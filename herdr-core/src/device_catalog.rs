@@ -206,6 +206,7 @@ pub(crate) fn group(
             }
             let name = crate::workspace::checkout_row_label(None, Path::new(&raw_checkout.path));
             let part = CheckoutSnapshot {
+                agent_scope: Default::default(),
                 id: id.clone(),
                 label: name.clone(),
                 owner_workspace_id: raw_owner(
@@ -232,6 +233,7 @@ pub(crate) fn group(
             {
                 Some(project) => {
                     let part = CheckoutSnapshot {
+                        agent_scope: Default::default(),
                         workspace_id: project.id.clone(),
                         tabs: part
                             .tabs
@@ -249,6 +251,7 @@ pub(crate) fn group(
                     merge_checkout(project, part);
                 }
                 None => projects.push(WorkspaceSnapshot {
+                    agent_scope: Default::default(),
                     label: name.clone(),
                     repo_name: name,
                     checkouts: vec![part],
@@ -309,6 +312,7 @@ pub(crate) fn group(
                 .cloned()
                 .collect::<Vec<_>>();
             let checkout = CheckoutSnapshot {
+                agent_scope: Default::default(),
                 id: checkout_id,
                 workspace_id: project_id.clone(),
                 label: crate::workspace::checkout_row_label(
@@ -347,6 +351,7 @@ pub(crate) fn group(
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_else(|| root.clone());
                     projects.push(WorkspaceSnapshot {
+                        agent_scope: Default::default(),
                         id: project_id.clone(),
                         label: name.clone(),
                         path: root.clone(),
@@ -416,7 +421,7 @@ pub(crate) fn group(
             project.checkouts.insert(0, main);
         }
     }
-    crate::sidebar::sync_checkout_agent_summaries(&mut projects, &raw.agents);
+    crate::agent_state::sync_checkout_agent_summaries(&mut projects, &raw.agents);
     crate::project_context::sort_projects(&mut projects, &raw.agents);
 
     let find_tab = |tab_id: &str| {
@@ -560,6 +565,7 @@ pub(crate) fn apply_registrations(
         let known = facts.known(&registration.path);
         let branch = known.and_then(|facts| facts.branch.clone());
         session.workspaces.push(WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -601,27 +607,7 @@ pub(crate) fn apply_registrations(
             cleanup: None,
         });
     }
-    let running = session
-        .agents
-        .iter()
-        .filter(|agent| agent.activity == crate::sidebar::AgentActivity::Working.name())
-        .map(|agent| agent.pane_id.clone())
-        .collect::<BTreeSet<_>>();
-    for project in &mut session.workspaces {
-        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
-        for pane in project
-            .checkouts
-            .iter()
-            .flat_map(|checkout| &checkout.tabs)
-            .flat_map(|tab| &tab.panes)
-        {
-            removal.pane_count += 1;
-            if running.contains(&pane.id) {
-                removal.running_agent_count += 1;
-            }
-        }
-        project.removal = removal;
-    }
+    crate::agent_state::sync_workspace_removals(&mut session.workspaces, &session.agents, false);
     crate::project_context::sort_projects(&mut session.workspaces, &session.agents);
 }
 

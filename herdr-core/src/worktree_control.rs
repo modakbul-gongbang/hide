@@ -2169,6 +2169,7 @@ mod tests {
     fn issue_cleanup_distinguishes_branch_switch_detach_removal_and_unregister() {
         let (mut mirror, receiver) = PurposeMirror::recording();
         let mut project = WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -2387,6 +2388,7 @@ mod tests {
             purpose: Some("Initial purpose".to_owned()),
         };
         let checkout = WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -2507,6 +2509,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -2568,6 +2571,7 @@ mod tests {
             purpose: None,
         };
         let mut project = WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),

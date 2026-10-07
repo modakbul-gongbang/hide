@@ -715,7 +715,7 @@ impl Runtime {
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
-        crate::sidebar::sync_checkout_agent_summaries(
+        crate::agent_state::sync_checkout_agent_summaries(
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );
@@ -734,26 +734,18 @@ impl Runtime {
         // project label is no longer Herdr's workspace label once a
         // registration covers the repository, so labels cannot be the key.
         for device in &mut self.snapshot.navigator.devices {
-            device.agent_count = projected_agents
-                .iter()
-                .filter(|agent| {
-                    self.snapshot
-                        .navigator
-                        .workspaces
-                        .iter()
-                        .filter(|workspace| workspace.device_id == device.id)
-                        .flat_map(|workspace| workspace.checkouts.iter())
-                        .flat_map(|checkout| checkout.tabs.iter())
-                        .flat_map(|tab| tab.panes.iter())
-                        .any(|pane| pane.id == agent.pane_id)
-                })
-                .count() as u32;
+            device.agent_count = crate::agent_state::device_catalog_count(
+                &self.snapshot.navigator.workspaces,
+                &projected_agents,
+                &device.id,
+            );
         }
         if self.snapshot.navigator.focused_device_id.is_none() {
             self.snapshot.navigator.focused_device_id = Some(self.node.as_str().to_owned());
         }
         self.resync_navigator_focus();
         self.rebuild_tab_strips();
+        self.refresh_agent_scopes();
         previous != self.snapshot.navigator || previous_card != self.snapshot.card
     }
     /// Puts one strip entry at a new place in its checkout's strip.
@@ -1965,12 +1957,7 @@ impl Runtime {
             }
         }
 
-        let agent_count = status
-            .session
-            .as_ref()
-            .map(|session| session.agents.len())
-            .unwrap_or(0)
-            .min(u32::MAX as usize) as u32;
+        let agent_count = crate::agent_state::remote_session_count(status.session.as_ref());
         if let Some(device) = self
             .snapshot
             .navigator
@@ -2000,6 +1987,7 @@ impl Runtime {
             self.sync_async_operations();
         }
         changed |= self.refresh_browser_inventory_scope();
+        changed |= self.refresh_agent_scopes();
         changed
     }
     /// Reconciles the pane and checkout ids loaded from disk against the first
@@ -2722,7 +2710,7 @@ impl Runtime {
             // The lineage is built before the read axis is applied, because
             // the read fingerprint carries what each row's descendants are
             // asking for and that is only known once the tree exists.
-            if crate::sidebar::prune_lineage_expansion(
+            if crate::agent_state::prune_lineage_expansion(
                 &mut self.snapshot.ui_state.expanded_agent_pane_ids,
                 &agents,
                 ReadRecordScope::Local,
@@ -2730,7 +2718,7 @@ impl Runtime {
                 self.persist_ui_state();
                 changed = true;
             }
-            crate::sidebar::apply_lineage(
+            crate::agent_state::apply_lineage(
                 &mut agents,
                 &self.snapshot.navigator.workspaces,
                 &self.snapshot.ui_state.expanded_agent_pane_ids,
@@ -3877,7 +3865,7 @@ impl Runtime {
                         {
                             checkout.purpose = next;
                         }
-                        crate::sidebar::sync_checkout_agent_summaries(
+                        crate::agent_state::sync_checkout_agent_summaries(
                             &mut session.workspaces,
                             &session.agents,
                         );
@@ -5027,7 +5015,7 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
-        crate::sidebar::sync_checkout_agent_summaries(
+        crate::agent_state::sync_checkout_agent_summaries(
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );

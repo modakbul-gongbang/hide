@@ -1,3 +1,4 @@
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -31,18 +32,18 @@ function row(): WorktreeRow {
   };
 }
 function catalog(worktree: WorktreeRow): SnapshotRest {
-  const checkout: Checkout = {
+  const checkout: Checkout = { agent_scope: emptyScope(),
     id: "checkout:task", workspace_id: "project:example", label: "task", path: worktree.path,
     branch: worktree.branch, purpose: null, is_worktree: true, exists: true, has_panes: false,
     pull_request: null, active_tab_id: null, strip: [], next_tab_label: "1", tabs: [], worktree,
   };
-  return {
-    navigator: { workspaces: [{
+  return legacyRest({
+    navigator: { workspaces: [{ agent_scope: emptyScope(),
       id: "project:example", label: "Example", path: "/projects/example", device_id: "local",
       registered: true, temporary: false, pinned: false, checkouts: [checkout],
       inactive_checkouts: { expanded: false, checkout_ids: [] },
     }] },
-  };
+  }, []);
 }
 
 describe("worktree Discard confirmation", () => {
@@ -111,4 +112,37 @@ describe("worktree Discard confirmation", () => {
       expect.objectContaining({ payload: expect.objectContaining({ discard_changes: true, expected_ignored_repositories: names }) }),
     ]);
   });
+  it("keeps the completed result after a checkout with panes leaves the catalog", async () => {
+    const before = catalog(row());
+    before.navigator!.workspaces![0]!.checkouts[0]!.tabs = [{ id: "tab", panes: [{ id: "root", title: "Shell" }] }] as unknown as Checkout["tabs"];
+    useShellStore.setState({ rest: legacyRest(before, []) });
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<WorkspaceDialogs actions={actions} />));
+    await act(async () => discard().click());
+    await act(async () => confirm()?.click());
+    const after = catalog(row());
+    after.navigator!.workspaces![0]!.checkouts = [];
+    after.worktree_removal = { id: 1, device_id: "local", repository_root: "/projects/example", checkout_path: row().path, branch: "feature/delete", delete_branch: false, phase: "finished", message: "Worktree removed" };
+    await act(async () => useShellStore.setState({ rest: legacyRest(after, []) }));
+    expect(document.querySelector('[data-delete-result="finished"]')?.textContent).toBe("Worktree removed");
+    expect(document.querySelector('[data-delete-confirm]')).toBeNull();
+  });
+
+  it("keeps a removed project's result after its nonempty target disappears", async () => {
+    const before = catalog(row());
+    before.navigator!.workspaces![0]!.registered = false;
+    before.navigator!.workspaces![0]!.checkouts[0]!.tabs = [{ id: "tab", panes: [{ id: "root", title: "Shell" }] }] as unknown as Checkout["tabs"];
+    useShellStore.setState({ rest: legacyRest(before, []) });
+    useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: "project:example" });
+    const actions = createActions((event) => { events.push(event); return true; });
+    await act(async () => root.render(<WorkspaceDialogs actions={actions} />));
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-remove-confirm]')!.click());
+    const after = catalog(row()); after.navigator!.workspaces = [];
+    await act(async () => useShellStore.setState({ rest: legacyRest(after, []) }));
+    expect(document.querySelector('[data-remove-result="finished"]')).not.toBeNull();
+    const sent = events.length;
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-remove-cancel]')!.click());
+    expect(events).toHaveLength(sent);
+  });
+
 });

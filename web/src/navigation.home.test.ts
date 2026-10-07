@@ -1,15 +1,20 @@
+import { allAgents, deviceListedAgents, agentPlaces } from "../test/legacyNavigation";
+import { projectRows } from "../test/legacyAgentScope";
+import { agentSections } from "../test/legacyAgentScope";
+import { emptyScope } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { agentPlaces, agentSections, allAgents, allProjectsCount, boardProjects, deviceListedAgents, mainSections } from "./navigation";
-import { projectRows } from "./projects";
+import { allProjectsCount, boardProjects, mainSections } from "./navigation";
+
 import { contextAllWorkspaces, contextHome, contextWorkspaces, projectsOf } from "./remote";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
-  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" } as AgentRow;
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
 }
 
 function workspace(id: string, deviceId: string, extra: Partial<Workspace> = {}, panes: string[] = []): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id,
     label: id,
     path: `/${id}`,
@@ -18,7 +23,7 @@ function workspace(id: string, deviceId: string, extra: Partial<Workspace> = {},
     temporary: false,
     pinned: false,
     inactive_checkouts: { expanded: false, checkout_ids: [] },
-    checkouts: [{ id: `${id}:c`, workspace_id: id, label: "main", path: `/${id}`, tabs: [{ id: `${id}:t`, panes: panes.map((pane) => ({ id: pane })) }] }],
+    checkouts: [{ agent_scope: emptyScope(), id: `${id}:c`, workspace_id: id, label: "main", path: `/${id}`, tabs: [{ id: `${id}:t`, panes: panes.map((pane) => ({ id: pane })) }] }],
     ...extra,
   } as unknown as Workspace;
 }

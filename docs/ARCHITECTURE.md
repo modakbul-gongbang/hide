@@ -292,6 +292,25 @@ If normal placement is full, the unresolved child waits and the core moves its k
 Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; instead it is a signal in every ancestor's read fingerprint, so the ancestor turns unread and its badge reports the count, while the ancestor's own group stays whatever its own axes say.
 The lineage is therefore built before the read axis is applied on every ingest, and there is no clock, timer or second store for it.
+The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifecycle, completion, ownership and read state, `turn.rs` derives groups, request verbs and runtime action gates, `work.rs` associates PRs and issues and assigns each duty, and `tally.rs` owns marks, representative ranks and scope counts.
+Its scope projection also carries list sections and checkout trees; the web resolves their pane IDs and physical occurrence indexes and applies locale-aware typography and alphabetical placement without choosing status priority, membership or counts.
+The `agent_scope` projection carries physical totals, Overview membership and request membership as separate values because their existing screen rules differ.
+The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from requests and the Overview attention count, and keeps them in physical agent lists.
+A changed Factory summary refreshes the scope in the same publication; unchanged worker membership reuses the cache.
+Device scopes also carry connected row listings and pane places, and the PR projection carries the tile's turn breakdown, so the shell does not reconstruct ownership or sum attention groups.
+`agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
+Existing close targets also carry `tally/close.rs` consequences: confirmation priority, stop-work rows, and outside-descendant rows and counts.
+`tally/graph.rs` supplies graph attention, ordered membership, fold classes and tucked marks for the fixed sixteen fold/scope combinations, deduplicating equal maps.
+Its `graph/cross.rs` supplies cross-project chip membership, attention order, counts and device context from stable device IDs, retaining the first global pane occurrence across the local and last-known remote catalogs.
+The web resolves the projected project/device IDs for navigation and translates local device context without regrouping or recounting chips.
+`work.rs` also publishes the request row’s selected PR and ordered issue keys, including folded-chip recency, while `tally.rs` owns local and remote device and removal totals.
+`tally/relations.rs` supplies command-palette lineage groups and their issue keys, and `tally/cleanup.rs` supplies checkout-use counts, preserving last-known disconnected descendants separately from live close targets.
+Text search and pixel geometry stay in the web; filters select from the core's priority order without deriving a new status.
+The cache includes pane close flags and labels so a pane-only change refreshes an open sheet; it adds no close action or runtime enforcement path.
+Catalog rebuilding restores cached scope fields before equality checks so an unchanged source does not create a publication merely by constructing new project objects.
+`sidebar.rs` retains payload and snapshot assembly, `request_view.rs` retains request block assembly and timestamp persistence, and `pet.rs` selects a pose from the local summary.
+These functions operate on the facts already projected by the core, including remote rows; they introduce no reader, timer, worker or I/O under the runtime lock.
+The existing `sidebar::tests`, `request_view::tests`, `pet::tests` and `runtime::tests::lineage` exercise these shared rules through their original projection callers.
 `docs/status-model.md` owns both rules.
 The Agents `My Work` view filters only the core-final Delegated answer and leaves visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
 Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.
@@ -1019,7 +1038,8 @@ A screen action is the `factory_action` event, whose `command` is the stage-1 `C
 
 ### The mobile companion
 
-Everything a phone touches lives in `hided/src/mobile/`, and `herdr-core` does not know phones exist; its only addition is `Runtime::remote_herdr_api`, which lends the Herdr API connection it already holds for a connected SSH device.
+Phone transport, pairing, conversation reads and delivery live in `hided/src/mobile/`; status projection and notification transitions belong to `herdr-core/src/agent_state/`.
+`Runtime::remote_herdr_api` lends the Herdr API connection the core already holds for a connected SSH device.
 Mobile is off until the operator turns it on in Settings > Mobile, and it is kept in `mobile.json` beside the daemon's state (the switch, the push mode, the serve entry hided added, and the VAPID key), written through a temporary file at mode 0600.
 
 The transport is the operator's own Tailscale, and `mobile/tailscale.rs` is the only file that knows it, so a relay later replaces that one module.
@@ -1055,7 +1075,8 @@ A phone starts an agent through the same `agent_start_in_checkout` event as the 
 While its start sheet is open (`start_sheet`), hided sends it a `start_catalog`: every device's Home and checkouts as targets named by id, `claude` and `codex` with the models the provider catalog lists, and the choice the last start remembered; the sheet counts as a start surface for the catalog demand, and the folder a target id leads to stays in hided.
 `start_agent` carries a request id, the text, a target id, a kind and an optional model; it is refused before anything is dispatched when the phone is no longer admitted or the target, kind, model or text is not one the sheet could have sent, and otherwise answered with `start_result` once the core's task slot or last error carries that request id, or `timeout` after 90 seconds (`start::ANSWER_LIMIT`, the core's own limit for a start).
 A request id the phone repeats is started once: the repeat gets the first answer, joins it while the first still waits, or, after a `timeout`, follows the same start again without sending it; one connection waits for one start at a time, and a second is answered `in_flight`.
-The list is a projection of the snapshot's `rest` section (`mobile/projection.rs`): the local navigator's agents and every connected device's, in the desktop's four groups, each keyed by device id and pane id with its lineage root.
+The list is `agent_state::phone::project` over the snapshot's `rest` section (`agent_state/tally.rs`, called by `mobile/projection.rs`): the local navigator's agents and every connected device's, in the desktop's four groups, each keyed by device id and pane id with its lineage root.
+The core supplies each phone group’s order and count; the phone renders both without recounting.
 hided follows the core only while Mobile is on with a phone paired, reads the snapshot off the core lock with its own cursors once per notification burst, and republishes the list only when it changed.
 A detail shows the agent's conversation (`mobile/conversation.rs`) or its terminal, as the phone chooses with `open` and `view`, and hided reads only the one shown, once a second and only while it is open.
 Claude Code and Codex draw in the alternate screen, so Herdr keeps no scrollback for their panes and `pane.read` holds only the screen; the conversation comes from the agent's own transcript instead, found through `hide-session` from the session `pane.get` reports for the pane.
@@ -1070,6 +1091,7 @@ Neither path goes through the attach set or a core key event, so a phone never m
 
 Push is Web Push that hided signs and encrypts itself with `ring`: a VAPID ES256 key made once and kept in `mobile.json`, RFC 8291 `aes128gcm` bodies, and a POST through `ureq` over rustls on a blocking thread, never under the core lock.
 Only the push services' own hosts are accepted as endpoints (Apple, FCM, Mozilla, Windows), parsed as an `https` URL with no userinfo and no port but 443 and posted without following redirects, plus a loopback endpoint in a debug build for the e2e.
+`agent_state::push::Transitions` (`agent_state/turn.rs`) owns notification state and the ten-minute disappearance ledger; hided owns subscriptions, mode policy and delivery.
 The first list only seeds the transitions; after it, a root agent entering Needs You or Done sends one notice per subscribed phone, a descendant's question, approval or error raises its root, and the notice's tag (`device|root pane`) replaces the one before it.
 A push payload is data, never a sentence: the task as `title`, `state` (`needs_you` or `done`), the project as `place`, the `tag`, `device_id`, `pane_id` and `clear`; the phone page gives its service worker the words for the two states in the language in effect, which the worker keeps in the Cache API (`hide-phone-words`) so a closed app still notifies, and composes the body from them and the place (no state word when none was stored).
 An agent that leaves the list is remembered for ten minutes, so one that comes back in the same state is not announced again; the cost is that the notification of a root that left for good is cleared up to ten minutes later.

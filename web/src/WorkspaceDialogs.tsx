@@ -18,7 +18,7 @@ import { DiskCleanupSheet } from "./DiskCleanupSheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
 import { SubtreeList } from "./components/subtree-list";
-import { subtreeOf, type Subtree } from "./close";
+import { closeScope, subtreeOf, type Subtree } from "./close";
 import { NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
 import { PrDelegateDialog, PrLinkDialog, PrNewIssueDialog } from "./PrDialogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
@@ -134,7 +134,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   if (dialog.kind === "disk_cleanup") return <DiskCleanupSheet key={dialog.workspaceId} actions={actions} workspace={target.workspace} filter={dialog.filter} onClose={close} />;
   if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} listed={found !== null} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
-  if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
+  if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} listed={!!found?.checkout} onClose={close} />;
   return null;
 }
 
@@ -144,10 +144,11 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
  * check or an agent that closed shows at once. Null when there are none,
  * which leaves the dialog as it was.
  */
-function useOutsideSubtree(actions: Actions, inside: string[]): Subtree | null {
-  useShellStore((s) => s.rest);
+function useOutsideSubtree(actions: Actions, inside: string[], listed: boolean): Subtree | null {
+  const rest = useShellStore((s) => s.rest);
   useShellStore((s) => s.agents);
-  return subtreeOf(inside, actions.everyAgent());
+  // A retained result row is no longer a live removal target.
+  return listed ? subtreeOf(closeScope(rest, inside), actions.everyAgent()) : null;
 }
 
 /**
@@ -191,7 +192,7 @@ function RemoveProjectDialog({ actions, workspace, listed, onClose }: { actions:
   const working = at !== null && !removed && refused === null;
   const panes = workspace.removal?.pane_count ?? 0;
   const inside = workspace.checkouts.flatMap((checkout) => checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)));
-  const subtree = useOutsideSubtree(actions, inside);
+  const subtree = useOutsideSubtree(actions, inside, listed);
   // What the operator chose, so Try again repeats it on what is left (B22).
   const [withOutside, setWithOutside] = useState(false);
   const remove = (outside: boolean) => {
@@ -442,7 +443,7 @@ function PurposeDialog({ actions, checkout, deviceLabel, onClose }: { actions: A
   );
 }
 
-function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { actions: Actions; deviceId: string; checkout: Checkout; onClose: () => void }) {
+function DeleteWorktreeDialog({ actions, deviceId, checkout, listed, onClose }: { actions: Actions; deviceId: string; checkout: Checkout; listed: boolean; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const row = checkout.worktree;
   const gate = row?.deletion_gate;
@@ -467,7 +468,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   const branch = row?.branch ?? checkout.branch;
   const needsDiscard = !!gate?.discard_label;
   const inside = checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id));
-  const subtree = useOutsideSubtree(actions, inside);
+  const subtree = useOutsideSubtree(actions, inside, listed);
   const [withOutside, setWithOutside] = useState(false);
   const closingOutside = inFlight && withOutside && subtree !== null && removal?.phase === "closing";
   const confirm = (outside: boolean) => {

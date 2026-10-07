@@ -6,7 +6,7 @@
 
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
-import type { AgentChip, LineageStep, PaneFocusRequest, PaneRow } from "./snapshot";
+import type { AgentChip, LineageStep, PaneFocusRequest, PaneRow, StatusTone } from "./snapshot";
 
 /**
  * The one focus the shell asked for by relationship, and where it was asked
@@ -50,26 +50,14 @@ export function chipTitle(t: TFunction<"translation">, chip: AgentChip): string 
   return [chip.label, statusText(t, chip.status_code), chip.detail].filter(Boolean).join(" · ");
 }
 
-/**
- * The colour class of a demand's mark and request, or null for no demand.
- * A demand keeps its hue once the operator has read it, at reduced emphasis
- * (docs/status-model.md, One meaning across surfaces), so an unread `?` stands
- * out from one already looked at; a blocked approval stays emphasized.
- */
-export function demandTone(demand: string, emphasized: boolean): string | null {
-  const read = emphasized ? "" : " opacity-(--opacity-read-status)";
-  if (demand === "error") return `text-destructive${read}`;
-  if (demand === "question" || demand === "approval") return `text-warning${read}`;
-  return null;
+/** Maps the core's semantic tone to this surface's existing tokens. */
+export function toneClass(tone: StatusTone): string {
+  const classes = { error: "text-destructive", warning: "text-warning", working: "text-agent-working", success: "text-success", subtle: "text-subtle-foreground", news: "text-foreground" };
+  return classes[tone.kind] + (tone.read ? " opacity-(--opacity-read-status)" : "");
 }
 
-/** The colour class of a chip's status mark, as the native row picks it (`AgentStatusPresentation`). */
-export function chipTone(chip: Pick<AgentChip, "demand" | "activity" | "emphasized">): string {
-  const demand = demandTone(chip.demand, chip.emphasized);
-  if (demand) return demand;
-  if (chip.activity === "working") return "text-agent-working";
-  if (chip.activity === "stopped" && chip.emphasized) return "text-success";
-  return "text-subtle-foreground";
+export function chipTone(chip: Pick<AgentChip, "tone">): string {
+  return toneClass(chip.tone);
 }
 
 export type RelationEntry = { paneId: string; label: string; relation: "parent" | "sibling" | "child"; chip: AgentChip | null };

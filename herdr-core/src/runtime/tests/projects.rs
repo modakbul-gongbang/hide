@@ -2185,6 +2185,7 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
     let mut runtime = runtime();
     let path = "/tmp/hide-runtime-inactive";
     let settled = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
+        agent_scope: Default::default(),
         id: id.to_owned(),
         workspace_id: "workspace-inactive".to_owned(),
         label: id.to_owned(),

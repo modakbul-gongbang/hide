@@ -514,7 +514,7 @@ impl Runtime {
         let mut agents = self.snapshot.navigator.agents.clone();
         self.snapshot.ui_state.agent_sleep.annotate(&mut agents);
         for agent in &mut agents {
-            crate::sidebar::rederive(agent);
+            crate::agent_state::rederive(agent);
         }
         if agents == self.snapshot.navigator.agents {
             return false;

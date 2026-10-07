@@ -1,3 +1,6 @@
+import { buildTasks, buildPullRequests, shownAgents } from "../test/legacyAgentScope";
+import { emptyScope } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28): four stages from Git, a card per issue and per worktree, the
 // backlog that starts work, the pull request as the result, at most two
@@ -5,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { allProjectsStats, boardLabels, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { allProjectsStats, boardLabels, buildDependencies, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -20,7 +23,7 @@ function pr(badge: PullRequest["badge"], checks: PullRequest["checks"] = "unknow
 /** `merged` is work that landed (Git and the link record agree); `inBase` is only Git finding HEAD in the base, as a checkout with no commits of its own does. */
 function checkout(id: string, options: { changed?: number; ahead?: number; pr?: PullRequest; worktree?: boolean; panes?: string[]; merged?: boolean; inBase?: boolean; task?: string; closes?: string[]; behind?: number } = {}): Checkout {
   const worktree = options.worktree ?? true;
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: "project",
     label: id,
@@ -51,7 +54,7 @@ function task(number: number, open = true, title = `Task ${number}`): Task {
 
 function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task[] | null; failure?: string; id?: string; remote?: string } = {}): Workspace {
   const connected = options.tasks !== null;
-  return {
+  return { agent_scope: emptyScope(),
     ...(options.remote ? { remote_target_id: options.remote } : {}),
     id: options.id ?? "project",
     label: options.id ?? "Project",
@@ -72,7 +75,7 @@ function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task
 }
 
 function agent(pane: string, group = "working", extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra };
+  return legacyAgentRow({ id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra });
 }
 
 function one(project: Workspace, agents: AgentRow[] = []): BoardProject[] {
@@ -494,6 +497,13 @@ describe("the PRs tab", () => {
     expect(row.agents.map((value) => value.pane_id).sort()).toEqual(["branch", "maker"]);
     // The maker works on something else on main; the pull request still waits on the operator.
     expect(row.group).toBe("turn");
+  });
+
+  it("keeps the first checkout row and its last-occurrence ancestor in expanded PR lineage", () => {
+    const project = repo([checkout("feature", { panes: ["child"] })], [listed(9, "feature")]);
+    const agents = [agent("root", "working", { identity_label: "First parent" }), agent("child", "working", { identity_label: "First child", lineage_parent_pane_id: "root" }), agent("child", "seen", { identity_label: "Later child", lineage_parent_pane_id: null }), agent("root", "seen", { identity_label: "Later parent" })];
+    const board = buildPullRequests({ workspace: project, agents, device: null }, NOW);
+    expect(board.groups[0]!.rows[0]!.lineage.map(row => [row.agent.identity_label, row.depth])).toEqual([["Later parent", 0], ["First child", 1]]);
   });
 
   it("draws no header for an empty group", () => {

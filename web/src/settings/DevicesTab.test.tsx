@@ -1,3 +1,4 @@
+import { emptyScope } from "../../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -20,12 +21,12 @@ const kit = (components: KitComponent[], over: Partial<Kit> = {}): Kit => ({ una
 
 const host: DeviceHost = { consent: "granted", helper_root: "~/.hide/host-helper", cli_dir: "~/.local/bin", contract: 3, bound_identity: "SHA256:abc", granted_at_unix_ms: 1, state: "ready", message: null, platform: "macos aarch64", helper_path: "~/.hide/host-helper/current/hided" };
 
-const remote = (id: string, over: Partial<Device> = {}): Device => ({ id, label: id === "mini" ? "Mac mini" : "Studio", kind: "remote", state: "ready", message: null, ssh_alias: id, agent_count: 0, test: null, host, kit: kit([part("cli", "installed"), part("claude_code_hook", "installed"), part("codex_hook", "installed")]), ...over });
+const remote = (id: string, over: Partial<Device> = {}): Device => ({ agent_scope: emptyScope(), id, label: id === "mini" ? "Mac mini" : "Studio", kind: "remote", state: "ready", message: null, ssh_alias: id, agent_count: 0, test: null, host, kit: kit([part("cli", "installed"), part("claude_code_hook", "installed"), part("codex_hook", "installed")]), ...over });
 
 const state = (devices: Device[]) => ({
   connection: "live" as const,
   rest: {
-    navigator: { focused_device_id: "local", devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null, kit: kit([part("cli", "installed")]) }, ...devices] },
+    navigator: { focused_device_id: "local", devices: [{ agent_scope: emptyScope(), id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null, kit: kit([part("cli", "installed")]) }, ...devices] },
     status: { remote: devices.map((device) => ({ target_id: device.id, state: "connected", message: null, herdr_version: "0.9.1" })) },
     ui_state: {},
   },

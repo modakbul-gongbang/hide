@@ -51,25 +51,33 @@ function agent(group: AgentGroup["group"], pane: string, root = pane, demand = "
     line: null,
     status_code: "unknown",
     demand,
+    emphasized: group === "needs_you" || group === "done",
+    // Frozen pre-refactor phone values, including the read-question difference.
+    holds_notification: group === "needs_you" || group === "done" || ["question", "approval", "error"].includes(demand),
   };
 }
 
 describe("staleTags", () => {
+  it("retains a read root question even though its group is Seen", () => {
+    expect(staleTags(["local|root"], [{ group: "seen", count: 1, agents: [agent("seen", "root", "root", "question")] }])).toEqual([]);
+    expect(staleTags(["local|root"], [{ group: "seen", count: 1, agents: [agent("seen", "root")] }])).toEqual(["local|root"]);
+  });
+
   it("keeps the notification of a root still waiting or done, through a child's request", () => {
     const groups: AgentGroup[] = [
-      { group: "needs_you", agents: [agent("needs_you", "child", "root")] },
-      { group: "seen", agents: [agent("seen", "other")] },
+      { group: "needs_you", count: 1, agents: [agent("needs_you", "child", "root")] },
+      { group: "seen", count: 1, agents: [agent("seen", "other")] },
     ];
     expect(staleTags(["local|root", "local|other", "local|gone"], groups)).toEqual(["local|other", "local|gone"]);
   });
 
   it("keeps a root's notification while a delegated child, only ever Working, still asks", () => {
     const groups: AgentGroup[] = [
-      { group: "working", agents: [agent("working", "child", "root", "question")] },
-      { group: "seen", agents: [agent("seen", "root")] },
+      { group: "working", count: 1, agents: [agent("working", "child", "root", "question")] },
+      { group: "seen", count: 1, agents: [agent("seen", "root")] },
     ];
     expect(staleTags(["local|root"], groups)).toEqual([]);
-    expect(staleTags(["local|root"], [{ group: "seen", agents: [agent("seen", "root")] }])).toEqual(["local|root"]);
+    expect(staleTags(["local|root"], [{ group: "seen", count: 1, agents: [agent("seen", "root")] }])).toEqual(["local|root"]);
   });
 });
 

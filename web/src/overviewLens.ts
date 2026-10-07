@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 // The Overview's lenses (PRD overview-lenses-tiles-agents) as pure functions
 // over the snapshot: the tiles that stand where the tab row was, and the
 // agents each scope holds. The Agents graph itself is `agentGraph.ts`. Every
@@ -31,10 +32,7 @@ const BUCKET_LABEL: Record<AgentBucket, MessageKey> = {
 const BUCKETS: readonly AgentBucket[] = ["turn", "working", "delegating", "resting"];
 
 export function bucketOf(agent: AgentRow): AgentBucket {
-  if (agent.group === "needs_you" || agent.group === "done") return "turn";
-  if (agent.waiting_on_descendants) return "delegating";
-  if (agent.group === "working") return "working";
-  return "resting";
+  return agent.state.bucket;
 }
 
 /** One agent the Overview draws, with where it works. */
@@ -53,14 +51,13 @@ export type LensAgent = {
 export function scopeAgents(projects: readonly BoardProject[]): LensAgent[] {
   const result: LensAgent[] = [];
   for (const { workspace, agents, device } of projects) {
-    const owners = new Map<string, Checkout>();
-    for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
+    const byPane = new Map([...agents].reverse().map((agent) => [agent.pane_id, agent]));
+    const checkouts = new Map(workspace.checkouts.map((checkout) => [checkout.id, checkout]));
     const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-    const seen = new Set<string>();
-    for (const agent of agents) {
-      const checkout = owners.get(agent.pane_id);
-      if (!checkout || seen.has(agent.pane_id)) continue;
-      seen.add(agent.pane_id);
+    for (const member of workspace.agent_scope.members) {
+      const agent = byPane.get(member.pane_id);
+      const checkout = checkouts.get(member.checkout_id);
+      if (!agent || !checkout) throw new Error("Overview scope references a missing agent or checkout");
       result.push({ agent, bucket: bucketOf(agent), project: workspace, checkout, device, task: checkout.task_key ? (tasks.get(checkout.task_key) ?? null) : null });
     }
   }
@@ -97,21 +94,20 @@ export type Tile = {
  * questions, approvals, errors and finished ones, and the bar of the four
  * buckets. A device that has not answered has no count.
  */
-export function agentsTile(agents: readonly LensAgent[], availability: DeviceAvailability, t: TFunction<"translation">): Tile {
+export function agentsTile(scope: AgentScope, availability: DeviceAvailability, t: TFunction<"translation">): Tile {
   const known = availability.state === "ready";
-  const count = (bucket: AgentBucket) => agents.filter((value) => value.bucket === bucket).length;
-  const demand = (kind: string) => agents.filter((value) => value.agent.group === "needs_you" && value.agent.demand === kind).length;
+  const count = (bucket: AgentBucket) => scope.buckets[bucket];
   const turn = count("turn");
   const parts = [
-    { key: "question", label: t("board.turn.question"), count: demand("question") },
-    { key: "approval", label: t("overview.approval"), count: demand("approval") },
-    { key: "error", label: t("common.error"), count: demand("error") },
-    { key: "done", label: t("overview.finished"), count: agents.filter((value) => value.agent.group === "done").length },
+    { key: "question", label: t("board.turn.question"), count: scope.turns.question },
+    { key: "approval", label: t("overview.approval"), count: scope.turns.approval },
+    { key: "error", label: t("common.error"), count: scope.turns.error },
+    { key: "done", label: t("overview.finished"), count: scope.turns.done },
   ].filter((part) => part.count > 0);
   return {
     id: "agents",
     label: t("overview.agents"),
-    value: known ? agents.length : null,
+    value: known ? scope.overview_total : null,
     unit: null,
     badge: known && turn > 0 ? { count: turn, parts } : null,
     bar: known ? BUCKETS.map((bucket) => ({ key: bucket, label: t(BUCKET_LABEL[bucket]), count: count(bucket) })) : null,
@@ -156,28 +152,25 @@ export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | 
  * the last value and says so by the name (B22).
  */
 export function prsTile(board: PrBoard, t: TFunction<"translation">): Tile {
-  const rows = (group: string) => board.groups.find((entry) => entry.group === group)?.rows ?? [];
-  const turn = rows("turn");
-  const look = turn.filter((row) => row.needsLook).length;
-  const drafts = turn.filter((row) => !row.needsLook && row.tone === "draft").length;
+  const counts = board.counts;
   const parts = [
-    { key: "review", label: t("board.stage.review"), count: turn.length - look - drafts },
-    { key: "draft", label: t("overview.draft"), count: drafts },
-    { key: "look", label: t("overview.reviewFinishedAgent"), count: look },
+    { key: "review", label: t("board.stage.review"), count: counts.review },
+    { key: "draft", label: t("overview.draft"), count: counts.draft },
+    { key: "look", label: t("overview.reviewFinishedAgent"), count: counts.look },
   ].filter((part) => part.count > 0);
   return {
     id: "prs",
     label: t("overview.prs"),
     value: board.open,
     unit: t("board.unit.open"),
-    badge: board.open !== null && turn.length > 0 ? { count: turn.length, parts } : null,
+    badge: board.open !== null && counts.turn > 0 ? { count: counts.turn, parts } : null,
     bar:
       board.open === null
         ? null
         : [
-            { key: "turn", label: t("board.prGroup.turn"), count: turn.length },
-            { key: "fixing", label: t("board.prGroup.fixing"), count: rows("fixing").length },
-            { key: "blocked", label: t("board.prGroup.blocked"), count: rows("blocked").length },
+            { key: "turn", label: t("board.prGroup.turn"), count: counts.turn },
+            { key: "fixing", label: t("board.prGroup.fixing"), count: counts.fixing },
+            { key: "blocked", label: t("board.prGroup.blocked"), count: counts.blocked },
           ],
     failure: board.failure ? readFailureText(board.failure, t) : null,
   };

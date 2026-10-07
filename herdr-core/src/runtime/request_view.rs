@@ -16,6 +16,10 @@ use crate::request_view::{self, RowPlace};
 const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Runtime {
+    pub(super) fn refresh_agent_scopes(&mut self) -> bool {
+        self.agent_scope_cache.refresh(&mut self.snapshot)
+    }
+
     /// Lays the block on this Mac's rows, whose pull requests come from
     /// their checkout's branch and their session. `live_panes` is Herdr's
     /// pane topology when the caller has one; only then do the verb records
@@ -146,7 +150,7 @@ impl Runtime {
                 changed = true;
             }
         }
-        changed
+        changed | self.refresh_agent_scopes()
     }
 
     /// A window began or stopped showing the request view.
@@ -226,15 +230,19 @@ impl Runtime {
             .any(|row| row.pane_id == pane_id)
         {
             let mut agents = self.snapshot.navigator.agents.clone();
-            changes = crate::sidebar::apply_read_state(&mut agents, &mut records, Some(pane_id));
+            changes =
+                crate::agent_state::apply_read_state(&mut agents, &mut records, Some(pane_id));
         } else {
             for remote in &self.snapshot.status.remote {
                 if let Some(session) = remote.session.as_ref()
                     && session.agents.iter().any(|row| row.pane_id == pane_id)
                 {
                     let mut agents = session.agents.clone();
-                    changes =
-                        crate::sidebar::apply_read_state(&mut agents, &mut records, Some(pane_id));
+                    changes = crate::agent_state::apply_read_state(
+                        &mut agents,
+                        &mut records,
+                        Some(pane_id),
+                    );
                 }
             }
         }
@@ -251,7 +259,7 @@ impl Runtime {
                 continue;
             };
             let before = session.agents.clone();
-            crate::sidebar::apply_read_state(
+            crate::agent_state::apply_read_state(
                 &mut session.agents,
                 &mut records,
                 session.focused_pane_id.as_deref(),

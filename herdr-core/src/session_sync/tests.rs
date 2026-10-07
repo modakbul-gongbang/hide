@@ -2468,7 +2468,7 @@ mod lineage_sessions {
             .project_remote("mini", replica.project())
             .expect("remote projection");
         assert!(excluded.is_empty(), "{excluded:?}");
-        crate::sidebar::apply_lineage(&mut remote.agents, &[], &[]);
+        crate::agent_state::apply_lineage(&mut remote.agents, &[], &[]);
         remote.agents
     }
 
@@ -2577,7 +2577,7 @@ mod lineage_sessions {
         let (mut remote, _) = replica
             .project_remote("mini", replica.project())
             .expect("remote projection");
-        crate::sidebar::apply_lineage(&mut remote.agents, &[], &[]);
+        crate::agent_state::apply_lineage(&mut remote.agents, &[], &[]);
         let child = &remote.agents[0];
         assert!(
             child.lineage_orphan,

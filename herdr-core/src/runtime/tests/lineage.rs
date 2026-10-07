@@ -251,7 +251,7 @@ fn a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_chil
 fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     let mut rows = lineage_rows();
     let mut records = std::collections::BTreeMap::new();
-    crate::sidebar::apply_read_state(&mut rows, &mut records, Some("child"));
+    crate::agent_state::apply_read_state(&mut rows, &mut records, Some("child"));
     let original = rows
         .iter()
         .map(|row| {
@@ -264,7 +264,7 @@ fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
         })
         .collect::<Vec<_>>();
     let ledger = records.clone();
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let row = |id: &str| rows.iter().find(|row| row.pane_id == id).unwrap();
     assert_eq!(row("parent").lineage_child_pane_ids, ["sibling", "child"]);
     assert_eq!(row("child").lineage_depth, 1);
@@ -291,7 +291,7 @@ fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     );
     assert_eq!(ledger, records);
     rows.retain(|row| row.pane_id != "parent");
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let child = rows.iter().find(|row| row.pane_id == "child").unwrap();
     assert_eq!(child.lineage_depth, 0);
     assert_eq!(child.lineage_root_checkout_id.as_deref(), Some("feature"));
@@ -319,11 +319,11 @@ fn lineage_depth_is_not_capped_and_cycles_are_visible_orphans() {
         crate::sidebar::owned_label_fixture(serde_json::json!({"agents":values})).unwrap(),
     )
     .agents;
-    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(rows[63].lineage_depth, 63);
     rows[0].spawned_from_pane_id = Some("p1".into());
     rows[0].declared_parent_session = rows[1].declared_parent_session.clone();
-    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     assert!(rows[0].lineage_orphan && rows[1].lineage_orphan);
     assert_eq!(rows[2].lineage_depth, 1);
 }
@@ -399,8 +399,8 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         .find(|row| row.pane_id == "child")
         .unwrap()
         .demand = "question".into();
-    crate::sidebar::apply_lineage(&mut attention, &lineage_workspaces(), &[]);
-    crate::sidebar::apply_read_state(
+    crate::agent_state::apply_lineage(&mut attention, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_read_state(
         &mut attention,
         &mut runtime.snapshot.ui_state.pane_read_records,
         None,
@@ -445,12 +445,12 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         ["parent"]
     );
     let mut scoped = vec!["parent".to_owned(), "remote:mini:p1".to_owned()];
-    assert!(!crate::sidebar::prune_lineage_expansion(
+    assert!(!crate::agent_state::prune_lineage_expansion(
         &mut scoped,
         &[],
         ReadRecordScope::Retain
     ));
-    assert!(crate::sidebar::prune_lineage_expansion(
+    assert!(crate::agent_state::prune_lineage_expansion(
         &mut scoped,
         &[],
         ReadRecordScope::Local
@@ -472,7 +472,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
 #[test]
 fn ownership_marks_descendants_delegated_and_hands_an_orphan_back_to_the_operator() {
     let mut rows = lineage_rows();
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let row = |rows: &[SidebarAgentSnapshot], id: &str| {
         rows.iter().find(|row| row.pane_id == id).unwrap().clone()
     };
@@ -489,7 +489,7 @@ fn ownership_marks_descendants_delegated_and_hands_an_orphan_back_to_the_operato
     );
 
     rows.retain(|row| row.pane_id != "parent");
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let orphan = row(&rows, "child");
     assert!(
         !orphan.delegated,
@@ -505,7 +505,7 @@ fn ownership_marks_descendants_delegated_and_hands_an_orphan_back_to_the_operato
 #[test]
 fn a_lost_origin_is_named_as_ended_rather_than_shown_as_a_pane_id() {
     let mut rows = lineage_rows();
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let row = |rows: &[SidebarAgentSnapshot], id: &str| {
         rows.iter().find(|row| row.pane_id == id).unwrap().clone()
     };
@@ -520,7 +520,7 @@ fn a_lost_origin_is_named_as_ended_rather_than_shown_as_a_pane_id() {
     // internal handle, never rendered as a name; with nothing to go to, no
     // destination is offered either.
     rows.retain(|row| row.pane_id != "parent");
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let orphan = row(&rows, "child");
     assert_eq!(
         orphan.lineage_hint.as_deref(),
@@ -543,7 +543,7 @@ fn a_lost_origin_is_named_as_ended_rather_than_shown_as_a_pane_id() {
 #[test]
 fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
     let mut rows = lineage_rows();
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let row = |id: &str| rows.iter().find(|row| row.pane_id == id).unwrap();
 
     assert_eq!(row("parent").lineage_path_pane_ids, Vec::<String>::new());
@@ -591,7 +591,7 @@ fn lineage_identity_uses_tasks_even_when_herdr_names_exist() {
         .unwrap(),
     )
     .agents;
-    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     let child = rows.iter().find(|row| row.pane_id == "w1:p2").unwrap();
 
     assert_eq!(
@@ -617,7 +617,7 @@ fn lineage_identity_uses_tasks_even_when_herdr_names_exist() {
 #[test]
 fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() {
     let mut rows = lineage_rows();
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     assert_eq!(
         rows.iter()
             .find(|row| row.pane_id == "grandchild")
@@ -626,7 +626,7 @@ fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() 
         ["parent", "child"]
     );
     rows.retain(|row| row.pane_id != "child");
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let grandchild = rows.iter().find(|row| row.pane_id == "grandchild").unwrap();
     assert_eq!(grandchild.lineage_path_pane_ids, Vec::<String>::new());
     assert_eq!(grandchild.lineage_parent_pane_id, None);
@@ -659,7 +659,7 @@ fn instrumented_rows(agent_kind: &str) -> Vec<SidebarAgentSnapshot> {
         .unwrap(),
     )
     .agents;
-    crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     rows
 }
 
@@ -1060,7 +1060,7 @@ fn a_delegated_childs_demand_and_completion_stay_off_the_operators_groups() {
             _ => {}
         }
     }
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let row = |id: &str| {
         rows.iter()
             .find(|row| row.pane_id == id)
@@ -1545,8 +1545,8 @@ fn the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated()
     assert!(!text.contains("escalat"));
     for row in &runtime.snapshot.navigator.agents {
         assert!(matches!(
-            crate::sidebar::ownership_of(row),
-            crate::sidebar::Ownership::Operator | crate::sidebar::Ownership::Delegated
+            crate::agent_state::ownership_of(row),
+            crate::agent_state::Ownership::Operator | crate::agent_state::Ownership::Delegated
         ));
     }
     let _ = std::fs::remove_file(&runtime.state_path);
@@ -2208,7 +2208,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
 #[test]
 fn each_row_lists_its_live_descendants_deepest_first_and_a_leaf_lists_none() {
     let mut rows = lineage_rows();
-    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    crate::agent_state::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let listed = |id: &str| {
         rows.iter()
             .find(|row| row.pane_id == id)
@@ -2292,7 +2292,7 @@ fn a_checkout_stays_in_use_while_an_agent_it_delegated_to_works_in_another_check
         mutate(&mut rows);
         let mut workspaces = lineage_workspaces();
         workspaces[0].is_git = true;
-        crate::sidebar::apply_lineage(&mut rows, &workspaces, &[]);
+        crate::agent_state::apply_lineage(&mut rows, &workspaces, &[]);
         runtime.snapshot.navigator.agents = rows;
         runtime.snapshot.navigator.workspaces = workspaces;
         let facts = runtime.cleanup_facts("project").unwrap();

@@ -1,3 +1,8 @@
+import { legacyPrCounts } from "../test/legacyAgentScope";
+import { buildTasks } from "../test/legacyAgentScope";
+import { emptyScope } from "../test/legacyAgentScope";
+import { agentsTile, scopeAgents } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Overview's lenses (PRD overview-lenses-tiles-agents): the tiles'
 // values, the checkout lanes' order, columns and folds, the lineage rows,
 // and where every way in lands. The expected answers are the PRD's
@@ -5,8 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { ageWords, agentsTile, bucketOf, issuesTile, prsTile, scopeAgents, sessionsTile, startOfDay } from "./overviewLens";
-import { buildTasks, type BoardProject, type PrBoard, type PrRow } from "./projectBoard";
+import { ageWords, bucketOf, issuesTile, prsTile, sessionsTile, startOfDay } from "./overviewLens";
+import { type BoardProject, type PrBoard, type PrRow } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, PullRequest, SessionRow, Task, Workspace } from "./snapshot";
 
 
@@ -17,7 +22,7 @@ const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 function checkout(id: string, options: { primary?: boolean; panes?: string[]; merged?: boolean; missing?: boolean; pr?: PullRequest; task?: string; changed?: number; ahead?: number } = {}): Checkout {
   const primary = options.primary ?? false;
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: "project",
     label: id,
@@ -41,7 +46,7 @@ function checkout(id: string, options: { primary?: boolean; panes?: string[]; me
 }
 
 function workspace(checkouts: Checkout[], options: { id?: string; tasks?: Task[]; reading?: boolean; failure?: string } = {}): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id: options.id ?? "project",
     label: options.id ?? "Project",
     path: "/fixture",
@@ -62,7 +67,7 @@ function workspace(checkouts: Checkout[], options: { id?: string; tasks?: Task[]
 }
 
 function agent(pane: string, group: string, extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", last_activity: "0000000000001", ...extra };
+  return legacyAgentRow({ id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", last_activity: "0000000000001", ...extra });
 }
 
 function one(project: Workspace, agents: AgentRow[]): BoardProject[] {
@@ -104,6 +109,16 @@ describe("the tiles", () => {
     expect(tile.bar?.map((segment) => [segment.key, segment.count])).toEqual([["turn", 2], ["working", 1], ["delegating", 1], ["resting", 1]]);
   });
 
+  it("keeps the first source occurrence for Overview when duplicate panes disagree", () => {
+    const project = workspace([checkout("main", { panes: ["same"] })]);
+    const first = agent("same", "working", { identity_label: "First" });
+    const last = agent("same", "seen", { identity_label: "Last" });
+    const rows = scopeAgents(one(project, [first, last]));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.agent.identity_label).toBe("First");
+    expect(rows[0]!.bucket).toBe("working");
+  });
+
   it("draws zero as zero with no badge, nothing for a device that has not answered, and ⚠ with the reason for one that cannot (B6)", () => {
     expect(agentsTile([], { state: "ready" }, t)).toMatchObject({ value: 0, badge: null, bar: [{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }], failure: null });
     expect(agentsTile([], { state: "loading", text: "connecting" }, t)).toMatchObject({ value: null, badge: null, bar: null, failure: null });
@@ -125,6 +140,7 @@ describe("the tiles", () => {
   it("counts open pull requests, badges the operator's turn with review, drafts and finished agents to look at, and bars turn, fixing and blocked (B1, B22)", () => {
     const row = (group: PrRow["group"], extra: Partial<PrRow> = {}) => ({ group, tone: "open", needsLook: false, ...extra }) as PrRow;
     const board = (rows: PrRow[], extra: Partial<PrBoard> = {}): PrBoard => ({
+      counts: legacyPrCounts({ groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, rows: rows.filter((r) => r.group === group) })) }),
       groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, rows: rows.filter((value) => value.group === group) })).filter((entry) => entry.rows.length > 0),
       open: rows.filter((value) => value.group !== "merged").length,
       reading: false,
