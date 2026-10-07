@@ -102,8 +102,9 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
  * shared server off; `features disable` writes `fake-daemon`, which a spec
  * checks never appears on its own. The daemon answers while
  * `fake-daemon-running` exists (`startCodexDaemon`), and `daemon stop` removes
- * it. A machine whose PATH has a real Codex runs that one instead, against
- * this HOME's `.codex`.
+ * it and answers `stopped`, or `notRunning` when it was not running. A
+ * machine whose PATH has a real Codex runs that one instead, against this
+ * HOME's `.codex`.
  */
 function seedCodex(home: string): void {
   const bin = path.join(home, ".local", "bin");
@@ -118,7 +119,7 @@ function seedCodex(home: string): void {
     "  'features disable '*) echo false > \"$state\" ;;",
     "  'features enable '*) echo true > \"$state\" ;;",
     "  'app-server daemon version') [ -e \"$running\" ] || { echo 'Error: failed to connect' >&2; exit 1; }; echo '{\"status\":\"running\"}' ;;",
-    "  'app-server daemon stop') rm -f \"$running\" ;;",
+    "  'app-server daemon stop') [ -e \"$running\" ] || { echo '{\"status\":\"notRunning\"}'; exit 0; }; rm -f \"$running\"; echo '{\"status\":\"stopped\"}' ;;",
     "  *) exit 1 ;;",
     "esac",
     "",
