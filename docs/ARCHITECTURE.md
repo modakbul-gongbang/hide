@@ -146,6 +146,8 @@ That stage inherits the Project-scope-only management contract and the provenanc
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
 Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns the focused project and checkout, each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
+The focus anchors among them (`ui_state.selected_pane_id`, `focused_checkout_id`, `focused_device_id`) move only on the events that ask for them; `ui_state_update` does not move them, and the shell leaves them out of it.
+That save is built from the shell's last snapshot, which can be older than a click the core has not echoed yet, and taking its copy once put the keyboard back on the pane the operator had left (issue #672).
 The core also owns the checkouts last brought to the front (`ui_state.recent_checkouts`, ⌘K's Recent, PRD cmdk-recent): ten records of device id, checkout id and the project, branch and device names a dimmed row is drawn from.
 One pass at the head of `sync_workspace_view` (`runtime/recent_checkouts.rs`) records a front change on whatever path caused it, compares borrowed strings with the head of the list and writes nothing when the front is unchanged, and saves through the coalesced off-lock UI-state save.
 It stores no project id, because a device project's id changes when the helper's facts group it, and the checkout id (`device_catalog::checkout_id`, the folder's) does not; `catalog.checkout_ids_renamed` migrates only ids an older build saved under a Herdr-workspace key, which this list never held.

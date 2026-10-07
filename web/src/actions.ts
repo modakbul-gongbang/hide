@@ -176,7 +176,9 @@ export function createActions(send: DispatchFn) {
    * same reason: the core owns them through `project_checkouts_fold`,
    * `checkout_agents_toggle` and `agent_tree_toggle`. The recent lists
    * (`recent_checkouts`, `recent_pane_ids`) ride along and the core ignores
-   * them, keeping its own.
+   * them, keeping its own. The keyboard's pane, checkout and device are left
+   * out too: the core moves them on their own events, and this copy can be
+   * older than a click it has not echoed yet (issue 672).
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
@@ -189,6 +191,9 @@ export function createActions(send: DispatchFn) {
       collapsed_workspace_ids: _projectFolds,
       expanded_checkout_ids: _checkoutFolds,
       expanded_agent_pane_ids: _lineageFolds,
+      selected_pane_id: _pane,
+      focused_checkout_id: _checkout,
+      focused_device_id: _device,
       ...owned
     } = state;
     void _workspaces;
@@ -198,6 +203,9 @@ export function createActions(send: DispatchFn) {
     void _projectFolds;
     void _checkoutFolds;
     void _lineageFolds;
+    void _pane;
+    void _checkout;
+    void _device;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
