@@ -54,7 +54,8 @@
       "arrived": "^\\s*(?:[\u276f\u203a>]\\s*)?(?:[1-9][.)]\\s*|\\[[ x]\\]\\s*)One\\s*$",
       "draft": "^[\u203a\u276f>] {bell}\\s*$",
       "no_match": "(?:No (?:matching |matching.*|models|sessions|results)|0 results|No matches).*",
-      "unsafe": "(?:Selected model:|Resumed session:|Trust saved:|Approval accepted:).*"
+      "unsafe": "(?:Selected model:|Resumed session:|Trust saved:|Approval accepted:).*",
+      "controls": "^\\s*(?:Enter (?:to |: ?)(?:select|confirm).*(?:Esc|cancel)|.*[\u2191\u2193].*(?:select|navigate)|(?:Use|use) (?:arrow|\u2191).*keys)"
     },
     "plan_approval": {
       "send": "Enter plan mode and propose one step: create probe-3.txt in this folder. Ask for plan approval using your interactive approval menu. Do not implement or run any command.",

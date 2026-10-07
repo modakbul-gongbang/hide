@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
+import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -13,9 +14,41 @@ from agent_live_check.conversation import messages
 from agent_live_check.protection import ProtectionError
 from agent_live_check.scenes import transcript
 from agent_live_check.setup import configure
+from agent_live_check.history import LABEL, seed
+from agent_live_check.scenes import startup_blocker
 
 
 class ScenePreparation(unittest.TestCase):
+    def test_blocked_startup_is_observed_only_for_the_owned_matching_native_agent(self):
+        recipe = {"id": "pi", "kind": "pi"}
+        actual = {"pane_id": "owned", "agent": "pi", "name": "live-pi-startup", "agent_status": "blocked"}
+        output = json.dumps({"error": {"code": "agent_not_ready"}})
+        self.assertTrue(startup_blocker("startup", recipe, "owned", output, actual))
+        self.assertFalse(startup_blocker("rest", recipe, "owned", output, actual))
+        self.assertFalse(startup_blocker("startup", recipe, "other", output, actual))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", output, {**actual, "agent": "codex"}))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", '{"error":{"code":"agent_pane_busy"}}', actual))
+
+    def test_non_jsonl_providers_seed_real_completed_native_prompts_for_resume(self):
+        checkout = Path(__file__).resolve().parents[2]
+        data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])
+        for key in ("grok", "opencode", "cursor"):
+            recipe, index, submitted = data[key], [0], []
+            screens = ["❯ ", LABEL + "\nWorking", LABEL + "\n❯ "]
+            statuses = ["idle", "working", "done"]
+            session = {"kind": "id", "source": "herdr:" + key, "value": "owned-native-session"}
+            def agent(pane):
+                value = {"agent_status": statuses[index[0]], "agent_session": session}
+                index[0] += 1
+                return value
+            runtime = SimpleNamespace(fixture_bin=None, screen=lambda pane: screens[index[0]], agent=agent,
+                                      send=lambda pane, text: submitted.append(text),
+                                      owner=SimpleNamespace(cancelled=threading.Event()))
+            result = seed(runtime, "owned", recipe, Path("/unused"), {"session_root": None}, 2)
+            self.assertEqual(len(submitted), 1)
+            self.assertEqual(result["visible_tokens"], [LABEL])
+            self.assertFalse(result["assistant_reply_verified"], "screen/status evidence cannot prove assistant mail")
+
     def test_every_mcp_recipe_connects_only_the_inert_project_server(self):
         checkout = Path(__file__).resolve().parents[2]
         data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])

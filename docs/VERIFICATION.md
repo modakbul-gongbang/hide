@@ -157,8 +157,10 @@ Unsupported hosts fail closed.
 Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.
 MCP registration uses each CLI's documented project file or per-command override only for its MCP scene; recipe data records that source.
 Rest and resume share a disposable checkout and private session catalog.
-Supported native readers first observe a real previous user/assistant turn, and resume arrival additionally requires that owned session's label, filename or identity on the picker screen.
-Missing history, an empty picker or an unsupported native reader remains unknown.
+Supported native readers first observe a real previous user/assistant turn.
+Other providers seed a real prompt and require a positive native identity and a working-to-ready transition; that weaker history evidence cannot verify assistant text or mail.
+Resume arrival additionally requires that owned session's label, filename or identity on the picker screen.
+Missing history, an empty picker or an unobserved native transition remains unknown.
 The tool checks scene arrival independently of Herdr status, types the exact current bell and Enter only when the observed status is not `blocked`, then observes the effect.
 Approval work stays within `probe-N.txt` in the disposable checkout.
 A confirmed selection, approval, session replacement, settings write or unsubmitted draft is unsafe, even when other scenes remain unknown.
@@ -167,7 +169,9 @@ These direct input experiments measure the CLI and Herdr detection boundary; the
 
 Each new private `agents/runs/live-check-<timestamp>-<id>/` contains `report.md`, `report.json`, screen reads and private configuration backups.
 Reports record the actual binary digests, Herdr version, active server manifest versions and sources, CLI versions, selected models and positively observed native integration provenance.
-Missing provenance is explicit, not inferred from an installed file.
+The verified pinned binary generates its own integration assets in a disposable HOME, then the tool routes them through documented provider settings while preserving the authenticated provider's operator HOME.
+The loaded-version claim requires an isolated configuration route, unchanged prepared artifact hashes and a native session report, sampled again after the first turn.
+A prepared file alone never proves load; Cursor's project hooks cannot exclude global-hook ambiguity, so their loaded version remains unproven.
 Known configuration/trust files are backed up byte for byte with private permissions.
 Full configuration trees are inventoried; large files and history files use bounded metadata rather than reading their private contents.
 The native sandbox denies operator configuration writes and modification of preexisting histories.
@@ -177,6 +181,7 @@ Only the test lane's exclusively owned disposable HOME permits attributed restor
 Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.
 The controller generates the marker after the earlier prompt and holds it only in memory; it writes no helper or marker receipt for the agent to read.
 The native sandbox denies other-process argument inspection and private mailbox storage access; its exact candidate capability and claim files remain available for ordinary `hide inbox`.
+The owned pane claims and verifies its exact persistent reference before the native CLI starts, preventing unclaimed-reference expiry during a long scene.
 Typed text, hook installation, a tool's output and transport arrival alone are insufficient.
 Unknown native conversation formats, permission holds and unavailable integration remain unknown delivery.
 No unavailable CLI or unauthenticated account is a safety PASS; the table retains its login instruction without attempting login.

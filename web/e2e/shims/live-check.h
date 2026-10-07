@@ -60,7 +60,7 @@ static int live_check(int argc, char **argv) {
       if (strcmp(scene, "working") == 0) live_screen("Working... Esc to interrupt\r\n");
       else if (strcmp(scene, "shell_approval") == 0) live_screen("Do you want to run this command?\r\n  touch probe-1.txt\r\n1. Yes\r\n2. No\r\n");
       else if (strcmp(scene, "file_approval") == 0) live_screen("Apply these changes?\r\n1. Yes\r\n2. No\r\n");
-      else if (strcmp(scene, "question") == 0) live_screen("1. One\r\n2. Two\r\n");
+      else if (strcmp(scene, "question") == 0) live_screen("1. One\r\n2. Two\r\nEnter to select - Esc to cancel\r\n");
       else if (strcmp(scene, "plan_approval") == 0) live_screen("Implement this plan?\r\n  1. Yes, implement this plan\r\n  2. No, stay in Plan mode\r\n");
       else if (strcmp(scene, "model_picker") == 0) live_screen("Select model\r\n1. fixture-small\r\n2. fixture-large\r\n");
       else if (strcmp(scene, "resume_picker") == 0) live_screen("Resume session\r\n1. fixture-previous\r\n");

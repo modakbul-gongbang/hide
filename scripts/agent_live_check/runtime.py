@@ -22,7 +22,8 @@ def clean_env() -> dict[str, str]:
             if not key.startswith(("HERDR_", "HIDE_", "HCOORD_"))
             and key not in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
                             "PI_CODING_AGENT_SESSION_DIR", "OPENCODE_CONFIG",
-                            "OPENCODE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                            "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "PI_CONFIG_DIR",
+                            "GROK_HOME", "GROK_CONFIG_DIR", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                             "XDG_STATE_HOME", "XDG_CACHE_HOME", "ZDOTDIR", "BASH_ENV", "ENV")}
 
 
@@ -258,6 +259,12 @@ class Runtime:
         self.wait(lambda: ready.exists(), 5)
         reference_input.unlink()
         ready.unlink()
+        # Claim this exact persistent reference while the attested shell still
+        # owns the pane. Unclaimed references expire before a legal long scene.
+        code, output = self.pane_command(pane, [str(self.hide), "workspace", "info"], name + "-claim")
+        if (code or json.loads(output).get("ok") is not True
+                or not reference.with_suffix(".claimed").is_file()):
+            raise ProtectionError("private_pane_reference_not_claimed")
         return workspace, pane, cwd
 
     def screen(self, pane):

@@ -17,12 +17,13 @@ from .authentication import AuthenticationRequired, require_no_login
 from .delivery import measure as measure_delivery
 from .overlay import prepare as prepare_overlay
 from .history import LABEL as PREVIOUS_LABEL, seed as seed_history
+from .integration import prepare as prepare_integration, project_args, observe as observe_integration
 from .processes import OwnedProcesses, ProcessError
 from .protection import ConfigGuard, ProtectionError, beneath, private_directory, stamp, write_private
 from .report import save
 from .runtime import Runtime, clean_env
 from .sandbox import WriteSandbox
-from .scenes import observe
+from .scenes import observe, startup_blocker
 from .setup import configure
 
 
@@ -58,8 +59,8 @@ def wrapper(runtime, recipe, executable, sandbox):
     command = [str(executable)]
     if sandbox:
         command = sandbox.command(command)
-    # Herdr owns integration arguments. This wrapper neither replaces nor
-    # installs those integrations and keeps the measured HOME for login.
+    # The driver routes the pinned installer's assets through disposable
+    # configuration. This executable wrapper only enforces the OS guard.
     fixture_env = "export HIDE_E2E_LIVE_CHECK=1\n" if runtime.fixture_bin else ""
     write_private(target, ("#!/bin/sh\n" + fixture_env + "exec " + " ".join(shlex.quote(v) for v in command) + ' "$@"\n').encode())
     target.chmod(0o700)
@@ -137,6 +138,7 @@ def main(argv=None):
                     runtime.credential_roots.add(runtime.probe / ("config-" + recipe["id"]))
                 overlay = prepare_overlay(recipe, runtime.probe, agent_home) if not args.fixture_bin else {
                     "env": {}, "copies": [], "settings": [], "session_root": None}
+                integration = prepare_integration(runtime, recipe, overlay)
                 provider["private_configuration"] = {key: value for key, value in overlay.items()
                                                       if key in ("copies", "provenance")}
                 if recipe["kind"] == "codex" and overlay["session_root"]:
@@ -164,8 +166,8 @@ def main(argv=None):
                             scene_overlay = {**overlay, "settings": list(overlay["settings"])}
                             if recipe["kind"] in ("pi", "omp"):
                                 scene_overlay["session_root"] = history
-                            extra = configure(runtime, launch, recipe, scene, cwd)
-                            for relative in (recipe["mcp"].get("path"), ".pi/settings.json"):
+                            extra = configure(runtime, launch, recipe, scene, cwd) + project_args(integration, recipe, cwd)
+                            for relative in (recipe["mcp"].get("path"), ".pi/settings.json", ".cursor/hooks.json"):
                                 if relative and (cwd / relative).is_file():
                                     scene_overlay["settings"].append(cwd / relative)
                             if scene == "rest" and recipe["kind"] in ("pi", "claude"):
@@ -179,15 +181,14 @@ def main(argv=None):
                             if code:
                                 write_private(run / (recipe["id"] + "-" + scene + "-start-error.json"),
                                               json.dumps({"exit_code": code, "stdout": output, "stderr": err}).encode())
-                                raise ProcessError("agent_start_refused_" + str(code))
+                                # A real startup blocker makes the CLI wait
+                                # return nonzero even though it started the
+                                # requested named agent in our owned pane.
+                                actual = runtime.agent(pane)
+                                if not startup_blocker(scene, recipe, pane, output, actual):
+                                    raise ProcessError("agent_start_refused_" + str(code))
                             startup_screen = runtime.screen(pane)
                             require_no_login(startup_screen)
-                            native = runtime.agent(pane)
-                            session = native.get("agent_session") if native else None
-                            if session and session.get("source") == "herdr:" + recipe["kind"]:
-                                provider["integration"] = {"status": "native_session_observed",
-                                    "source": session["source"], "herdr_version": runtime.expected_version,
-                                    "binary_sha256": report["herdr"]["sha256"]}
                             if scene == "rest":
                                 previous_session = seed_history(runtime, pane, recipe, agent_home, scene_overlay,
                                                                 args.scene_seconds)
@@ -213,7 +214,13 @@ def main(argv=None):
                                 write_private(evidence, json.dumps({"reason": str(error)}).encode())
                         finally:
                             if workspace:
-                                runtime.close_workspace(workspace)
+                                try:
+                                    current_integration = observe_integration(runtime, pane, recipe, integration)
+                                    if (current_integration["native_source"] or
+                                            not provider["integration"].get("native_source")):
+                                        provider["integration"] = current_integration
+                                finally:
+                                    runtime.close_workspace(workspace)
             if provider.get("skipped"):
                 observed = {row["scene"] for row in provider["scenes"]}
                 provider["scenes"].extend({"scene": scene, "arrival": "skipped", "status": "unknown",

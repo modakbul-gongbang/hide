@@ -15,7 +15,7 @@ from agent_live_check.report import exit_code, save, verdict
 from agent_live_check.runtime import Runtime
 from agent_live_check.processes import OwnedProcesses
 from agent_live_check.authentication import AuthenticationRequired
-from agent_live_check.scenes import matches, observe
+from agent_live_check.scenes import arrived, matches, observe
 
 
 def safe_agent():
@@ -31,9 +31,10 @@ class MeasurementResults(unittest.TestCase):
         data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])
         for recipe in data.values():
             question = recipe["scenes"]["question"]
-            self.assertFalse(matches(question["arrived"], question["send"], "bell"))
-            self.assertFalse(matches(question["arrived"], "One option is to continue.", "bell"))
-            self.assertTrue(matches(question["arrived"], "1. One\n2. Two\n", "bell"))
+            self.assertFalse(arrived(question, question["send"], "bell"))
+            self.assertFalse(arrived(question, "One option is to continue.", "bell"))
+            self.assertFalse(arrived(question, "Here are the choices; no interactive tool is open:\n1. One\n2. Two\n❯ ", "bell"))
+            self.assertTrue(arrived(question, "1. One\n2. Two\nEnter to select · Esc to cancel", "bell"))
 
     def test_login_appearing_immediately_before_bell_receives_no_input(self):
         with tempfile.TemporaryDirectory() as name, OwnedProcesses() as owner:

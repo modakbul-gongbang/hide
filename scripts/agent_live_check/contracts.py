@@ -55,8 +55,11 @@ def recipes(directory: Path, declared: dict) -> dict:
         if (value["id"] in result or set(value["scenes"]) != set(SCENES)
                 or not value["model"] or not value["argv"]):
             raise ProtectionError("incomplete_or_duplicate_scene_recipe")
-        for scene in value["scenes"].values():
-            if set(scene) != {"send", "arrived", "draft", "no_match", "unsafe"}:
+        for name, scene in value["scenes"].items():
+            expected = {"send", "arrived", "draft", "no_match", "unsafe"}
+            if name == "question":
+                expected.add("controls")
+            if set(scene) != expected:
                 raise ProtectionError("invalid_scene_recipe")
         result[value["id"]] = value
     if set(result) != set(declared):

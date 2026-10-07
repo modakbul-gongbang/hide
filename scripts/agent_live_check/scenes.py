@@ -17,6 +17,22 @@ def matches(pattern: str, screen: str, bell: str) -> bool:
                           flags=re.MULTILINE | re.IGNORECASE))
 
 
+def arrived(data: dict, screen: str, bell: str) -> bool:
+    return matches(data["arrived"], screen, bell) and (
+        not data.get("controls") or matches(data["controls"], screen, bell))
+
+
+def startup_blocker(scene, recipe, pane, output, actual):
+    try:
+        refusal = json.loads(output).get("error", {}).get("code")
+    except (ValueError, AttributeError):
+        return False
+    return bool(scene == "startup" and refusal == "agent_not_ready" and actual
+                and actual.get("pane_id") == pane and actual.get("agent") == recipe["kind"]
+                and actual.get("name") == "live-" + recipe["id"] + "-" + scene
+                and actual.get("agent_status") == "blocked")
+
+
 def transcript(home: Path, kind: str, session: dict | None, session_root: Path | None = None) -> Path | None:
     if not session or session.get("source") != "herdr:" + kind:
         return None
@@ -72,7 +88,7 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
             agent = runtime.agent(pane)
             previous_visible = (scene != "resume_picker" or runtime.fixture_bin or
                                 (previous_session and any(token in screen for token in previous_session["visible_tokens"])))
-            if agent and matches(data["arrived"], screen, bell) and previous_visible:
+            if agent and arrived(data, screen, bell) and previous_visible:
                 before = {"screen": screen, "agent": agent}
                 break
             samples = [{"phase": "arrival", "screen": screen, "agent": agent}]

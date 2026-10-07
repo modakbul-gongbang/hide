@@ -13,9 +13,10 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent_live_check.process_table import snapshot
+from agent_live_check.process_table import Process, marked_descendants, snapshot
 from agent_live_check.processes import OwnedProcesses, ProcessError
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
@@ -114,6 +115,49 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_proven_birth_identity_needs_no_argument_read_but_reused_pid_does(self):
+        import ctypes
+        import errno
+        identity = Process(111, 1, 111, 10, 0, False, os.getuid())
+        library = Mock()
+        def unavailable(*unused):
+            ctypes.set_errno(errno.EIO)
+            return -1
+        library.sysctl.side_effect = unavailable
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            result = marked_descendants({111: identity}, "fixture-run", 1,
+                                        known={111: identity})
+            self.assertEqual(result, {111: identity})
+            library.sysctl.assert_not_called()
+            replacement = Process(111, 1, 111, 11, 0, False, os.getuid())
+            with patch("agent_live_check.process_table.snapshot", return_value={111: replacement}):
+                with self.assertRaisesRegex(RuntimeError, "owned_process_arguments_unavailable_5"):
+                    marked_descendants({111: replacement}, "fixture-run", 1,
+                                       known={111: identity})
+            library.sysctl.assert_called_once()
+
+    def test_partial_orphan_identity_survives_later_unrelated_denial(self):
+        import ctypes
+        import errno
+        table = {111: Process(111, 1, 111, 10, 0, False, os.getuid()),
+                 222: Process(222, 1, 222, 11, 0, False, os.getuid())}
+        known = {}
+        def query(mib, _, buffer, size, *unused):
+            if mib[2] == 111:
+                data = b"HIDE_LIVE_CHECK_OWNER=fixture-run\0"
+                ctypes.memmove(buffer, data, len(data))
+                size._obj.value = len(data)
+                return 0
+            ctypes.set_errno(errno.EPERM)
+            return -1
+        library = Mock()
+        library.sysctl.side_effect = query
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
+                patch("agent_live_check.process_table.snapshot", return_value=table):
+            with self.assertRaisesRegex(RuntimeError, "owned_process_arguments_unavailable"):
+                marked_descendants(table, "fixture-run", 1, remember=known.__setitem__)
+        self.assertEqual(known, {111: table[111]}, "proven orphan was discarded on a later denial")
+
     @unittest.skipUnless(sys.platform == "darwin", "Darwin orphan discovery")
     def test_orphan_scan_failure_still_ends_known_child(self):
         with tempfile.TemporaryDirectory(prefix="agent-scan-") as name:
@@ -123,7 +167,7 @@ class ProcessProtection(unittest.TestCase):
             program = (
                 "import os,sys,time; from pathlib import Path; from unittest.mock import patch; "
                 "from agent_live_check.processes import guard; r,w=os.pipe(); "
-                "\ndef unavailable(*args):"
+                "\ndef unavailable(*args,**kwargs):"
                 f"\n deadline=time.monotonic()+1; file=Path({str(receipt)!r})"
                 "\n while not file.exists() and time.monotonic()<deadline: time.sleep(.01)"
                 "\n raise RuntimeError('injected_unrelated_procargs_denial')"

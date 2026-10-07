@@ -195,7 +195,9 @@ def guard(reader: int, argv: list[str]) -> int:
             observed.update(current)
             observed.pop(os.getpid(), None)
             if sys.platform == "darwin":
-                current.update(marked_descendants(table, marker, earliest))
+                current.update(marked_descendants(table, marker, earliest,
+                               known={**observed, os.getpid(): table[os.getpid()]},
+                               remember=observed.__setitem__))
             current.pop(os.getpid(), None)
             observed.update(current)
             if (any(p.rss < 0 and not p.zombie for p in current.values())
@@ -222,7 +224,9 @@ def guard(reader: int, argv: list[str]) -> int:
                 table = snapshot()
                 if sys.platform == "darwin":
                     try:
-                        observed.update(marked_descendants(table, marker, earliest))
+                        marked_descendants(table, marker, earliest,
+                                           known={**observed, os.getpid(): table[os.getpid()]},
+                                           remember=observed.__setitem__)
                     except BaseException as error:
                         # An unrelated same-UID process can deny procargs reads.
                         # Keep cleanup unconfirmed, but still end every identity

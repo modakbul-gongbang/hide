@@ -14,10 +14,9 @@ PROMPT = "Reply with exactly " + LABEL + ". Do not use tools."
 def seed(runtime, pane, recipe, home, overlay, seconds):
     if runtime.fixture_bin:
         return {"status": "fixture", "visible_tokens": ["fixture-previous"]}
-    if recipe["kind"] not in ("claude", "codex", "pi", "omp"):
-        return {"status": "unknown", "reason": "no_supported_owned_session_reader", "visible_tokens": []}
     deadline = time.monotonic() + seconds
     sent = False
+    working = False
     while time.monotonic() < deadline:
         screen = runtime.screen(pane)
         require_no_login(screen)
@@ -27,6 +26,16 @@ def seed(runtime, pane, recipe, home, overlay, seconds):
             runtime.send(pane, PROMPT)
             sent = True
         session = agent.get("agent_session") if agent else None
+        working |= bool(sent and agent and agent["agent_status"] == "working")
+        if (recipe["kind"] not in ("claude", "codex", "pi", "omp") and sent and working
+                and session and session.get("source") == "herdr:" + recipe["kind"]
+                and agent["agent_status"] in ("idle", "done") and LABEL in screen
+                and matches(recipe["scenes"]["rest"]["arrived"], screen, "")):
+            # A real submitted prompt on a positively identified native
+            # session is enough to seed its own resume catalog. This is not
+            # role-aware assistant evidence and cannot verify mail delivery.
+            return {"status": "native_prompt_completed", "session": session,
+                    "visible_tokens": [LABEL], "assistant_reply_verified": False}
         file = transcript(home, recipe["kind"], session, overlay["session_root"])
         if sent and file:
             rows = messages(file, recipe["kind"])

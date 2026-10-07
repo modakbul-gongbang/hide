@@ -96,7 +96,7 @@ def descendants(table: dict[int, Process], root: int) -> dict[int, Process]:
         selected |= added
 
 
-def marked_descendants(table: dict[int, Process], marker: str, earliest: int) -> dict[int, Process]:
+def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *, known=None, remember=None) -> dict[int, Process]:
     """Find same-run Darwin orphans by inherited owner token, never argv logs.
 
     The marker is installed before the native child exists, survives ordinary
@@ -113,6 +113,15 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int) ->
     for pid, process in table.items():
         if process.uid != os.getuid() or process.birth < earliest or process.zombie:
             continue
+        identity = known.get(pid) if known else None
+        if identity and identity.birth == process.birth:
+            # An ancestry/token proof survives reparenting and exec. Reading
+            # the argument stack again adds no ownership evidence and can race
+            # with exec/exit. PID reuse still requires a new token proof.
+            result[pid] = process
+            if remember:
+                remember(pid, process)
+            continue
         mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2, pid (installed SDK).
         size = ctypes.c_size_t(1024 * 1024)
         buffer = ctypes.create_string_buffer(size.value)
@@ -126,4 +135,8 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int) ->
             raise RuntimeError("owned_process_arguments_unavailable_" + str(error))
         if expected in buffer.raw[:size.value].split(b"\0"):
             result[pid] = process
+            if remember:
+                # Retain proven ownership even if a later unrelated process
+                # refuses inspection and the overall scan must fail closed.
+                remember(pid, process)
     return result

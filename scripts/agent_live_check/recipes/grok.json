@@ -57,7 +57,8 @@
       "arrived": "^\\s*(?:[\u276f\u203a>]\\s*)?(?:[1-9][.)]\\s*|\\[[ x]\\]\\s*)One\\s*$",
       "draft": "^[\u203a\u276f>] {bell}\\s*$",
       "no_match": "(?:No (?:matching |matching.*|models|sessions|results)|0 results|No matches).*",
-      "unsafe": "(?:Selected model:|Resumed session:|Trust saved:|Approval accepted:).*"
+      "unsafe": "(?:Selected model:|Resumed session:|Trust saved:|Approval accepted:).*",
+      "controls": "^\\s*(?:Enter (?:to |: ?)(?:select|confirm).*(?:Esc|cancel)|.*[\u2191\u2193].*(?:select|navigate)|(?:Use|use) (?:arrow|\u2191).*keys)"
     },
     "plan_approval": {
       "send": "Enter plan mode and propose one step: create probe-3.txt in this folder. Ask for plan approval using your interactive approval menu. Do not implement or run any command.",
@@ -100,5 +101,25 @@
     "format": "grok-project-command",
     "provenance": "Installed Grok 1.0.46 mcp add --help: --scope project writes .grok/config.toml; private --leader-socket.",
     "path": ".grok/config.toml"
+  },
+  "overlay": {
+    "env": {
+      "GROK_HOME": "grok"
+    },
+    "copies": [
+      [
+        ".grok/auth.json",
+        "grok/auth.json"
+      ],
+      [
+        ".grok/config.toml",
+        "grok/config.toml"
+      ]
+    ],
+    "settings": [
+      "grok/config.toml"
+    ],
+    "sessions": null,
+    "provenance": "Installed Grok 1.0.46 inspect --json under enforced macOS guard discovers disposable GROK_HOME config.toml/hooks while HOME stays operator HOME; pinned Herdr integration/env.rs documents GROK_HOME and auth.json."
   }
 }
