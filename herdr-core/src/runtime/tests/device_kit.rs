@@ -1737,6 +1737,44 @@ fn this_machines_kit_runs_on_its_own_node() {
     );
 }
 
+/// PRD codex-daemon-apply B11 on this machine: the turn-off needs no helper
+/// connection here and goes to the core's own node as the kit's reinstall
+/// with `codex_daemon_off`, whose answer settles this machine's row.
+#[test]
+fn this_machines_shared_server_turn_off_goes_to_its_own_node() {
+    let shared = device_runtime(None, None);
+    let own = shared.lock().unwrap().node.clone();
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(own.as_str(), &shared_server(true, None));
+    assert!(dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": own.as_str() }),
+    ));
+    let node = KitDevice::answering(Ok(shared_server(
+        false,
+        Some(hide_kit::CodexDaemonOff::Done { no_daemon: None }),
+    )));
+    let pump = crate::kit::KitPump::spawn(
+        shared.weak(),
+        crate::handle::ChangeNotifier::noop(),
+        Arc::clone(&node) as Arc<dyn NodeLink>,
+        Some("/run/herdr.sock".to_owned()),
+        own.clone(),
+    )
+    .unwrap();
+
+    let kit = settle_own(&shared);
+    drop(pump);
+    assert_eq!(turn_offs(&node), 1, "{:?}", node.calls());
+    assert_eq!(
+        kit.codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Done)
+    );
+}
+
 /// B11: a node outside the desktop package installs nothing, and this
 /// machine's row says why with the node's own reason.
 #[test]
