@@ -167,15 +167,19 @@ pub mod git {
     /// `commondir`), each a line long when Git writes it.
     const POINTER_LIMIT: u64 = 64 * 1024;
 
-    /// The text of the regular file at `path`, refused past `limit` bytes. A
-    /// repository's files are written by whatever runs in it, so a pipe, a
-    /// device or a link at the name is refused without blocking the reader,
-    /// and an outsized file is refused rather than read whole.
+    /// The regular file a repository's name resolves to. A repository's files
+    /// are written by whatever runs in it, so a pipe or a device is refused
+    /// without blocking the reader. A link is followed, as Git follows it: a
+    /// config a dotfile manager links in still names its branches.
+    fn open_file(path: &Path) -> std::io::Result<std::fs::File> {
+        hide_platform::fs::open_regular(&std::fs::canonicalize(path)?)
+    }
+
+    /// The text of the file `open_file` opens at `path`, refused past `limit`
+    /// bytes rather than read whole.
     fn read_small(path: &Path, limit: u64) -> std::io::Result<String> {
         let mut text = String::new();
-        hide_platform::fs::open_regular(path)?
-            .take(limit + 1)
-            .read_to_string(&mut text)?;
+        open_file(path)?.take(limit + 1).read_to_string(&mut text)?;
         if text.len() as u64 > limit {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::FileTooLarge,
@@ -239,8 +243,7 @@ pub mod git {
             // Streamed and capped: a repository that has packed many refs
             // can hold a file of megabytes, and a missing line in the first
             // `PACKED_REFS_LIMIT` bytes is no answer rather than a guess.
-            let packed =
-                hide_platform::fs::open_regular(&self.common_dir.join("packed-refs")).ok()?;
+            let packed = open_file(&self.common_dir.join("packed-refs")).ok()?;
             BufReader::new(packed.take(PACKED_REFS_LIMIT))
                 .lines()
                 .map_while(Result::ok)
@@ -647,6 +650,33 @@ pub mod git {
                     .description
                     .as_deref(),
                 Some("kept")
+            );
+        }
+
+        /// A linked `HEAD` and config are followed, as Git follows them.
+        #[cfg(unix)]
+        #[test]
+        fn a_linked_head_and_config_are_read_through_the_link() {
+            let (temp, repository) = repository("ref: refs/heads/main");
+            fs::write(repository.common_dir.join("refs/heads/main"), FIRST).unwrap();
+            let elsewhere = temp.path().join("dotfiles");
+            fs::create_dir_all(&elsewhere).unwrap();
+            for (name, text) in [
+                ("HEAD", "ref: refs/heads/main\n"),
+                ("config", "[branch \"main\"]\n\tdescription = linked\n"),
+            ] {
+                let target = elsewhere.join(name);
+                fs::write(&target, text).unwrap();
+                let at = repository.common_dir.join(name);
+                fs::remove_file(&at).ok();
+                std::os::unix::fs::symlink(&target, &at).unwrap();
+            }
+            assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
+            assert_eq!(
+                repository.branch_notes().unwrap()["main"]
+                    .description
+                    .as_deref(),
+                Some("linked")
             );
         }
 
