@@ -64,6 +64,14 @@ class CoreTouchesNoMachine(unittest.TestCase):
         self.assertEqual(check.test_modules(),
                          {'herdr-core/src/fake.rs', 'herdr-core/src/fixture.rs'})
 
+    def test_the_factory_runner_is_found_however_it_is_named(self):
+        root, check = self.tree({'factory.rs': 'use hide_factory::exec::SystemRunner;\n'
+                                               'use hide_factory::{exec};\n'
+                                               'fn run(r: &mut R) { exec::checked(r, "s", "git", &[], None); }\n'
+                                               'fn sh() { let _ = exec::shell(); }\n'})
+        found = check.findings(root / 'herdr-core/src/factory.rs')
+        self.assertEqual([line.split(':')[1] for line in found], ['1', '3', '4'], found)
+
     def test_a_new_touch_in_an_excused_store_fails(self):
         root, check = self.tree({'store.rs': 'fn save() { std::fs::write("s", b"x"); }\n'})
         check.STORES = {'herdr-core/src/store.rs': (1, 'the core state file')}

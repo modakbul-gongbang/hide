@@ -45,7 +45,7 @@ BANNED = [
     (r"\.(try_exists|is_symlink)\(\)", "reads the file system; ask a node"),
     (r"\b(std::)?env::(current_exe|current_dir|set_current_dir|home_dir)\b",
      "reads where this process runs; that is a node's"),
-    (r"\bhide_factory::exec\b|\bSystemRunner\b",
+    (r"\bhide_factory::exec\b|\bSystemRunner\b|\bexec::(checked|shell)\b",
      "runs a Factory command on this machine; that is a node's"),
     (r"\bhide_ai::settings::(load|save)\b",
      "reads or writes the AI choice file; keep it in one of the core's stores"),
