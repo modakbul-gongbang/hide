@@ -20,8 +20,8 @@ fn shared_skill(fixture: &Fixture) -> PathBuf {
         .join("SKILL.md")
 }
 
-fn gemini_settings(fixture: &Fixture) -> PathBuf {
-    fixture.home().join(".gemini/settings.json")
+fn cursor_hooks(fixture: &Fixture) -> PathBuf {
+    fixture.home().join(".cursor/hooks.json")
 }
 
 /// A folder the agent makes under the home, such as its settings folder.
@@ -99,61 +99,64 @@ fn every_adapter_names_an_official_page_and_a_unique_id() {
 #[test]
 fn an_agent_that_is_not_on_gets_nothing_until_the_operator_switches_it_on() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
+    install(&fixture, "cursor-agent", ".cursor");
 
     let report = apply(&fixture.target, &Scope::automatic());
 
-    let gemini = agent(&report, "gemini-cli");
-    assert!(!gemini.enabled);
-    assert_eq!(gemini.skill.state, ComponentState::Off);
-    assert_eq!(gemini.hook.as_ref().unwrap().state, ComponentState::Off);
-    assert!(!gemini_settings(&fixture).exists());
+    let cursor = agent(&report, "cursor");
+    assert!(!cursor.enabled);
+    assert_eq!(cursor.skill.state, ComponentState::Off);
+    assert_eq!(cursor.hook.as_ref().unwrap().state, ComponentState::Off);
+    assert!(!cursor_hooks(&fixture).exists());
     assert!(!shared_skill(&fixture).exists());
 
-    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let report = apply(&fixture.target, &Scope::agents(["cursor"], []));
 
-    let gemini = agent(&report, "gemini-cli");
-    assert!(gemini.enabled);
-    assert_eq!(gemini.skill.state, ComponentState::Installed, "{gemini:?}");
+    let cursor = agent(&report, "cursor");
+    assert!(cursor.enabled);
+    assert_eq!(cursor.skill.state, ComponentState::Installed, "{cursor:?}");
     assert_eq!(
-        gemini.hook.as_ref().unwrap().state,
+        cursor.hook.as_ref().unwrap().state,
         ComponentState::Installed,
-        "{gemini:?}"
+        "{cursor:?}"
     );
     assert!(shared_skill(&fixture).is_file());
     assert!(
-        std::fs::read_to_string(gemini_settings(&fixture))
+        std::fs::read_to_string(cursor_hooks(&fixture))
             .unwrap()
             .contains("hide-guidance@1")
     );
-    assert_eq!(record(&fixture)["agents"]["gemini-cli"], true);
+    assert_eq!(record(&fixture)["agents"]["cursor"], true);
 }
 
 #[test]
 fn switching_on_an_agent_that_is_not_installed_here_records_nothing() {
     let fixture = Fixture::new();
 
-    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let report = apply(&fixture.target, &Scope::agents(["cursor"], []));
 
-    let gemini = agent(&report, "gemini-cli");
-    assert_eq!(gemini.availability, Availability::NotInstalled);
+    let cursor = agent(&report, "cursor");
+    assert_eq!(cursor.availability, Availability::NotInstalled);
     assert!(
         record(&fixture).get("agents").is_none(),
         "{}",
         record(&fixture)
     );
-    assert!(!gemini_settings(&fixture).exists());
+    assert!(!cursor_hooks(&fixture).exists());
 }
 
 #[test]
 fn a_program_on_the_home_bin_folder_is_the_agent_being_installed() {
     let fixture = Fixture::new();
-    executable(&fixture.home().join(".local/bin/gemini"), "#!/bin/sh\n");
+    executable(
+        &fixture.home().join(".local/bin/cursor-agent"),
+        "#!/bin/sh\n",
+    );
 
     let report = status(&fixture.target);
 
     assert_eq!(
-        agent(&report, "gemini-cli").availability,
+        agent(&report, "cursor").availability,
         Availability::Available
     );
     assert_eq!(
@@ -165,60 +168,60 @@ fn a_program_on_the_home_bin_folder_is_the_agent_being_installed() {
 #[test]
 fn a_second_apply_of_an_agent_that_is_on_changes_nothing() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     let tree = home_tree(fixture.home());
 
     let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(home_tree(fixture.home()), tree);
-    assert!(agent(&report, "gemini-cli").enabled);
+    assert!(agent(&report, "cursor").enabled);
 }
 
 #[test]
 fn removed_by_hand_stays_removed_until_the_operator_reinstalls() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
-    std::fs::remove_file(gemini_settings(&fixture)).unwrap();
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
+    std::fs::remove_file(cursor_hooks(&fixture)).unwrap();
     std::fs::remove_dir_all(fixture.home().join(".agents")).unwrap();
 
     let report = apply(&fixture.target, &Scope::automatic());
 
-    let gemini = agent(&report, "gemini-cli");
-    assert_eq!(gemini.hook.as_ref().unwrap().state, ComponentState::Removed);
-    assert_eq!(gemini.skill.state, ComponentState::Removed);
-    assert!(!gemini_settings(&fixture).exists());
+    let cursor = agent(&report, "cursor");
+    assert_eq!(cursor.hook.as_ref().unwrap().state, ComponentState::Removed);
+    assert_eq!(cursor.skill.state, ComponentState::Removed);
+    assert!(!cursor_hooks(&fixture).exists());
     assert!(!shared_skill(&fixture).exists());
 
-    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let report = apply(&fixture.target, &Scope::agents(["cursor"], []));
 
-    let gemini = agent(&report, "gemini-cli");
+    let cursor = agent(&report, "cursor");
     assert_eq!(
-        gemini.hook.as_ref().unwrap().state,
+        cursor.hook.as_ref().unwrap().state,
         ComponentState::Installed
     );
-    assert_eq!(gemini.skill.state, ComponentState::Installed);
+    assert_eq!(cursor.skill.state, ComponentState::Installed);
 }
 
 #[test]
 fn an_older_stub_is_replaced_without_the_operator_asking() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     let path = shared_skill(&fixture);
     let current = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, current.replace("hide-skill@1", "hide-skill@0")).unwrap();
 
     let before = status(&fixture.target);
     assert_eq!(
-        agent(&before, "gemini-cli").skill.state,
+        agent(&before, "cursor").skill.state,
         ComponentState::Outdated
     );
     let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
-        agent(&report, "gemini-cli").skill.state,
+        agent(&report, "cursor").skill.state,
         ComponentState::Installed
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), current);
@@ -227,31 +230,32 @@ fn an_older_stub_is_replaced_without_the_operator_asking() {
 #[test]
 fn switching_an_agent_off_takes_only_hides_pieces_and_keeps_a_folder_another_agent_reads() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
+    install(&fixture, "cursor-agent", ".cursor");
     install(&fixture, "codex", ".codex");
-    let settings = r#"{"theme":"dark","hooks":{"SessionStart":[{"matcher":"*","hooks":[{"name":"other","type":"command","command":"/opt/other/start.sh"}]}]}}"#;
-    std::fs::write(gemini_settings(&fixture), settings).unwrap();
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let settings = r#"{"version":1,"hooks":{"sessionStart":[{"command":"/opt/other/start.sh"}]}}"#;
+    std::fs::write(cursor_hooks(&fixture), settings).unwrap();
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     assert!(shared_skill(&fixture).is_file());
 
-    let report = apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+    let report = apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
-    let gemini = agent(&report, "gemini-cli");
-    assert!(!gemini.enabled);
-    assert_eq!(gemini.hook.as_ref().unwrap().state, ComponentState::Off);
+    let cursor = agent(&report, "cursor");
+    assert!(!cursor.enabled);
+    assert_eq!(cursor.hook.as_ref().unwrap().state, ComponentState::Off);
     let left: Value =
-        serde_json::from_str(&std::fs::read_to_string(gemini_settings(&fixture)).unwrap()).unwrap();
-    assert_eq!(left["theme"], "dark");
-    assert_eq!(left["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+        serde_json::from_str(&std::fs::read_to_string(cursor_hooks(&fixture)).unwrap()).unwrap();
+    assert_eq!(left["version"], 1);
+    assert_eq!(left["hooks"]["sessionStart"].as_array().unwrap().len(), 1);
+    assert!(left.to_string().contains("/opt/other/start.sh"));
     assert!(!left.to_string().contains("hide-guidance"));
     // Codex reads the shared folder and is still on.
     assert!(shared_skill(&fixture).is_file());
-    assert_eq!(record(&fixture)["agents"]["gemini-cli"], false);
+    assert_eq!(record(&fixture)["agents"]["cursor"], false);
 
     // No later pass puts it back.
     apply(&fixture.target, &Scope::automatic());
     assert!(
-        !std::fs::read_to_string(gemini_settings(&fixture))
+        !std::fs::read_to_string(cursor_hooks(&fixture))
             .unwrap()
             .contains("hide-guidance")
     );
@@ -264,23 +268,20 @@ fn switching_an_agent_off_takes_only_hides_pieces_and_keeps_a_folder_another_age
 #[test]
 fn a_skill_that_hide_did_not_write_is_left_alone_and_reported() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
+    install(&fixture, "cursor-agent", ".cursor");
     let own = shared_skill(&fixture);
     std::fs::create_dir_all(own.parent().unwrap()).unwrap();
     std::fs::write(&own, "---\nname: hide-browser\n---\nmine\n").unwrap();
 
-    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let report = apply(&fixture.target, &Scope::agents(["cursor"], []));
 
-    assert_eq!(
-        agent(&report, "gemini-cli").skill.state,
-        ComponentState::Absent
-    );
-    assert!(!agent(&report, "gemini-cli").needs_attention());
+    assert_eq!(agent(&report, "cursor").skill.state, ComponentState::Absent);
+    assert!(!agent(&report, "cursor").needs_attention());
     assert_eq!(
         std::fs::read_to_string(&own).unwrap(),
         "---\nname: hide-browser\n---\nmine\n"
     );
-    apply(&fixture.target, &Scope::agents([], ["gemini-cli", "codex"]));
+    apply(&fixture.target, &Scope::agents([], ["cursor", "codex"]));
     assert_eq!(
         std::fs::read_to_string(&own).unwrap(),
         "---\nname: hide-browser\n---\nmine\n"
@@ -353,20 +354,15 @@ fn claude_code_and_codex_are_on_without_a_choice_and_off_removes_the_hook_part()
 #[test]
 fn removing_a_machine_takes_every_marked_piece_and_nothing_else() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
 
     let removed = remove(&fixture.target);
 
-    assert!(
-        removed
-            .agents
-            .iter()
-            .any(|(code, _)| code == "hook:gemini-cli")
-    );
+    assert!(removed.agents.iter().any(|(code, _)| code == "hook:cursor"));
     assert!(!shared_skill(&fixture).exists());
     assert!(
-        !std::fs::read_to_string(gemini_settings(&fixture))
+        !std::fs::read_to_string(cursor_hooks(&fixture))
             .map(|text| text.contains("hide-guidance"))
             .unwrap_or(false)
     );
@@ -376,12 +372,12 @@ fn removing_a_machine_takes_every_marked_piece_and_nothing_else() {
 fn the_shared_stub_goes_when_the_last_agent_reading_it_is_switched_off_even_with_codex_not_installed()
  {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     assert!(shared_skill(&fixture).is_file());
 
     // Codex is on by default but not installed here, so it reads nothing.
-    apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+    apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
     assert!(!shared_skill(&fixture).exists());
 }
@@ -389,12 +385,12 @@ fn the_shared_stub_goes_when_the_last_agent_reading_it_is_switched_off_even_with
 #[test]
 fn a_switch_off_that_left_hides_stub_behind_does_not_read_as_off() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     // The choice is off and Hide's stub is still there, as a removal that
     // failed would leave it.
     let mut text = record(&fixture);
-    text["agents"]["gemini-cli"] = serde_json::json!(false);
+    text["agents"]["cursor"] = serde_json::json!(false);
     std::fs::write(
         fixture.home().join(".hide/kit/installed.json"),
         text.to_string(),
@@ -403,10 +399,10 @@ fn a_switch_off_that_left_hides_stub_behind_does_not_read_as_off() {
 
     let report = status(&fixture.target);
 
-    let gemini = agent(&report, "gemini-cli");
-    assert_eq!(gemini.skill.state, ComponentState::Failed, "{gemini:?}");
+    let cursor = agent(&report, "cursor");
+    assert_eq!(cursor.skill.state, ComponentState::Failed, "{cursor:?}");
     assert!(
-        gemini
+        cursor
             .skill
             .reason
             .as_deref()
@@ -431,19 +427,16 @@ fn an_agent_found_only_by_its_program_reports_its_folder_as_not_made_yet() {
 #[test]
 fn a_file_that_only_mentions_the_marker_is_not_hides_stub() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
+    install(&fixture, "cursor-agent", ".cursor");
     let own = shared_skill(&fixture);
     std::fs::create_dir_all(own.parent().unwrap()).unwrap();
     // The marker's words sit in the body, not in the line Hide writes.
     let mine = "---\nname: hide-browser\n---\nsee hide-skill@1 in the docs\n";
     std::fs::write(&own, mine).unwrap();
 
-    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
-    assert_eq!(
-        agent(&report, "gemini-cli").skill.state,
-        ComponentState::Absent
-    );
-    apply(&fixture.target, &Scope::agents([], ["gemini-cli", "codex"]));
+    let report = apply(&fixture.target, &Scope::agents(["cursor"], []));
+    assert_eq!(agent(&report, "cursor").skill.state, ComponentState::Absent);
+    apply(&fixture.target, &Scope::agents([], ["cursor", "codex"]));
 
     assert_eq!(std::fs::read_to_string(&own).unwrap(), mine);
 }
@@ -451,8 +444,8 @@ fn a_file_that_only_mentions_the_marker_is_not_hides_stub() {
 #[test]
 fn an_edited_stub_is_reported_and_only_reinstall_puts_hides_text_back() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     let path = shared_skill(&fixture);
     let hide_text = std::fs::read_to_string(&path).unwrap();
     let edited = format!("{hide_text}\nMy own note for this agent.\n");
@@ -460,23 +453,23 @@ fn an_edited_stub_is_reported_and_only_reinstall_puts_hides_text_back() {
 
     // No automatic pass overwrites the operator's change.
     let report = apply(&fixture.target, &Scope::automatic());
-    let gemini = agent(&report, "gemini-cli");
-    assert_eq!(gemini.skill.state, ComponentState::Outdated);
-    assert!(gemini.skill.reason.as_deref().unwrap().contains("edited"));
-    assert!(gemini.needs_attention());
+    let cursor = agent(&report, "cursor");
+    assert_eq!(cursor.skill.state, ComponentState::Outdated);
+    assert!(cursor.skill.reason.as_deref().unwrap().contains("edited"));
+    assert!(cursor.needs_attention());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
 
     // Switching the agent off keeps what they wrote as well.
-    let off = apply(&fixture.target, &Scope::agents([], ["gemini-cli", "codex"]));
+    let off = apply(&fixture.target, &Scope::agents([], ["cursor", "codex"]));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
     assert_eq!(
-        agent(&off, "gemini-cli").skill.state,
+        agent(&off, "cursor").skill.state,
         ComponentState::Off,
         "an edited stub is the operator's file, so the switch is Off"
     );
 
     // Reinstall (switching on again) restores Hide's text.
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), hide_text);
 }
 
@@ -489,7 +482,7 @@ fn a_folder_the_agent_makes_is_not_the_agent_being_installed() {
         ("cursor-agent", "cursor", ".cursor"),
         ("grok", "grok", ".grok"),
         ("opencode", "opencode", ".config/opencode"),
-        ("gemini", "gemini-cli", ".gemini"),
+        ("omp", "omp", ".omp/agent"),
     ] {
         let fixture = Fixture::new();
         set_up(&fixture, folder);
@@ -514,10 +507,10 @@ fn a_folder_the_agent_makes_is_not_the_agent_being_installed() {
 #[test]
 fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_off() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    install(&fixture, "cursor-agent", ".cursor");
+    apply(&fixture.target, &Scope::agents(["cursor"], []));
     assert!(shared_skill(&fixture).is_file());
-    std::fs::remove_file(fixture.home().join(".local/bin/gemini")).unwrap();
+    std::fs::remove_file(fixture.home().join(".local/bin/cursor-agent")).unwrap();
     let tree = home_tree(fixture.home());
 
     let report = apply(&fixture.target, &Scope::automatic());
@@ -526,34 +519,34 @@ fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_
     // pieces stay as they were, so the agent is whole again once its
     // program is back.
     assert_eq!(home_tree(fixture.home()), tree);
-    assert_eq!(record(&fixture)["agents"]["gemini-cli"], true);
-    let gemini = agent(&report, "gemini-cli");
-    assert_eq!(gemini.availability, Availability::NotInstalled);
-    assert!(gemini.enabled, "the switch stays so it can be turned off");
+    assert_eq!(record(&fixture)["agents"]["cursor"], true);
+    let cursor = agent(&report, "cursor");
+    assert_eq!(cursor.availability, Availability::NotInstalled);
+    assert!(cursor.enabled, "the switch stays so it can be turned off");
     assert!(
-        gemini.chosen,
+        cursor.chosen,
         "the record holds the operator's choice, which is what keeps the row's switch"
     );
-    assert!(!gemini.needs_attention(), "nothing for Reinstall to do");
-    for piece in [&gemini.skill, gemini.hook.as_ref().unwrap()] {
-        assert_eq!(piece.state, ComponentState::Absent, "{gemini:?}");
+    assert!(!cursor.needs_attention(), "nothing for Reinstall to do");
+    for piece in [&cursor.skill, cursor.hook.as_ref().unwrap()] {
+        assert_eq!(piece.state, ComponentState::Absent, "{cursor:?}");
         assert!(
             piece
                 .reason
                 .as_deref()
                 .unwrap()
-                .contains("`gemini` is not found"),
+                .contains("`cursor-agent` is not found"),
             "{piece:?}"
         );
     }
 
     // The switch still takes Hide's pieces out.
-    let report = apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+    let report = apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
-    assert!(!agent(&report, "gemini-cli").enabled);
+    assert!(!agent(&report, "cursor").enabled);
     assert!(!shared_skill(&fixture).exists());
     assert!(
-        !std::fs::read_to_string(gemini_settings(&fixture))
+        !std::fs::read_to_string(cursor_hooks(&fixture))
             .map(|text| text.contains("hide-guidance"))
             .unwrap_or(false)
     );
@@ -564,7 +557,7 @@ fn an_agent_on_only_by_default_with_no_program_reports_no_operator_choice() {
     let fixture = Fixture::new();
     // A machine that already has a record, so the first-run hold does not
     // switch the default-on agents off.
-    apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+    apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
     let report = status(&fixture.target);
 
@@ -573,7 +566,7 @@ fn an_agent_on_only_by_default_with_no_program_reports_no_operator_choice() {
     assert!(codex.enabled, "Codex is on by default");
     assert!(!codex.chosen, "{codex:?}");
     // Switched off by the operator, the choice is on record whatever it is.
-    assert!(agent(&report, "gemini-cli").chosen);
+    assert!(agent(&report, "cursor").chosen);
 }
 
 #[test]
@@ -748,45 +741,40 @@ fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
 
 #[cfg(unix)]
 #[test]
-fn cursor_and_gemini_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {
-    for (id, program, folder, file) in [
-        ("cursor", "cursor-agent", ".cursor", ".cursor/hooks.json"),
-        ("gemini-cli", "gemini", ".gemini", ".gemini/settings.json"),
-    ] {
-        let fixture = Fixture::new();
-        install(&fixture, program, folder);
+fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
+    let file = ".cursor/hooks.json";
+    let fixture = Fixture::new();
+    install(&fixture, "cursor-agent", ".cursor");
 
-        let report = apply(&fixture.target, &Scope::agents([id], []));
+    let report = apply(&fixture.target, &Scope::agents(["cursor"], []));
 
-        let hook = agent(&report, id).hook.as_ref().unwrap();
-        assert_eq!(hook.state, ComponentState::Installed, "{id}: {hook:?}");
-        let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
-        assert!(written.contains("hide-guidance@1"), "{id}");
+    let hook = agent(&report, "cursor").hook.as_ref().unwrap();
+    assert_eq!(hook.state, ComponentState::Installed, "{hook:?}");
+    let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
+    assert!(written.contains("hide-guidance@1"));
 
-        let report = apply(&fixture.target, &Scope::agents([], [id]));
+    let report = apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
-        assert_eq!(
-            agent(&report, id).hook.as_ref().unwrap().state,
-            ComponentState::Off,
-            "{id}"
-        );
-        // Hide created the file and nothing else was in it, so the file goes.
-        assert!(!fixture.home().join(file).exists(), "{id}");
-    }
+    assert_eq!(
+        agent(&report, "cursor").hook.as_ref().unwrap().state,
+        ComponentState::Off
+    );
+    // Hide created the file and nothing else was in it, so the file goes.
+    assert!(!fixture.home().join(file).exists());
 }
 
 #[test]
-fn only_claude_code_and_codex_do_everything_and_the_five_others_are_partial() {
+fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRD and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18).
     let expected: [(&str, &[Feature]); 7] = [
         ("claude-code", &Feature::ALL),
         ("codex", &Feature::ALL),
-        ("gemini-cli", &[Skill, Guidance]),
         ("grok", &[Skill, HerdrIntegration]),
         ("opencode", &[Skill, HerdrIntegration]),
         ("pi", &[Skill, HerdrIntegration]),
+        ("omp", &[Skill, HerdrIntegration]),
         ("cursor", &[Skill, Guidance, HerdrIntegration]),
     ];
     assert_eq!(

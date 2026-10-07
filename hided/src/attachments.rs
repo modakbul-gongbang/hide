@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use hide_node_link::attachments::COMMIT_GRACE;
+
 /// Bytes one attachment may hold, the same cap the core enforces.
 pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 /// Bytes one batch may hold, the same cap the core enforces.
@@ -32,9 +34,6 @@ const STAGED_KEEP: usize = 512;
 /// file goes, and nothing committed within the grace window is evicted: the
 /// core may still be reading the file a just-pasted token names.
 const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
-
-/// How long a committed file is safe from eviction.
-const COMMIT_GRACE: Duration = Duration::from_secs(60);
 
 /// Stages one connection may have open at once; past it the oldest open stage
 /// is dropped, so an abandoned upload cannot hold file descriptors forever.

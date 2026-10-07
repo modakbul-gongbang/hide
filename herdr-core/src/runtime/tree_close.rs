@@ -610,7 +610,7 @@ impl Runtime {
                     .cloned()
                     .collect::<HashSet<_>>();
                 match node.kind {
-                    NodeKind::Pane => self.close_local_pane(node.id.clone(), confirmed),
+                    NodeKind::Pane => self.close_local_pane(node.id.clone(), confirmed, false),
                     NodeKind::Tab => self.close_local_tab(node.id.clone(), confirmed),
                 };
                 self.close_operations

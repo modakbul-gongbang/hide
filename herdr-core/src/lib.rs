@@ -15,8 +15,6 @@ mod disk;
 mod display_text;
 pub mod domain;
 mod environment;
-#[cfg(all(test, unix))]
-mod executable_fixture;
 pub mod factory;
 #[cfg(test)]
 mod fake_herdr;

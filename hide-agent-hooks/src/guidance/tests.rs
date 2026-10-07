@@ -599,14 +599,18 @@ fn a_settings_file_that_holds_another_key_keeps_it_when_hides_hook_goes() {
 
 #[test]
 fn a_retired_agent_gets_no_new_hook_and_its_old_entry_comes_out() {
-    let fixture = Fixture::new(GuidanceAgent::Qwen);
-    let failure = super::install(GuidanceAgent::Qwen, fixture.home(), &fixture.helper);
-    assert!(failure.is_err());
-    assert!(!GuidanceAgent::Qwen.config_path(fixture.home()).exists());
-    install_any(GuidanceAgent::Qwen, fixture.home(), &fixture.helper).unwrap();
-    let removed = remove(GuidanceAgent::Qwen, fixture.home()).unwrap();
-    assert_eq!(removed.removed_entries, 1);
-    assert_eq!(GuidanceAgent::from_id("qwen-code"), None);
-    assert!(GuidanceAgent::is_retired_id("qwen-code"));
-    assert!(!GuidanceAgent::is_retired_id("gemini-cli"));
+    for agent in [GuidanceAgent::Qwen, GuidanceAgent::Gemini] {
+        let fixture = Fixture::new(agent);
+        let failure = super::install(agent, fixture.home(), &fixture.helper);
+        assert!(failure.is_err(), "{agent:?}");
+        assert!(!agent.config_path(fixture.home()).exists(), "{agent:?}");
+        install_any(agent, fixture.home(), &fixture.helper).unwrap();
+        let removed = remove(agent, fixture.home()).unwrap();
+        assert_eq!(removed.removed_entries, 1, "{agent:?}");
+        // A hook entry an earlier build left runs nothing.
+        assert_eq!(GuidanceAgent::from_id(agent.id()), None, "{agent:?}");
+        assert!(GuidanceAgent::is_retired_id(agent.id()), "{agent:?}");
+    }
+    assert_eq!(GuidanceAgent::LIVE, [GuidanceAgent::Cursor]);
+    assert!(!GuidanceAgent::is_retired_id("cursor"));
 }

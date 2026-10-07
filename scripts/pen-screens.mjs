@@ -5096,7 +5096,7 @@ function buildOnboarding(tokens, root) {
   const MARKS = Object.fromEntries([...manifest.existing, ...manifest.logos].map(({id, file}) => [id, path.posix.join('../web/src/assets/agents', file)]));
   // [id, label, state]: on, off, or none (not set up on this machine).
   const AGENTS = [
-    ['claude-code', 'Claude Code', 'on'], ['codex', 'Codex', 'on'], ['opencode', 'OpenCode', 'on'], ['gemini-cli', 'Gemini CLI', 'off'],
+    ['claude-code', 'Claude Code', 'on'], ['codex', 'Codex', 'on'], ['opencode', 'OpenCode', 'on'], ['omp', 'omp', 'off'],
     ['cursor', 'Cursor', 'none'], ['copilot-cli', 'Copilot CLI', 'none'], ['amp', 'Amp', 'none'], ['factory-droid', 'Factory Droid', 'none'],
     ['kiro', 'Kiro', 'none'], ['qwen-code', 'Qwen Code', 'none'], ['goose', 'Goose', 'none'], ['cline', 'Cline', 'none'],
     ['kilo-code', 'Kilo Code', 'none'], ['crush', 'Crush', 'none'], ['junie', 'Junie', 'none'], ['augment', 'Augment', 'none'],

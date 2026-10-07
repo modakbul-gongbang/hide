@@ -369,7 +369,7 @@ function FileBody({
     return <Notice text={t("common.loading")} state="loading" />;
   }
   if (document.document_kind !== "text" && document.document_kind !== "markdown") {
-    return <FileViewer document={document} />;
+    return <FileViewer document={document} displayId={display.id} />;
   }
   // A bare browser cannot prove that the daemon is on the viewer's machine,
   // even when its URL is localhost through an SSH tunnel (D-12).

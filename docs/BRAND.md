@@ -47,9 +47,10 @@ The mobile web icons in `web/public/m/` are size derivatives of the full square 
 
 The first-run agent choice, the Agents tab and Hide AI's agent selects and Add menu are the only places that draw other vendors' marks (`web/src/components/agent-logo.tsx`), each on a fixed light plate (`--logo-plate`) so a dark-filled mark stays legible in both themes.
 `web/src/assets/agents/manifest.json` is the only list: a bundled file names its source URL, licence, any modification and the date it was taken, and an agent without an official source mark is a monogram with the reason written beside it.
-`scripts/check-agent-logos.mjs` (run by `check-design-contract`) fails a bundled file the manifest does not list, an adapter with no entry, and an entry without its source and licence.
+`scripts/check-agent-logos.mjs` (run by `check-design-contract`) fails a bundled file the manifest does not list, an adapter with no entry, an entry whose id is neither a kit adapter nor a Hide AI provider's agent (`hide-ai/src/registry.rs`), and an entry without its source and licence.
+A mark can outlive its agent's row in the kit while Hide AI still offers that agent: Gemini CLI's stays for the Hide AI provider.
 Marks are shown as the vendor published them: never recoloured, redrawn or approximated (design principle 10), and a mark whose source cannot be confirmed becomes a monogram rather than a guess.
-A mark is bundled in the format the vendor publishes, an SVG or, where it publishes none, its PNG (`gemini-cli.png`), named for its adapter id so `web/src/agentLogos.ts` maps it without a list of its own.
+A mark is bundled in the format the vendor publishes, an SVG or, where it publishes none, its PNG (`gemini-cli.png`), named for its agent's id so `web/src/agentLogos.ts` maps it without a list of its own.
 An SVG that recolours itself under `prefers-color-scheme` takes the scheme from the app's theme inside an `<img>`, not from the plate behind it, so a dark-theme variant turns light on the light plate; where the vendor offers a fixed-colour variant that one is bundled instead, with the reason in its manifest `note` (Pi).
 Showing a mark names the product it belongs to and implies no endorsement; trademark questions go to the vendor's own brand page named in the manifest.
 

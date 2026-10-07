@@ -60,7 +60,12 @@ use crate::error::HostError;
 /// disk, attachments, project creation, clone, worktree cleanup and the Git
 /// watch, each its own call. A helper on 21 would refuse each as unknown, so
 /// it is refused at Hello instead.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// 23: `process_descendants` lists the processes under a pid, and a running
+/// `process_starts` answer names its program, so a worktree deletion waits
+/// for every process under a pane's shell and names any still running (issue
+/// 707). A helper on 22 would refuse the first as unknown and answer without
+/// a name.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -360,9 +365,15 @@ pub enum Call {
     AgentInstalled {
         name: String,
     },
-    /// The start time of each pid, in order (`process::ProcessStart`).
+    /// The start time and program of each pid, in order
+    /// (`process::ProcessStart`).
     ProcessStarts {
         pids: Vec<u32>,
+    },
+    /// Every process under `pid`, parents before children, as a list of
+    /// pids; one that has ended, or has no children, has none.
+    ProcessDescendants {
+        pid: u32,
     },
     /// Measures each of `paths` (`disk::DiskUsage`), reporting each one as
     /// it finishes and answering them all. The entries of `shared_git` are
