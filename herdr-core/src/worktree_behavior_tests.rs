@@ -540,7 +540,16 @@ fn changes_before_sentinel(
     name: &str,
 ) -> Vec<PathBuf> {
     use hide_node_link::worktrees::GitWatchReport;
-    let mut before: Vec<PathBuf> = reader.git_watch.pending.keys().cloned().collect();
+    // The node reports a burst as it drains it, so the sentinel's own writes
+    // from an earlier phase can arrive after that phase returned and sit in
+    // `pending`; they are the test's, not a change of the project watched.
+    let mut before: Vec<PathBuf> = reader
+        .git_watch
+        .pending
+        .keys()
+        .filter(|root| **root != sentinel.0)
+        .cloned()
+        .collect();
     let sentinel_common = reader.git_watch.registered[&sentinel.0].clone();
     let subscription = reader
         .git_watch

@@ -775,7 +775,10 @@ mod tests {
         let pinned = Watching::default().pin_for(&target);
         assert_eq!(pinned, Some(identity), "the watcher opens nothing itself");
         let (stamped_by, stamps) = stamp_on(&node, &root_path, pinned, &[String::new()]).unwrap();
-        assert_eq!(stamped_by, identity, "the node reads the boundary's identity as its own");
+        assert_eq!(
+            stamped_by, identity,
+            "the node reads the boundary's identity as its own"
+        );
         assert!(stamps[0].is_some());
 
         std::fs::rename(&root, home.join("moved")).unwrap();
