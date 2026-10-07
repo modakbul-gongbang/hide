@@ -1,4 +1,4 @@
-use hide_session::{Agent, search::SearchIndex};
+use hide_session::{Agent, search::SearchIndex, search_read};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use tempfile::tempdir;
@@ -8,10 +8,7 @@ fn event(role: &str, text: &str) -> String {
 }
 fn index_all(index: &mut SearchIndex, path: &std::path::Path, project: &str, session: &str) {
     for _ in 0..12 {
-        if !index
-            .update(project, session, Agent::Codex, path, 0)
-            .unwrap()
-        {
+        if !search_read::update(index, project, session, Agent::Codex, path, 0).unwrap() {
             return;
         }
     }
@@ -42,7 +39,7 @@ fn korean_literal_queries_group_by_session_and_keep_exact_message_offsets() {
         "연결",
         "처리",
     ] {
-        let result = index.search("project-a", query, 0).unwrap();
+        let result = search_read::search(&index, "project-a", query, 0).unwrap();
         assert_eq!(result.hits.len(), 1, "{query}");
         assert!(
             result.hits[0]
@@ -51,19 +48,19 @@ fn korean_literal_queries_group_by_session_and_keep_exact_message_offsets() {
                 .contains(&query.to_lowercase())
         );
     }
-    let hit = &index.search("project-a", "foo_bar", 0).unwrap().hits[0];
+    let hit = &search_read::search(&index, "project-a", "foo_bar", 0)
+        .unwrap()
+        .hits[0];
     assert_eq!(hit.source_offset, first.len() as u64);
     assert_eq!(hit.role, "assistant");
     assert!(
-        index
-            .search("project-b", "대화", 0)
+        search_read::search(&index, "project-b", "대화", 0)
             .unwrap()
             .hits
             .is_empty()
     );
     assert!(
-        index
-            .search("project-a", "definitely absent", 0)
+        search_read::search(&index, "project-a", "definitely absent", 0)
             .unwrap()
             .hits
             .is_empty()
@@ -83,15 +80,26 @@ fn tool_record_larger_than_two_megabytes_resumes_through_restart() {
     )
     .unwrap();
     let mut index = SearchIndex::open(&db).unwrap();
-    assert!(index.update("p", "s", Agent::Codex, &path, 0).unwrap());
+    assert!(search_read::update(&mut index, "p", "s", Agent::Codex, &path, 0).unwrap());
     drop(index); // persisted while discarding the oversized record
     let mut index = SearchIndex::open(&db).unwrap();
     index_all(&mut index, &path, "p", "s");
-    let result = index.search("p", "정상 요청", 0).unwrap();
+    let result = search_read::search(&index, "p", "정상 요청", 0).unwrap();
     assert_eq!(result.hits.len(), 1);
     assert_eq!(result.hits[0].source_offset, tool.len() as u64);
-    assert_eq!(index.search("p", "후속 답변", 0).unwrap().hits.len(), 1);
-    assert!(index.search("p", "xxx", 0).unwrap().hits.is_empty());
+    assert_eq!(
+        search_read::search(&index, "p", "후속 답변", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
+    assert!(
+        search_read::search(&index, "p", "xxx", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
 }
 #[test]
 fn append_torn_restart_replace_truncate_delete_and_clear_never_return_invalid_copy() {
@@ -120,23 +128,54 @@ fn append_torn_restart_replace_truncate_delete_and_clear_never_return_invalid_co
         .unwrap();
     let mut index = SearchIndex::open(&db).unwrap();
     index_all(&mut index, &path, "p", "s");
-    assert_eq!(index.search("p", "신규", 0).unwrap().hits.len(), 1);
+    assert_eq!(
+        search_read::search(&index, "p", "신규", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
     let replacement = tmp.path().join("replacement");
     fs::write(&replacement, event("user", "replacement 새 메시지")).unwrap();
     fs::rename(&replacement, &path).unwrap();
-    assert!(index.search("p", "old unique", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "old unique", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     index_all(&mut index, &path, "p", "s");
-    assert!(index.search("p", "old unique", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "old unique", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     fs::write(&path, event("user", "truncated 내용")).unwrap();
     index_all(&mut index, &path, "p", "s");
-    assert!(index.search("p", "replacement", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "replacement", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     let before = fs::read(&path).unwrap();
     index.clear("p").unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
-    assert!(index.search("p", "내용", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "내용", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     index_all(&mut index, &path, "p", "s");
     fs::remove_file(&path).unwrap();
-    assert!(index.search("p", "내용", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "내용", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     index.remove("p", Some("s")).unwrap();
 }
 #[test]
@@ -153,7 +192,12 @@ fn unchanged_file_needs_no_cursor_write_and_retention_is_project_local() {
     index.set_days("p", 0).unwrap();
     assert_eq!(index.days("p").unwrap(), 0);
     assert_eq!(index.days("other").unwrap(), 90);
-    assert!(index.search("p", "원본", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "원본", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     assert!(index.set_days("p", 7).is_err());
     assert_eq!(index.days("p").unwrap(), 0);
 }
@@ -166,9 +210,14 @@ fn expired_bodies_are_removed_even_if_the_transcript_is_unchanged() {
     fs::write(&source, &original).unwrap();
     let mut index = SearchIndex::open(&tmp.path().join("index.db")).unwrap();
     index_all(&mut index, &source, "p", "s");
-    let at = index.search("p", "expires", 0).unwrap().hits[0].at_unix_ms;
+    let at = search_read::search(&index, "p", "expires", 0).unwrap().hits[0].at_unix_ms;
     index.prune("p", at + 1).unwrap();
-    assert!(index.search("p", "expires", 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", "expires", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     assert_eq!(fs::read_to_string(&source).unwrap(), original);
 }
 
@@ -187,8 +236,19 @@ fn middle_rewrites_and_rewrites_with_append_invalidate_the_entire_consumed_prefi
     )
     .unwrap();
     index_all(&mut index, &source, "p", "s");
-    assert!(index.search("p", "old middle", 0).unwrap().hits.is_empty());
-    assert_eq!(index.search("p", "new middle", 0).unwrap().hits.len(), 1);
+    assert!(
+        search_read::search(&index, "p", "old middle", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    assert_eq!(
+        search_read::search(&index, "p", "new middle", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
     fs::write(
         &source,
         original.replace("old middle marker", "app middle marker")
@@ -196,8 +256,19 @@ fn middle_rewrites_and_rewrites_with_append_invalidate_the_entire_consumed_prefi
     )
     .unwrap();
     index_all(&mut index, &source, "p", "s");
-    assert!(index.search("p", "new middle", 0).unwrap().hits.is_empty());
-    assert_eq!(index.search("p", "app middle", 0).unwrap().hits.len(), 1);
+    assert!(
+        search_read::search(&index, "p", "new middle", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    assert_eq!(
+        search_read::search(&index, "p", "app middle", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -215,25 +286,37 @@ fn oversized_claude_tool_blocks_resume_after_restart_without_losing_human_text()
     .unwrap();
     let database = tmp.path().join("index.db");
     let mut index = SearchIndex::open(&database).unwrap();
-    assert!(index.update("p", "s", Agent::Claude, &source, 0).unwrap());
+    assert!(search_read::update(&mut index, "p", "s", Agent::Claude, &source, 0).unwrap());
     drop(index);
     let mut index = SearchIndex::open(&database).unwrap();
     let mut finished = false;
     for _ in 0..12 {
-        if !index.update("p", "s", Agent::Claude, &source, 0).unwrap() {
+        if !search_read::update(&mut index, "p", "s", Agent::Claude, &source, 0).unwrap() {
             finished = true;
             break;
         }
     }
     assert!(finished);
-    assert_eq!(index.search("p", "before tool", 0).unwrap().hits.len(), 1);
-    assert_eq!(index.search("p", "after tool", 0).unwrap().hits.len(), 1);
+    assert_eq!(
+        search_read::search(&index, "p", "before tool", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
+    assert_eq!(
+        search_read::search(&index, "p", "after tool", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
     // A mixed envelope has real conversation text and must fail its bound,
     // rather than silently discarding that text with a large tool result.
     fs::write(&source, serde_json::json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","input":{"data":"x".repeat(2*1024*1024)}},{"type":"text","text":"keep this real answer"}]}}).to_string()+"\n").unwrap();
     let mut failure = None;
     for _ in 0..12 {
-        match index.update("p", "s", Agent::Claude, &source, 0) {
+        match search_read::update(&mut index, "p", "s", Agent::Claude, &source, 0) {
             Err(error) => {
                 failure = Some(error);
                 break;
@@ -261,8 +344,7 @@ fn special_file_replacement_fails_promptly_instead_of_waiting_for_a_writer() {
     assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
     let started = std::time::Instant::now();
     assert!(
-        index
-            .update("p", "s", Agent::Codex, &source, 0)
+        search_read::update(&mut index, "p", "s", Agent::Codex, &source, 0)
             .unwrap_err()
             .contains("regular file")
     );
@@ -287,13 +369,25 @@ fn prolific_session_and_provider_scopes_are_bounded_after_grouping() {
     index_all(&mut index, &path, "p", "claude-older");
     let two = vec!["prolific".into(), "claude-older".into()];
     let page = index
-        .search_scoped("p", "shared needle", 0, Some(&two))
+        .search_scoped("p", "shared needle", 0, Some(&two), &mut |paths| {
+            Ok(search_read::stamps(paths))
+        })
         .unwrap();
     assert_eq!(page.hits.len(), 2);
     assert!(!page.limited);
-    assert!(index.search("p", "shared needle", 0).unwrap().limited);
+    assert!(
+        search_read::search(&index, "p", "shared needle", 0)
+            .unwrap()
+            .limited
+    );
     let page = index
-        .search_scoped("p", "shared needle", 0, Some(&["claude-older".into()]))
+        .search_scoped(
+            "p",
+            "shared needle",
+            0,
+            Some(&["claude-older".into()]),
+            &mut |paths| Ok(search_read::stamps(paths)),
+        )
         .unwrap();
     assert_eq!(page.hits[0].session_id, "claude-older");
     assert!(!page.limited);
@@ -313,13 +407,18 @@ fn inactive_project_copies_expire_under_their_own_policies() {
     // Oct 1 body is expired under 30 days on Nov 2, retained under 90.
     index.prune_all(1_793_577_600_000).unwrap();
     assert!(
-        index
-            .search("inactive", "retained", 0)
+        search_read::search(&index, "inactive", "retained", 0)
             .unwrap()
             .hits
             .is_empty()
     );
-    assert_eq!(index.search("active", "retained", 0).unwrap().hits.len(), 1);
+    assert_eq!(
+        search_read::search(&index, "active", "retained", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
     assert_eq!(fs::read(&path).unwrap(), original);
 }
 
@@ -340,8 +439,8 @@ fn all_source_work_is_bounded_and_unchanged_reads_are_zero() {
         let mut calls = 0;
         loop {
             calls += 1;
-            let more = index.update("p", "s", Agent::Codex, &path, 0).unwrap();
-            let r = index.last_update_reads();
+            let (more, r) =
+                search_read::update_measured(index, "p", "s", Agent::Codex, &path, 0).unwrap();
             let n = r.cursor_bytes + r.witness_bytes;
             bytes += n;
             max = max.max(n);
@@ -363,7 +462,13 @@ fn all_source_work_is_bounded_and_unchanged_reads_are_zero() {
         .write_all(event("assistant", "append needle").as_bytes())
         .unwrap();
     assert!(measure(&mut index, "append") > 0);
-    assert_eq!(index.search("p", "append needle", 0).unwrap().hits.len(), 1);
+    assert_eq!(
+        search_read::search(&index, "p", "append needle", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -394,12 +499,12 @@ fn escaped_conversation_discriminators_never_authorize_discard_even_after_restar
         .unwrap();
         let database = tmp.path().join("index.db");
         let mut index = SearchIndex::open(&database).unwrap();
-        assert!(index.update("p", "s", agent, &source, 0).unwrap());
+        assert!(search_read::update(&mut index, "p", "s", agent, &source, 0).unwrap());
         drop(index);
         let mut index = SearchIndex::open(&database).unwrap();
         let mut failed = false;
         for _ in 0..12 {
-            match index.update("p", "s", agent, &source, 0) {
+            match search_read::update(&mut index, "p", "s", agent, &source, 0) {
                 Err(error) => {
                     assert!(error.contains("line_bytes"));
                     failed = true;
@@ -434,7 +539,7 @@ fn later_prefix_rewrite_with_append_survives_restart_during_validation() {
     let mut index = SearchIndex::open(&database).unwrap();
     index_all(&mut index, &source, "p", "s");
     assert_eq!(
-        index.search("p", old, 0).unwrap().hits[0].source_offset,
+        search_read::search(&index, "p", old, 0).unwrap().hits[0].source_offset,
         expected_offset
     );
     let changed = body.replacen(old, new, 1);
@@ -444,16 +549,17 @@ fn later_prefix_rewrite_with_append_survives_restart_during_validation() {
         changed + &event("assistant", "new appended answer"),
     )
     .unwrap();
-    assert!(index.update("p", "s", Agent::Codex, &source, 0).unwrap());
-    let reads = index.last_update_reads();
+    let (more, reads) =
+        search_read::update_measured(&mut index, "p", "s", Agent::Codex, &source, 0).unwrap();
+    assert!(more);
     assert_eq!(reads.cursor_bytes, 0);
     assert_eq!(reads.witness_bytes, 1024 * 1024);
     drop(index);
     let mut index = SearchIndex::open(&database).unwrap();
     let mut finished = false;
     for _ in 0..40 {
-        let more = index.update("p", "s", Agent::Codex, &source, 0).unwrap();
-        let reads = index.last_update_reads();
+        let (more, reads) =
+            search_read::update_measured(&mut index, "p", "s", Agent::Codex, &source, 0).unwrap();
         assert!(reads.cursor_bytes + reads.witness_bytes <= 1024 * 1024);
         if !more {
             finished = true;
@@ -461,13 +567,21 @@ fn later_prefix_rewrite_with_append_survives_restart_during_validation() {
         }
     }
     assert!(finished);
-    assert!(index.search("p", old, 0).unwrap().hits.is_empty());
+    assert!(
+        search_read::search(&index, "p", old, 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
     assert_eq!(
-        index.search("p", new, 0).unwrap().hits[0].source_offset,
+        search_read::search(&index, "p", new, 0).unwrap().hits[0].source_offset,
         expected_offset
     );
     assert_eq!(
-        index.search("p", "new appended answer", 0).unwrap().hits[0].source_offset,
+        search_read::search(&index, "p", "new appended answer", 0)
+            .unwrap()
+            .hits[0]
+            .source_offset,
         append_offset
     );
 }
@@ -490,14 +604,16 @@ fn rekeying_onto_a_project_indexed_since_keeps_the_newer_rows_and_drops_the_old_
     assert_eq!(moved, 0, "every old row collides with a newer one");
     assert!(dropped >= 3, "policy, file and message rows: {dropped}");
     assert!(
-        index
-            .search("project-old", "대화", 0)
+        search_read::search(&index, "project-old", "대화", 0)
             .unwrap()
             .hits
             .is_empty()
     );
     assert_eq!(
-        index.search("project-new", "대화", 0).unwrap().hits.len(),
+        search_read::search(&index, "project-new", "대화", 0)
+            .unwrap()
+            .hits
+            .len(),
         1
     );
     assert_eq!(index.days("project-new").unwrap(), 30);

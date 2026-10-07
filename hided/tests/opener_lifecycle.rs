@@ -201,7 +201,7 @@ fn owner_process() {
             .expect("owner_process is spawned by a test, with its marker"),
     );
     let script = fake_opener(marker.parent().unwrap());
-    let launched = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker);
+    let launched = hide_node::opener::spawn_opener(supervisor(), script.as_os_str(), &marker);
     if std::env::var_os("HIDED_EXPECT_OPENER_TIMEOUT").is_some() {
         assert!(launched.is_err());
         return;
@@ -218,7 +218,7 @@ async fn default_app_handoff_survives_caller_close() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake(dir.path(), "fake-default-app", "app");
     let marker = dir.path().join("handoff");
-    hided::spawn::handoff_default_opener(script.as_os_str(), &marker).unwrap();
+    hide_node::opener::handoff_default_opener(script.as_os_str(), &marker).unwrap();
     let app = wait_for_pid(&sidecar(&marker, "pid"));
     assert!(app.alive(), "successful default app handoff was closed");
     let _ = unsafe { libc::kill(app.pid as i32, libc::SIGKILL) };
@@ -289,7 +289,8 @@ fn normal_close_reaps_cli_and_its_child() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
     let marker = dir.path().join("normal");
-    let mut opener = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
+    let mut opener =
+        hide_node::opener::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
     let child = wait_for_pid(&sidecar(&marker, "child"));
     opener.stop();
@@ -304,7 +305,8 @@ fn unexpected_supervisor_exit_still_ends_owned_cli_group() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
     let marker = dir.path().join("supervisor-crash");
-    let mut opener = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
+    let mut opener =
+        hide_node::opener::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
     let child = wait_for_pid(&sidecar(&marker, "child"));
     assert_eq!(
@@ -362,7 +364,7 @@ fn repeated_owned_helpers_are_reaped_between_requests() {
     for index in 0..16 {
         let marker = dir.path().join(format!("request-{index}"));
         let mut opener =
-            hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
+            hide_node::opener::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
         let pid = wait_for_pid(&sidecar(&marker, "pid"));
         let child = wait_for_pid(&sidecar(&marker, "child"));
         opener.stop();
@@ -371,15 +373,15 @@ fn repeated_owned_helpers_are_reaped_between_requests() {
     }
 }
 
-fn handler(script: &Path, shutdown: Arc<Notify>) -> hided::opener::OpenHandler {
-    hided::opener::OpenHandler::new(
+fn handler(script: &Path, shutdown: Arc<Notify>) -> hide_node::opener::OpenHandler {
+    hide_node::opener::OpenHandler::new(
         Some(script.to_path_buf()),
         shutdown,
         supervisor().to_path_buf(),
     )
 }
 
-async fn wait_until_idle(handler: &hided::opener::OpenHandler) {
+async fn wait_until_idle(handler: &hide_node::opener::OpenHandler) {
     let until = Instant::now() + Duration::from_secs(5);
     while handler.in_flight() != 0 && Instant::now() < until {
         tokio::time::sleep(Duration::from_millis(20)).await;

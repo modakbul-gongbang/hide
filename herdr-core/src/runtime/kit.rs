@@ -15,8 +15,8 @@ use hide_kit::{ComponentId, KitReport, Scope};
 
 use super::Runtime;
 use super::hosts::HostPhase;
-use crate::host_access::HostChannel;
 use crate::model::{CodexDaemonOffSnapshot, KitSnapshot};
+use crate::node_access::NodeLink;
 
 /// How often this Mac's kit is read again while Settings is on screen, so a
 /// part the operator removed by hand shows up without a relaunch.
@@ -64,7 +64,7 @@ pub(crate) enum DeviceKitWork {
 /// runtime taken under the lock.
 pub(crate) struct DeviceKitCall {
     pub(crate) work: DeviceKitWork,
-    pub(crate) channel: Arc<dyn HostChannel>,
+    pub(crate) channel: Arc<dyn NodeLink>,
     pub(crate) cli_dir: String,
     pub(crate) herdr_socket: Option<String>,
     pub(crate) retirement_projects: Vec<String>,
@@ -75,7 +75,7 @@ pub(crate) struct DeviceKitCall {
 /// What a device's kit call answered.
 pub(crate) enum DeviceKitAnswer {
     Report(Result<KitReport, String>),
-    Removed(Result<hide_host::protocol::KitRemoved, String>),
+    Removed(Result<hide_node_link::protocol::KitRemoved, String>),
 }
 
 /// Where one device stands with the first-run agent choice in this run.
@@ -948,7 +948,7 @@ impl Runtime {
     fn ingest_device_kit_removal(
         &mut self,
         device_id: &str,
-        removed: Result<hide_host::protocol::KitRemoved, String>,
+        removed: Result<hide_node_link::protocol::KitRemoved, String>,
     ) -> bool {
         match removed {
             Ok(removed) => crate::diagnostic!(serde_json::json!({

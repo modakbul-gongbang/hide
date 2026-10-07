@@ -1,26 +1,27 @@
 //! Persistent workspace and checkout discovery for the hide navigator.
 //!
-//! The catalog is deliberately filesystem-first. A workspace registration is
-//! metadata only, while checkout discovery is rebuilt from the repositories'
-//! own files on launch and after a session update, never by running git: the
-//! rebuild sits on the session-sync coordinator, and a process there holds
-//! every Herdr event behind it. Removing a registration therefore cannot
-//! remove a checkout or terminate a remote process.
+//! A workspace registration is metadata only, while checkout discovery is
+//! rebuilt on launch and after a session update from what the core's own node
+//! says about the paths involved (`PathIndex`). The core reads no folder: the
+//! node answers from the repositories' own files, never by running git, and
+//! the sync coordinator asks it before taking the runtime lock. Removing a
+//! registration therefore cannot remove a checkout or terminate a remote
+//! process.
 
-use std::collections::{BTreeMap, HashSet};
-use std::fs;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
-use hide_platform::fs::identity;
+use hide_node_link::catalog::{BranchNote, PATH_FACTS_LIMIT, PathFact, PathFacts, RepositoryPlace};
+use hide_node_link::protocol::Call;
 use hide_platform::path;
 
-use crate::git_dir::{self, Repository};
 use crate::model::{
     CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, DeviceRegistration,
     DeviceSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
 };
 use crate::node::NodeId;
+use crate::node_access::{NodeLink, call_as};
 
 /// The row for the machine the core runs on. Its id is the node id; its
 /// `kind` stays `local`, the role "the core's own machine", not a name.
@@ -88,10 +89,12 @@ pub fn registration(
     if device_id.trim().is_empty() {
         return Err("workspace registration must name its device".to_owned());
     }
-    let path = normalized_path(Path::new(path))?;
-    if path.as_os_str().is_empty() {
+    // The path is the node's own spelling (a folder it created, resolved or
+    // answered for); the core compares it by names and never resolves it.
+    if path.trim().is_empty() {
         return Err("workspace path must not be empty".to_owned());
     }
+    let path = PathBuf::from(comparison_by_names(Path::new(path)));
     let label = if label.trim().is_empty() {
         path.file_name()
             .and_then(|name| name.to_str())
@@ -126,14 +129,17 @@ pub fn checkout_id_for_path(workspace_id: &str, path: &Path) -> String {
     )
 }
 
-pub fn inspect_registered(registration: &WorkspaceRegistration) -> WorkspaceSnapshot {
+pub fn inspect_registered(
+    registration: &WorkspaceRegistration,
+    paths: &PathIndex,
+) -> WorkspaceSnapshot {
     let mut workspace = inspect(
         &registration.id,
         &registration.label,
-        Path::new(&registration.path),
+        &registration.path,
         &registration.device_id,
-        true,
-        false,
+        (true, false),
+        paths,
     );
     workspace.pinned = registration.pinned;
     workspace.is_home = registration.home;
@@ -141,19 +147,19 @@ pub fn inspect_registered(registration: &WorkspaceRegistration) -> WorkspaceSnap
     workspace
 }
 
-pub fn inspect_temporary(path: &Path, device_id: &str) -> WorkspaceSnapshot {
-    let label = path
+pub fn inspect_temporary(path: &str, device_id: &str, paths: &PathIndex) -> WorkspaceSnapshot {
+    let label = Path::new(path)
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("Unregistered workspace");
     inspect(
-        &workspace_id_for_path(path),
+        &workspace_id_for_path(Path::new(path)),
         label,
         path,
         device_id,
-        false,
-        true,
+        (false, true),
+        paths,
     )
 }
 
@@ -235,52 +241,168 @@ fn space_occupies_checkout(
     if !workspace.session_workspace_ids.contains(&space.id) {
         return false;
     }
-    let checkout = PathBuf::from(normalized_for_comparison(Path::new(checkout_path)));
+    let checkout = PathBuf::from(comparison_by_names(Path::new(checkout_path)));
     space
         .cwds
         .iter()
-        .any(|cwd| PathBuf::from(normalized_for_comparison(Path::new(cwd))).starts_with(&checkout))
+        .any(|cwd| Path::new(cwd).starts_with(&checkout))
 }
 
-/// Each pane directory's repository root in comparison form, keyed by the raw
-/// directory Herdr reported. Resolved by the sync coordinator before it takes
-/// the runtime lock, because the reconcile that consumes it runs on every
-/// publish and a filesystem walk per directory does not belong under it.
-pub type RootIndex = BTreeMap<String, String>;
+/// What the core's own node said about the paths of one catalog rebuild
+/// (`Call::PathFacts`), by the string each was asked as and by its comparison
+/// form. Asked by the sync coordinator before it takes the runtime lock, so
+/// the catalog and the reconcile that run on every publish compare names and
+/// never read a folder. A path it does not carry is read by its names alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PathIndex {
+    paths: BTreeMap<String, PathFact>,
+    notes: BTreeMap<String, Result<BTreeMap<String, BranchNote>, String>>,
+}
 
-/// Resolves every directory the session's panes occupy to its repository root,
-/// or to the directory itself when it is not inside a repository.
-pub fn root_index(spaces: &[SessionSpace]) -> RootIndex {
-    let mut index = RootIndex::new();
-    for space in spaces {
-        for cwd in &space.cwds {
-            if index.contains_key(cwd) {
-                continue;
-            }
-            let path = Path::new(cwd);
-            let root = git_dir::discover(path)
-                .map(|repository| normalized_for_comparison(&repository.root))
-                .unwrap_or_else(|| normalized_for_comparison(path));
-            index.insert(cwd.clone(), root);
+/// How long the core's own node may take to read the paths of one rebuild.
+const PATH_FACTS_TIMEOUT: Duration = Duration::from_secs(10);
+
+impl PathIndex {
+    /// An index that knows no path: every path is read by its names.
+    pub const NONE: Self = Self {
+        paths: BTreeMap::new(),
+        notes: BTreeMap::new(),
+    };
+
+    pub fn new(facts: PathFacts) -> Self {
+        let mut paths = facts.paths;
+        let aliases = paths
+            .values()
+            .filter(|fact| !paths.contains_key(&fact.comparison))
+            .map(|fact| (fact.comparison.clone(), fact.clone()))
+            .collect::<Vec<_>>();
+        // The working tree a path is in is that tree's own place, so a row
+        // made for the root reads the same facts without asking again.
+        let roots = paths
+            .values()
+            .filter_map(|fact| fact.repository.as_ref())
+            .map(|place| {
+                (
+                    place.root.clone(),
+                    PathFact {
+                        comparison: place.root.clone(),
+                        exists: true,
+                        repository: Some(place.clone()),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        for (comparison, fact) in aliases.into_iter().chain(roots) {
+            paths.entry(comparison).or_insert(fact);
+        }
+        for (repository, error) in facts
+            .repositories
+            .iter()
+            .filter_map(|(repository, notes)| Some((repository, notes.as_ref().err()?)))
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "workspace_catalog",
+                "kind": "branch_notes.read_failed",
+                "repository": repository,
+                "message": error,
+            }));
+        }
+        Self {
+            paths,
+            notes: facts.repositories,
         }
     }
-    index
-}
 
-// How many times the current thread has run git. A test that asserts a code
-// path never shells out reads it before and after; the runtime lock is held
-// through some of those paths, and a fork there is a stall for every thread.
-// `initialize_git` is the one site left that runs it, so the count is also
-// the proof that the catalog is read from files.
-// Per thread, because the test runner runs other tests' git alongside.
-#[cfg(test)]
-thread_local! {
-    static GIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
+    /// Asks `node` what `paths` are, in parts of at most
+    /// `PATH_FACTS_LIMIT`.
+    pub fn ask(node: &dyn NodeLink, paths: BTreeSet<String>) -> Result<Self, String> {
+        let paths = paths.into_iter().collect::<Vec<_>>();
+        let mut facts = PathFacts::default();
+        for part in paths.chunks(PATH_FACTS_LIMIT) {
+            let answer: PathFacts = call_as(
+                node,
+                Call::PathFacts {
+                    paths: part.to_vec(),
+                },
+                PATH_FACTS_TIMEOUT,
+            )
+            .map_err(|error| error.to_string())?;
+            facts.paths.extend(answer.paths);
+            facts.repositories.extend(answer.repositories);
+        }
+        Ok(Self::new(facts))
+    }
 
-#[cfg(test)]
-pub(crate) fn git_calls_on_this_thread() -> usize {
-    GIT_CALLS.with(|calls| calls.get())
+    /// Whether the node answered for `path`.
+    pub fn knows(&self, path: &str) -> bool {
+        self.paths.contains_key(path)
+    }
+
+    /// `path` in comparison form: the node's, else its names.
+    pub fn comparison(&self, path: &str) -> String {
+        self.paths
+            .get(path)
+            .map(|fact| fact.comparison.clone())
+            .unwrap_or_else(|| comparison_by_names(Path::new(path)))
+    }
+
+    /// The repository `path` is in, as its node read it.
+    pub fn place(&self, path: &str) -> Option<&RepositoryPlace> {
+        self.paths
+            .get(path)
+            .and_then(|fact| fact.repository.as_ref())
+    }
+
+    /// Whether the node found `path`; a path it was not asked about is not
+    /// known to exist.
+    pub fn exists(&self, path: &str) -> bool {
+        self.paths.get(path).is_some_and(|fact| fact.exists)
+    }
+
+    /// The working tree holding `path`, else `path` itself, in comparison
+    /// form.
+    pub fn root(&self, path: &str) -> String {
+        self.place(path)
+            .map(|place| place.root.clone())
+            .unwrap_or_else(|| self.comparison(path))
+    }
+
+    /// What the repository at `main_root` says of `branch`. A config that
+    /// could not be read was reported when the answer arrived and is taken as
+    /// no note.
+    fn note(&self, main_root: &str, branch: &str) -> Option<&BranchNote> {
+        self.notes.get(main_root)?.as_ref().ok()?.get(branch)
+    }
+
+    /// Every path a catalog of `registrations`, `spaces` and `worktrees`
+    /// reads, for one `PathIndex::ask`.
+    pub fn wanted(
+        node: &NodeId,
+        registrations: &[WorkspaceRegistration],
+        spaces: &[SessionSpace],
+        worktrees: &WorktreeCatalogSnapshot,
+    ) -> BTreeSet<String> {
+        let mut paths = BTreeSet::new();
+        for registration in registrations
+            .iter()
+            .filter(|registration| *node == registration.device_id)
+        {
+            paths.insert(registration.path.clone());
+        }
+        for space in spaces {
+            paths.extend(space.cwds.iter().cloned());
+        }
+        for project in &worktrees.projects {
+            paths.insert(project.root_path.clone());
+            paths.extend(
+                project
+                    .worktrees
+                    .iter()
+                    .map(|worktree| worktree.path.clone()),
+            );
+        }
+        paths
+    }
 }
 
 pub fn build_catalog(
@@ -288,6 +410,7 @@ pub fn build_catalog(
     registrations: &[WorkspaceRegistration],
     spaces: &[SessionSpace],
     worktrees: &WorktreeCatalogSnapshot,
+    paths: &PathIndex,
 ) -> Vec<WorkspaceSnapshot> {
     // A project is a repository: its main worktree is the identity and every
     // worktree with a pane in it is a checkout under it. A Herdr workspace
@@ -297,7 +420,7 @@ pub fn build_catalog(
     // never changes which row the user is looking at.
     let mut result: Vec<WorkspaceSnapshot> = Vec::new();
     for space in spaces {
-        for projected in inspect_space(node, space) {
+        for projected in inspect_space(node, space, paths) {
             match result
                 .iter_mut()
                 .find(|existing| existing.id == projected.id)
@@ -319,22 +442,22 @@ pub fn build_catalog(
         .iter()
         .filter(|registration| *node == registration.device_id)
     {
-        let comparison = normalized_for_comparison(&project_root(Path::new(&registration.path)));
-        let occupied = result.iter().position(|workspace| {
-            normalized_for_comparison(Path::new(&workspace.path)) == comparison
-        });
+        let comparison = project_root(&registration.path, paths);
+        let occupied = result
+            .iter()
+            .position(|workspace| comparison_by_names(Path::new(&workspace.path)) == comparison);
         match occupied {
             // A second registration for a repository that already carries
             // one is not a second row, and it must not rename the first.
             Some(index) if result[index].registered => continue,
             Some(index) => adopt_registration(&mut result[index], registration),
-            None => result.push(inspect_registered(registration)),
+            None => result.push(inspect_registered(registration, paths)),
         }
     }
 
     for project in &mut result {
         apply_session_purposes(project, spaces);
-        apply_worktrees(project, worktrees);
+        apply_worktrees(project, worktrees, paths);
         let primary = registrations
             .iter()
             .find(|row| row.id == project.id)
@@ -363,12 +486,12 @@ pub(crate) fn apply_primary_checkout(project: &mut WorkspaceSnapshot, primary_id
     }
 }
 
-/// The directory that identifies a project: the repository's main worktree
-/// for a git checkout, the folder itself otherwise.
-fn project_root(path: &Path) -> PathBuf {
-    match git_dir::discover(path) {
-        Some(repository) => repository.main_root(),
-        None => normalized_path(path).unwrap_or_else(|_| path.into()),
+/// The directory that identifies a project, in comparison form: the
+/// repository's main worktree for a git checkout, the folder itself otherwise.
+fn project_root(path: &str, paths: &PathIndex) -> String {
+    match paths.place(path) {
+        Some(place) => place.main_root.clone(),
+        None => paths.comparison(path),
     }
 }
 
@@ -381,11 +504,11 @@ fn merge_space(existing: &mut WorkspaceSnapshot, incoming: WorkspaceSnapshot) {
         }
     }
     for checkout in incoming.checkouts {
-        let comparison = normalized_for_comparison(Path::new(&checkout.path));
+        let comparison = comparison_by_names(Path::new(&checkout.path));
         if !existing
             .checkouts
             .iter()
-            .any(|known| normalized_for_comparison(Path::new(&known.path)) == comparison)
+            .any(|known| comparison_by_names(Path::new(&known.path)) == comparison)
         {
             existing.checkouts.push(checkout);
         }
@@ -435,28 +558,23 @@ fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &Workspac
 /// without git. Every other worktree of the repository is added by
 /// [`apply_worktrees`] from the worktree reader's answer, which is what makes
 /// a worktree with no terminal a row the operator can select and start one in.
-fn inspect_space(node: &NodeId, space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
+fn inspect_space(node: &NodeId, space: &SessionSpace, paths: &PathIndex) -> Vec<WorkspaceSnapshot> {
     let mut projects: Vec<WorkspaceSnapshot> = Vec::new();
     for cwd in &space.cwds {
-        let path = Path::new(cwd);
-        // One discovery per directory answers root, project and branch; the
-        // catalog is rebuilt on the sync coordinator, so every fact it needs
-        // has to be a file read rather than a process.
-        let repository = git_dir::discover(path);
-        let root = repository
-            .as_ref()
-            .map(|repository| repository.root.clone())
-            .unwrap_or_else(|| normalized_path(path).unwrap_or_else(|_| path.into()));
-        let project_path = repository
-            .as_ref()
-            .map(Repository::main_root)
-            .unwrap_or_else(|| root.clone());
-        let project_comparison = normalized_for_comparison(&project_path);
-        let root_comparison = normalized_for_comparison(&root);
+        // One answer per directory gives root, project and branch, read by
+        // the node from Git's files.
+        let repository = paths.place(cwd);
+        let root_comparison = paths.root(cwd);
+        let project_comparison = repository
+            .map(|place| place.main_root.clone())
+            .unwrap_or_else(|| root_comparison.clone());
+        let root = PathBuf::from(&root_comparison);
+        let project_path = PathBuf::from(&project_comparison);
         let workspace_id = workspace_id_for_path(&project_path);
-        let index = match projects.iter().position(|project| {
-            normalized_for_comparison(Path::new(&project.path)) == project_comparison
-        }) {
+        let index = match projects
+            .iter()
+            .position(|project| comparison_by_names(Path::new(&project.path)) == project_comparison)
+        {
             Some(index) => index,
             None => {
                 let name = project_path
@@ -496,33 +614,32 @@ fn inspect_space(node: &NodeId, space: &SessionSpace) -> Vec<WorkspaceSnapshot> 
         if projects[index]
             .checkouts
             .iter()
-            .any(|existing| normalized_for_comparison(Path::new(&existing.path)) == root_comparison)
+            .any(|existing| comparison_by_names(Path::new(&existing.path)) == root_comparison)
         {
             continue;
         }
-        let branch = repository.as_ref().and_then(Repository::branch);
+        let branch = repository.and_then(|place| place.branch.clone());
         let label = checkout_row_label(branch.as_deref(), &root);
         let is_worktree = root_comparison != project_comparison;
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
-        let head_oid = repository.as_ref().and_then(Repository::head_oid);
         projects[index].checkouts.push(checkout(
             &workspace_id,
             &root,
             &label,
-            branch,
-            head_oid,
-            is_worktree,
-            false,
+            (is_worktree, false),
+            true,
+            repository
+                .map(|place| git_facts(&place.main_root, branch, place.head_oid.clone(), paths)),
         ));
     }
     // The main worktree leads, so the primary badge and the project path
     // agree even when a worktree's pane was reported first.
     for project in &mut projects {
-        let project_comparison = normalized_for_comparison(Path::new(&project.path));
+        let project_comparison = comparison_by_names(Path::new(&project.path));
         if let Some(index) = project.checkouts.iter().position(|checkout| {
-            normalized_for_comparison(Path::new(&checkout.path)) == project_comparison
+            comparison_by_names(Path::new(&checkout.path)) == project_comparison
         }) && index != 0
         {
             let main = project.checkouts.remove(index);
@@ -542,38 +659,42 @@ fn inspect_space(node: &NodeId, space: &SessionSpace) -> Vec<WorkspaceSnapshot> 
 pub(crate) fn apply_worktrees(
     project: &mut WorkspaceSnapshot,
     worktrees: &WorktreeCatalogSnapshot,
+    paths: &PathIndex,
 ) {
-    let project_comparison = normalized_for_comparison(Path::new(&project.path));
-    let Some(listed) = worktrees.projects.iter().find(|listed| {
-        normalized_for_comparison(Path::new(&listed.root_path)) == project_comparison
-    }) else {
+    let project_comparison = paths.comparison(&project.path);
+    let Some(listed) = worktrees
+        .projects
+        .iter()
+        .find(|listed| paths.comparison(&listed.root_path) == project_comparison)
+    else {
         return;
     };
     project.default_branch = listed.default_branch.clone();
     project.branches = listed.branches.clone();
 
-    let repository = git_dir::discover(Path::new(&project.path));
+    // A listed project's path is its main worktree's, in comparison form.
+    let main_root = project_comparison.clone();
     for worktree in &listed.worktrees {
-        let comparison = normalized_for_comparison(Path::new(&worktree.path));
+        let comparison = paths.comparison(&worktree.path);
         let existing = project
             .checkouts
             .iter()
-            .position(|known| normalized_for_comparison(Path::new(&known.path)) == comparison);
+            .position(|known| paths.comparison(&known.path) == comparison);
         let index = match existing {
             Some(index) => index,
             None => {
                 let path = PathBuf::from(&worktree.path);
                 let label = checkout_row_label(worktree.branch.as_deref(), &path);
+                // The row's `worktree` carries the reader's commit, which
+                // `head_sha` prefers; no second copy is made here.
+                let git = git_facts(&main_root, worktree.branch.clone(), None, paths);
                 project.checkouts.push(checkout(
                     &project.id,
                     &path,
                     &label,
-                    worktree.branch.clone(),
-                    // The row's `worktree` carries the reader's commit, which
-                    // `head_sha` prefers; no second copy is made here.
-                    None,
-                    !worktree.is_main,
-                    project.temporary,
+                    (!worktree.is_main, project.temporary),
+                    !worktree.missing,
+                    Some(git),
                 ));
                 project.checkouts.len() - 1
             }
@@ -600,15 +721,17 @@ pub(crate) fn apply_worktrees(
             row.purpose = worktree
                 .branch
                 .as_deref()
-                .and_then(|branch| branch_description(repository.as_ref(), branch));
+                .and_then(|branch| branch_purpose(paths.note(&main_root, branch)));
         }
     }
 
     // The main worktree leads, so the primary badge and the project path
     // agree whichever order the rows were created in.
-    if let Some(index) = project.checkouts.iter().position(|checkout| {
-        normalized_for_comparison(Path::new(&checkout.path)) == project_comparison
-    }) && index != 0
+    if let Some(index) = project
+        .checkouts
+        .iter()
+        .position(|checkout| comparison_by_names(Path::new(&checkout.path)) == project_comparison)
+        && index != 0
     {
         let main = project.checkouts.remove(index);
         project.checkouts.insert(0, main);
@@ -624,9 +747,67 @@ pub(crate) fn checkout_row_label(branch: Option<&str>, path: &Path) -> String {
     })
 }
 
-/// The working tree holding `path`, read from the repository's files.
-pub fn git_root(path: &Path) -> Option<PathBuf> {
-    git_dir::discover(path).map(|repository| repository.root)
+/// What the node in this process says of `paths`, for a test that builds a
+/// catalog by hand.
+#[cfg(test)]
+pub(crate) fn paths_here<I, P>(paths: I) -> PathIndex
+where
+    I: IntoIterator<Item = P>,
+    P: Into<String>,
+{
+    PathIndex::ask(
+        &hide_node::Local::of_process(),
+        paths.into_iter().map(Into::into).collect(),
+    )
+    .expect("the node in this process answers")
+}
+
+/// The paths a catalog of `registrations`, `spaces` and `worktrees` reads, as
+/// the node in this process answers them.
+#[cfg(test)]
+pub(crate) fn catalog_paths_here(
+    registrations: &[WorkspaceRegistration],
+    spaces: &[SessionSpace],
+    worktrees: &WorktreeCatalogSnapshot,
+) -> PathIndex {
+    paths_here(PathIndex::wanted(
+        &crate::node::test_node(),
+        registrations,
+        spaces,
+        worktrees,
+    ))
+}
+
+/// The node in this process, counting what it is asked: a test that reads
+/// `calls` around an ingest proves the ingest asked the node nothing under
+/// the runtime lock.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct CountingNode {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+impl CountingNode {
+    pub(crate) fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+impl NodeLink for CountingNode {
+    fn call(
+        &self,
+        call: Call,
+        timeout: Duration,
+    ) -> Result<hide_node_link::link::LinkAnswer, hide_node_link::link::LinkError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        hide_node::Local::of_process().call(call, timeout)
+    }
+
+    fn in_process(&self) -> bool {
+        true
+    }
 }
 
 /// A base directory for tests that assert what the catalog says about a
@@ -646,7 +827,7 @@ pub(crate) fn temp_base_outside_any_repository() -> &'static Path {
     BASE.get_or_init(|| {
         let preferred = std::env::temp_dir();
         for candidate in [preferred.clone(), PathBuf::from("/tmp")] {
-            if candidate.is_dir() && git_root(&candidate).is_none() {
+            if candidate.is_dir() && hide_project::git::discover(&candidate).is_none() {
                 return candidate;
             }
         }
@@ -659,148 +840,45 @@ pub(crate) fn temp_base_outside_any_repository() -> &'static Path {
     .as_path()
 }
 
-/// What stands at the path a new project would be created at.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProjectFolder {
-    /// Nothing is there; the folder is made.
-    Free,
-    /// A folder holding nothing, or nothing but `.git` (and the `.DS_Store`
-    /// Finder writes when the folder is looked at): what a create that failed
-    /// after making its folder leaves. A retry continues into it, so the same
-    /// intent converges instead of being refused by its own leftover.
-    Leftover,
-    /// Something else is there, a file, a symlink or a folder with contents.
-    Taken,
-}
-
-/// The names a leftover folder may hold: its repository, and what Finder
-/// writes into a folder the operator opened to see why a create failed.
-const LEFTOVER_NAMES: [&str; 2] = [".git", ".DS_Store"];
-
-/// Reads the path a new project would take without following a symlink at it.
-/// The caller has already confined the parent; this judges only the last name.
-pub fn project_folder(path: &Path) -> ProjectFolder {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ProjectFolder::Free,
-        Err(_) => return ProjectFolder::Taken,
-    };
-    if !metadata.is_dir() {
-        return ProjectFolder::Taken;
-    }
-    match fs::read_dir(path) {
-        Ok(mut entries) => {
-            let only_git = entries.all(|entry| {
-                entry
-                    .is_ok_and(|entry| LEFTOVER_NAMES.iter().any(|name| entry.file_name() == *name))
-            });
-            if only_git {
-                ProjectFolder::Leftover
-            } else {
-                ProjectFolder::Taken
-            }
-        }
-        Err(_) => ProjectFolder::Taken,
-    }
-}
-
-/// Makes a new project's folder and a Git repository in it. The repository is
-/// made in this folder even inside another repository's tree, because a new
-/// project is its own repository. A leftover of an earlier attempt is
-/// continued into; anything else at the path is refused and left as it is.
-/// A failure after the folder was made keeps the folder and says so.
-pub fn create_project_folder(path: &Path) -> Result<(), String> {
-    match fs::create_dir(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            if project_folder(path) != ProjectFolder::Leftover {
-                return Err(format!(
-                    "{} already exists; pick another name",
-                    path.display()
-                ));
-            }
-        }
-        Err(error) => return Err(format!("{} could not be made: {error}", path.display())),
-    }
-    if path.join(".git").exists() {
-        return Ok(());
-    }
-    #[cfg(test)]
-    GIT_CALLS.with(|calls| calls.set(calls.get() + 1));
-    let kept = |reason: String| {
-        format!(
-            "{reason}; the folder {} was kept, and creating it again continues there",
-            path.display()
-        )
-    };
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .arg("init")
-        .output()
-        .map_err(|error| kept(format!("git init could not start: {error}")))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(kept(command_failure("git init", &output)))
-    }
-}
-
-pub fn initialize_git(path: &Path) -> Result<(), String> {
-    if git_root(path).is_some() {
-        return Ok(());
-    }
-    #[cfg(test)]
-    GIT_CALLS.with(|calls| calls.set(calls.get() + 1));
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(["init"])
-        .output()
-        .map_err(|error| format!("git init could not start: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(command_failure("git init", &output))
-    }
-}
-
 fn inspect(
     id: &str,
     label: &str,
-    path: &Path,
+    path: &str,
     device_id: &str,
-    registered: bool,
-    temporary: bool,
+    (registered, temporary): (bool, bool),
+    paths: &PathIndex,
 ) -> WorkspaceSnapshot {
-    let normalized = normalized_path(path).unwrap_or_else(|_| path.to_path_buf());
-    let repository = git_dir::discover(&normalized);
-    let git_root_path = repository
-        .as_ref()
-        .map(|repository| repository.root.clone());
-    let is_git = git_root_path.is_some();
+    let repository = paths.place(path);
+    let normalized = paths.comparison(path);
+    let is_git = repository.is_some();
     // One row for where this registration points. The repository's other
     // worktrees are added from the worktree reader's answer, so this stands
     // alone only for a plain folder and for the ticks before the first read.
-    let branch = repository.as_ref().and_then(Repository::branch);
-    let checkouts = match git_root_path.as_deref() {
-        Some(root) => vec![checkout(
-            id,
-            root,
-            &checkout_row_label(branch.as_deref(), root),
-            branch.clone(),
-            repository.as_ref().and_then(Repository::head_oid),
-            false,
-            temporary,
-        )],
+    let branch = repository.and_then(|place| place.branch.clone());
+    let checkouts = match repository {
+        Some(place) => {
+            let root = Path::new(&place.root);
+            vec![checkout(
+                id,
+                root,
+                &checkout_row_label(branch.as_deref(), root),
+                (false, temporary),
+                true,
+                Some(git_facts(
+                    &place.main_root,
+                    branch.clone(),
+                    place.head_oid.clone(),
+                    paths,
+                )),
+            )]
+        }
         None => vec![checkout(
             id,
-            &normalized,
-            &checkout_row_label(None, &normalized),
+            Path::new(&normalized),
+            &checkout_row_label(None, Path::new(&normalized)),
+            (false, temporary),
+            paths.exists(path),
             None,
-            None,
-            false,
-            temporary,
         )],
     };
 
@@ -810,15 +888,14 @@ fn inspect(
         tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
-        path: path::to_wire_lossy(&normalized),
-        // Only this node's paths are inspected: the filesystem read here says
-        // nothing about another machine.
+        path: normalized.clone(),
+        // Only this node's paths are read: its answer says nothing about
+        // another machine.
         remote_target_id: None,
         expanded: true,
         device_id: device_id.to_owned(),
-        repo_name: git_root_path
-            .as_deref()
-            .and_then(|root| root.file_name())
+        repo_name: repository
+            .and_then(|place| Path::new(&place.root).file_name())
             .and_then(|name| name.to_str())
             .unwrap_or(label)
             .to_owned(),
@@ -839,34 +916,53 @@ fn inspect(
     }
 }
 
+/// What a checkout row knows from Git when it is made.
+struct CheckoutGit {
+    branch: Option<String>,
+    head_oid: Option<String>,
+    purpose: Option<CheckoutPurposeSnapshot>,
+    issue: Option<String>,
+}
+
+/// A row's Git facts: its branch and commit, and what the repository at
+/// `main_root` says of the branch.
+fn git_facts(
+    main_root: &str,
+    branch: Option<String>,
+    head_oid: Option<String>,
+    paths: &PathIndex,
+) -> CheckoutGit {
+    let note = branch
+        .as_deref()
+        .and_then(|branch| paths.note(main_root, branch));
+    CheckoutGit {
+        purpose: branch_purpose(note),
+        issue: note.and_then(|note| note.issue.clone()),
+        branch,
+        head_oid,
+    }
+}
+
+/// A checkout row of `path`. `git` is `None` for a folder outside any
+/// repository.
 fn checkout(
     workspace_id: &str,
     path: &Path,
     label: &str,
-    branch: Option<String>,
-    head_oid: Option<String>,
-    is_worktree: bool,
-    temporary: bool,
+    (is_worktree, temporary): (bool, bool),
+    exists: bool,
+    git: Option<CheckoutGit>,
 ) -> CheckoutSnapshot {
-    let repository = git_dir::discover(path);
-    let purpose = branch
-        .as_deref()
-        .and_then(|branch| branch_description(repository.as_ref(), branch));
-    let branch_issue = match repository.as_ref().zip(branch.as_deref()) {
-        Some((repository, branch)) => match repository.branch_issue(branch) {
-            Ok(issue) => issue,
-            Err(error) => {
-                crate::diagnostic!(
-                    serde_json::json!({"component":"checkout_issue", "kind":"config.read_failed", "message":error})
-                );
-                None
-            }
-        },
-        None => None,
-    };
+    let is_primary = git.is_some() && !is_worktree;
+    let git = git.unwrap_or(CheckoutGit {
+        branch: None,
+        head_oid: None,
+        purpose: None,
+        issue: None,
+    });
     CheckoutSnapshot {
-        branch_issue,
-        head_oid,
+        branch_issue: git.issue,
+        head_oid: git.head_oid,
         // A checkout with no Herdr tabs yet: the first one the operator makes
         // here is Tab 1. Reconcile overwrites this the moment Herdr reports any.
         next_tab_label: crate::model::next_tab_label(std::iter::empty()),
@@ -874,11 +970,11 @@ fn checkout(
         workspace_id: workspace_id.to_owned(),
         label: label.to_owned(),
         path: path::to_wire_lossy(path),
-        branch,
-        purpose,
+        branch: git.branch,
+        purpose: git.purpose,
         is_worktree,
-        is_primary: repository.is_some() && !is_worktree,
-        exists: path.exists(),
+        is_primary,
+        exists,
         temporary,
         tabs: Vec::<TabSnapshot>::new(),
         active_tab_id: None,
@@ -889,57 +985,25 @@ fn checkout(
     }
 }
 
-fn branch_description(
-    repository: Option<&Repository>,
-    branch: &str,
-) -> Option<CheckoutPurposeSnapshot> {
-    let repository = repository?;
-    match repository.branch_description(branch) {
-        Ok(Some(text)) => Some(CheckoutPurposeSnapshot {
+fn branch_purpose(note: Option<&BranchNote>) -> Option<CheckoutPurposeSnapshot> {
+    note?
+        .description
+        .clone()
+        .map(|text| CheckoutPurposeSnapshot {
             text,
             origin: CheckoutPurposeOrigin::BranchDescription,
-        }),
-        Ok(None) => None,
-        Err(error) => {
-            crate::diagnostic!(serde_json::json!({
-                "component": "workspace_catalog",
-                "kind": "branch_description.read_failed",
-                "message": error,
-            }));
-            None
-        }
-    }
+        })
 }
 
-fn command_failure(command: &str, output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if stderr.is_empty() {
-        format!("{command} exited with {}", output.status)
-    } else {
-        format!("{command}: {stderr}")
+/// `path` compared by its names: spelled with `/` between names and without
+/// a trailing separator. Links are the node's to resolve (`PathIndex`); the
+/// core only compares what a node already spelled.
+pub fn comparison_by_names(path: &Path) -> String {
+    let wire = path::to_wire_lossy(path);
+    match wire.trim_end_matches('/') {
+        "" if wire.starts_with('/') => "/".to_owned(),
+        trimmed => trimmed.to_owned(),
     }
-}
-
-fn normalized_path(path: &Path) -> Result<PathBuf, String> {
-    if path.as_os_str().is_empty() {
-        return Err("workspace path must not be empty".to_owned());
-    }
-    if path.exists() {
-        identity::canonical(path)
-            .map_err(|error| format!("workspace path could not be resolved: {error}"))
-    } else if let Some(parent) = path.parent().filter(|parent| parent.exists()) {
-        let canonical_parent = identity::canonical(parent)
-            .map_err(|error| format!("workspace parent could not be resolved: {error}"))?;
-        Ok(canonical_parent.join(path.file_name().unwrap_or_default()))
-    } else {
-        Ok(path.to_path_buf())
-    }
-}
-
-pub fn normalized_for_comparison(path: &Path) -> String {
-    path::to_wire_lossy(&normalized_path(path).unwrap_or_else(|_| path.to_path_buf()))
-        .trim_end_matches('/')
-        .to_owned()
 }
 
 pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
@@ -952,6 +1016,24 @@ pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::model::{ProjectWorktreesSnapshot, WorktreeSnapshot};
+    use std::fs;
+    use std::process::Command;
+
+    /// `build_catalog` with the paths the node in this process answers.
+    fn catalog(
+        registrations: &[WorkspaceRegistration],
+        spaces: &[SessionSpace],
+        worktrees: &WorktreeCatalogSnapshot,
+    ) -> Vec<WorkspaceSnapshot> {
+        let paths = catalog_paths_here(registrations, spaces, worktrees);
+        build_catalog(
+            &crate::node::test_node(),
+            registrations,
+            spaces,
+            worktrees,
+            &paths,
+        )
+    }
 
     /// The catalog before the worktree reader has answered. Every case that
     /// is not about worktree rows uses this, so those tests still assert what
@@ -1023,11 +1105,11 @@ mod tests {
     }
 
     // The catalog is rebuilt on the session-sync coordinator, the thread that
-    // applies Herdr's events. With ~30 pane directories a rebuild that ran one
-    // git per fact spawned ~250 processes and held tab, zoom and focus events
-    // for seconds (2026-09-10 audit). Every fact now comes from a file read.
+    // applies Herdr's events, from what the node said of its paths; the node
+    // reads the repositories' own files (2026-09-10 audit: one git per fact
+    // held Herdr's events for seconds).
     #[test]
-    fn the_catalog_is_built_without_running_git() {
+    fn the_catalog_says_what_git_says_from_the_nodes_answer() {
         let (_scratch, root, worktree) = repository_with_worktree("no-spawn");
         let nested = worktree.join("src");
         fs::create_dir_all(&nested).expect("nested directory");
@@ -1054,18 +1136,18 @@ mod tests {
             },
         ];
 
-        let before = git_calls_on_this_thread();
+        let registrations = [demo, plain];
+        let paths = catalog_paths_here(&registrations, &spaces, &no_worktrees());
         let catalog = build_catalog(
             &crate::node::test_node(),
-            &[demo, plain],
+            &registrations,
             &spaces,
             &no_worktrees(),
+            &paths,
         );
-        let roots = root_index(&spaces);
-        assert_eq!(git_calls_on_this_thread(), before, "the catalog ran git");
 
-        // And it still says what git says: the worktree's pane is a checkout
-        // row under the repository it belongs to, on its own branch.
+        // The worktree's pane is a checkout row under the repository it
+        // belongs to, on its own branch.
         let project = catalog
             .iter()
             .find(|project| project.label == "Demo")
@@ -1079,8 +1161,8 @@ mod tests {
         assert!(linked.is_worktree);
         assert_eq!(linked.branch.as_deref(), Some("feature"));
         assert_eq!(
-            normalized_for_comparison(Path::new(&linked.path)),
-            normalized_for_comparison(&worktree)
+            linked.path,
+            path::to_wire_lossy(&fs::canonicalize(&worktree).unwrap())
         );
         let plain = catalog
             .iter()
@@ -1089,8 +1171,8 @@ mod tests {
         assert!(!plain.is_git);
         assert_eq!(plain.session_workspace_ids, vec!["w2".to_owned()]);
         assert_eq!(
-            roots.get(nested.to_str().unwrap()).map(String::as_str),
-            Some(normalized_for_comparison(&worktree).as_str())
+            paths.root(nested.to_str().unwrap()),
+            path::to_wire_lossy(&fs::canonicalize(&worktree).unwrap())
         );
     }
 
@@ -1149,7 +1231,7 @@ mod tests {
 
         let registration = registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE)
             .expect("registration");
-        let snapshot = inspect_registered(&registration);
+        let snapshot = inspect_registered(&registration, &paths_here([registration.path.clone()]));
         // A registration is one row for where it is. The `feature` worktree
         // exists on disk but has no pane, so it is not a checkout row.
         assert!(snapshot.is_git);
@@ -1158,8 +1240,7 @@ mod tests {
         assert_eq!(snapshot.checkouts[0].branch.as_deref(), Some("main"));
 
         // It becomes one once a Herdr workspace has a pane in it.
-        let occupied = build_catalog(
-            &crate::node::test_node(),
+        let occupied = catalog(
             &[],
             &[SessionSpace {
                 id: "w1".to_owned(),
@@ -1189,7 +1270,7 @@ mod tests {
         let (_scratch, root) = temp_dir("flat");
         let registration = registration(root.to_str().unwrap(), "Flat", crate::node::TEST_NODE)
             .expect("registration");
-        let snapshot = inspect_registered(&registration);
+        let snapshot = inspect_registered(&registration, &paths_here([registration.path.clone()]));
         assert!(!snapshot.is_git);
         assert_eq!(snapshot.checkouts.len(), 1);
         assert_eq!(
@@ -1212,8 +1293,7 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         }];
 
-        let catalog = build_catalog(
-            &crate::node::test_node(),
+        let catalog = catalog(
             std::slice::from_ref(&registration),
             &spaces,
             &no_worktrees(),
@@ -1242,18 +1322,12 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let occupied = build_catalog(
-            &crate::node::test_node(),
+        let occupied = catalog(
             std::slice::from_ref(&registration),
             &[space],
             &no_worktrees(),
         );
-        let released = build_catalog(
-            &crate::node::test_node(),
-            std::slice::from_ref(&registration),
-            &[],
-            &no_worktrees(),
-        );
+        let released = catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
 
         assert_eq!(occupied[0].id, released[0].id);
         assert_eq!(occupied[0].label, released[0].label);
@@ -1283,18 +1357,8 @@ mod tests {
                 .expect("second"),
         ];
 
-        let unregistered = build_catalog(
-            &crate::node::test_node(),
-            &[],
-            std::slice::from_ref(&space),
-            &no_worktrees(),
-        );
-        let catalog = build_catalog(
-            &crate::node::test_node(),
-            &registrations,
-            &[space],
-            &no_worktrees(),
-        );
+        let unregistered = catalog(&[], std::slice::from_ref(&space), &no_worktrees());
+        let catalog = catalog(&registrations, &[space], &no_worktrees());
 
         assert_eq!(unregistered.len(), 2);
         assert!(
@@ -1322,7 +1386,7 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let catalog = build_catalog(&crate::node::test_node(), &[], &[space], &no_worktrees());
+        let catalog = catalog(&[], &[space], &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         let canonical = fs::canonicalize(&root).expect("canonical root");
@@ -1350,7 +1414,7 @@ mod tests {
             },
         ];
 
-        let catalog = build_catalog(&crate::node::test_node(), &[], &spaces, &no_worktrees());
+        let catalog = catalog(&[], &spaces, &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].checkouts.len(), 1);
@@ -1433,20 +1497,26 @@ mod tests {
         let alias = root.join("checkout-alias");
         fs::create_dir_all(&nested).expect("checkout fixture");
         hide_platform::fs::link::create_link(&checkout, &alias).expect("checkout symlink");
+        // The spaces carry their cwds as the node reads them, which is where
+        // the link and the `..` are resolved.
+        let alias = alias.to_string_lossy().into_owned();
+        let dotted = nested.join("..").to_string_lossy().into_owned();
+        let paths = paths_here([alias.clone(), dotted.clone()]);
         let spaces = vec![
             SessionSpace {
                 id: "symlink".to_owned(),
                 label: "Symlink".to_owned(),
                 purpose: Some("Earlier".to_owned()),
-                cwds: vec![alias.to_string_lossy().into_owned()],
+                cwds: vec![paths.comparison(&alias)],
             },
             SessionSpace {
                 id: "dot-segment".to_owned(),
                 label: "Dot segment".to_owned(),
                 purpose: None,
-                cwds: vec![nested.join("..").to_string_lossy().into_owned()],
+                cwds: vec![paths.comparison(&dotted)],
             },
         ];
+        let checkout = fs::canonicalize(&checkout).expect("the checkout's real path");
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
             pull_requests: Vec::new(),
@@ -1542,8 +1612,7 @@ mod tests {
             }],
         };
 
-        let catalog = build_catalog(
-            &crate::node::test_node(),
+        let catalog = catalog(
             &[registration],
             &[SessionSpace {
                 id: "w1".to_owned(),
@@ -1562,8 +1631,8 @@ mod tests {
         // gains the counts, rather than becoming a second row beside it.
         let occupied = &rows[0];
         assert_eq!(
-            normalized_for_comparison(Path::new(&occupied.path)),
-            normalized_for_comparison(&root),
+            occupied.path,
+            path::to_wire_lossy(&fs::canonicalize(&root).unwrap()),
             "the main worktree leads"
         );
         assert!(!occupied.is_worktree);
@@ -1613,7 +1682,7 @@ mod tests {
             }],
         };
 
-        let catalog = build_catalog(&crate::node::test_node(), &[registration], &[], &worktrees);
+        let catalog = catalog(&[registration], &[], &worktrees);
 
         let gone = catalog[0]
             .checkouts
@@ -1631,14 +1700,8 @@ mod tests {
         let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
             .expect("registration");
 
-        let before = build_catalog(
-            &crate::node::test_node(),
-            std::slice::from_ref(&registration),
-            &[],
-            &no_worktrees(),
-        );
-        let unrelated = build_catalog(
-            &crate::node::test_node(),
+        let before = catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
+        let unrelated = catalog(
             &[registration],
             &[],
             &WorktreeCatalogSnapshot {
@@ -1660,77 +1723,9 @@ mod tests {
             .expect("registration");
         let registration_id = registration.id.clone();
 
-        let catalog = build_catalog(
-            &crate::node::test_node(),
-            &[registration],
-            &[],
-            &no_worktrees(),
-        );
+        let catalog = catalog(&[registration], &[], &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration_id);
-    }
-
-    /// Create new project makes the folder and its own repository, even inside
-    /// another repository's tree; the same create again continues into what
-    /// it made, and a folder with contents is refused and left untouched.
-    #[test]
-    fn a_new_project_folder_is_made_as_its_own_repository_and_a_retry_converges() {
-        let (_scratch, outer, _worktree) = repository_with_worktree("new-project");
-        let target = outer.join("fresh");
-        assert_eq!(project_folder(&target), ProjectFolder::Free);
-
-        create_project_folder(&target).expect("created");
-        assert!(target.join(".git").is_dir());
-        assert_eq!(
-            git_root(&target).as_deref(),
-            Some(target.canonicalize().unwrap().as_path())
-        );
-        assert_eq!(project_folder(&target), ProjectFolder::Leftover);
-
-        create_project_folder(&target).expect("a retry continues into its own folder");
-        assert_eq!(
-            git_root(&target).as_deref(),
-            Some(target.canonicalize().unwrap().as_path())
-        );
-
-        let empty = outer.join("empty");
-        fs::create_dir(&empty).unwrap();
-        assert_eq!(project_folder(&empty), ProjectFolder::Leftover);
-        create_project_folder(&empty).expect("an empty folder is continued into");
-        assert!(empty.join(".git").is_dir());
-
-        let looked_at = outer.join("looked-at");
-        fs::create_dir(&looked_at).unwrap();
-        fs::write(looked_at.join(".DS_Store"), "finder").unwrap();
-        assert_eq!(project_folder(&looked_at), ProjectFolder::Leftover);
-
-        // A symlink at the name is refused, never followed into its target.
-        #[cfg(unix)]
-        {
-            let (_elsewhere_scratch, elsewhere) = temp_dir("new-project-elsewhere");
-            let link = outer.join("link");
-            std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
-            assert_eq!(project_folder(&link), ProjectFolder::Taken);
-            assert!(create_project_folder(&link).is_err());
-            assert!(!elsewhere.join(".git").exists());
-        }
-
-        let taken = outer.join("taken");
-        fs::create_dir(&taken).unwrap();
-        fs::write(taken.join("notes.md"), "mine\n").unwrap();
-        assert_eq!(project_folder(&taken), ProjectFolder::Taken);
-        let error = create_project_folder(&taken).expect_err("a folder with contents is refused");
-        assert!(error.contains("already exists"), "{error}");
-        assert!(!taken.join(".git").exists());
-        assert_eq!(
-            fs::read_to_string(taken.join("notes.md")).unwrap(),
-            "mine\n"
-        );
-
-        let file = outer.join("file");
-        fs::write(&file, "x").unwrap();
-        assert_eq!(project_folder(&file), ProjectFolder::Taken);
-        assert!(create_project_folder(&file).is_err());
     }
 }

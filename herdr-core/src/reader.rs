@@ -140,6 +140,13 @@ where
         answer
     }
 
+    /// Whether a read was started and not yet joined: its answer may already
+    /// have landed, so a caller joins first to learn whether one runs.
+    #[cfg(test)]
+    pub(crate) fn reading(&self) -> bool {
+        self.worker.is_some()
+    }
+
     /// A bounded reader can cancel its batch, then join outside the runtime
     /// lock so no socket request survives its coordinator's shutdown.
     pub(crate) fn join_pending(&mut self) {

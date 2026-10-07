@@ -203,16 +203,11 @@ fn open_event(target: serde_json::Value) -> Vec<u8> {
 fn opening_a_pull_request_reads_its_sessions_on_the_panels_own_revision() {
     let home = scratch_dir("herdr-core-links-home-");
     claude_session(home.path(), "s-maker", CREATED + 1_000);
-    let shared = Arc::new(Mutex::new(links_runtime(
-        vec![pull_request(7, "4-task", &[3])],
-        true,
-    )));
-    let worker = super::super::links::spawn_worker(
-        &shared,
-        ChangeNotifier::noop(),
-        Some(home.path().to_path_buf()),
-    )
-    .expect("the link worker starts");
+    let mut runtime = links_runtime(vec![pull_request(7, "4-task", &[3])], true);
+    runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
+    let shared = Arc::new(Mutex::new(runtime));
+    let worker = super::super::links::spawn_worker(&shared, ChangeNotifier::noop())
+        .expect("the link worker starts");
 
     assert!(
         shared

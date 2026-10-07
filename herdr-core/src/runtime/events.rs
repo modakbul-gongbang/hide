@@ -2572,6 +2572,13 @@ impl Runtime {
                     return true;
                 };
                 let pane_id = payload.pane_id;
+                if self.pane_alone_unzoomed(&pane_id) {
+                    self.push_diagnostic(
+                        "pane.zoom.single_pane",
+                        format!("Pane {pane_id} is its tab's only pane; zoom was not sent"),
+                    );
+                    return true;
+                }
                 self.push_diagnostic(
                     "pane.zoom.requested",
                     format!("Toggling zoom for pane {pane_id}"),

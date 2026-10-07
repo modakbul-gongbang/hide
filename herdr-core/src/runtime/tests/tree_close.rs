@@ -114,8 +114,15 @@ fn tree_catalog() -> session_sync::PrecomputedCatalog {
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &workspace::catalog_paths_here(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces.iter().flat_map(|space| space.cwds.clone()),
+        )),
     }
 }
 
@@ -139,6 +146,7 @@ fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     assert!(
         runtime.ingest_session_with_catalog(Ok(tree_payload(&EVERY, status)), Some(tree_catalog()))

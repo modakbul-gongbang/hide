@@ -2,16 +2,23 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::process::Command;
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 use crate::agent_start::StartError;
+use hide_node_link::git::{BranchConfigKey, GitCommand};
+use hide_node_link::process::ProcessStart;
+use hide_node_link::protocol::Call;
 
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
 /// A host's Git checks answer in seconds; a removal deletes a whole folder.
 const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOST_REMOVE_TIMEOUT: Duration = Duration::from_secs(120);
+/// A git command on a repository's node: a checkout of a large tree is the
+/// slowest; a branch check and a fetch carry the node's own bound.
+const GIT_TIMEOUT: Duration = Duration::from_secs(120);
+/// A read of a few pids' start times.
+const PROCESS_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where a worktree task runs: the Herdr that creates or closes the
 /// checkout's panes and the file host that answers its Git checks and runs
@@ -20,7 +27,7 @@ const HOST_REMOVE_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Clone)]
 pub struct WorktreeTarget {
     connector: Arc<dyn ApiConnector>,
-    host: Arc<dyn crate::host_access::HostChannel>,
+    host: Arc<dyn crate::node_access::NodeLink>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     /// This machine: a purpose is mirrored into the branch description, and
@@ -31,7 +38,7 @@ pub struct WorktreeTarget {
 impl WorktreeTarget {
     pub(crate) fn local(
         context: &LiveContext,
-        host: Arc<dyn crate::host_access::HostChannel>,
+        host: Arc<dyn crate::node_access::NodeLink>,
     ) -> Self {
         Self {
             connector: Arc::clone(&context.api_connector),
@@ -44,7 +51,7 @@ impl WorktreeTarget {
 
     pub(crate) fn device(
         context: &RemoteControlContext,
-        host: Arc<dyn crate::host_access::HostChannel>,
+        host: Arc<dyn crate::node_access::NodeLink>,
     ) -> Self {
         Self {
             connector: Arc::clone(&context.api_connector),
@@ -64,9 +71,9 @@ pub struct TabTarget {
     connector: Arc<dyn ApiConnector>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
-    /// This machine: a provider missing from this PATH is refused before
-    /// Herdr is asked.
-    local: bool,
+    /// The node whose PATH must hold the chosen agent, asked before Herdr
+    /// is; none for a device, whose own Herdr answers for its PATH.
+    agent_node: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 impl TabTarget {
@@ -75,7 +82,7 @@ impl TabTarget {
             connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
-            local: true,
+            agent_node: Some(Arc::clone(&context.node)),
         }
     }
 
@@ -84,7 +91,7 @@ impl TabTarget {
             connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
-            local: false,
+            agent_node: None,
         }
     }
 }
@@ -103,8 +110,8 @@ pub fn spawn_worktree_preflight(
             Err(_) => return,
         };
         let Some(removal) = request else { return; };
-        let result = crate::host_access::call_as::<()>(target.host.as_ref(),
-            hide_host::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
+        let result = crate::node_access::call_as::<()>(target.host.as_ref(),
+            hide_node_link::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
             .map_err(|error| format!("{}. No panes were closed.", error.to_string().trim_end_matches('.')));
         crate::diagnostic!(serde_json::json!({"component":"worktree_removal", "kind":"preflight_finished", "id":id, "accepted":result.is_ok()}));
         if let Ok(mut guard) = runtime.lock() {
@@ -126,6 +133,7 @@ pub fn spawn_worktree_close(
         .spawn(move || {
             let result = close_checkout_panes(
                 context.connector.as_ref(),
+                context.host.as_ref(),
                 std::slice::from_ref(&checkout_path),
                 &pane_ids,
                 ProcessWait::for_folder_removal(context.local),
@@ -191,18 +199,18 @@ pub fn spawn_worktree_close(
 /// Runs the confirmed removal on the repository's own host. An answer that
 /// never came leaves the removal's effect unknown, which is not a success.
 fn remove_on_host(
-    host: &dyn crate::host_access::HostChannel,
-    removal: hide_host::worktrees::ConfirmedRemoval,
+    host: &dyn crate::node_access::NodeLink,
+    removal: hide_node_link::worktrees::ConfirmedRemoval,
 ) -> Result<String, String> {
     let path = removal.checkout_path.clone();
-    match crate::host_access::call_as::<hide_host::worktrees::RemovalOutcome>(
+    match crate::node_access::call_as::<hide_node_link::worktrees::RemovalOutcome>(
         host,
-        hide_host::protocol::Call::WorktreeRemove { removal },
+        hide_node_link::protocol::Call::WorktreeRemove { removal },
         HOST_REMOVE_TIMEOUT,
     ) {
         Ok(outcome) if outcome.removed => Ok(outcome.message),
         Ok(outcome) => Err(outcome.message),
-        Err(crate::host_access::HostCallError::Unknown(reason)) => Err(format!(
+        Err(crate::node_access::LinkError::Unknown(reason)) => Err(format!(
             "The removal of {path} was sent but its result is unknown ({reason}). Review the worktree again before retrying."
         )),
         Err(error) => Err(format!(
@@ -214,13 +222,13 @@ fn remove_on_host(
 /// Asks the repository's host whether `branch` may be created; nothing is
 /// created by the question.
 fn check_new_branch(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     repository_root: &str,
     branch: &str,
 ) -> Result<(), String> {
-    crate::host_access::call_as::<()>(
+    crate::node_access::call_as::<()>(
         host,
-        hide_host::protocol::Call::BranchCheck {
+        hide_node_link::protocol::Call::BranchCheck {
             path: repository_root.to_owned(),
             branch: branch.to_owned(),
         },
@@ -233,12 +241,12 @@ fn check_new_branch(
 /// when there is none there. A host that did not answer is an error, never a
 /// missing folder: a real worktree is not rolled back for a helper hiccup.
 fn host_directory(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     path: &str,
 ) -> Result<Option<String>, String> {
-    crate::host_access::call_as::<Option<String>>(
+    crate::node_access::call_as::<Option<String>>(
         host,
-        hide_host::protocol::Call::Directory {
+        hide_node_link::protocol::Call::Directory {
             path: path.to_owned(),
         },
         HOST_CHECK_TIMEOUT,
@@ -260,6 +268,7 @@ pub fn spawn_workspace_close(
         .spawn(move || {
             let result = close_checkout_panes(
                 context.connector.as_ref(),
+                context.host.as_ref(),
                 &checkout_paths,
                 &pane_ids,
                 ProcessWait::Skip,
@@ -414,12 +423,16 @@ pub struct PurposeMirror {
 impl PurposeMirror {
     const QUEUE_CAPACITY: usize = 64;
 
-    pub fn new(connector: Arc<dyn ApiConnector>) -> Result<Self, String> {
+    /// `node` holds the repositories whose purposes are mirrored.
+    pub fn new(
+        connector: Arc<dyn ApiConnector>,
+        node: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Result<Self, String> {
         let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
         let worker = thread::Builder::new()
             .name("herdr-core-purpose-mirror".to_owned())
             .spawn(move || {
-                let git = SystemGit;
+                let git = NodeGit(node.as_ref());
                 while let Ok(message) = receiver.recv() {
                     let request = match message {
                         PurposeMirrorMessage::Write(request) => request,
@@ -431,19 +444,19 @@ impl PurposeMirror {
                                     crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.token_cleanup_failed","workspace_id":id,"message":error}));
                                 }
                             }
-                            if let Err(error) = git.unset(&repository_root, &format!("branch.{branch}.issue")) {
+                            if let Err(error) = git.run(&repository_root, GitCommand::UnsetBranchConfig { branch, key: BranchConfigKey::Issue }) {
                                 crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.cleanup_failed","message":error}));
                             }
                             continue;
                         }
                     };
-                    let key = format!("branch.{}.description", request.branch);
-                    let result = match request.purpose.as_deref() {
-                        Some(purpose) => git
-                            .run(&request.repository_root, &["config", &key, purpose])
-                            .map(|_| ()),
-                        None => git.unset(&request.repository_root, &key),
+                    let branch = request.branch.clone();
+                    let key = BranchConfigKey::Description;
+                    let command = match request.purpose.clone() {
+                        Some(value) => GitCommand::SetBranchConfig { branch, key, value },
+                        None => GitCommand::UnsetBranchConfig { branch, key },
                     };
+                    let result = git.run(&request.repository_root, command).map(|_| ());
                     match result {
                         Ok(()) => crate::diagnostic!(serde_json::json!({
                             "component": "checkout_purpose",
@@ -561,8 +574,8 @@ impl PurposeMirror {
                     continue;
                 };
                 let key = (
-                    workspace::normalized_for_comparison(Path::new(&workspace.path)),
-                    workspace::normalized_for_comparison(Path::new(&checkout.path)),
+                    workspace::comparison_by_names(Path::new(&workspace.path)),
+                    workspace::comparison_by_names(Path::new(&checkout.path)),
                     branch.to_owned(),
                 );
                 current.insert(key.clone());
@@ -645,23 +658,37 @@ pub fn spawn_existing_branch_worktree(
     context: WorktreeTarget,
     request: WorktreeTaskRequest,
 ) -> Result<(), String> {
-    spawn_worktree_task(context, request, |_, request| {
-        request.base_branch = existing_branch_base(&request.repository_root, &request.branch)?;
+    spawn_worktree_task(context, request, |context, request| {
+        request.base_branch = existing_branch_base(
+            &NodeGit(context.host.as_ref()),
+            &request.repository_root,
+            &request.branch,
+        )?;
         Ok(())
     })
 }
 
 /// `None` when `branch` is a local branch, else `origin/<branch>` once it
 /// has been fetched from `origin`.
-fn existing_branch_base(repository_root: &str, branch: &str) -> Result<Option<String>, String> {
-    let root = Path::new(repository_root);
-    let local = format!("refs/heads/{branch}");
-    if hide_host::worktrees::git(root, &["show-ref", "--verify", "--quiet", &local]).is_ok() {
+fn existing_branch_base(
+    git: &dyn GitCommands,
+    repository_root: &str,
+    branch: &str,
+) -> Result<Option<String>, String> {
+    let branch = branch.to_owned();
+    let has_local = GitCommand::HasLocalBranch {
+        branch: branch.clone(),
+    };
+    if git.run(repository_root, has_local).is_ok() {
         return Ok(None);
     }
-    let refspec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
-    hide_host::worktrees::git(root, &["fetch", "--no-tags", "origin", &refspec])
-        .map_err(|error| format!("fetch {branch} from origin: {error}"))?;
+    git.run(
+        repository_root,
+        GitCommand::FetchBranch {
+            branch: branch.clone(),
+        },
+    )
+    .map_err(|error| format!("fetch {branch} from origin: {error}"))?;
     Ok(Some(format!("origin/{branch}")))
 }
 
@@ -702,7 +729,7 @@ fn spawn_worktree_task(
                 context.connector.as_ref(),
                 &context.runtime,
                 &context.notifier,
-                context.local,
+                context.local.then_some(context.host.as_ref()),
                 request.id,
             );
         })
@@ -717,7 +744,7 @@ pub fn spawn_purpose_write(
     thread::Builder::new()
         .name("herdr-core-purpose-write".into())
         .spawn(move || {
-            let git = SystemGit;
+            let git = NodeGit(context.node.as_ref());
             let result = write_purpose(context.api_connector.as_ref(), &git, &request);
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
@@ -753,7 +780,7 @@ fn write_issue_metadata(
     previous: Option<&str>,
 ) -> Result<(), IssueWriteFailure> {
     let (detail, token_may_have_changed) =
-        match write_workspace_metadata(connector, git, request, "issue", "issue") {
+        match write_workspace_metadata(connector, git, request, "issue", BranchConfigKey::Issue) {
             Ok(PurposeTaskOutcome::Saved { .. }) => return Ok(()),
             Ok(PurposeTaskOutcome::GitFailed {
                 detail,
@@ -793,6 +820,7 @@ pub fn spawn_issue_write(
                         .map_err(IssueWriteFailure::unchanged)?;
                     Some(
                         crate::github::read_linked_issue(
+                            context.node.as_ref(),
                             Path::new(&request.repository_root),
                             &reference,
                         )
@@ -801,7 +829,7 @@ pub fn spawn_issue_write(
                 };
                 write_issue_metadata(
                     context.api_connector.as_ref(),
-                    &SystemGit,
+                    &NodeGit(context.node.as_ref()),
                     &request,
                     previous.as_deref(),
                 )?;
@@ -830,7 +858,7 @@ pub fn spawn_local_issue_write(
         .spawn(move || {
             let result = write_issue_metadata(
                 context.api_connector.as_ref(),
-                &SystemGit,
+                &NodeGit(context.node.as_ref()),
                 &request,
                 previous.as_deref(),
             )
@@ -853,7 +881,7 @@ pub fn spawn_remote_purpose_write(
     thread::Builder::new()
         .name("herdr-core-remote-purpose-write".into())
         .spawn(move || {
-            let git = SystemGit;
+            let git = HerdrOnly;
             let result = write_purpose(context.api_connector.as_ref(), &git, &request);
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
@@ -906,6 +934,9 @@ pub enum TaskAgentOutcome {
 /// little longer so a slow start is not reported as an unknown one.
 const AGENT_START_TIMEOUT_MS: u64 = 120_000;
 
+/// A PATH lookup on the node: a directory walk, nothing that should wait.
+const AGENT_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Starts the agent the task chose, in the pane the task created, and hands
 /// the answer back on its own axis. The creation was already published, so a
 /// failure here never hides the worktree or the pane.
@@ -913,7 +944,7 @@ fn start_task_agent(
     connector: &dyn ApiConnector,
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
-    local: bool,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
 ) {
     let Some(runtime) = runtime.upgrade() else {
@@ -926,7 +957,7 @@ fn start_task_agent(
     let Some(start) = pending else {
         return;
     };
-    let outcome = launch_with_prompt(connector, local, id, start);
+    let outcome = launch_with_prompt(connector, agent_node, id, start);
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
@@ -946,7 +977,7 @@ fn start_task_agent(
 /// that sent it keeps the text.
 fn launch_with_prompt(
     connector: &dyn ApiConnector,
-    local: bool,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     start: PendingAgentStart,
 ) -> TaskAgentOutcome {
@@ -963,7 +994,16 @@ fn launch_with_prompt(
             Err(message) => return TaskAgentOutcome::Failed(message),
         }
     }
-    launch_agent(connector, local, id, &pane_id, &kind, args, codex_daemon).into()
+    launch_agent(
+        connector,
+        agent_node,
+        id,
+        &pane_id,
+        &kind,
+        args,
+        codex_daemon,
+    )
+    .into()
 }
 
 /// The longest first prompt, in bytes once encoded, that a start carries.
@@ -1017,7 +1057,7 @@ pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), St
                 context.connector.as_ref(),
                 &context.runtime,
                 &context.notifier,
-                context.local,
+                context.local.then_some(context.host.as_ref()),
                 id,
             )
         })
@@ -1049,7 +1089,7 @@ impl From<Launch> for TaskAgentOutcome {
 
 fn launch_agent(
     connector: &dyn ApiConnector,
-    local: bool,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     pane_id: &str,
     kind: &str,
@@ -1059,10 +1099,26 @@ fn launch_agent(
     // Herdr would type the command into the pane's shell and wait for an
     // agent that can never appear; say so before asking it. A device's PATH
     // is not this machine's, so there its Herdr answers for it.
-    if local && hide_ai::resolve_binary(Path::new(kind)).is_none() {
-        return Launch::Failed(format!(
-            "{kind} is not installed on the daemon's PATH. Install it, then retry."
-        ));
+    if let Some(node) = agent_node {
+        match crate::node_access::call_as::<bool>(
+            node,
+            Call::AgentInstalled {
+                name: kind.to_owned(),
+            },
+            AGENT_CHECK_TIMEOUT,
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Launch::Failed(format!(
+                    "{kind} is not installed on the daemon's PATH. Install it, then retry."
+                ));
+            }
+            Err(error) => {
+                return Launch::Failed(format!(
+                    "Could not check whether {kind} is installed ({error}). Retry."
+                ));
+            }
+        }
     }
     let name = crate::fork::task_agent_name(kind, pane_id);
     let params = match wire::agent_start_params(pane_id, &name, kind, args, codex_daemon) {
@@ -1120,13 +1176,13 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
         target.connector.as_ref(),
         &target.runtime,
         &target.notifier,
-        target.local,
+        target.agent_node.as_deref(),
         request.id,
     );
 }
 
 /// How long the helper may take to bring a Home in step: a stat per
-/// project and a link each, at most [`hide_host::home::MAX_LINKS`].
+/// project and a link each, at most [`hide_node_link::home::MAX_LINKS`].
 const HOME_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A Home start or a new tab in Home (PRD home-device-rail D-04): the
@@ -1136,7 +1192,7 @@ pub struct HomeStartRequest {
     pub id: u64,
     pub device_id: String,
     pub projects: Vec<String>,
-    pub host: Arc<dyn crate::host_access::HostChannel>,
+    pub host: Arc<dyn crate::node_access::NodeLink>,
 }
 
 /// Brings the device's Home in step with its projects, then opens a tab in
@@ -1176,7 +1232,7 @@ pub fn spawn_home_link_sync(
     runtime: Weak<Mutex<Runtime>>,
     device_id: String,
     projects: Vec<String>,
-    host: Arc<dyn crate::host_access::HostChannel>,
+    host: Arc<dyn crate::node_access::NodeLink>,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-home-link-sync".into())
@@ -1193,12 +1249,12 @@ pub fn spawn_home_link_sync(
 }
 
 fn sync_home(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     projects: &[String],
-) -> Result<hide_host::home::HomeSynced, crate::host_access::HostCallError> {
-    crate::host_access::call_as(
+) -> Result<hide_node_link::home::HomeSynced, crate::node_access::LinkError> {
+    crate::node_access::call_as(
         host,
-        hide_host::protocol::Call::HomeSync {
+        hide_node_link::protocol::Call::HomeSync {
             projects: projects.to_vec(),
         },
         HOME_SYNC_TIMEOUT,
@@ -1238,13 +1294,19 @@ fn create_checkout_tab(
 
 pub fn spawn_branch_migration(
     context: LiveContext,
+    host: Arc<dyn crate::node_access::NodeLink>,
     request: WorktreeTaskRequest,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-branch-migrate".into())
         .spawn(move || {
-            let runner = SystemGit;
-            let result = migrate_branch(context.api_connector.as_ref(), &runner, &request);
+            let runner = NodeGit(host.as_ref());
+            let result = migrate_branch(
+                context.api_connector.as_ref(),
+                host.as_ref(),
+                &runner,
+                &request,
+            );
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_task_operation_result(request.id, result);
@@ -1260,7 +1322,7 @@ pub fn spawn_branch_migration(
 
 fn create_worktree(
     connector: &dyn ApiConnector,
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     local: bool,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
@@ -1269,7 +1331,7 @@ fn create_worktree(
 
 fn create_worktree_observing_purpose(
     connector: &dyn ApiConnector,
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     local: bool,
     request: &WorktreeTaskRequest,
     on_purpose_write: impl FnOnce(&str, &str),
@@ -1313,7 +1375,7 @@ fn create_worktree_observing_purpose(
     if identity_matches {
         let purpose_failure = request.purpose.as_ref().and_then(|purpose| {
             on_purpose_write(&created.path, purpose);
-            let git = SystemGit;
+            let git = NodeGit(host);
             let purpose_request = PurposeTaskRequest {
                 id: request.id,
                 checkout_id: String::new(),
@@ -1337,7 +1399,7 @@ fn create_worktree_observing_purpose(
                 session_workspace_id: Some(created.workspace_id.clone()),
                 purpose: issue.clone(),
             };
-            write_issue_metadata(connector, &SystemGit, &issue_request, None)
+            write_issue_metadata(connector, &NodeGit(host), &issue_request, None)
                 .err()
                 .map(|failure| failure.detail)
         });
@@ -1405,53 +1467,34 @@ fn create_worktree_observing_purpose(
 }
 
 trait GitCommands {
-    fn run(&self, cwd: &str, args: &[&str]) -> Result<String, String>;
+    fn run(&self, cwd: &str, command: GitCommand) -> Result<String, String>;
+}
 
-    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
-        self.run(cwd, &["config", "--unset-all", key]).map(|_| ())
+/// The git of the node that holds the repository.
+struct NodeGit<'a>(&'a dyn crate::node_access::NodeLink);
+
+impl GitCommands for NodeGit<'_> {
+    fn run(&self, cwd: &str, command: GitCommand) -> Result<String, String> {
+        crate::node_access::call_as(
+            self.0,
+            Call::Git {
+                root: cwd.to_owned(),
+                command,
+            },
+            GIT_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
-struct SystemGit;
-impl GitCommands for SystemGit {
-    fn run(&self, cwd: &str, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .output()
-            .map_err(|error| format!("git could not be run: {error}"))?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        } else {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            Err(if detail.is_empty() {
-                format!("git {} exited with {}", args[0], output.status)
-            } else {
-                format!("git {}: {detail}", args[0])
-            })
-        }
-    }
+/// A device checkout keeps its purpose in Herdr's metadata only; the branch
+/// description mirror is this machine's (B30), so a device write never asks
+/// for git.
+struct HerdrOnly;
 
-    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
-        let output = Command::new("git")
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(cwd)
-            .args(["config", "--unset-all", key])
-            .output()
-            .map_err(|error| format!("git could not be run: {error}"))?;
-        if output.status.success() || output.status.code() == Some(5) {
-            Ok(())
-        } else {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            Err(if detail.is_empty() {
-                format!("git config exited with {}", output.status)
-            } else {
-                format!("git config: {detail}")
-            })
-        }
+impl GitCommands for HerdrOnly {
+    fn run(&self, _cwd: &str, _command: GitCommand) -> Result<String, String> {
+        Err("A device checkout keeps its purpose in Herdr only".to_owned())
     }
 }
 
@@ -1460,7 +1503,13 @@ fn write_purpose(
     git: &dyn GitCommands,
     request: &PurposeTaskRequest,
 ) -> Result<PurposeTaskOutcome, String> {
-    write_workspace_metadata(connector, git, request, "purpose", "description")
+    write_workspace_metadata(
+        connector,
+        git,
+        request,
+        "purpose",
+        BranchConfigKey::Description,
+    )
 }
 
 fn write_workspace_metadata(
@@ -1468,7 +1517,7 @@ fn write_workspace_metadata(
     git: &dyn GitCommands,
     request: &PurposeTaskRequest,
     token: &str,
-    config_key: &str,
+    config_key: BranchConfigKey,
 ) -> Result<PurposeTaskOutcome, String> {
     let purpose = request.purpose.trim().to_owned();
     if purpose.chars().count() > 80 {
@@ -1502,16 +1551,20 @@ fn write_workspace_metadata(
             token_written,
         });
     };
-    let key = format!("branch.{branch}.{config_key}");
-    let git_result = if purpose.is_empty() {
-        git.unset(&request.repository_root, &key)
+    let branch = branch.to_owned();
+    let command = if purpose.is_empty() {
+        GitCommand::UnsetBranchConfig {
+            branch,
+            key: config_key,
+        }
     } else {
-        git.run(
-            &request.repository_root,
-            &["config", &key, purpose.as_str()],
-        )
-        .map(|_| ())
+        GitCommand::SetBranchConfig {
+            branch,
+            key: config_key,
+            value: purpose.clone(),
+        }
     };
+    let git_result = git.run(&request.repository_root, command).map(|_| ());
     match git_result {
         Ok(()) => Ok(PurposeTaskOutcome::Saved {
             purpose,
@@ -1579,22 +1632,17 @@ fn write_created_purpose(
 
 fn migrate_branch(
     connector: &dyn ApiConnector,
+    host: &dyn crate::node_access::NodeLink,
     git: &dyn GitCommands,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
-    let status = git.run(
-        &request.repository_root,
-        &["status", "--porcelain=v1", "--untracked-files=all"],
-    )?;
+    let status = git.run(&request.repository_root, GitCommand::Status)?;
     if !status.is_empty() {
         return Err(
             "preflight: commit or discard uncommitted changes before moving the branch".into(),
         );
     }
-    let original = git.run(
-        &request.repository_root,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-    )?;
+    let original = git.run(&request.repository_root, GitCommand::CurrentBranch)?;
     let Some(base) = request.base_branch.as_deref() else {
         return Err("preflight: the project base branch is unknown".into());
     };
@@ -1603,7 +1651,9 @@ fn migrate_branch(
     }
     git.run(
         &request.repository_root,
-        &["checkout", "--no-overwrite-ignore", base],
+        GitCommand::Checkout {
+            branch: base.to_owned(),
+        },
     )
     .map_err(|error| format!("checkout base branch: {error}"))?;
 
@@ -1614,26 +1664,20 @@ fn migrate_branch(
         issue: None,
         ..request.clone()
     };
-    match create_worktree(
-        connector,
-        &crate::host_access::InProcessHost,
-        true,
-        &create_request,
-    ) {
+    match create_worktree(connector, host, true, &create_request) {
         Ok(outcome) => Ok(outcome),
         Err(create_error) => match git.run(
             &request.repository_root,
-            &["checkout", "--no-overwrite-ignore", &original],
+            GitCommand::Checkout {
+                branch: original.clone(),
+            },
         ) {
             Ok(_) => Err(format!(
                 "create worktree: {create_error}; restored the main worktree to {original}"
             )),
             Err(restore_error) => {
                 let current = git
-                    .run(
-                        &request.repository_root,
-                        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-                    )
+                    .run(&request.repository_root, GitCommand::CurrentBranch)
                     .unwrap_or_else(|_| "an unknown branch".into());
                 Err(format!(
                     "restore original branch: {restore_error}. The main worktree is now on {current}. After resolving the Git error, open the repository at {} and check out {original}.",
@@ -1681,21 +1725,31 @@ struct PaneProcess {
     started: u64,
 }
 
-impl PaneProcess {
-    /// Only a process that does not exist, or is another one now, has ended;
-    /// a process that cannot be read is not claimed to be gone.
-    fn has_ended(&self) -> Result<bool, String> {
-        match hide_platform::process::start_time(self.pid) {
-            Ok(started) => Ok(started != self.started),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
-            Err(error) => Err(format!("process {} could not be read: {error}", self.pid)),
-        }
+/// What `node`'s kernel says about each of `pids`, in order.
+fn process_starts(
+    node: &dyn crate::node_access::NodeLink,
+    pids: Vec<u32>,
+) -> Result<Vec<ProcessStart>, String> {
+    let asked = pids.len();
+    let starts: Vec<ProcessStart> =
+        crate::node_access::call_as(node, Call::ProcessStarts { pids }, PROCESS_READ_TIMEOUT)
+            .map_err(|error| format!("the pane processes could not be read: {error}"))?;
+    if starts.len() != asked {
+        return Err(format!(
+            "the pane processes could not be read: {asked} asked, {} answered",
+            starts.len()
+        ));
     }
+    Ok(starts)
 }
 
 /// The shell and foreground processes Herdr reports for `pane_id`. A process
 /// that already ended is not listed: there is nothing to wait for.
-fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<PaneProcess>, String> {
+fn pane_processes(
+    connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    pane_id: &str,
+) -> Result<Vec<PaneProcess>, String> {
     let value = control_request(
         connector,
         "pane.process_info",
@@ -1712,11 +1766,11 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
     pids.sort_unstable();
     pids.dedup();
     let mut running = Vec::new();
-    for pid in pids {
-        match hide_platform::process::start_time(pid) {
-            Ok(started) => running.push(PaneProcess { pid, started }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("process {pid} could not be read: {error}")),
+    for (pid, start) in pids.clone().into_iter().zip(process_starts(node, pids)?) {
+        match start {
+            ProcessStart::Running { started } => running.push(PaneProcess { pid, started }),
+            ProcessStart::Gone => {}
+            ProcessStart::Unreadable { reason } => return Err(reason),
         }
     }
     Ok(running)
@@ -1726,18 +1780,28 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
 /// more at the deadline, and names the pids still running when it does.
 /// `pause` is how long it lets the processes go on, which a test replaces.
 fn wait_for_processes_to_end(
+    node: &dyn crate::node_access::NodeLink,
     held: &mut Vec<PaneProcess>,
     deadline: Instant,
     mut pause: impl FnMut(Duration),
 ) -> Result<(), String> {
     loop {
-        let mut running = Vec::new();
-        for process in held.drain(..) {
-            if !process.has_ended()? {
-                running.push(process);
+        if !held.is_empty() {
+            let starts = process_starts(node, held.iter().map(|process| process.pid).collect())?;
+            let mut running = Vec::new();
+            // Only a process that does not exist, or is another one now, has
+            // ended; a process that cannot be read is not claimed to be gone.
+            for (process, start) in held.drain(..).zip(starts) {
+                match start {
+                    ProcessStart::Running { started } if started == process.started => {
+                        running.push(process);
+                    }
+                    ProcessStart::Running { .. } | ProcessStart::Gone => {}
+                    ProcessStart::Unreadable { reason } => return Err(reason),
+                }
             }
+            *held = running;
         }
-        *held = running;
         if held.is_empty() {
             return Ok(());
         }
@@ -1764,6 +1828,7 @@ fn wait_for_processes_to_end(
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn close_checkout_panes(
     connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
     paths: &[String],
     pane_ids: &[String],
     wait: ProcessWait,
@@ -1777,7 +1842,7 @@ pub(crate) fn close_checkout_panes(
         let mut held = Vec::new();
         if wait == ProcessWait::ForEnd {
             for pane_id in pane_ids {
-                held.extend(pane_processes(connector, pane_id)?);
+                held.extend(pane_processes(connector, node, pane_id)?);
             }
         }
         for pane_id in pane_ids {
@@ -1813,7 +1878,7 @@ pub(crate) fn close_checkout_panes(
             let (present, pane_at_checkout) = confirmation_state(panes, paths)?;
             if pane_ids.iter().all(|id| !present.contains(id)) && !pane_at_checkout {
                 // Herdr has nothing more to say; only the processes remain.
-                return wait_for_processes_to_end(&mut held, deadline, thread::sleep);
+                return wait_for_processes_to_end(node, &mut held, deadline, thread::sleep);
             }
             thread::sleep(CONFIRM_POLL.min(deadline.saturating_duration_since(Instant::now())));
         }
@@ -1975,11 +2040,8 @@ mod tests {
         }
     }
     impl GitCommands for ScriptedGit {
-        fn run(&self, _cwd: &str, args: &[&str]) -> Result<String, String> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+        fn run(&self, _cwd: &str, command: GitCommand) -> Result<String, String> {
+            self.calls.lock().unwrap().push(command.args());
             self.replies
                 .lock()
                 .unwrap()
@@ -2023,10 +2085,17 @@ mod tests {
             &git,
             &purpose_request("acme/project#42"),
             "issue",
-            "issue",
+            BranchConfigKey::Issue,
         )
         .unwrap();
-        write_workspace_metadata(&server, &git, &purpose_request(""), "issue", "issue").unwrap();
+        write_workspace_metadata(
+            &server,
+            &git,
+            &purpose_request(""),
+            "issue",
+            BranchConfigKey::Issue,
+        )
+        .unwrap();
         let requests = server.requests.lock().unwrap();
         assert_eq!(requests[0]["params"]["tokens"]["issue"], "acme/project#42");
         assert!(requests[1]["params"]["tokens"]["issue"].is_null());
@@ -2327,7 +2396,7 @@ mod tests {
         };
 
         let suppressed = HashMap::from([(
-            workspace::normalized_for_comparison(Path::new("/fixture/repo/worktrees/topic")),
+            workspace::comparison_by_names(Path::new("/fixture/repo/worktrees/topic")),
             "Initial purpose".to_owned(),
         )]);
         mirror.sync(
@@ -2550,6 +2619,7 @@ mod tests {
         ]);
         let result = close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             ProcessWait::Skip,
@@ -2568,6 +2638,7 @@ mod tests {
         ]);
         close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             ProcessWait::Skip,
@@ -2605,6 +2676,7 @@ mod tests {
             assert!(
                 close_checkout_panes(
                     &server,
+                    &hide_node::Local::of_process(),
                     &["/fixture/topic".into()],
                     &["w1:p1".into()],
                     ProcessWait::Skip,
@@ -2646,12 +2718,17 @@ mod tests {
         let mut child = LongLived::start();
         let pid = child.0.id();
         let server = server(vec![process_info("w1:p1", pid)]);
-        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        let mut held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
         let mut pauses = 0;
-        wait_for_processes_to_end(&mut held, Instant::now() + CONFIRM_TIMEOUT, |_| {
-            pauses += 1;
-            child.end();
-        })
+        wait_for_processes_to_end(
+            &hide_node::Local::of_process(),
+            &mut held,
+            Instant::now() + CONFIRM_TIMEOUT,
+            |_| {
+                pauses += 1;
+                child.end();
+            },
+        )
         .unwrap();
         assert_eq!(
             pauses, 1,
@@ -2666,12 +2743,15 @@ mod tests {
         let child = LongLived::start();
         let pid = child.0.id();
         let server = server(vec![process_info("w1:p1", pid)]);
-        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        let mut held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
         assert_eq!(held.len(), 1);
         // A deadline that has passed still checks once before it fails.
-        let error = wait_for_processes_to_end(&mut held, Instant::now(), |_| {
-            panic!("no time is left to wait")
-        })
+        let error = wait_for_processes_to_end(
+            &hide_node::Local::of_process(),
+            &mut held,
+            Instant::now(),
+            |_| panic!("no time is left to wait"),
+        )
         .unwrap_err();
         assert!(
             error.contains(&format!("still running (pid {pid})")),
@@ -2685,8 +2765,13 @@ mod tests {
             pid: u32::MAX - 1,
             started: 1,
         }];
-        wait_for_processes_to_end(&mut held, Instant::now(), |_| panic!("nothing to wait for"))
-            .unwrap();
+        wait_for_processes_to_end(
+            &hide_node::Local::of_process(),
+            &mut held,
+            Instant::now(),
+            |_| panic!("nothing to wait for"),
+        )
+        .unwrap();
         assert!(held.is_empty());
     }
 
@@ -2696,13 +2781,15 @@ mod tests {
         for shell in [0, 1, u32::MAX - 1] {
             let server = server(vec![process_info("w1:p1", shell)]);
             assert!(
-                pane_processes(&server, "w1:p1").unwrap().is_empty(),
+                pane_processes(&server, &hide_node::Local::of_process(), "w1:p1")
+                    .unwrap()
+                    .is_empty(),
                 "pid {shell}"
             );
         }
         // The shell is also the foreground process, and is listed once.
         let server = server(vec![process_info("w1:p1", me)]);
-        let held = pane_processes(&server, "w1:p1").unwrap();
+        let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
         assert_eq!(
             held.iter().map(|process| process.pid).collect::<Vec<_>>(),
             [me]
@@ -2716,6 +2803,7 @@ mod tests {
         ]);
         let error = close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             ProcessWait::ForEnd,
@@ -2731,6 +2819,7 @@ mod tests {
         let server = server(vec![json!({"result":{"type":"ok"}}), snapshot(&[])]);
         close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into()],
             ProcessWait::Skip,
@@ -2746,6 +2835,7 @@ mod tests {
         assert!(
             close_checkout_panes(
                 &server,
+                &hide_node::Local::of_process(),
                 &["/fixture/topic".into()],
                 &["w1:p1".into()],
                 ProcessWait::Skip,
@@ -2795,7 +2885,7 @@ mod tests {
         ]);
         let error = create_worktree(
             &server,
-            &crate::host_access::InProcessHost,
+            &hide_node::Local::of_process(),
             true,
             &task("feature"),
         )
@@ -2825,14 +2915,13 @@ mod tests {
     #[test]
     fn an_unanswered_folder_check_keeps_the_created_worktree() {
         struct Busy;
-        impl crate::host_access::HostChannel for Busy {
+        impl crate::node_access::NodeLink for Busy {
             fn call(
                 &self,
-                _call: hide_host::protocol::Call,
+                _call: hide_node_link::protocol::Call,
                 _timeout: std::time::Duration,
-            ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError>
-            {
-                Err(crate::host_access::HostCallError::Unknown(
+            ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+                Err(crate::node_access::LinkError::Unknown(
                     "The device did not answer in time".to_owned(),
                 ))
             }
@@ -2878,7 +2967,7 @@ mod tests {
 
         let outcome = create_worktree(
             &server,
-            &crate::host_access::InProcessHost,
+            &hide_node::Local::of_process(),
             true,
             &task("feature"),
         )
@@ -2900,7 +2989,13 @@ mod tests {
     fn migrate_branch_blocked_when_dirty() {
         let git = ScriptedGit::new(vec![Ok(" M file")]);
         let server = server(vec![]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("uncommitted changes"));
         assert!(server.requests.lock().unwrap().is_empty());
     }
@@ -2915,7 +3010,13 @@ mod tests {
             worktree_list(&path, "feature"),
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok("")]);
-        let outcome = migrate_branch(&server, &git, &task("feature")).unwrap();
+        let outcome = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap();
         assert_eq!(outcome.path, path);
         assert_eq!(
             git.calls.lock().unwrap()[2],
@@ -2938,7 +3039,13 @@ mod tests {
             json!({"error":{"code":"injected","message":"pane creation failed"}}),
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok(""), Ok("")]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
             git.calls.lock().unwrap()[3],
@@ -2962,7 +3069,12 @@ mod tests {
         let server = server(vec![
             json!({"error":{"code":"injected","message":"create failed"}}),
         ]);
-        let _ = migrate_branch(&server, &git, &task("feature"));
+        let _ = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        );
         assert!(
             server
                 .requests
@@ -2981,7 +3093,13 @@ mod tests {
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok(""), Ok("")]);
 
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
 
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
@@ -3005,7 +3123,13 @@ mod tests {
             Err("injected checkout failure"),
         ]);
         let server = server(vec![]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("checkout base branch"));
         assert_eq!(git.calls.lock().unwrap().len(), 3);
         assert!(server.requests.lock().unwrap().is_empty());
@@ -3049,18 +3173,16 @@ mod tests {
             base_branch: Some("main".into()),
             ..task("feature")
         };
-        let error = migrate_branch(&server, &SystemGit, &request).unwrap_err();
+        let node = hide_node::Local::of_process();
+        let error = migrate_branch(&server, &node, &NodeGit(&node), &request).unwrap_err();
 
         assert!(error.contains("checkout base branch"));
         assert_eq!(
             std::fs::read_to_string(root.join("ignored.txt")).unwrap(),
             "private ignored bytes"
         );
-        let branch = SystemGit
-            .run(
-                root.to_str().unwrap(),
-                &["symbolic-ref", "--quiet", "--short", "HEAD"],
-            )
+        let branch = NodeGit(&node)
+            .run(root.to_str().unwrap(), GitCommand::CurrentBranch)
             .unwrap();
         assert_eq!(branch, "feature");
         assert!(server.requests.lock().unwrap().is_empty());
@@ -3078,7 +3200,13 @@ mod tests {
             Err("injected restore failure"),
             Ok("main"),
         ]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("main worktree is now on main"));
         assert!(error.contains("open the repository at /fixture/repo and check out feature"));
     }
@@ -3122,7 +3250,7 @@ mod tests {
             .into();
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3155,7 +3283,7 @@ mod tests {
         let server = server(vec![]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3172,6 +3300,50 @@ mod tests {
         assert!(requests_of(&server).is_empty());
     }
 
+    /// The chosen agent is looked up on the node that would run it, and one
+    /// it lacks fails the start before Herdr types anything into the pane.
+    #[test]
+    fn an_agent_missing_from_its_node_fails_before_contacting_herdr() {
+        struct Missing(Mutex<Vec<hide_node_link::protocol::Call>>);
+        impl crate::node_access::NodeLink for Missing {
+            fn call(
+                &self,
+                call: hide_node_link::protocol::Call,
+                _timeout: std::time::Duration,
+            ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+                self.0.lock().unwrap().push(call);
+                Ok(crate::node_access::LinkAnswer::Parsed(json!(false)))
+            }
+        }
+        let node = Missing(Mutex::default());
+        let server = server(vec![]);
+        let outcome = launch_with_prompt(
+            &server,
+            Some(&node),
+            7,
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: None,
+                args: Vec::new(),
+                codex_daemon: Default::default(),
+            },
+        );
+        assert_eq!(
+            outcome,
+            TaskAgentOutcome::Failed(
+                "claude is not installed on the daemon's PATH. Install it, then retry.".into()
+            )
+        );
+        assert_eq!(
+            *node.0.lock().unwrap(),
+            [hide_node_link::protocol::Call::AgentInstalled {
+                name: "claude".into()
+            }]
+        );
+        assert!(requests_of(&server).is_empty());
+    }
+
     #[test]
     fn a_codex_with_the_shared_daemon_starts_without_it() {
         let server = server(vec![
@@ -3180,7 +3352,7 @@ mod tests {
         ]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3209,7 +3381,7 @@ mod tests {
         ]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3240,7 +3412,7 @@ mod tests {
         let server = server(vec![]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3266,7 +3438,7 @@ mod tests {
         assert!(prompt_argument(&at_cap).is_ok());
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3293,7 +3465,7 @@ mod tests {
         ]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),

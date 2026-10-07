@@ -10,18 +10,8 @@
 
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::{ErrorCode, HostError, HostResult};
-
-/// The project a registrable folder belongs to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Registrable {
-    /// The project's root: the main worktree of its repository, or the
-    /// folder itself.
-    pub root: String,
-    pub is_git: bool,
-}
+pub use hide_node_link::register::Registrable;
 
 pub fn check(path: &Path, home: &Path) -> HostResult<Registrable> {
     let home = hide_platform::fs::identity::canonical(home).map_err(|error| {

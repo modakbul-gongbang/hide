@@ -47,14 +47,14 @@ fn schema() -> Value {
 
 fn request(deadline: Duration) -> AiRequest {
     AiRequest {
-        feature_id: "fixture",
+        feature_id: "fixture".into(),
         request_id: RequestId("req-1".to_owned()),
         subject_id: "pane-1".to_owned(),
         system: "Classify the transcript. Answer only with the schema.".to_owned(),
         input: "user: add compact task labels".to_owned(),
         output_schema: schema(),
         deadline,
-        schema_version: "fixture.v1",
+        schema_version: "fixture.v1".into(),
     }
 }
 

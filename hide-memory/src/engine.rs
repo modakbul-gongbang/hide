@@ -107,14 +107,14 @@ impl HideNativeAnalyzer {
             });
         }
         Ok(AiRequest {
-            feature_id: "project_memory",
+            feature_id: "project_memory".into(),
             request_id: RequestId(request_id.into()),
             subject_id: format!("{project_id}:{session_id}"),
             system: system_prompt(),
             input,
             output_schema: output_schema(),
             deadline: Duration::from_secs(45),
-            schema_version: SCHEMA_VERSION,
+            schema_version: SCHEMA_VERSION.into(),
         })
     }
 

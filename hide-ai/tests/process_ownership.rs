@@ -32,7 +32,7 @@ use serde_json::json;
 /// Counts router events by name so a test can prove the cap actually engaged.
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-struct Recorder(Mutex<Vec<&'static str>>);
+struct Recorder(Mutex<Vec<std::borrow::Cow<'static, str>>>);
 
 #[cfg(target_os = "macos")]
 impl AiLogSink for Recorder {
@@ -64,7 +64,7 @@ fn fixture() -> PathBuf {
 #[cfg(target_os = "macos")]
 fn request(n: usize) -> AiRequest {
     AiRequest {
-        feature_id: "process_ownership",
+        feature_id: "process_ownership".into(),
         request_id: RequestId(format!("req-{n}")),
         // A distinct subject per request so nothing is suppressed as a
         // duplicate; each one runs a real turn.
@@ -73,7 +73,7 @@ fn request(n: usize) -> AiRequest {
         input: format!("hello {n}"),
         output_schema: json!({"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}),
         deadline: Duration::from_secs(10),
-        schema_version: "process.v1",
+        schema_version: "process.v1".into(),
     }
 }
 

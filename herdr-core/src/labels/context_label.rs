@@ -73,14 +73,14 @@ pub(crate) static OUTPUT_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
 /// idempotency key; `pane_id` is the subject the router de-duplicates on.
 pub(crate) fn request(pane_id: &str, request_id: String, context: &str) -> AiRequest {
     AiRequest {
-        feature_id: FEATURE_ID,
+        feature_id: FEATURE_ID.into(),
         request_id: RequestId(request_id),
         subject_id: pane_id.to_owned(),
         system: SYSTEM_PROMPT.to_owned(),
         input: format!("<raw-session-events>\n{context}\n</raw-session-events>"),
         output_schema: OUTPUT_SCHEMA.clone(),
         deadline: DEADLINE,
-        schema_version: SCHEMA_VERSION,
+        schema_version: SCHEMA_VERSION.into(),
     }
 }
 

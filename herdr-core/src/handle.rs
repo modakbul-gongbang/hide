@@ -83,6 +83,7 @@ pub struct Core {
     _links: Option<crate::links::worker::LinkWorker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
     factory: Option<crate::factory::FactoryHost>,
+    own_node: Arc<dyn crate::node_access::NodeLink>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     owner_thread: ThreadId,
@@ -106,6 +107,9 @@ impl Drop for Core {
         if let Some(labels) = self.labels.take() {
             labels.analyzer.shutdown();
         }
+        // A kit step running on this machine's node ends the child it waits
+        // on, so the kit worker below is joined without waiting it out.
+        self.own_node.close("core stopping");
         self._session_search.take();
         self._links.take();
         self._terminal_maintenance.take();
@@ -169,7 +173,9 @@ impl Core {
     #[cfg(test)]
     pub(crate) fn for_runtime_fixture(runtime: Arc<Mutex<Runtime>>) -> (Self, ChangeNotifier) {
         let notifier = ChangeNotifier::new();
+        let own_node = lock_recover(&runtime).own_node();
         let core = Self {
+            own_node,
             _terminal_maintenance: None,
             _changes: None,
             _kit: None,
@@ -186,8 +192,18 @@ impl Core {
         (core, notifier)
     }
 
-    pub fn create(options: CoreOptions) -> Option<Box<Self>> {
-        if validate_options(&options).is_err() {
+    /// `own_node` answers for the machine this core runs on (PRD
+    /// core-host-node D-21); the core reaches that machine only through it.
+    /// `own_herdr` is that node's connection to the Herdr server at
+    /// `options.herdr_socket_path`, given exactly when a socket is.
+    pub fn create(
+        options: CoreOptions,
+        own_node: std::sync::Arc<dyn crate::node_access::NodeLink>,
+        own_herdr: Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>>,
+    ) -> Option<Box<Self>> {
+        if validate_options(&options).is_err()
+            || options.herdr_socket_path.is_some() != own_herdr.is_some()
+        {
             return None;
         }
         let environment = match options.home.as_deref() {
@@ -212,7 +228,11 @@ impl Core {
                 serde_json::json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
             );
         }
-        let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
+        let runtime = Arc::new(Mutex::new(Runtime::new(
+            options.clone(),
+            environment,
+            Arc::clone(&own_node),
+        )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
         let delivery_path = hide_kit::layout::delivery_ledger(
@@ -259,6 +279,7 @@ impl Core {
             environment_home.clone(),
             Arc::downgrade(&runtime),
             &options.node_id,
+            Arc::clone(&own_node),
         ) {
             Ok(services) => {
                 let services = Arc::new(services);
@@ -290,11 +311,7 @@ impl Core {
         // After the search worker, whose index holds each project's Copied
         // history, and before any coordinator, so the first catalog and
         // GitHub answers reach it.
-        let links = match crate::runtime::links::spawn_worker(
-            &runtime,
-            notifier.clone(),
-            environment_home.clone(),
-        ) {
+        let links = match crate::runtime::links::spawn_worker(&runtime, notifier.clone()) {
             Ok(worker) => Some(worker),
             Err(message) => {
                 crate::diagnostic!(
@@ -321,10 +338,14 @@ impl Core {
                 })
                 .ok()
             });
-        let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
+        let session_sync = if let (Some(socket_path), Some(own_herdr)) =
+            (options.herdr_socket_path.as_deref(), own_herdr)
+        {
             live::install(
                 &runtime,
                 notifier.clone(),
+                Arc::clone(&own_node),
+                own_herdr,
                 socket_path,
                 options.herdr_bin_path.as_deref(),
                 usage_paths,
@@ -363,51 +384,23 @@ impl Core {
                     None
                 }
             };
-        // This Mac's install kit runs whether or not Herdr answers; only
-        // retiring the old labels plugin needs it (PRD labels-in-hided D-12).
-        // Without a socket from the embedder it is the one Herdr would use
-        // for the core's home.
-        let herdr_socket = options
-            .herdr_socket_path
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                let home = environment_home.clone()?;
-                let variables = |name: &str| {
-                    if name == hide_platform::host::HOME_VARIABLE {
-                        Some(home.clone().into_os_string())
-                    } else {
-                        std::env::var_os(name)
-                    }
-                };
-                hide_platform::host::herdr_socket_default_from(&variables).ok()
-            })
-            .unwrap_or_default();
-        let kit = match crate::kit::local_target(
-            options.kit_dir.as_deref(),
-            environment_home,
-            herdr_socket,
-            std::sync::Arc::default(),
+        // This machine's install kit runs on its own node whether or not
+        // Herdr answers; only retiring the old labels plugin needs it (PRD
+        // labels-in-hided D-12). Without a socket from the embedder the node
+        // uses the one Herdr would for its home.
+        lock_recover(&runtime).queue_local_kit_launch();
+        let kit = match crate::kit::KitPump::spawn(
+            Arc::downgrade(&runtime),
+            notifier.clone(),
+            Arc::clone(&own_node),
+            options.herdr_socket_path.clone(),
+            options.node_id.clone(),
         ) {
-            Ok(target) => {
-                lock_recover(&runtime).queue_local_kit_launch();
-                match crate::kit::KitPump::spawn(
-                    Arc::downgrade(&runtime),
-                    notifier.clone(),
-                    target,
-                    options.node_id.clone(),
-                ) {
-                    Ok(pump) => Some(pump),
-                    Err(error) => {
-                        lock_recover(&runtime).set_local_kit_unavailable(&format!(
-                            "Hide could not start its installer: {error}"
-                        ));
-                        None
-                    }
-                }
-            }
-            Err(reason) => {
-                lock_recover(&runtime).set_local_kit_unavailable(&reason);
+            Ok(pump) => Some(pump),
+            Err(error) => {
+                lock_recover(&runtime).set_local_kit_unavailable(&format!(
+                    "Hide could not start its installer: {error}"
+                ));
                 None
             }
         };
@@ -416,6 +409,7 @@ impl Core {
             _terminal_maintenance: maintenance,
             _changes: changes,
             _kit: kit,
+            own_node,
             _session_sync: session_sync,
             _session_search: session_search,
             _links: links,
@@ -489,7 +483,8 @@ impl Core {
         lock_recover(&self.runtime).prepare_delivery_human()
     }
 
-    /// Where each device's file work runs, handed over once by the daemon.
+    /// The checkout roots the daemon verified, by the identity each was
+    /// opened with, which the core's own file work is checked against.
     pub fn set_file_roots(&self, roots: crate::files::FileRoots) {
         if check_owner_thread(self, "set_file_roots")
             && lock_recover(&self.runtime).set_file_roots(roots)
@@ -498,17 +493,18 @@ impl Core {
         }
     }
 
-    /// Where a device's file work runs, for the daemon's own
-    /// requests that answer outside the snapshot (the Explorer's listing).
-    /// Asking may start the device's helper, which the snapshot announces.
-    pub fn device_channel(
+    /// The link to the node `device_id` names, for the daemon's own
+    /// requests that answer outside the snapshot (the Explorer's listing and
+    /// watch, the links query). Asking may start a device's helper, which
+    /// the snapshot announces.
+    pub fn node_link(
         &self,
         device_id: &str,
-    ) -> Result<std::sync::Arc<dyn crate::host_access::HostChannel>, String> {
-        if !check_owner_thread(self, "device_channel") {
+    ) -> Result<std::sync::Arc<dyn crate::node_access::NodeLink>, String> {
+        if !check_owner_thread(self, "node_link") {
             return Err("the core was called off its owner thread".to_owned());
         }
-        let result = lock_recover(&self.runtime).device_channel(device_id);
+        let result = lock_recover(&self.runtime).node_link(device_id);
         // Only a refusal can have started a helper connection.
         if result.is_err() {
             notify_change(self);

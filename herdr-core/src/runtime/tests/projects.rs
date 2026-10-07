@@ -396,7 +396,10 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
         "layouts": layouts,
     }))
     .expect("three-tab payload");
-    let spaces = Runtime::session_spaces(&payload);
+    let spaces = Runtime::session_spaces(
+        &payload,
+        &workspace::paths_here(Runtime::session_cwds(&payload)),
+    );
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
@@ -404,29 +407,50 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
             &[],
             &spaces,
             &no_worktrees(),
+            &workspace::catalog_paths_here(&[], &spaces, &no_worktrees()),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces
+                .iter()
+                .flat_map(|space| space.cwds.clone())
+                .chain(Runtime::session_cwds(&payload)),
+        )),
     };
     let mut runtime = runtime();
 
-    let before = workspace::git_calls_on_this_thread();
-    assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
-    let after = workspace::git_calls_on_this_thread();
-
+    let node = std::sync::Arc::new(workspace::CountingNode::default());
+    runtime.own_node = node.clone();
+    let before = node.calls();
+    assert!(runtime.ingest_session_with_catalog(Ok(payload.clone()), Some(catalog)));
     assert_eq!(
-        after - before,
+        node.calls() - before,
         0,
-        "the reconcile ran git under the runtime lock"
+        "the reconcile asked the node under the runtime lock"
     );
-    let placed: usize = runtime
-        .snapshot()
-        .navigator
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.checkouts.iter())
-        .map(|checkout| checkout.tabs.len())
-        .sum();
-    assert_eq!(placed, 3, "every tab landed in a checkout without git");
+    let placed = |runtime: &Runtime| -> usize {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .map(|checkout| checkout.tabs.len())
+            .sum()
+    };
+    assert_eq!(
+        placed(&runtime),
+        3,
+        "every tab landed in a checkout without asking the node"
+    );
+    // A session applied without a catalog, as a close's status read does,
+    // reads the paths the coordinator brought rather than asking again.
+    runtime.ingest_session(Ok(payload));
+    assert_eq!(
+        node.calls() - before,
+        0,
+        "a session without a catalog asked the node under the runtime lock"
+    );
+    assert_eq!(placed(&runtime), 3);
     assert!(
         !runtime
             .snapshot()
@@ -472,7 +496,10 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         }))
         .expect("one-tab payload")
     };
-    let spaces = Runtime::session_spaces(&payload());
+    let spaces = Runtime::session_spaces(
+        &payload(),
+        &workspace::paths_here(Runtime::session_cwds(&payload())),
+    );
     let fresh = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
@@ -480,8 +507,14 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
             &[],
             &spaces,
             &no_worktrees(),
+            &workspace::catalog_paths_here(&[], &spaces, &no_worktrees()),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces
+                .iter()
+                .flat_map(|space| space.cwds.clone())
+                .chain(Runtime::session_cwds(&payload())),
+        )),
     };
     let mut runtime = runtime();
     assert!(runtime.ingest_session_with_catalog(Ok(payload()), Some(fresh)));
@@ -499,16 +532,18 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
             home: false,
         }],
         workspaces: Vec::new(),
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
-    let before = workspace::git_calls_on_this_thread();
+    let node = std::sync::Arc::new(workspace::CountingNode::default());
+    runtime.own_node = node.clone();
+    let before = node.calls();
     runtime.ingest_session_with_catalog(Ok(payload()), Some(stale));
-    let after = workspace::git_calls_on_this_thread();
+    let after = node.calls();
 
     assert_eq!(
         after - before,
         0,
-        "a stale catalog was rebuilt under the runtime lock"
+        "a stale catalog was rebuilt from the node under the runtime lock"
     );
     assert_eq!(
         runtime.snapshot().navigator.workspaces,
@@ -677,14 +712,14 @@ fn a_named_project_overview_measures_its_whole_disk() {
     };
     // A checkout row carries its layers; the shared Git directory does not.
     let layered = |path: &str, cache: u64, deps: u64, other: u64, source: u64| {
-        let cell = |bytes| crate::disk_layers::LayerCell {
+        let cell = |bytes| hide_node_link::disk::LayerCell {
             bytes,
             folders: usize::from(bytes > 0),
             largest_name: None,
         };
         DiskUsageSnapshot {
             volume_free_bytes: Some(7),
-            layers: Some(crate::disk_layers::DiskLayers {
+            layers: Some(hide_node_link::disk::DiskLayers {
                 build_cache: cell(cache),
                 dependencies: cell(deps),
                 other: cell(other),
@@ -1099,6 +1134,7 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
                 .expect("empty session payload"),
                 created_pane_id: None,
                 git_init_error: Some("git init failed explicitly".to_owned()),
+                paths: Default::default(),
             }),
             7,
         )
@@ -1299,6 +1335,7 @@ fn adding_a_folder_while_its_removal_closes_panes_is_refused_and_a_landed_add_ca
             session: context_payload(),
             created_pane_id: Some("w1:p1".to_owned()),
             git_init_error: None,
+            paths: Default::default(),
         }),
         3,
     ));
@@ -1590,11 +1627,13 @@ fn removing_registration_converges_without_git_or_repeat_publication() {
     let event = serde_json::to_vec(&serde_json::json!({
         "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
     })).unwrap();
-    let git_before = workspace::git_calls_on_this_thread();
+    let node = std::sync::Arc::new(workspace::CountingNode::default());
+    runtime.own_node = node.clone();
+    let git_before = node.calls();
     assert!(runtime.dispatch_json(&event));
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
     assert!(runtime.snapshot.navigator.workspaces.is_empty());
-    assert_eq!(workspace::git_calls_on_this_thread(), git_before);
+    assert_eq!(node.calls(), git_before);
     assert!(
         !runtime.dispatch_json(&event),
         "The same target state is already reached"
@@ -2037,7 +2076,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
     assert_eq!(
         runtime
             .unconfirmed_created_purpose_values()
-            .get(&workspace::normalized_for_comparison(Path::new(path)))
+            .get(&workspace::comparison_by_names(Path::new(path)))
             .map(String::as_str),
         Some("Unconfirmed creation purpose"),
         "the mirror sees the suppression before the token write can publish"
@@ -2063,7 +2102,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
     assert_eq!(
         runtime
             .unconfirmed_created_purposes
-            .get(&workspace::normalized_for_comparison(Path::new(path)))
+            .get(&workspace::comparison_by_names(Path::new(path)))
             .map(String::as_str),
         Some("Unconfirmed creation purpose")
     );
@@ -2248,8 +2287,13 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     }];
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-    runtime.snapshot.navigator.workspaces =
-        workspace::build_catalog(&crate::node::test_node(), &[], &spaces, &no_worktrees());
+    runtime.snapshot.navigator.workspaces = workspace::build_catalog(
+        &crate::node::test_node(),
+        &[],
+        &spaces,
+        &no_worktrees(),
+        &workspace::catalog_paths_here(&[], &spaces, &no_worktrees()),
+    );
     runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
     runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
     runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
@@ -2278,8 +2322,18 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &workspace::catalog_paths_here(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces
+                .iter()
+                .flat_map(|space| space.cwds.clone())
+                .chain(Runtime::session_cwds(&payload)),
+        )),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -2330,8 +2384,13 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
     // pane, not the Herdr workspace id, decides which layout is projected.
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-    runtime.snapshot.navigator.workspaces =
-        workspace::build_catalog(&crate::node::test_node(), &[], &spaces, &no_worktrees());
+    runtime.snapshot.navigator.workspaces = workspace::build_catalog(
+        &crate::node::test_node(),
+        &[],
+        &spaces,
+        &no_worktrees(),
+        &workspace::catalog_paths_here(&[], &spaces, &no_worktrees()),
+    );
     runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
     runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
     runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
@@ -2379,8 +2438,13 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &workspace::catalog_paths_here(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         ),
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
 
@@ -2438,6 +2502,7 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
         &registrations,
         &spaces,
         &no_worktrees(),
+        &workspace::catalog_paths_here(&registrations, &spaces, &no_worktrees()),
     );
 
     // The registration is the row's identity; the Herdr workspace is
@@ -2487,8 +2552,18 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &workspace::catalog_paths_here(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces
+                .iter()
+                .flat_map(|space| space.cwds.clone())
+                .chain(Runtime::session_cwds(&occupied)),
+        )),
     };
     runtime.restore_hint_pending = false;
     assert!(runtime.ingest_session_with_catalog(Ok(occupied), Some(catalog)));
@@ -2601,7 +2676,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
         Some(session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![current_workspace],
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     assert_eq!(runtime.snapshot().terminal.pane_id, None);
@@ -2693,7 +2768,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
         Some(session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![current_workspace],
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     assert_eq!(
@@ -2770,7 +2845,7 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
         Some(session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
             workspaces: Vec::new(),
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     // The layout stays in the snapshot because it is Herdr's and it
@@ -2802,6 +2877,9 @@ fn checkout_path_matching_uses_component_boundaries() {
     let sibling_path = folder.path().join("checkout-sibling");
     std::fs::create_dir_all(checkout_path.join("src")).expect("checkout fixture");
     std::fs::create_dir_all(sibling_path.join("src")).expect("sibling fixture");
+    // A checkout row's path is the node's comparison form.
+    let checkout_path = std::fs::canonicalize(&checkout_path).expect("the checkout's real path");
+    let sibling_path = std::fs::canonicalize(&sibling_path).expect("the sibling's real path");
     let checkout = checkout_path.to_string_lossy();
     let child = checkout_path
         .join("src/main.rs")
@@ -2812,8 +2890,9 @@ fn checkout_path_matching_uses_component_boundaries() {
         .to_string_lossy()
         .into_owned();
 
-    assert!(path_is_within_checkout(&child, &checkout));
-    assert!(!path_is_within_checkout(&sibling_child, &checkout));
+    let paths = workspace::paths_here([child.clone(), sibling_child.clone()]);
+    assert!(path_is_within_checkout(&paths, &child, &checkout));
+    assert!(!path_is_within_checkout(&paths, &sibling_child, &checkout));
 
     let _ = std::fs::remove_dir_all(checkout_path);
     let _ = std::fs::remove_dir_all(sibling_path);
@@ -3524,13 +3603,13 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 workspace_views_path: None,
                 shortcut_import_path: None,
                 local_issues_path: None,
-                kit_dir: None,
             },
             environment::EnvironmentReport {
                 statuses: vec![],
                 home_path: None,
                 codex_home: None,
             },
+            std::sync::Arc::new(hide_node::Local::of_process()),
         )
     };
     let set = |id: &str| {

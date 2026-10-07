@@ -4,32 +4,12 @@ use std::cmp::Ordering;
 use std::path::Path;
 
 use cap_std::fs::Dir;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
-
-/// Children a listing carries at most; a folder with more is answered as
-/// truncated, never grown (PRD S5.5 B6).
-pub const LIST_CAP: usize = 500;
+pub use hide_node_link::list::{Entry, LIST_CAP, Listing};
 
 /// The one name the Explorer hides: the repository's own directory.
 const GIT_DIR_NAME: &str = ".git";
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Entry {
-    pub name: String,
-    pub is_directory: bool,
-    /// The entry's own inode (a link's, not its target's): the identity a
-    /// trash of this row confirms (`mutate::trash`).
-    pub inode: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Listing {
-    pub entries: Vec<Entry>,
-    /// More than `LIST_CAP` children existed; the rest were not read.
-    pub truncated: bool,
-}
 
 /// The children of `relative` under `dir`: files and directories, hidden
 /// names included, `.git` left out, directories first and then the natural

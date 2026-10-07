@@ -381,6 +381,12 @@ impl MemoryStore {
         Ok(store)
     }
 
+    /// Whether a store was ever written at `path`; a read-only open of one
+    /// that was not is refused.
+    pub fn exists(path: &Path) -> bool {
+        path.is_file()
+    }
+
     pub fn open_read_only(path: &Path) -> Result<Self, MemoryError> {
         let connection = Connection::open_with_flags(
             path,

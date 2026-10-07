@@ -33,7 +33,9 @@ pub(super) fn with_views(mut runtime: Runtime, path: &Path) -> Runtime {
             std::fs::File::open(&path).ok().map(|file| (path, file))
         })
         .collect();
-    runtime.set_file_roots(crate::files::FileRoots::from_opened(roots));
+    runtime.set_file_roots(crate::files::FileRoots::from_identities(
+        hide_node::hold_roots(roots).1,
+    ));
     with_views_only(runtime, path)
 }
 
@@ -711,16 +713,15 @@ fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
         "the saved display is kept, and says what it waits for"
     );
     assert!(
-        !restarted.set_file_roots(crate::files::FileRoots::from_opened(Vec::new())),
+        !restarted.set_file_roots(crate::files::FileRoots::from_identities(Vec::new())),
         "a root set that does not hold the checkout still waits"
     );
 
     let root = std::fs::File::open(&directory).expect("open root");
     assert!(
-        restarted.set_file_roots(crate::files::FileRoots::from_opened(vec![(
-            directory.clone(),
-            root
-        )]))
+        restarted.set_file_roots(crate::files::FileRoots::from_identities(
+            hide_node::hold_roots(vec![(directory.clone(), root)]).1
+        ))
     );
     assert_eq!(restored(&restarted), vec![("notes.md".to_owned(), false)]);
     restarted.sync_workspace_view();
@@ -733,7 +734,7 @@ fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
         )]
     );
     assert!(
-        !restarted.set_file_roots(crate::files::FileRoots::from_opened(Vec::new())),
+        !restarted.set_file_roots(crate::files::FileRoots::from_identities(Vec::new())),
         "a Workspace is restored once per process"
     );
 }
@@ -936,7 +937,9 @@ fn a_restore_waits_while_the_front_moved_since_the_last_sync() {
         })
         .collect();
     assert!(
-        !restarted.set_file_roots(crate::files::FileRoots::from_opened(roots)),
+        !restarted.set_file_roots(crate::files::FileRoots::from_identities(
+            hide_node::hold_roots(roots).1
+        )),
         "the Workspace the sync saw is no longer in front"
     );
     assert!(

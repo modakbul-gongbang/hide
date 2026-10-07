@@ -4,7 +4,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use herdr_core::host_access::HostChannel;
+use herdr_core::node_access::NodeLink;
 use herdr_core::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, Context, Query, QueryResult, Refusal,
 };
@@ -45,7 +45,7 @@ enum Command {
     },
     DeviceChannel {
         device_id: String,
-        reply: Sender<Result<Arc<dyn HostChannel>, String>>,
+        reply: Sender<Result<Arc<dyn NodeLink>, String>>,
     },
     WorkspaceRemoteRoutes {
         reply: Sender<Vec<herdr_core::WorkspaceRemoteRoute>>,
@@ -210,8 +210,8 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped dispatch reply".to_owned())?
     }
 
-    /// Where a device's file work runs; see `Core::device_channel`.
-    pub fn device_channel(&self, device_id: &str) -> Result<Arc<dyn HostChannel>, String> {
+    /// The link to the node `device_id` names; see `Core::node_link`.
+    pub fn node_link(&self, device_id: &str) -> Result<Arc<dyn NodeLink>, String> {
         let (reply, rx) = mpsc::channel();
         self.commands
             .send(Command::DeviceChannel {
@@ -404,7 +404,29 @@ fn owner_loop(
     ready: Sender<Result<(), String>>,
     notify: broadcast::Sender<()>,
 ) {
-    let Some(core) = Core::create(options) else {
+    // The core's own node answers for the home the core reads and writes
+    // for: the configured one, else the process's, as the core decides.
+    let mut own_node = hide_node::Local::new(
+        options
+            .home
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)),
+    );
+    // The install kit's parts ship beside this binary in the app bundle; a
+    // daemon anywhere else installs nothing (PRD device-parity D-19).
+    if let Some(kit_dir) = std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(hide_kit::bundled_kit_dir)
+    {
+        own_node = own_node.bundled(kit_dir);
+    }
+    let own_herdr = options
+        .herdr_socket_path
+        .as_deref()
+        .map(|socket| hide_node::herdr(std::path::Path::new(socket)));
+    let Some(core) = Core::create(options, std::sync::Arc::new(own_node), own_herdr) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),
         ));
@@ -414,6 +436,7 @@ fn owner_loop(
         let _ = notify.send(());
     });
     let _ = ready.send(Ok(()));
+    let mut _held_roots = hide_node::HeldRoots::default();
     while let Ok(command) = commands.recv() {
         match command {
             Command::DeliveryHuman { reply } => {
@@ -452,7 +475,11 @@ fn owner_loop(
                 ));
             }
             Command::SetFileRoots { roots, reply } => {
-                core.set_file_roots(herdr_core::FileRoots::from_opened(roots));
+                // This node holds the opened roots while the core pins their
+                // identities; the previous set closes once it is replaced.
+                let (held, identities) = hide_node::hold_roots(roots);
+                core.set_file_roots(herdr_core::FileRoots::from_identities(identities));
+                _held_roots = held;
                 let _ = reply.send(Ok(()));
             }
             Command::Dispatch { event, reply } => {
@@ -460,7 +487,7 @@ fn owner_loop(
                 let _ = reply.send(Ok(()));
             }
             Command::DeviceChannel { device_id, reply } => {
-                let _ = reply.send(core.device_channel(&device_id));
+                let _ = reply.send(core.node_link(&device_id));
             }
             Command::WorkspaceRemoteRoutes { reply } => {
                 let _ = reply.send(core.workspace_remote_routes());

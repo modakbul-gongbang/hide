@@ -1,15 +1,12 @@
 //! Bounded, explicit terminal file ingress. No provider draft or submission state.
+//! The picked files are read by the node that holds them
+//! (`hide_host::attachments`); the clipboard image is the core's own file in
+//! its state folder.
 use std::fs;
-use std::io::Read;
-
-use hide_platform::fs::identity::stamp_of;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) const MAX_FILES: usize = 8;
-pub(crate) const MAX_PATH_BYTES: usize = 4096;
-pub(crate) const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
-pub(crate) const MAX_REQUEST_BYTES: u64 = 40 * 1024 * 1024;
+pub(crate) use hide_node_link::attachments::{MAX_FILES, MAX_PATH_BYTES};
 pub(crate) const MAX_QUEUED_INPUT: usize = 64 * 1024;
 pub(crate) const MAX_STAGED_FILES: usize = 128;
 pub(crate) const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
@@ -49,77 +46,42 @@ pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
     }
 }
 
+/// Reads the picked files on `node`, which asks after each file whether to
+/// go on, so a cancel stops the read between two files.
 pub(crate) fn read_sources(
+    node: &dyn crate::node_access::NodeLink,
     paths: &[String],
     cancelled: &AtomicBool,
 ) -> Result<Vec<AttachmentFile>, String> {
-    if paths.is_empty() || paths.len() > MAX_FILES {
-        return Err("Choose between 1 and 8 regular files.".to_owned());
-    }
-    let mut files = Vec::with_capacity(paths.len());
-    let mut total = 0u64;
-    for path in paths {
-        check_cancelled(cancelled)?;
-        let path = Path::new(path);
-        if path.as_os_str().len() > MAX_PATH_BYTES
-            || !path.is_absolute()
-            || path
-                .as_os_str()
-                .as_encoded_bytes()
-                .iter()
-                .any(|byte| byte.is_ascii_control())
-        {
-            return Err(
-                "File paths must be absolute and contain no control characters.".to_owned(),
-            );
-        }
-        let mut file = hide_platform::fs::open_regular(path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidInput {
-                "Folders, symbolic links and special files cannot be attached. Choose regular files."
-                    .to_owned()
-            } else {
-                "A selected file is unavailable or is a symbolic link. Choose a regular file."
-                    .to_owned()
-            }
+    check_cancelled(cancelled)?;
+    let call = hide_node_link::protocol::Call::ReadAttachments {
+        paths: paths.to_vec(),
+    };
+    let read: Vec<hide_node_link::attachments::ReadFile> =
+        crate::node_access::call_as_with_progress(
+            node,
+            call,
+            READ_TIMEOUT,
+            |_: serde_json::Value| !cancelled.load(Ordering::Acquire),
+        )
+        .map_err(|error| match error {
+            crate::node_access::LinkError::Refused(refusal) => refusal.message,
+            other => format!("The selected files could not be read: {other}"),
         })?;
-        let before = file
-            .metadata()
-            .map_err(|_| "Could not inspect a selected file.".to_owned())?;
-        let stamp = stamp_of(&file).map_err(|_| "Could not inspect a selected file.".to_owned())?;
-        if before.len() > MAX_FILE_BYTES {
-            return Err("A file exceeds the 20 MiB attachment limit.".to_owned());
-        }
-        total = total
-            .checked_add(before.len())
-            .ok_or("Attachment size overflow.")?;
-        if total > MAX_REQUEST_BYTES {
-            return Err("The selected files exceed the 40 MiB total attachment limit.".to_owned());
-        }
-        let mut bytes = Vec::with_capacity(before.len() as usize);
-        (&mut file)
-            .take(MAX_FILE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| {
-                "Could not read a selected file. Check its permissions and retry.".to_owned()
-            })?;
-        let after = stamp_of(&file).map_err(|_| "Could not recheck a selected file.".to_owned())?;
-        if bytes.len() as u64 != before.len() || stamp != after {
-            return Err(
-                "A selected file changed while it was being read. Choose it again.".to_owned(),
-            );
-        }
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or("A file name is not valid UTF-8.")?;
-        files.push(AttachmentFile {
-            path: path.to_string_lossy().into_owned(),
-            name: name.to_owned(),
-            bytes,
-        });
-    }
-    Ok(files)
+    check_cancelled(cancelled)?;
+    read.into_iter()
+        .map(|file| {
+            Ok(AttachmentFile {
+                bytes: file.bytes()?,
+                path: file.path,
+                name: file.name,
+            })
+        })
+        .collect()
 }
+
+/// Reading 40 MiB from a local disk takes well under a minute.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 pub(crate) fn paste_bytes(paths: &[String], bracketed: bool) -> Result<Vec<u8>, String> {
     if paths.is_empty() || paths.len() > MAX_FILES {
@@ -185,36 +147,24 @@ mod tests {
         );
         assert!(paste_bytes(&["/tmp/a\ncommand".to_owned()], true).is_err());
     }
+
     #[test]
-    fn selected_files_are_read_and_special_files_refused() {
+    fn picked_files_are_read_on_the_node_with_its_refusal_in_the_operators_words() {
         let folder = tempfile::tempdir().unwrap();
-        let root = folder.path().to_path_buf();
-        let file = root.join("한글.png");
+        let file = folder.path().join("한글.png");
         fs::write(&file, b"explicit bytes").unwrap();
-        let link = root.join("link.png");
-        // A Windows account without the privilege cannot make the link.
-        let linked = match hide_platform::fs::link::create_link(&file, &link) {
-            Err(error) if hide_platform::fs::link::needs_privilege(&error) => false,
-            made => made.map(|()| true).unwrap(),
-        };
-        let cancelled = AtomicBool::new(false);
-        let result = read_sources(&[file.to_string_lossy().into_owned()], &cancelled).unwrap();
-        assert_eq!(result[0].bytes, b"explicit bytes");
-        assert!(
-            !linked || read_sources(&[link.to_string_lossy().into_owned()], &cancelled).is_err()
-        );
-        assert!(read_sources(&[root.to_string_lossy().into_owned()], &cancelled).is_err());
-        let oversized = root.join("large");
-        fs::File::create(&oversized)
-            .unwrap()
-            .set_len(MAX_FILE_BYTES + 1)
-            .unwrap();
-        assert!(
-            read_sources(&[oversized.to_string_lossy().into_owned()], &cancelled)
-                .unwrap_err()
-                .contains("20 MiB")
-        );
-        cancelled.store(true, Ordering::Release);
-        assert!(read_sources(&[file.to_string_lossy().into_owned()], &cancelled).is_err());
+        let node = hide_node::Local::of_process();
+        let paths = vec![file.to_string_lossy().into_owned()];
+        let read = read_sources(&node, &paths, &AtomicBool::new(false)).unwrap();
+        assert_eq!(read[0].bytes, b"explicit bytes");
+        assert_eq!(read[0].name, "한글.png");
+        let refused = read_sources(
+            &node,
+            &[folder.path().to_string_lossy().into_owned()],
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(refused.starts_with("Folders, symbolic links"), "{refused}");
+        assert!(read_sources(&node, &paths, &AtomicBool::new(true)).is_err());
     }
 }

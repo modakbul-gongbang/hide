@@ -2,26 +2,34 @@
 //!
 //! Codex is read from its usage endpoint with the token in `auth.json`, and
 //! from the newest session JSONL when that fails. Claude Code is read by
-//! running `claude -p /usage` on a worker thread and parsing the text the
-//! CLI prints: the CLI authenticates against its own keychain item, so Hide
+//! having the core's own node run `claude -p /usage` while a worker thread
+//! waits, and parsing the text the CLI prints; the node also reads
+//! `auth.json` and the session files (`hide_host::usage`): the CLI authenticates against its own keychain item, so Hide
 //! never holds a token and macOS never asks it for one. The earlier direct
 //! read of the keychain was denied on every rebuild, because an ad hoc
 //! signed dev build has a new code identity each time.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hide_ai::{CancelToken, ClaudeCliBackend, ClaudeConfig, UsageError};
-use hide_session::{newest_codex_session_files, parse_rfc3339, read_tail};
+use hide_ai::CancelToken;
+use hide_node_link::protocol::Call;
+use hide_node_link::usage::{CodexWeeklyUsage, CredentialsAnswer, UsageError, UsageText};
 use serde_json::{Value, json};
+
+use crate::node_access::{NodeLink, call_as, call_as_with_progress};
 
 use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
 use crate::reader::BackgroundRead;
 use crate::zoneinfo::{Zone, civil_from_days, days_from_civil, days_in_month};
 
-pub const WEEKLY_WINDOW_MINUTES: u64 = 10_080;
+pub use hide_node_link::usage::WEEKLY_WINDOW_MINUTES;
+
+/// How long a node read of a file may take.
+const NODE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// The node ends `claude -p /usage` itself well before this.
+const CLAUDE_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 const WEEKLY_WINDOW_SECONDS: u64 = 604_800;
 const INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -29,9 +37,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const POPOVER_REFRESH_AGE: Duration = Duration::from_secs(60);
 const STALE_LIMIT_MS: u64 = 15 * 60 * 1_000;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-const CODEX_TAIL_BYTES: u64 = 2 * 1024 * 1024;
-/// The name the CLI is looked up by on `PATH`, and the name the row shows
-/// when it is not there.
+/// The name the row shows when the CLI is not on `PATH`.
 const CLAUDE_BINARY: &str = "claude";
 /// A reset the CLI prints is at most one weekly window away. A wall time
 /// that matched this recently is the reset that just passed (the CLI prints
@@ -176,6 +182,8 @@ pub struct ProviderUsageReader {
     codex_fallback: Option<SessionFallback>,
     published: Vec<ProviderUsageSnapshot>,
     http: UreqUsageClient,
+    /// The core's own node, which holds the operator's logins.
+    node: Arc<dyn NodeLink>,
     /// The Claude read runs on this worker: a `claude` child takes seconds,
     /// and the coordinator thread that drives this reader is the one that
     /// applies every Herdr pane event.
@@ -187,9 +195,13 @@ pub struct ProviderUsageReader {
 }
 
 impl ProviderUsageReader {
-    pub(crate) fn new(paths: UsagePaths) -> Self {
+    pub(crate) fn new(paths: UsagePaths, node: Arc<dyn NodeLink>) -> Self {
         let claude_cancel = CancelToken::new();
-        let claude_read = claude_background_read(paths.claude_cwd.clone(), claude_cancel.clone());
+        let claude_read = claude_background_read(
+            paths.claude_cwd.clone(),
+            claude_cancel.clone(),
+            Arc::clone(&node),
+        );
         Self {
             paths,
             started_at: Instant::now(),
@@ -199,6 +211,7 @@ impl ProviderUsageReader {
             codex_fallback: None,
             published: ProviderUsageSnapshot::initial_rows(),
             http: UreqUsageClient::new(),
+            node,
             claude_read,
             claude_attempt: 0,
             claude_cancel,
@@ -276,7 +289,7 @@ impl ProviderUsageReader {
             return;
         }
         let checked_at = unix_milliseconds();
-        let credentials = match read_codex_credentials(&self.paths) {
+        let credentials = match self.codex_credentials() {
             Ok(credentials) => credentials,
             Err(kind) => {
                 self.codex
@@ -314,9 +327,37 @@ impl ProviderUsageReader {
         }
     }
 
+    /// The Codex login, from the node that holds it.
+    fn codex_credentials(&self) -> Result<hide_node_link::usage::CodexCredentials, &'static str> {
+        let codex_home = self.paths.codex_home.as_ref().ok_or("credential_path")?;
+        let call = Call::CodexCredentials {
+            codex_home: codex_home.to_string_lossy().into_owned(),
+        };
+        match call_as(self.node.as_ref(), call, NODE_READ_TIMEOUT) {
+            Ok(CredentialsAnswer::Found { credentials }) => Ok(credentials),
+            Ok(CredentialsAnswer::Refused { refusal }) => Err(refusal.code()),
+            Err(_) => Err("credentials_unreadable"),
+        }
+    }
+
     fn refresh_codex_fallback(&mut self, checked_at: u64) {
-        self.codex_fallback =
-            read_codex_session_fallback(self.paths.codex_home.as_deref(), checked_at);
+        let Some(codex_home) = self.paths.codex_home.as_ref() else {
+            self.codex_fallback = None;
+            return;
+        };
+        let call = Call::CodexSessionUsage {
+            codex_home: codex_home.to_string_lossy().into_owned(),
+        };
+        let read: Option<CodexWeeklyUsage> =
+            call_as(self.node.as_ref(), call, NODE_READ_TIMEOUT).unwrap_or_default();
+        self.codex_fallback = read.map(|usage| SessionFallback {
+            value: UsageValue {
+                label: "Codex".to_owned(),
+                used_percent: usage.used_percent,
+                resets_at_unix_seconds: usage.resets_at_unix_seconds,
+            },
+            source_at_unix_ms: usage.source_at_unix_ms.unwrap_or(checked_at),
+        });
     }
 }
 
@@ -326,28 +367,37 @@ impl Drop for ProviderUsageReader {
     }
 }
 
-/// The worker that runs `claude -p /usage` and parses its text. It takes
-/// owned inputs, because it outlives any one `read_if_due` call.
+/// The worker that has the node run `claude -p /usage` and parses its text.
+/// It takes owned inputs, because it outlives any one `read_if_due` call;
+/// `cancel` answers the node's reports, so dropping the reader ends the child.
 fn claude_background_read(
     cwd: Option<PathBuf>,
     cancel: CancelToken,
+    node: Arc<dyn NodeLink>,
 ) -> BackgroundRead<ClaudeUsageRequest, ClaudeUsageAnswer> {
-    let backend = cwd.map(|cwd| {
-        Arc::new(ClaudeCliBackend::new(ClaudeConfig {
-            binary: PathBuf::from(CLAUDE_BINARY),
-            cwd,
-            ..ClaudeConfig::default()
-        }))
-    });
     BackgroundRead::on_change(Duration::ZERO, move |_: &ClaudeUsageRequest| {
         let checked_at_unix_ms = unix_milliseconds();
-        let outcome = match backend.as_ref() {
-            Some(backend) => backend
-                .usage_text(&cancel)
-                .map_err(FetchFailure::from_usage_error)
-                .and_then(|text| {
-                    parse_claude_usage_text(&text, unix_seconds(), checked_at_unix_ms)
-                }),
+        let outcome = match cwd.as_ref() {
+            Some(cwd) => {
+                let call = Call::ClaudeUsageText {
+                    cwd: cwd.to_string_lossy().into_owned(),
+                };
+                let text = call_as_with_progress::<UsageText, Value>(
+                    node.as_ref(),
+                    call,
+                    CLAUDE_READ_TIMEOUT,
+                    |_| !cancel.is_cancelled(),
+                );
+                match text {
+                    Ok(UsageText::Text { text }) => {
+                        parse_claude_usage_text(&text, unix_seconds(), checked_at_unix_ms)
+                    }
+                    Ok(UsageText::Failed { error }) => Err(FetchFailure::from_usage_error(error)),
+                    Err(_) => Err(FetchFailure::from_usage_error(UsageError::Failed(
+                        "usage_node_unavailable".to_owned(),
+                    ))),
+                }
+            }
             None => Err(FetchFailure::schema("state_dir")),
         };
         ClaudeUsageAnswer {
@@ -932,87 +982,6 @@ fn parse_codex_usage(body: &str, checked_at: u64) -> Result<SuccessfulUsage, Fet
     })
 }
 
-struct CodexCredentials {
-    access_token: String,
-    account_id: String,
-}
-
-fn read_codex_credentials(paths: &UsagePaths) -> Result<CodexCredentials, &'static str> {
-    let root = paths.codex_home.clone().ok_or("credential_path")?;
-    let value = fs::read(root.join("auth.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .ok_or("credentials_missing")?;
-    let tokens = value.get("tokens").ok_or("credentials_schema")?;
-    let access_token = tokens
-        .get("access_token")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or("credentials_schema")?
-        .to_owned();
-    let account_id = tokens
-        .get("account_id")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or("credentials_schema")?
-        .to_owned();
-    Ok(CodexCredentials {
-        access_token,
-        account_id,
-    })
-}
-
-fn read_codex_session_fallback(
-    codex_home: Option<&Path>,
-    checked_at: u64,
-) -> Option<SessionFallback> {
-    let sessions_root = codex_home?.join("sessions");
-    let candidates = newest_codex_session_files(&sessions_root).ok()?;
-    for path in candidates {
-        let Ok(tail) = read_tail(&path, CODEX_TAIL_BYTES) else {
-            continue;
-        };
-        if let Some((used_percent, resets_at, source_at)) = parse_latest_codex_weekly_usage(&tail) {
-            return Some(SessionFallback {
-                value: UsageValue {
-                    label: "Codex".to_owned(),
-                    used_percent,
-                    resets_at_unix_seconds: resets_at,
-                },
-                source_at_unix_ms: source_at.unwrap_or(checked_at),
-            });
-        }
-    }
-    None
-}
-
-fn parse_latest_codex_weekly_usage(contents: &str) -> Option<(f64, u64, Option<u64>)> {
-    contents.lines().rev().find_map(|line| {
-        let value = serde_json::from_str::<Value>(line).ok()?;
-        if value.get("type").and_then(Value::as_str) != Some("event_msg")
-            || value.pointer("/payload/type").and_then(Value::as_str) != Some("token_count")
-        {
-            return None;
-        }
-        let limits = value.pointer("/payload/rate_limits")?;
-        let weekly = ["primary", "secondary"].into_iter().find_map(|name| {
-            let window = limits.get(name)?;
-            (window.get("window_minutes").and_then(Value::as_u64) == Some(WEEKLY_WINDOW_MINUTES))
-                .then_some(window)
-        })?;
-        let source_at = value
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .and_then(parse_rfc3339)
-            .map(|seconds| seconds.saturating_mul(1_000));
-        Some((
-            weekly.get("used_percent").and_then(Value::as_f64)?,
-            weekly.get("resets_at").and_then(Value::as_u64)?,
-            source_at,
-        ))
-    })
-}
-
 fn parse_http_date(value: &str) -> Option<u64> {
     let parts = value.split_whitespace().collect::<Vec<_>>();
     let (day, month, year, time) = match parts.as_slice() {
@@ -1137,28 +1106,6 @@ mod tests {
         assert_eq!(success.main.used_percent, 76.0);
         assert_eq!(success.main.resets_at_unix_seconds, 1_893_456_000);
         assert!(success.buckets.is_empty());
-    }
-
-    #[test]
-    fn rfc3339_parser_handles_utc_fraction_and_offsets() {
-        assert_eq!(parse_rfc3339("2030-01-01T00:00:00Z"), Some(1_893_456_000));
-        assert_eq!(
-            parse_rfc3339("2030-01-01T09:00:00.123+09:00"),
-            Some(1_893_456_000)
-        );
-        assert_eq!(parse_rfc3339("2026-02-29T00:00:00Z"), None);
-    }
-
-    #[test]
-    fn codex_parser_chooses_the_exact_weekly_window_and_latest_event() {
-        let contents = concat!(
-            "{\"timestamp\":\"2026-09-14T12:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":12.0,\"window_minutes\":10080,\"resets_at\":4102444800}}}}\n",
-            "{\"timestamp\":\"2026-09-14T12:01:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":90.0,\"window_minutes\":300,\"resets_at\":4102444800},\"secondary\":{\"used_percent\":58.0,\"window_minutes\":10080,\"resets_at\":4102444801}}}}\n",
-        );
-        assert_eq!(
-            parse_latest_codex_weekly_usage(contents),
-            Some((58.0, 4_102_444_801, Some(1_789_387_260_000)))
-        );
     }
 
     #[test]
