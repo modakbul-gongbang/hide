@@ -756,6 +756,7 @@ impl TaskSource for SharedProjects {
                         events.push(OutsideEvent::BodyEdited {
                             issue: issue_ref.clone(),
                             body_hash: hash,
+                            body: body.to_owned(),
                         });
                     }
                     let closing: Vec<&Value> = prs

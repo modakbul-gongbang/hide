@@ -6,7 +6,7 @@
   "editor_tab_kind": ["file", "diff", "session", "memory"],
   "factory_attempt_outcome": ["passed", "failed", "environment", "running"],
   "factory_attempt_stage": ["task", "pre_merge"],
-  "factory_column": ["drafting", "waiting", "running", "done"],
+  "factory_column": ["before", "moving", "stuck", "done"],
   "factory_discovery_class": ["in_scope", "decision", "scope_change", "prerequisite", "unrelated"],
   "factory_env_hold": ["disk_floor", "disk_full", "memory_critical"],
   "factory_gate": ["review_directly", "approved_scope_change", "breaking_change", "no_verification", "risk_path", "manual_mode", "open_question", "check_failed", "autonomy_diff", "dirty_main", "merge_refused"],

@@ -114,7 +114,7 @@ impl Judgment {
 
     /// The bundled input as the provider reads it, within [`INPUT_LIMIT`].
     pub fn render_input(&self) -> String {
-        let value = match &self.input {
+        let mut value = match &self.input {
             JudgmentInput::IntakeReview {
                 card,
                 attachment,
@@ -150,6 +150,10 @@ impl Judgment {
                 "diff": diff.as_deref().map(|text| cut(text, DIFF_LIMIT)),
             }),
         };
+        // Display metadata adds no input or provider work.
+        if let Some(card) = value.get_mut("card").and_then(Value::as_object_mut) {
+            card.remove("summary");
+        }
         cut(&value.to_string(), INPUT_LIMIT)
     }
 }
@@ -197,6 +201,7 @@ pub struct ProposedQuestion {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IntakeVerdict {
+    pub summary: Option<String>,
     pub questions: Vec<ProposedQuestion>,
     pub dependencies: Vec<String>,
     pub split: Vec<SplitPiece>,
@@ -251,6 +256,7 @@ pub fn parse_intake(value: &Value) -> Result<IntakeVerdict, String> {
         return Err("split_needs_two_pieces".into());
     }
     Ok(IntakeVerdict {
+        summary: value["summary"].as_str().map(crate::model::short_summary),
         questions,
         dependencies,
         split,
@@ -394,8 +400,9 @@ fn intake_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["questions", "dependencies", "split", "flags", "fits_scope"],
+        "required": ["summary", "questions", "dependencies", "split", "flags", "fits_scope"],
         "properties": {
+            "summary": {"type": "string", "maxLength": 60},
             "questions": {"type": "array", "items": question_item()},
             "dependencies": {"type": "array", "items": {"type": "string"}},
             "fits_scope": {"type": ["boolean", "null"]},
@@ -460,7 +467,7 @@ fn env_schema() -> Value {
     })
 }
 
-const INTAKE_SYSTEM: &str = "You review a software Task card before it runs, with no knowledge of the conversation that wrote it. You see only the card, its attached PRD, the repository's file list and guide, and the other Tasks of the same Factory. Return JSON only. You may only add: questions a person must answer before the Task can run safely (each with a concrete suggestion and a default action), dependencies on other listed Tasks by id when this Task cannot start until that one is merged, a split when the Task is clearly too large for one pull request (two or more pieces, each with a goal and checkable criteria, `after` naming earlier pieces), and short flags. Ask about untestable completion criteria, hidden decisions, and mismatch between the card and the PRD. Never rewrite the card. Do not add a dependency only because two Tasks touch the same file. Return empty arrays when the card is ready. When autonomy_scope is given, set fits_scope to true only when the card plainly falls within that description and false otherwise; when it is null, set fits_scope to null.";
+const INTAKE_SYSTEM: &str = "summary에는 Task의 목표를 60자 이내 한 줄로 요약하세요. 제목을 반복하지 마세요. You review a software Task card before it runs, with no knowledge of the conversation that wrote it. You see only the card, its attached PRD, the repository's file list and guide, and the other Tasks of the same Factory. Return JSON only. You may only add: questions a person must answer before the Task can run safely (each with a concrete suggestion and a default action), dependencies on other listed Tasks by id when this Task cannot start until that one is merged, a split when the Task is clearly too large for one pull request (two or more pieces, each with a goal and checkable criteria, `after` naming earlier pieces), and short flags. Ask about untestable completion criteria, hidden decisions, and mismatch between the card and the PRD. Never rewrite the card. Do not add a dependency only because two Tasks touch the same file. Return empty arrays when the card is ready. When autonomy_scope is given, set fits_scope to true only when the card plainly falls within that description and false otherwise; when it is null, set fits_scope to null.";
 
 const DRIFT_SYSTEM: &str = "You compare a finished change with the Task card it claims to complete: its goal, completion criteria and out-of-scope list, and the decisions the worker recorded. Return JSON only. pass is true when the diff does what the card asks and nothing it rules out. When it drifts, add questions for a person, each with a suggestion and a default action that keeps the change as narrow as the card; add flags for a reported breaking change or a public contract change. You cannot send work back and you cannot approve anything wider than the card.";
 

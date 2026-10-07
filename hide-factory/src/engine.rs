@@ -374,6 +374,7 @@ impl Engine {
             &tasks,
             self.now(),
             self.ports.clock.utc_offset_ms(),
+            &self.runtime_blocked,
         )
     }
 
@@ -1461,6 +1462,9 @@ impl Engine {
             );
         }
         Ok(Card {
+            summary: existing
+                .filter(|old| old.goal.trim() == goal.trim())
+                .and_then(|old| old.summary.clone()),
             title: title.trim().to_owned(),
             goal: goal.trim().to_owned(),
             criteria: criteria
@@ -1967,6 +1971,18 @@ impl Engine {
             Err(reason) => return self.review_failed(factory, id, &reason),
         };
         let mut result = verdict.result();
+        self.with_task(factory, id, |task| {
+            if task.card.summary.is_none() {
+                task.card.summary = Some(
+                    verdict
+                        .summary
+                        .as_deref()
+                        .map(short_summary)
+                        .filter(|summary| !summary.is_empty())
+                        .unwrap_or_else(|| goal_summary(&task.card.goal, &task.card.title)),
+                );
+            }
+        });
         let now = self.now();
         // A worker's claim is not the fit: only a review that says the card
         // fits its enabled scope lets it start without a person (B30).
@@ -2393,6 +2409,7 @@ impl Engine {
         // The original becomes the first piece and keeps its issue (D-55).
         self.with_task(factory, id, |task| {
             task.card.title = first.title.clone();
+            task.card.summary = None;
             task.card.goal = first.goal.clone();
             task.card.criteria = first.criteria.clone();
             task.review = ReviewState::Pending;
@@ -2409,6 +2426,7 @@ impl Engine {
             }
             let card = Card {
                 title: piece.title.clone(),
+                summary: None,
                 goal: piece.goal.clone(),
                 criteria: piece.criteria.clone(),
                 out_of_scope: Vec::new(),
@@ -4210,7 +4228,15 @@ impl Engine {
         let factory = self.factory_id(project)?;
         let running: Vec<String> = self
             .tasks_of(&factory)
-            .filter(|t| t.state.column() == Some(Column::Running))
+            .filter(|t| {
+                !matches!(
+                    t.state,
+                    TaskState::Drafting
+                        | TaskState::Waiting
+                        | TaskState::Done
+                        | TaskState::Cancelled
+                )
+            })
             .map(Task::display_id)
             .collect();
         if !running.is_empty() {
@@ -5279,7 +5305,11 @@ impl Engine {
                     );
                 }
             }
-            OutsideEvent::BodyEdited { issue, body_hash } => {
+            OutsideEvent::BodyEdited {
+                issue,
+                body_hash,
+                body,
+            } => {
                 let Some(task) = self.task_for_issue(factory_id, &issue) else {
                     return;
                 };
@@ -5288,7 +5318,8 @@ impl Engine {
                 }
                 let first = task.source_body_hash.is_none();
                 self.with_task(factory_id, &task.id, |t| {
-                    t.source_body_hash = Some(body_hash.clone())
+                    t.source_body_hash = Some(body_hash.clone());
+                    t.card.summary = Some(goal_summary(&body, &t.card.title));
                 });
                 if first {
                     return;
@@ -5957,6 +5988,7 @@ impl Engine {
             &self.tasks_of(factory_id).collect::<Vec<_>>(),
             now,
             self.ports.clock.utc_offset_ms(),
+            &self.runtime_blocked,
         ))
         .unwrap_or_default();
         let judgment = Judgment {

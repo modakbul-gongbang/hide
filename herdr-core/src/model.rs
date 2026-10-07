@@ -5322,7 +5322,7 @@ mod wire_enum_tests {
 
         for column in Column::ALL {
             match column {
-                Column::Drafting | Column::Waiting | Column::Running | Column::Done => {}
+                Column::Before | Column::Moving | Column::Stuck | Column::Done => {}
             }
         }
         let columns = Column::ALL.map(Column::as_str);
