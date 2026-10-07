@@ -32,24 +32,17 @@ async function deletionFixture(herdr: HerdrFixture) {
 }
 
 /**
- * The fixture branch has nothing ahead of main and no dirt or agent, so the
- * core folds its row under Inactive once it has read the worktree's Git
- * facts, unless it is the focused checkout; until then the row is drawn among
- * the active checkouts. With no saved state the core focuses the first
- * checkout its catalog holds, which can be this one, so main is focused first
- * and the fold is awaited and opened: the row is then found where it stays.
+ * The fixture branch has nothing ahead of main and no dirt or agent, yet no
+ * work of its own has landed, so its row stays among the active checkouts:
+ * Git reads a branch with no commits of its own as merged, and only landed
+ * work folds under Inactive. The row's commit age is drawn once the core has
+ * read the worktree's Git facts, which the deletion dialog is built from.
  */
 async function featureRow(page: Page) {
   const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
-  const main = project.locator('[data-checkout][aria-label^="main"]');
-  await main.click();
-  await expect(main).toHaveAttribute("aria-current", "true");
-  const inactive = project.locator("[data-inactive-checkouts]");
-  await expect(inactive).toHaveText("Inactive 1", { timeout: 30_000 });
-  await inactive.click();
-  await expect(inactive).toHaveAttribute("aria-expanded", "true");
   const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
-  await expect(feature).toBeVisible();
+  await expect(feature.locator("[data-checkout-age]")).toBeVisible({ timeout: 30_000 });
+  await expect(project.locator("[data-inactive-checkouts]")).toHaveCount(0);
   return feature;
 }
 

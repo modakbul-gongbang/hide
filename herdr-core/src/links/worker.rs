@@ -898,7 +898,7 @@ fn prune(store: &mut LinkStore, paths: &Paths) {
 fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     let mut summaries = BTreeMap::new();
     for project in state.projects.iter() {
-        match store.summary(&project.key) {
+        match store.summary(&project.key, &project.worktrees) {
             Ok(summary) => {
                 summaries.insert(project.workspace_id.clone(), summary);
             }

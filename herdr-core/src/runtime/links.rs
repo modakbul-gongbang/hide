@@ -475,7 +475,11 @@ impl Runtime {
         if summaries.projects == projects {
             return false;
         }
+        for workspace in &mut self.snapshot.navigator.workspaces {
+            associate_landed(workspace, projects.get(&workspace.id));
+        }
         summaries.projects = projects;
+        self.refresh_inactive_groups();
         true
     }
 
@@ -490,6 +494,31 @@ impl Runtime {
         summaries.filling = filling;
         true
     }
+}
+
+/// Decides each checkout's `landed` from Git and the project's record: its
+/// HEAD is in the base, and the record names it among the checkouts whose
+/// work landed. With no record (still filling, Copied history Off, a device
+/// with no pull requests read) nothing is landed, so a checkout with no
+/// commits of its own is never drawn as merged. Runs on every catalog
+/// projection, so it compares before it writes.
+pub(super) fn associate_landed(
+    workspace: &mut WorkspaceSnapshot,
+    summary: Option<&ProjectLinkSummary>,
+) -> bool {
+    let mut changed = false;
+    for checkout in &mut workspace.checkouts {
+        let landed = checkout
+            .worktree
+            .as_ref()
+            .is_some_and(|worktree| worktree.merged == Some(true))
+            && summary.is_some_and(|summary| summary.landed.contains(&checkout.path));
+        if checkout.landed != landed {
+            checkout.landed = landed;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// A pull request GitHub answered, with the issues it is linked to now.

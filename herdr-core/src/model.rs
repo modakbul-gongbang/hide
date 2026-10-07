@@ -1387,6 +1387,13 @@ pub struct CheckoutSnapshot {
     /// The complete worktree row backing the card and both removal menus.
     /// All three surfaces therefore consume one core-owned policy result.
     pub worktree: Option<WorktreeSnapshot>,
+    /// The work done here is in the base: Git finds HEAD in it, and the link
+    /// record ties the sessions that worked here to a merged pull request and
+    /// to none still open. Git alone cannot say this, because a checkout with
+    /// no commits of its own is in its base too. A merged pull request on
+    /// this checkout's own HEAD is the other proof, which `pull_request`
+    /// carries.
+    pub landed: bool,
     pub tabs: Vec<TabSnapshot>,
     /// The tab Herdr reports as active in this checkout, or `None` when the
     /// workspace's active tab lives in a sibling checkout. A checkout never

@@ -16,7 +16,7 @@ pub mod store;
 pub mod worker;
 
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The most sessions one panel read returns (D-40).
 pub const PANEL_SESSION_LIMIT: usize = 200;
@@ -203,11 +203,20 @@ pub struct ProjectLinkSummary {
     /// Session id → the pull requests it made or worked on.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
+    /// The checkouts, by path, whose work landed: the sessions that worked
+    /// in each made or worked on a merged pull request and on none still
+    /// open. A session belongs to the deepest checkout holding its folder.
+    /// Core only: the runtime carries it onto each checkout's `landed`.
+    #[serde(skip)]
+    pub landed: BTreeSet<String>,
 }
 
 impl ProjectLinkSummary {
     pub fn is_empty(&self) -> bool {
-        self.prs.is_empty() && self.issues.is_empty() && self.sessions.is_empty()
+        self.prs.is_empty()
+            && self.issues.is_empty()
+            && self.sessions.is_empty()
+            && self.landed.is_empty()
     }
 }
 

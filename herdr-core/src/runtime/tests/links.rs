@@ -113,6 +113,60 @@ fn a_failed_github_read_hands_the_worker_nothing_to_close() {
     assert!(!runtime.link_projects()[0].prs_read);
 }
 
+/// A checkout whose HEAD Git finds in its base reads as merged only once the
+/// record says the work done there landed: one with no commits of its own
+/// stays a plain checkout in the main list, and new commits on it take the
+/// record's answer away.
+#[test]
+fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() {
+    let mut runtime = links_runtime(Vec::new(), true);
+    let in_base = |runtime: &mut Runtime, merged| {
+        runtime.snapshot.navigator.workspaces[0].checkouts[0].worktree =
+            Some(crate::model::WorktreeSnapshot {
+                path: "/repo/task".into(),
+                merged: Some(merged),
+                ..Default::default()
+            });
+        runtime.apply_pull_requests();
+        runtime.refresh_inactive_groups();
+    };
+    let shown = |runtime: &Runtime| {
+        let workspace = &runtime.snapshot.navigator.workspaces[0];
+        (
+            workspace.checkouts[0].landed,
+            workspace.inactive_checkouts.checkout_ids.clone(),
+        )
+    };
+    in_base(&mut runtime, true);
+    assert_eq!(shown(&runtime), (false, Vec::<String>::new()));
+
+    let summary = |paths: &[&str]| {
+        std::collections::BTreeMap::from([(
+            "w".to_owned(),
+            crate::links::ProjectLinkSummary {
+                landed: paths.iter().map(|path| (*path).to_owned()).collect(),
+                ..Default::default()
+            },
+        )])
+    };
+    assert!(runtime.ingest_link_summaries(summary(&["/repo/task"])));
+    assert_eq!(shown(&runtime), (true, vec!["c".to_owned()]));
+    let wire = serde_json::to_value(runtime.snapshot()).unwrap();
+    assert_eq!(
+        wire["navigator"]["workspaces"][0]["checkouts"][0]["landed"],
+        true
+    );
+    assert!(
+        wire["link_summaries"]["projects"]["w"]
+            .get("landed")
+            .is_none(),
+        "the record's set stays in the core"
+    );
+
+    in_base(&mut runtime, false);
+    assert_eq!(shown(&runtime), (false, Vec::<String>::new()));
+}
+
 fn claude_session(home: &Path, id: &str, printed_at: u64) {
     let dir = home.join(".claude/projects/-repo-task");
     std::fs::create_dir_all(&dir).unwrap();

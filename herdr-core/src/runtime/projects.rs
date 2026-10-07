@@ -854,15 +854,25 @@ impl Runtime {
             });
         }
 
+        let link_summaries = self
+            .snapshot
+            .link_summaries
+            .as_ref()
+            .map(|summaries| &summaries.projects);
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
             // The commit a checkout is on is what ties a settled pull request
-            // to it, so a catalog read that moved a HEAD decides again here.
+            // to it, so a catalog read that moved a HEAD decides again here,
+            // and whether its work landed follows the same read.
             let project = github.project(&workspace.path);
             associate_pull_requests(workspace, project);
+            super::links::associate_landed(
+                workspace,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
             // Git refreshes the persistent purpose sources. Restore the
             // agent/PR fallback in this same projection before publishing it.
             crate::sidebar::sync_checkout_purposes(
@@ -2830,6 +2840,11 @@ impl Runtime {
             .map(|workspace| workspace.path.clone())
             .filter(|path| !self.github_settled.contains(path))
             .collect();
+        let link_summaries = self
+            .snapshot
+            .link_summaries
+            .as_ref()
+            .map(|summaries| &summaries.projects);
         for workspace in self.snapshot.navigator.workspaces.iter_mut() {
             let project = github.project(&workspace.path);
             let status = project
@@ -2866,6 +2881,10 @@ impl Runtime {
                 }
             }
             changed |= associate_pull_requests(workspace, project);
+            changed |= super::links::associate_landed(
+                workspace,
+                link_summaries.and_then(|summaries| summaries.get(&workspace.id)),
+            );
         }
         let times = pull_request_times(&github);
         if *self.pull_request_times != times {

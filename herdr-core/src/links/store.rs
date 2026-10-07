@@ -10,7 +10,7 @@ use super::{
     CREATED_AFTER_MS, CREATED_BEFORE_MS, DAY_MS, FileState, IssueSource, LinkedIssue, LinkedParent,
     LinkedSession, OPEN_EXCEPTION_MS, PANEL_SESSION_LIMIT, PaneFact, ParentFact, ProjectFacts,
     ProjectLinkSummary, SESSION_PR_LIMIT, STORE_PAGE_LIMIT, SUMMARY_SESSION_LIMIT, SessionPrChip,
-    SessionRole, within,
+    SessionRole, WorktreeFact, within,
 };
 use hide_session::ConversationCheckpoint;
 use hide_session::links::ReadAnswer;
@@ -1488,14 +1488,22 @@ impl LinkStore {
             .map_err(failed)
     }
 
-    /// A project's counts and chips (D-45).
-    pub fn summary(&self, project: &str) -> Result<ProjectLinkSummary, String> {
+    /// A project's counts and chips (D-45), and which of its `checkouts`
+    /// (the ones it has now) hold work that landed.
+    pub fn summary(
+        &self,
+        project: &str,
+        checkouts: &[WorktreeFact],
+    ) -> Result<ProjectLinkSummary, String> {
         let mut summary = ProjectLinkSummary::default();
         let Some(row) = self.project(project)? else {
             return Ok(summary);
         };
         let mut by_pr: BTreeMap<u64, Vec<(String, String, String)>> = BTreeMap::new();
         let mut chips: BTreeMap<String, BTreeSet<SessionPrChip>> = BTreeMap::new();
+        // Per checkout: whether a pull request its sessions worked on merged,
+        // and whether one is still open.
+        let mut work: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
         for pr in self.candidate_prs(project)? {
             let lines = self.pr_lines(&row, &pr, None)?;
             if lines.is_empty() {
@@ -1508,6 +1516,16 @@ impl LinkStore {
                         number: pr.number,
                         created: line.role == SessionRole::Created,
                     });
+                }
+                let checkout = line
+                    .cwd
+                    .as_deref()
+                    .filter(|_| line.device_id == row.device)
+                    .and_then(|cwd| deepest_checkout(checkouts, cwd));
+                if let Some(checkout) = checkout {
+                    let (merged, open) = work.entry(checkout).or_default();
+                    *merged |= pr.merged_at.is_some();
+                    *open |= pr.end().is_none();
                 }
             }
             by_pr.insert(
@@ -1558,8 +1576,23 @@ impl LinkStore {
                 (id, chips)
             })
             .collect();
+        summary.landed = work
+            .into_iter()
+            .filter(|(_, (merged, open))| *merged && !*open)
+            .map(|(checkout, _)| checkout.to_owned())
+            .collect();
         Ok(summary)
     }
+}
+
+/// The checkout a session in `cwd` worked in: the deepest one holding it, so
+/// a worktree inside another checkout keeps its own sessions.
+fn deepest_checkout<'a>(checkouts: &'a [WorktreeFact], cwd: &str) -> Option<&'a str> {
+    checkouts
+        .iter()
+        .map(|checkout| checkout.path.as_str())
+        .filter(|path| within(cwd, path))
+        .max_by_key(|path| path.trim_end_matches('/').len())
 }
 
 fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
