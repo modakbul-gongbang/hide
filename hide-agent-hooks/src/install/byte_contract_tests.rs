@@ -1,0 +1,94 @@
+//! PRD agent-adapter-layer D-10: the accepted pre-move installation bytes.
+//! These fixtures pin all six commands, matchers, markers and file ordering.
+//! A command change would invalidate Codex trust even if its meaning stayed the same.
+
+use super::*;
+
+const POSIX_HELPER: &str = "/kit path/it's/hide-agent-hooks";
+const WINDOWS_HELPER: &str = "C:\\kit path\\it's\\hide-agent-hooks.exe";
+const OPERATOR_DOCUMENT: &str = r#"{"operator_setting":{"enabled":true},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo operator-hook"}]}]}}"#;
+
+const BASELINES: [(AgentRuntime, &str, bool, &str); 4] = [
+    (
+        AgentRuntime::ClaudeCode,
+        POSIX_HELPER,
+        false,
+        include_str!("../../tests/fixtures/hook-bytes/claude-code-posix.json"),
+    ),
+    (
+        AgentRuntime::Codex,
+        POSIX_HELPER,
+        false,
+        include_str!("../../tests/fixtures/hook-bytes/codex-posix.json"),
+    ),
+    (
+        AgentRuntime::ClaudeCode,
+        WINDOWS_HELPER,
+        true,
+        include_str!("../../tests/fixtures/hook-bytes/claude-code-windows.json"),
+    ),
+    (
+        AgentRuntime::Codex,
+        WINDOWS_HELPER,
+        true,
+        include_str!("../../tests/fixtures/hook-bytes/codex-windows.json"),
+    ),
+];
+
+#[test]
+fn every_installed_command_keeps_its_premove_bytes_on_both_platforms() {
+    for (runtime, helper, windows, baseline) in BASELINES {
+        let expected: Value = serde_json::from_str(baseline).unwrap();
+        let events = expected["hooks"].as_object().unwrap();
+        assert_eq!(events.len(), 6, "the pre-move contract has six events");
+        for (name, groups) in events {
+            let event = HookEvent::parse(name).expect("the pre-move event must still exist");
+            let installed = groups.as_array().unwrap().last().unwrap();
+            let hook = if windows {
+                windows_hook(Path::new(helper), runtime, event)
+            } else {
+                posix_hook(Path::new(helper), runtime, event)
+            };
+            assert_eq!(
+                serde_json::to_vec(&hook).unwrap(),
+                serde_json::to_vec(&installed["hooks"][0]).unwrap(),
+                "{} {name}: command bytes on windows={windows}",
+                runtime.id()
+            );
+            assert_eq!(
+                hook_matcher(runtime, event),
+                installed.get("matcher").and_then(Value::as_str),
+                "{} {name}: matcher bytes",
+                runtime.id()
+            );
+        }
+    }
+}
+
+#[test]
+fn complete_installed_files_keep_their_premove_bytes_and_second_install_is_inert() {
+    for (runtime, helper, windows, baseline) in BASELINES {
+        if windows != cfg!(windows) {
+            continue;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let config = runtime.config_path(home.path());
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, OPERATOR_DOCUMENT).unwrap();
+
+        let first = install(runtime, home.path(), Path::new(helper)).unwrap();
+        assert!(first.changed);
+        assert_eq!(first.preserved_entries, 1, "the operator hook survives");
+        assert_eq!(
+            fs::read(&config).unwrap(),
+            baseline.as_bytes(),
+            "{}: complete installed file bytes",
+            runtime.id()
+        );
+
+        let second = install(runtime, home.path(), Path::new(helper)).unwrap();
+        assert!(!second.changed, "a repeat install must write nothing");
+        assert_eq!(second.preserved_entries, 1);
+        assert_eq!(fs::read(&config).unwrap(), baseline.as_bytes());
+    }
+}
