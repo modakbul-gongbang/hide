@@ -415,21 +415,37 @@ fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
         .unwrap(),
     );
     runtime.install_label_services(std::sync::Arc::clone(&services));
-    runtime.set_label_overlay(plan_waiting_overlay(4));
-    runtime.ingest_session(Ok(codex_projection("done", 4)));
-    assert_eq!(row(&runtime)["blocked"], true);
-    runtime.dispatch_json(
-        &serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "key",
-            "payload": {"pane_id": PANE, "bytes_base64": crate::live::encode_base64(b"\r")},
-        }))
-        .unwrap(),
-    );
-    assert_eq!(
+    let enter = |runtime: &mut Runtime| {
+        runtime.dispatch_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION, "kind": "key",
+                "payload": {"pane_id": PANE, "bytes_base64": crate::live::encode_base64(b"\r")},
+            }))
+            .unwrap(),
+        );
         services
             .input
             .submits(crate::labels::store::LOCAL_TARGET, PANE)
-            .len(),
-        1
-    );
+            .len()
+    };
+    // Herdr reads the menu as done under one Codex manifest and as unknown
+    // under another; the coordinator observes each state for delivery.
+    let mut seq = 4;
+    for status in ["done", "unknown"] {
+        let overlay = plan_waiting_overlay(seq);
+        let projection = codex_projection(status, seq);
+        runtime.observe_delivery(crate::node::TEST_NODE, &projection, None, Some(&overlay));
+        runtime.set_label_overlay(overlay);
+        runtime.ingest_session(Ok(projection));
+        assert_eq!(row(&runtime)["blocked"], true, "{status}");
+        let before = enter(&mut runtime);
+        assert_eq!(enter(&mut runtime), before + 1, "{status}");
+        seq += 1;
+    }
+    // A prompt Herdr reports is answered, not submitted to.
+    let projection = codex_projection("blocked", seq);
+    runtime.observe_delivery(crate::node::TEST_NODE, &projection, None, None);
+    runtime.ingest_session(Ok(projection));
+    let before = enter(&mut runtime);
+    assert_eq!(enter(&mut runtime), before, "blocked");
 }

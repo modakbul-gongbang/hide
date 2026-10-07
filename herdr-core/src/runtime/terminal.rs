@@ -520,11 +520,12 @@ impl Runtime {
     }
     /// Records that the operator submitted to an agent pane, for who sent
     /// the message it writes next (PRD overview-request-view D-19). Only the
-    /// moment is kept. An Enter at a prompt Herdr reports (`blocked`, whose
-    /// activity is not `stopped`) answers that prompt, not the conversation,
-    /// and is not one. An Enter at a plan waiting for approval is: the agent
-    /// rests (`stopped`), and approving writes the operator's next message
-    /// (Codex's "Implement the plan.").
+    /// moment is kept. An Enter at a prompt Herdr reports (`blocked`) answers
+    /// that prompt, not the conversation, and is not one. An Enter at a plan
+    /// waiting for approval is, whatever Herdr reads its menu as: approving
+    /// writes the operator's next message (Codex's "Implement the plan.").
+    /// Herdr's own status is the delivery observation's; a pane with none is
+    /// judged from its row, where only a resting agent's wait is the plan's.
     pub(super) fn record_operator_submit(&self, pane_id: &str) {
         let Some(services) = self.label_services.as_ref() else {
             return;
@@ -532,7 +533,11 @@ impl Runtime {
         let Some(row) = self.agent_row(pane_id) else {
             return;
         };
-        if row.blocked && row.activity != "stopped" {
+        let at_prompt = match self.delivery_observations.get(pane_id) {
+            Some(observation) => observation.status == "blocked",
+            None => row.blocked && row.activity != "stopped",
+        };
+        if at_prompt {
             return;
         }
         services
