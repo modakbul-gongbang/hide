@@ -18,7 +18,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use hide_node::ssh::PaneEvents as _;
 use hide_node_link::device::{
     DeviceConnector, DeviceTransport, HOST_CONSENT_CONTRACT, HostConsent,
 };
