@@ -248,10 +248,6 @@ mod tests {
             read_setting(&shim, home.path(), &AtomicBool::new(false)),
             Ok(DaemonSetting::Off)
         );
-        assert_eq!(
-            crate::program_version(&shim, &crate::cli_path(home.path()).unwrap()).as_deref(),
-            Some("0.160.0")
-        );
     }
 
     /// A stand-in `codex` whose `features` command keeps the setting in a

@@ -377,7 +377,8 @@ pub(crate) fn runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathB
 }
 
 /// The program `name` as a hook's daemon would find it on [`cli_path`],
-/// without the login shell's folders, which only the install kit reads.
+/// without the login shell's folders, which only the install kit and Hide AI
+/// read (`hide_platform::programs`).
 pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
     hide_platform::host::find_program(&cli_path(home)?, name)
 }
@@ -390,15 +391,6 @@ pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
 /// is run with this value, never with the daemon's `PATH` alone.
 pub fn cli_path(home: &Path) -> Option<OsString> {
     hide_platform::programs::cli_path_with(home, None)
-}
-
-/// The version a program reports for `--version`, run with `path` (the
-/// search it was found on), within the same short bound the runtime probe
-/// uses; `None` when it does not answer in time, exits non-zero or prints no
-/// `x.y.z`.
-pub fn program_version(binary: &Path, path: &OsStr) -> Option<String> {
-    version_output(binary, path, RUNTIME_VERSION_PROBE_TIMEOUT)
-        .and_then(|output| parse_version(&output))
 }
 
 fn version_output(binary: &Path, path: &OsStr, timeout: Duration) -> Option<String> {
