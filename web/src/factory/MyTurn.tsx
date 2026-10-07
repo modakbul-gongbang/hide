@@ -239,7 +239,7 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
       ) : null}
       <div className="flex min-w-0 flex-wrap items-center gap-sm pl-(--size-icon)">
         {choices.length > 0 ? (
-          <Button data-factory-send={request.state.phase} disabled={!command} aria-busy={sending} onClick={send}>
+          <Button data-factory-send={request.state.phase} disabled={!command || request.state.phase === "taken"} aria-busy={sending} onClick={send}>
             {sending ? <LoaderCircleIcon className="animate-spin" /> : <CornerDownLeftIcon />}
             {sending ? t("factory.turn.sending") : label}
           </Button>

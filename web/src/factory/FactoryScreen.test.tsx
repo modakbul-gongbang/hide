@@ -307,6 +307,45 @@ it("does not send a taken answer again while its item is still on screen (B10)",
   await act(async () => send.click());
   const sent = lastAction(events);
   await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
-  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
+  expect(container.querySelector<HTMLButtonElement>("[data-factory-send]")!.disabled).toBe(true);
+  await act(async () => press(container.querySelector("[data-factory-choice='1']")!, { key: "Enter" }));
   expect(sentVerbs(events)).toEqual(["merge"]);
+});
+
+it("holds Add while a check is on its way, and keeps a refused check's text through a later write of another setting (B22)", async () => {
+  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings" });
+  await answerConfig(summary, events);
+  await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!, "README"));
+  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
+  await act(async () => add.click());
+  expect(add.disabled).toBe(true);
+  const check = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: check.payload.request_id, answer: { ok: false, reason: "factory_busy", next_action: "Try again in a moment" } }] } }));
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
+  await act(async () => type(field, "7"));
+  await act(async () => press(field, { key: "Enter" }));
+  const write = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: write.payload.request_id, answer: { ok: true, config: { ...CONFIG, new_task_limit: 7 }, machine: { max_workers: 5 } } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("README");
+});
+
+it("puts a number the field cannot take back to the saved value instead of leaving it as if saved (B22)", async () => {
+  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings" });
+  await answerConfig(summary, events);
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
+  await act(async () => type(field, "2.5"));
+  await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!.value).toBe(String(CONFIG.new_task_limit));
+});
+
+it("leaves an open priority form alone when another action on the page is taken (B19)", async () => {
+  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail("waiting", ["priority", "cancel"]) } }));
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-action='priority']")!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-action='cancel']")!.click());
+  const cancel = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, factories: [factory()], inbox: [] }, actions: [{ request_id: cancel.payload.request_id, answer: { ok: true } }] } }));
+  expect(container.querySelector("[data-factory-priority]")).not.toBeNull();
 });

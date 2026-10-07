@@ -21,7 +21,9 @@ export type RequestState =
   | { phase: "refused"; answer: ActionAnswer["answer"] }
   | { phase: "refused"; answer: null; id: string };
 
-export function useFactoryRequest(actions: Pick<Actions, "factoryAction">): { state: RequestState; send: (command: FactoryCommand) => void; reset: () => void } {
+export type FactoryRequest = { state: RequestState; send: (command: FactoryCommand) => void; reset: () => void };
+
+export function useFactoryRequest(actions: Pick<Actions, "factoryAction">): FactoryRequest {
   const [state, setState] = useState<RequestState>({ phase: "idle" });
   const id = state.phase === "sending" || (state.phase === "refused" && state.answer === null) ? state.id : null;
   const answer = useShellStore((s) => (id ? (s.factory?.actions.find((row) => row.request_id === id)?.answer ?? null) : null));

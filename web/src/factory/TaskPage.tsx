@@ -15,7 +15,10 @@ import { ACTION_LABEL, GATE_LABEL, OUTCOME_LABEL, STAGE_LABEL, STOP_LABEL, TONE_
 import type { AttemptView, CardView, FactorySummary, FactoryView, Question, TaskDetail } from "./model";
 import { Refusal } from "./MyTurn";
 import { Revive } from "./FactoryBoard";
-import { useFactoryRequest, type RequestState } from "./request";
+import { useFactoryRequest, type FactoryRequest } from "./request";
+
+/** The engine's priority is a 32-bit integer; a larger one would not reach it. */
+const PRIORITY_LIMIT = 2_147_483_647;
 import { inboxKey, taskChain } from "./view";
 
 const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
@@ -61,6 +64,8 @@ export function TaskPage({ summary, place, actions }: { summary: FactorySummary;
 function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: FactoryView; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const request = useFactoryRequest(actions);
+  // The comment and priority forms have their own request, so another action's answer cannot close them.
+  const form = useFactoryRequest(actions);
   const card = detail.card;
   const chain = taskChain(factory, card.task);
   const open = detail.questions.filter((question) => question.answer === null);
@@ -76,7 +81,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
           </span>
           {detail.stop_code ? <span className="text-caption text-warning" data-factory-stop={detail.stop_code}>{t(STOP_LABEL[detail.stop_code])}</span> : null}
           <span className="flex-1" />
-          <PageActions detail={detail} task={task} send={send} phase={request.state.phase} actions={actions} />
+          <PageActions detail={detail} task={task} send={send} sending={request.state.phase === "sending"} form={form} actions={actions} />
         </div>
         <span className="flex min-w-0 flex-wrap gap-xs text-caption text-muted-foreground">
           <span className="font-mono">{card.display_id}</span>
@@ -90,6 +95,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
           ) : null}
         </span>
         <Refusal state={request.state} />
+        <Refusal state={form.state} />
         {card.state === "cancelled" || card.state === "outside" ? <Revive factory={factory.id} card={card} actions={actions} /> : null}
       </div>
       {open.map((question) => (
@@ -243,17 +249,17 @@ function ChainColumn({ title, cards, factory, onRemove }: { title: string; cards
 }
 
 /** The state's actions as buttons (D-07, B19): nothing the engine would refuse in this state is drawn. */
-function PageActions({ detail, task, send, phase, actions }: { detail: TaskDetail; task: string; send: (command: FactoryCommand) => void; phase: RequestState["phase"]; actions: Actions }) {
+function PageActions({ detail, task, send, sending, form, actions }: { detail: TaskDetail; task: string; send: (command: FactoryCommand) => void; sending: boolean; form: FactoryRequest; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const [comment, setComment] = useState<string | null>(null);
   const [priority, setPriority] = useState<string | null>(null);
-  const sending = phase === "sending";
+  const asking = form.state.phase === "sending";
   // A form stays open with what was typed until the engine takes it, so a refusal loses nothing.
   useEffect(() => {
-    if (phase !== "taken") return;
+    if (form.state.phase !== "taken") return;
     setComment(null);
     setPriority(null);
-  }, [phase]);
+  }, [form.state]);
   const allowed = PAGE_ACTIONS.filter((action) => detail.allowed.includes(action));
   if (allowed.length === 0) return null;
   const button = (action: (typeof PAGE_ACTIONS)[number], onClick: () => void, variant: "default" | "secondary" | "ghost" = "secondary") => (
@@ -271,9 +277,9 @@ function PageActions({ detail, task, send, phase, actions }: { detail: TaskDetai
             return comment === null ? (
               button(action, () => setComment(""))
             ) : (
-              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); if (comment.trim() && !sending) send({ verb: "request_changes", task, comment: comment.trim() }); }}>
+              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); if (comment.trim() && !asking) form.send({ verb: "request_changes", task, comment: comment.trim() }); }}>
                 <Input autoFocus value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("factory.turn.commentPlaceholder")} aria-label={t("factory.turn.commentPlaceholder")} data-factory-comment="true" />
-                <Button type="submit" size="sm" disabled={!comment.trim()}>{t("factory.action.requestChanges")}</Button>
+                <Button type="submit" size="sm" disabled={!comment.trim() || asking}>{t("factory.action.requestChanges")}</Button>
               </form>
             );
           case "retry":
@@ -286,9 +292,9 @@ function PageActions({ detail, task, send, phase, actions }: { detail: TaskDetai
             return priority === null ? (
               button(action, () => setPriority(String(detail.card.priority)))
             ) : (
-              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); const value = Number(priority); if (priority.trim() !== "" && Number.isInteger(value) && !sending) send({ verb: "priority", task, priority: value }); }}>
+              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); const value = Number(priority); if (priority.trim() !== "" && Number.isInteger(value) && Math.abs(value) <= PRIORITY_LIMIT && !asking) form.send({ verb: "priority", task, priority: value }); }}>
                 <Input autoFocus type="number" className="w-[calc(var(--size-control-lg)*3)]" value={priority} onChange={(event) => setPriority(event.target.value)} aria-label={t("factory.action.priority")} data-factory-priority="true" />
-                <Button type="submit" size="sm">{t("factory.task.set")}</Button>
+                <Button type="submit" size="sm" disabled={asking}>{t("factory.task.set")}</Button>
               </form>
             );
           case "edit":

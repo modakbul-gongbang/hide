@@ -1110,7 +1110,7 @@ Core owner: `herdr-core/src/factory/screen.rs`, `herdr-core/src/runtime/factory.
 
 The Factory screens draw the Software Factory engine ([factory.md](factory.md)) and change nothing it decides.
 Every count, name, state, order and reason on them is a field of the engine's `FactorySummary` or `TaskDetail`, and every action they offer is one stage-1 command the engine may refuse.
-A refusal keeps the thing that was acted on in place with the engine's next action on one line beneath it, and what the person typed stays until the engine takes it; a taken answer is not sent again while its item is still drawn.
+A refusal keeps the thing that was acted on in place with the engine's next action on one line beneath it, and the text typed into a form (a change request, a priority, a check) stays until the engine takes it, while a settings field goes back to the saved value; a taken answer is not sent again while its item is still drawn.
 An action the engine has not answered within 20 seconds reads as unanswered, says the Factory may still finish it, and still takes the engine's answer when it comes, because one `gh` call can outlast the wait.
 
 ### The Factory place
@@ -1172,7 +1172,7 @@ The sheet first picks what the engine lists first, the required checks before th
 The merge mode starts on auto; with no verification auto cannot be picked and says why in its place, and the Factory is made manual.
 A project with a GitHub remote shows, above the create button, the account, the repository and every GitHub read and write the engine will make; a project without one has no GitHub step.
 Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed project check shows the step that failed and the engine's next action as the engine wrote it (`gh auth login` for a logged-out `gh`), and a project that already has a Factory opens it.
-The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision, and a value the engine refuses, or an emptied number, goes back to the saved one.
+The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision, and a value the engine refuses, an emptied number or one the field cannot take goes back to the saved one.
 'Factory 닫기' can be pressed only while the 실행 중 column is empty, a paused, verifying or merge-waiting Task included, because the engine refuses to close the Factory until then.
 
 ## Recent navigation
