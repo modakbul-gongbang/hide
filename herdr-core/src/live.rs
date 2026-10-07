@@ -1408,7 +1408,9 @@ pub fn spawn_reopen(context: LiveContext, request: ReopenRequest) -> Result<(), 
     thread::Builder::new()
         .name("herdr-core-reopen-closed".to_owned())
         .spawn(move || {
-            let result = run_herdr_reopen(context.api_connector.as_ref(), &request)
+            let node = context.node.as_ref();
+            let folders = |path: &str| crate::node_access::is_directory(node, path);
+            let result = run_herdr_reopen(context.api_connector.as_ref(), &folders, &request)
                 .map(FileReopenResultOrHerdr::Herdr);
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -1474,8 +1476,11 @@ fn run_file_reopen(
     })
 }
 
+/// `folders` says whether a closed pane's folder is still a directory on the
+/// node that held it.
 fn run_herdr_reopen(
     connector: &dyn ApiConnector,
+    folders: &dyn Fn(&str) -> bool,
     request: &ReopenRequest,
 ) -> Result<ReopenOutcome, String> {
     match &request.item {
@@ -1484,7 +1489,7 @@ fn run_herdr_reopen(
             context,
             pane,
             placement,
-        } => reopen_pane(connector, key, context, pane, placement, request),
+        } => reopen_pane(connector, folders, key, context, pane, placement, request),
         ClosedItem::Tab {
             key,
             context,
@@ -1492,6 +1497,7 @@ fn run_herdr_reopen(
             panes,
         } => reopen_tab(
             connector,
+            folders,
             key,
             context,
             reopen_owner(request)?,
@@ -1654,6 +1660,7 @@ fn repair_incomplete_tab_layout(
 
 fn reopen_pane(
     connector: &dyn ApiConnector,
+    folders: &dyn Fn(&str) -> bool,
     key: &str,
     context: &ClosedContext,
     pane: &ClosedPane,
@@ -1661,7 +1668,7 @@ fn reopen_pane(
     request: &ReopenRequest,
 ) -> Result<ReopenOutcome, String> {
     let mut notices = Vec::new();
-    let cwd = restored_cwd(&pane.cwd, &context.checkout_path, &mut notices);
+    let cwd = restored_cwd(folders, &pane.cwd, &context.checkout_path, &mut notices);
     let (restored_pane_id, restored_tab_id) = if request.tab_exists {
         let current_layout = export_reopen_layout(connector, key, &context.tab_id)?;
         let marker = reopen_intent_marker(key, ReopenIntentStage::Pane);
@@ -1866,8 +1873,10 @@ fn reopen_owner(request: &ReopenRequest) -> Result<&OwnerOpen, String> {
         .ok_or_else(|| "the closed item names no checkout to reopen in".to_owned())
 }
 
+#[allow(clippy::too_many_arguments)] // one closed tab with its owner, layout and folders
 fn reopen_tab(
     connector: &dyn ApiConnector,
+    folders: &dyn Fn(&str) -> bool,
     key: &str,
     context: &ClosedContext,
     owner: &OwnerOpen,
@@ -1882,8 +1891,12 @@ fn reopen_tab(
     let mut terminal_ids = Vec::new();
     root.known_pane_ids(&pane_map, &mut terminal_ids);
     let mut common_notices = Vec::new();
-    let Some(root) = root.resolve_panes(&pane_map, &context.checkout_path, &mut common_notices)
-    else {
+    let Some(root) = root.resolve_panes(
+        &pane_map,
+        &context.checkout_path,
+        folders,
+        &mut common_notices,
+    ) else {
         return Err("the closed tab contained no panes".into());
     };
     let layout = ensure_workspace_and_tab(
@@ -1905,7 +1918,7 @@ fn reopen_tab(
     let mut notices = Vec::new();
     for (index, (pane, new_id)) in terminal_panes.iter().zip(new_ids.iter()).enumerate() {
         let mut pane_notices = Vec::new();
-        if !Path::new(&pane.cwd).is_dir() {
+        if !folders(&pane.cwd) {
             pane_notices.push(format!(
                 "{} no longer exists; reopened in the checkout root",
                 pane.cwd
@@ -1950,8 +1963,13 @@ fn ensure_complete_tab_restore(expected: usize, actual: usize) -> Result<(), Str
     }
 }
 
-fn restored_cwd(cwd: &str, checkout_root: &str, notices: &mut Vec<String>) -> String {
-    if Path::new(cwd).is_dir() {
+fn restored_cwd(
+    folders: &dyn Fn(&str) -> bool,
+    cwd: &str,
+    checkout_root: &str,
+    notices: &mut Vec<String>,
+) -> String {
+    if folders(cwd) {
         cwd.to_owned()
     } else {
         notices.push(format!(
@@ -4090,6 +4108,7 @@ mod tests {
 
         let outcome = reopen_pane(
             &herdr.connector(),
+            &|path| Path::new(path).is_dir(),
             "nested-intent",
             &context,
             &pane,
@@ -4274,6 +4293,7 @@ mod tests {
 
         let outcome = reopen_pane(
             &herdr.connector(),
+            &|path| Path::new(path).is_dir(),
             "first-attempt",
             &context,
             &pane,

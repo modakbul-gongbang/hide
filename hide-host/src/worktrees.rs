@@ -1114,18 +1114,6 @@ fn lock_reason(field: &str) -> Option<String> {
     }
 }
 
-/// Names the locked checkout and the manual action; never executes this text.
-pub fn locked_removal_reason(name: &str, reason: &str) -> String {
-    let detail = if reason.is_empty() {
-        "Git supplied no lock reason"
-    } else {
-        reason
-    };
-    format!(
-        "Worktree {name} is locked: {detail}. Unlock it with git worktree unlock before deleting, then refresh its Git state."
-    )
-}
-
 /// Removes the worktree folder and its registration, keeping the branch.
 /// `force` removes it with uncommitted changes too, which the operator must
 /// have accepted.
@@ -1625,7 +1613,9 @@ fn check_confirmed_removal(request: &ConfirmedRemoval, panes_closed: bool) -> Re
             .as_deref()
             .or_else(|| target.file_name().and_then(|name| name.to_str()))
             .unwrap_or("selected checkout");
-        return Err(stopped(locked_removal_reason(name, reason)));
+        return Err(stopped(hide_node_link::worktrees::locked_removal_reason(
+            name, reason,
+        )));
     }
     if current.head != request.expected_head_sha || current.branch != request.expected_branch {
         return Err(stopped(

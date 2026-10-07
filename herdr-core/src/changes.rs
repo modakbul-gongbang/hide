@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use hide_host::git::{ChangedFile, Changes, DiffTarget, FileStatus};
 use hide_node_link::ErrorCode;
+use hide_node_link::git::{ChangedFile, Changes, DiffTarget, FileStatus};
 use hide_node_link::protocol::Call;
 use hide_platform::path;
 

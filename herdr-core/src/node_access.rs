@@ -19,6 +19,19 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `root` as the channel's requests name it: its pinned identity, or the one
 /// a fresh `root_open` reports, which is then pinned.
+/// Whether `path` is a directory on `node`. A node that cannot answer says
+/// no, so the caller falls back the way it does for a folder that is gone.
+pub fn is_directory(node: &dyn NodeLink, path: &str) -> bool {
+    call_as::<Option<String>>(
+        node,
+        hide_node_link::protocol::Call::Directory {
+            path: path.to_owned(),
+        },
+        std::time::Duration::from_secs(10),
+    )
+    .is_ok_and(|real| real.is_some())
+}
+
 pub fn pinned_root(
     channel: &(impl NodeLink + ?Sized),
     root: &str,

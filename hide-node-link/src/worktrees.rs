@@ -126,3 +126,15 @@ pub struct Unpushed {
     pub remote: String,
     pub count: u32,
 }
+
+/// Names the locked checkout and the manual action; never executes this text.
+pub fn locked_removal_reason(name: &str, reason: &str) -> String {
+    let detail = if reason.is_empty() {
+        "Git supplied no lock reason"
+    } else {
+        reason
+    };
+    format!(
+        "Worktree {name} is locked: {detail}. Unlock it with git worktree unlock before deleting, then refresh its Git state."
+    )
+}

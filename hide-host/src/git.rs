@@ -13,7 +13,6 @@ use std::process::{Command, Stdio};
 
 use hide_platform::path::RelPath;
 use hide_platform::process::OwnedChild;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::root::Root;
@@ -23,107 +22,9 @@ use crate::root::Root;
 /// cut or allowed to dominate the wire.
 pub const MAX_DIFF_BYTES: usize = 256 * 1024;
 
-/// What to read: the folder below the root the answer is limited to, the
-/// file whose diff to fetch and which group it is in, and the branch the
-/// committed group is measured against. `base: None` measures against the
-/// repository's default branch when it has one.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ChangesQuery {
-    pub scope: String,
-    pub selected: Option<String>,
-    pub committed: bool,
-    pub base: Option<String>,
-    /// Further diffs to take in the same read, one per View display of a
-    /// diff; past `MAX_DIFFS` they are not answered.
-    #[serde(default)]
-    pub diffs: Vec<DiffTarget>,
-}
-
-pub use hide_node_link::git::{DiffTarget, MAX_DIFFS};
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Changes {
-    /// The working tree against `HEAD`: what `git status` reports.
-    pub entries: Vec<ChangedFile>,
-    /// What this branch's commits changed since `base`. Absent when there is
-    /// no base to compare with, which is not the same as an empty group.
-    pub committed: Option<Vec<ChangedFile>>,
-    /// The base the committed group was measured against, as this checkout
-    /// resolved it.
-    pub base: Option<String>,
-    pub diff: Option<Diff>,
-    /// One diff per answered target of `ChangesQuery::diffs`, in order. A
-    /// target no longer in its group is answered with empty text and a
-    /// notice saying so, never left out.
-    #[serde(default)]
-    pub diffs: Vec<GroupDiff>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GroupDiff {
-    pub committed: bool,
-    #[serde(flatten)]
-    pub diff: Diff,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChangedFile {
-    pub path: String,
-    pub previous: Option<String>,
-    pub status: FileStatus,
-    pub added: Option<u32>,
-    pub removed: Option<u32>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Diff {
-    pub path: String,
-    pub text: String,
-    /// Set when the diff was cut short or could not be taken, naming why.
-    pub notice: Option<String>,
-}
-
-/// The six working-tree states the view presents. Git's porcelain codes
-/// carry more distinctions; [`FileStatus::from_porcelain`] is the single
-/// place they collapse.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileStatus {
-    Modified,
-    Added,
-    Deleted,
-    Untracked,
-    Renamed,
-    Conflict,
-}
-
-impl FileStatus {
-    /// Maps one porcelain v1 `XY` pair onto the presented status. Index and
-    /// worktree columns are read together: a file staged as added and then
-    /// edited is still an addition to the reader, and a delete on either side
-    /// is a delete.
-    pub fn from_porcelain(code: &str) -> Self {
-        let mut characters = code.chars();
-        let index = characters.next().unwrap_or(' ');
-        let worktree = characters.next().unwrap_or(' ');
-        if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
-            return Self::Conflict;
-        }
-        if index == '?' && worktree == '?' {
-            return Self::Untracked;
-        }
-        if index == 'R' || worktree == 'R' {
-            return Self::Renamed;
-        }
-        if index == 'D' || worktree == 'D' {
-            return Self::Deleted;
-        }
-        if index == 'A' || worktree == 'A' {
-            return Self::Added;
-        }
-        Self::Modified
-    }
-}
+pub use hide_node_link::git::{
+    ChangedFile, Changes, ChangesQuery, Diff, DiffTarget, FileStatus, GroupDiff, MAX_DIFFS,
+};
 
 /// Reads the checkout's changes under `scope`. A folder that is not a
 /// repository, a root that is not the repository's top level, a scope that

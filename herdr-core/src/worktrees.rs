@@ -380,7 +380,9 @@ pub fn deletion_gate(
                     .and_then(|name| name.to_str())
             })
             .unwrap_or("selected checkout");
-        Some(hide_host::worktrees::locked_removal_reason(name, reason))
+        Some(hide_node_link::worktrees::locked_removal_reason(
+            name, reason,
+        ))
     } else {
         worktree.ignored_scan_unavailable.clone()
     };

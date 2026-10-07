@@ -12,7 +12,6 @@
 //!
 //! Every call here runs on a worker thread, never under `Mutex<Runtime>`.
 
-use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -172,9 +171,13 @@ pub(crate) enum WakeOutcome {
 /// Starts the agent again in the same pane, through Herdr's `agent.start`
 /// once the pane's shell holds its terminal (`agent_start`); Herdr answers
 /// once the agent is ready.
-pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -> WakeOutcome {
+pub(crate) fn start_agent(
+    connector: &dyn ApiConnector,
+    node: &dyn NodeLink,
+    request: &WakeRequest,
+) -> WakeOutcome {
     if let Some(cwd) = request.cwd.as_deref()
-        && !Path::new(cwd).is_dir()
+        && !crate::node_access::is_directory(node, cwd)
     {
         return WakeOutcome::Failed {
             reason: format!("The working folder {cwd} no longer exists."),
@@ -263,7 +266,11 @@ pub(crate) fn spawn_wake(context: LiveContext, request: WakeRequest) -> Result<(
     thread::Builder::new()
         .name("herdr-core-agent-wake".into())
         .spawn(move || {
-            let outcome = start_agent(context.api_connector.as_ref(), &request);
+            let outcome = start_agent(
+                context.api_connector.as_ref(),
+                context.node.as_ref(),
+                &request,
+            );
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
@@ -406,6 +413,7 @@ mod tests {
         });
         let outcome = start_agent(
             &herdr.connector(),
+            &hide_node::Local::of_process(),
             &WakeRequest {
                 codex_daemon: crate::codex_launch::CodexDaemon::Unknown,
                 pane_id: "w1:p1".into(),
@@ -435,6 +443,7 @@ mod tests {
         });
         let outcome = start_agent(
             &herdr.connector(),
+            &hide_node::Local::of_process(),
             &WakeRequest {
                 codex_daemon: Default::default(),
                 pane_id: "w1:p1".into(),
@@ -459,6 +468,7 @@ mod tests {
         let herdr = FakeHerdr::start("agent-wake-cwd", |method, _| panic!("unexpected {method}"));
         let outcome = start_agent(
             &herdr.connector(),
+            &hide_node::Local::of_process(),
             &WakeRequest {
                 codex_daemon: Default::default(),
                 pane_id: "w1:p1".into(),

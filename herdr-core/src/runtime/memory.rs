@@ -1693,7 +1693,7 @@ fn memory_analysis_due(
     checkout_path: &str,
     now_unix_ms: u64,
 ) -> Result<bool, String> {
-    if !database.is_file() {
+    if !MemoryStore::exists(database) {
         return Ok(false);
     }
     let identity = project_identity(sessions_node, node, checkout_path)?;
@@ -2180,7 +2180,7 @@ pub(super) fn load_sessions(
         .into_iter()
         .map(project_session_row)
         .collect::<Vec<_>>();
-    let (state, memories) = if database.is_file() {
+    let (state, memories) = if MemoryStore::exists(database) {
         let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
         match store.project_state(&identity.id) {
             Ok(state) => {
@@ -2317,8 +2317,7 @@ pub(super) fn load_session_detail(
         SESSION_CALL_TIMEOUT,
     )
     .map_err(|error| format!("Session unavailable: {error}"))?;
-    let store = database
-        .is_file()
+    let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
     let agent = if row.provider == "codex" {
