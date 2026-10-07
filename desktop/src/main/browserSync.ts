@@ -62,9 +62,10 @@ function rect(value: unknown): BrowserRect | null | undefined {
 /** A sync message, or null when any part of it is out of shape. */
 export function parseSync(value: unknown): BrowserSync | null {
   if (typeof value !== "object" || value === null) return null;
-  const { workspace, displays, retained, attachment_epoch, authorized_scopes } = value as Record<string, unknown>;
+  const { workspace, displays, retained, attachment_epoch, authorized_scopes, node } = value as Record<string, unknown>;
   if (attachment_epoch !== undefined && (typeof attachment_epoch !== "string" || attachment_epoch.length === 0 || attachment_epoch.length > 64 || /[^A-Za-z0-9-]/.test(attachment_epoch))) return null;
   if (workspace !== null && !workspaceIdentity(workspace)) return null;
+  if (node !== undefined && !identity(node)) return null;
   if (!Array.isArray(displays) || displays.length > MAX_SYNCED_DISPLAYS) return null;
   if (!Array.isArray(retained) || retained.length > MAX_RETAINED_DISPLAYS) return null;
   const scopes: NonNullable<BrowserSync["authorized_scopes"]> = [];
@@ -111,6 +112,7 @@ export function parseSync(value: unknown): BrowserSync | null {
     retained: owned,
     ...(attachment_epoch === undefined ? {} : { attachment_epoch }),
     ...(authorized_scopes === undefined ? {} : { authorized_scopes: scopes }),
+    ...(node === undefined ? {} : { node: node as string }),
   };
 }
 
@@ -185,8 +187,12 @@ export function popupBounds(asked: { width?: number; height?: number }, parent: 
   };
 }
 
-/** Web logins are shared across Workspaces; file previews and each remote device's loopback stay separate. */
-export function browserPartition(workspace: string, url: string): string {
+/**
+ * Web logins are shared across Workspaces; file previews and each remote
+ * device's loopback stay separate. Only the core's own node (`node`, null
+ * until the shell names it) loads this computer's loopback in the shared one.
+ */
+export function browserPartition(workspace: string, url: string, node: string | null): string {
   const separator = workspace.indexOf("\u0000");
   if (separator < 1) throw new Error("Browser Workspace key is missing its device");
   const device = workspace.slice(0, separator);
@@ -194,7 +200,7 @@ export function browserPartition(workspace: string, url: string): string {
   if (address.protocol === "file:") {
     return `persist:hide-browser-file-${createHash("sha256").update(workspace).digest("hex").slice(0, 32)}`;
   }
-  if (device !== "local" && isLoopbackHost(address.hostname)) {
+  if (device !== node && isLoopbackHost(address.hostname)) {
     return `persist:hide-browser-loopback-${createHash("sha256").update(device).digest("hex").slice(0, 32)}`;
   }
   return "persist:hide-browser-web";

@@ -31,8 +31,8 @@ export type RevealExternalEntry = { id: "reveal_external"; label: string; unavai
  * target on another device, or one already known to be gone (`blocked`),
  * is listed disabled with its reason rather than hidden.
  */
-export function revealExternalEntry(host: RevealHost, device: string, t: TFunction<"translation">, blocked: string | null = null, separated = false): RevealExternalEntry[] {
+export function revealExternalEntry(host: RevealHost, device: string, node: string, t: TFunction<"translation">, blocked: string | null = null, separated = false): RevealExternalEntry[] {
   if (!host) return [];
-  const unavailable = device !== "local" ? t("explorer.revealHereOnly") : blocked;
+  const unavailable = device !== node ? t("explorer.revealHereOnly") : blocked;
   return [{ id: "reveal_external", label: t(host.label), unavailable, ...(separated ? { separated } : {}) }];
 }

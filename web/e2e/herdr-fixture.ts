@@ -31,6 +31,16 @@ import { afterCleanup, ownUntilWorkerExit } from "./worker-owned";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
 import { copyFixtureShim } from "./shims/build";
 
+/** What `pane process-info` answers about a pane's shell, as far as the fixture reads it. */
+type ShellProcessInfo = {
+  shell_pid: number | null;
+  foreground_process_group_id: number | null;
+  foreground_processes: { pid: number }[];
+};
+
+/** What `workspace create` answers, as far as the fixture reads it. */
+type CreatedWorkspace = { result: { workspace: { workspace_id: string }; root_pane: { pane_id: string } } };
+
 export type HerdrFixture = {
   bin: string;
   socket: string;
@@ -467,26 +477,51 @@ export async function finishFixtureTurn(fixture: HerdrFixture, pane: string, els
 }
 
 /**
- * `herdr agent start` for `pane`, sent only while the pane's shell alone holds
- * the terminal: its foreground process group is the shell's own and has no
- * other member. That is the condition the pinned Herdr checks
- * (`available_pane_shell_from_job`, docs/ARCHITECTURE.md, Starting an agent), and
- * `pane process-info` reports it. Herdr does not wait, so the fixture does, as
- * the product does (`agent_start::start_at_shell`): a refusal as `agent_pane_busy`
- * typed nothing, so it goes back to waiting, within the same bound. Any other
- * answer is the start's. Synchronous so `run` can hold a start until the pane is ready.
+ * Whether the pinned Herdr counts `pane`'s shell as available to `agent start`
+ * (docs/ARCHITECTURE.md, Starting an agent), the one place the fixture decides
+ * it. On macOS and Linux that is the shell alone in the terminal, its
+ * foreground process group its own with no other member, which `pane
+ * process-info` reports. On Windows it is no process naming the shell as its
+ * parent, by pid alone, which `pane process-info` does not report (its
+ * foreground is the shell unless an agent runs below it), so the fixture reads
+ * the process table itself (`hide-children.exe`). A process older than the
+ * shell that names it is a dead parent's pid given to the shell; Herdr refuses
+ * that pane for as long as the process runs, so no wait reaches a start and
+ * this throws, naming it (`unclaimedWorkspace` keeps such panes out of the
+ * workspaces the fixture opens).
+ */
+function shellAvailability(env: NodeJS.ProcessEnv, bin: string, root: string, pane: string, timeout?: number): { available: boolean; info: ShellProcessInfo } {
+  const info = (herdr(env, bin, ["pane", "process-info", "--pane", pane], timeout) as { result: { process_info: ShellProcessInfo } }).result.process_info;
+  const shell = info.shell_pid;
+  if (shell === null || shell <= 1) return { available: false, info };
+  if (process.platform !== "win32") {
+    return { available: info.foreground_process_group_id === shell && info.foreground_processes.every((process) => process.pid === shell), info };
+  }
+  const children = listShellChildren(root, shell);
+  const older = children.filter(isOlderClaimant);
+  if (older.length > 0) {
+    throw new Error(`a process older than the shell of pane ${pane} names it as parent, so the pinned Herdr refuses agent start there for as long as it runs: ${older.join(", ")}`);
+  }
+  return { available: children.length === 0, info };
+}
+
+/**
+ * `herdr agent start` for `pane`, sent only while `shellAvailability` says the
+ * pinned Herdr counts the pane's shell as available. Herdr does not wait, so
+ * the fixture does, as the product does (`agent_start::start_at_shell`): a
+ * refusal as `agent_pane_busy` typed nothing, so it goes back to waiting,
+ * within the same bound. Any other answer is the start's. Synchronous so `run`
+ * can hold a start until the pane is ready.
  */
 function startAgentAtShell(env: NodeJS.ProcessEnv, bin: string, root: string, args: string[], ms = 10_000): unknown {
   const pane = args[args.indexOf("--pane") + 1]!;
   const deadline = Date.now() + ms;
   let seen = "";
   for (;;) {
-    const info = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as {
-      result: { process_info: { shell_pid: number | null; foreground_process_group_id: number | null; foreground_processes: { pid: number }[] } };
-    }).result.process_info;
+    const { available, info } = shellAvailability(env, bin, root, pane);
     const shell = info.shell_pid;
     seen = JSON.stringify(info);
-    if (shell !== null && shell > 1 && info.foreground_process_group_id === shell && info.foreground_processes.every((process) => process.pid === shell)) {
+    if (available) {
       try {
         return herdr(env, bin, args);
       } catch (error) {
@@ -520,14 +555,48 @@ function shellChildren(root: string, shell: number | null): string {
 }
 
 /**
- * The processes that started before `shell` yet name its pid as their parent:
- * Windows gave the shell the pid of their dead parent (csrss.exe names the
- * smss.exe that started it at boot). The pinned Herdr counts a shell's
- * children by parent pid alone, so it refuses `agent start` in that pane for
- * as long as they run, and csrss.exe runs until shutdown.
+ * A `listShellChildren` line for a process that started before the shell yet
+ * names its pid as its parent: Windows gave the shell the pid of that
+ * process's dead parent (csrss.exe names the smss.exe that started it at
+ * boot). The pinned Herdr counts a shell's children by parent pid alone, so it
+ * refuses `agent start` in that pane for as long as the process runs, and
+ * csrss.exe runs until shutdown.
  */
-function olderClaimants(root: string, shell: number): string[] {
-  return listShellChildren(root, shell).filter((child) => child.split(" ")[2] === "older");
+function isOlderClaimant(child: string): boolean {
+  return child.split(" ")[2] === "older";
+}
+
+/** Each older claimant of each pane's shell, `pane <id> shell <pid>: <child>`. */
+function claimedShells(env: NodeJS.ProcessEnv, bin: string, root: string, panes: string[]): string[] {
+  return panes.flatMap((pane) => {
+    const shell = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as { result: { process_info: { shell_pid: number | null } } }).result.process_info.shell_pid;
+    if (shell === null) throw new Error(`pane ${pane} reports no shell pid`);
+    return listShellChildren(root, shell).filter(isOlderClaimant).map((child) => `pane ${pane} shell ${shell}: ${child}`);
+  });
+}
+
+/**
+ * The workspace `open` makes, or on Windows, when an older process claims one
+ * of its panes' shells (`isOlderClaimant`), a second one: opened while the
+ * claimed shells still hold their pids, so no new shell can be given one of
+ * them, after which the claimed workspace closes. A replacement that is
+ * claimed too fails with each process's pid, start time and name. Herdr sets
+ * a pane's shell pid before it answers the create, so the check needs no wait.
+ */
+function unclaimedWorkspace<T>(env: NodeJS.ProcessEnv, bin: string, root: string, open: () => T, of: (opened: T) => { workspace: string; panes: string[] }): T {
+  const opened = open();
+  if (process.platform !== "win32") return opened;
+  const claimed = claimedShells(env, bin, root, of(opened).panes);
+  if (claimed.length === 0) return opened;
+  const replaced = of(opened).workspace;
+  console.log(`herdr fixture: replacing workspace ${replaced}, a process older than its shell names the shell as parent: ${claimed.join("; ")}`);
+  const replacement = open();
+  herdr(env, bin, ["workspace", "close", replaced]);
+  const again = claimedShells(env, bin, root, of(replacement).panes);
+  if (again.length > 0) {
+    throw new Error(`a process older than the shell names it as parent in the replacement workspace too, so the pinned Herdr refuses agent start there: ${again.join("; ")}`);
+  }
+  return replacement;
 }
 
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
@@ -631,14 +700,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     if (workspaces.length !== 0) throw new Error("private herdr server already has workspaces");
 
     const inputLogs: [string, string] = [path.join(root, "input-one.log"), path.join(root, "input-two.log")];
-    type ShellProcessInfo = {
-      shell_pid: number | null;
-      foreground_process_group_id: number | null;
-      foreground_processes: { pid: number }[];
-    };
-    // A focused workspace of two panes side by side, each shell at its prompt
-    // and, with agents, alone in the terminal.
-    const openPanes = async () => {
+    // A focused workspace of two panes side by side.
+    const openPanes = () => {
       const created = herdr(env, bin, [
         "workspace",
         "create",
@@ -666,54 +729,29 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         "--no-focus",
       ]) as { result: { pane: { pane_id: string } } };
       const second = split.result.pane.pane_id;
-      // A printed prompt does not mean agent.start can use the shell yet.
-      // Keep the prompt and process-state wait inside the same setup deadline.
-      for (const pane of [first, second]) {
-        const deadline = Date.now() + 10_000;
-        let processInfo: ShellProcessInfo | null = null;
-        await waitFor(
-          () => {
-            if (!paneText(env, bin, pane).includes("fixture %")) return false;
-            if (!agents) return true;
-            const remaining = deadline - Date.now();
-            if (remaining <= 0) return false;
-            const answer = herdr(env, bin, ["pane", "process-info", "--pane", pane], remaining) as {
-              result: { process_info: ShellProcessInfo };
-            };
-            processInfo = answer.result.process_info;
-            const shell = processInfo.shell_pid;
-            return shell !== null && shell > 1
-              && processInfo.foreground_process_group_id === shell
-              && processInfo.foreground_processes.every((process) => process.pid === shell);
-          },
-          `a prompt with an available shell in pane ${pane}`,
-          10_000,
-          () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
-        );
-      }
       return { workspace: created.result.workspace.workspace_id, tab: created.result.tab.tab_id, panes: [first, second] as [string, string] };
     };
-    // What makes each pane's shell refuse an agent start for good, on Windows.
-    const claims = (panes: string[]) => panes.flatMap((pane) => {
-      const shell = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as { result: { process_info: ShellProcessInfo } }).result.process_info.shell_pid;
-      if (shell === null) throw new Error(`pane ${pane} reports no shell pid`);
-      return olderClaimants(root, shell).map((child) => `pane ${pane} shell ${shell}: ${child}`);
-    });
-    let opened = await openPanes();
-    if (process.platform === "win32") {
-      const claimed = claims(opened.panes);
-      if (claimed.length > 0) {
-        // Opened while the claimed shells still hold their pids, so no new
-        // shell can be given one of them; then the claimed workspace goes.
-        console.log(`herdr fixture: replacing workspace ${opened.workspace}, a process older than its shell names the shell as parent: ${claimed.join("; ")}`);
-        const replaced = opened.workspace;
-        opened = await openPanes();
-        herdr(env, bin, ["workspace", "close", replaced]);
-        const again = claims(opened.panes);
-        if (again.length > 0) {
-          throw new Error(`a process older than the shell names it as parent in the replacement workspace too, so the pinned Herdr refuses agent start there: ${again.join("; ")}`);
-        }
-      }
+    const opened = unclaimedWorkspace(env, bin, root, openPanes, (workspace) => workspace);
+    // Each shell at its prompt and, with agents, available to agent start. A
+    // printed prompt does not mean agent.start can use the shell yet. Keep the
+    // prompt and process-state wait inside the same setup deadline.
+    for (const pane of opened.panes) {
+      const deadline = Date.now() + 10_000;
+      let processInfo: ShellProcessInfo | null = null;
+      await waitFor(
+        () => {
+          if (!paneText(env, bin, pane).includes("fixture %")) return false;
+          if (!agents) return true;
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) return false;
+          const { available, info } = shellAvailability(env, bin, root, pane, remaining);
+          processInfo = info;
+          return available;
+        },
+        `a prompt with an available shell in pane ${pane}`,
+        10_000,
+        () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
+      );
     }
     const [first, second] = opened.panes;
     if (agents) {
@@ -740,6 +778,12 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       fixturePath,
       shell: paneShellOf(env),
       run: (args) => {
+        if (args[0] === "workspace" && args[1] === "create") {
+          return unclaimedWorkspace(env, bin, root, () => herdr(env, bin, args) as CreatedWorkspace, (created) => ({
+            workspace: created.result.workspace.workspace_id,
+            panes: [created.result.root_pane.pane_id],
+          }));
+        }
         const result = args[0] === "agent" && args[1] === "start" && args.includes("--pane") ? startAgentAtShell(env, bin, root, args) : herdr(env, bin, args);
         if (args[0] === "agent" && args[1] === "start") {
           const pane = args[args.indexOf("--pane") + 1];

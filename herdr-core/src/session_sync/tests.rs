@@ -95,7 +95,7 @@ fn event(kind: &str, data: Value) -> ReplicaEvent {
     let raw = json!({"event": kind, "data": data});
     match parse_subscription_line(&raw.to_string()).expect("event parses") {
         SubscriptionLine::Event(event) => event,
-        SubscriptionLine::Error { .. } => unreachable!(),
+        SubscriptionLine::EventsLost { .. } | SubscriptionLine::Error { .. } => unreachable!(),
     }
 }
 
@@ -556,7 +556,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
@@ -566,13 +566,13 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
-            kit_dir: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )))
 }
 
@@ -583,8 +583,9 @@ fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> Ses
         runtime: Arc::downgrade(runtime),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     };
-    SessionSyncContext::local(&live)
+    SessionSyncContext::local(&live, std::sync::Arc::new(hide_node::Local::of_process()))
 }
 
 fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
@@ -969,7 +970,7 @@ fn official_remote_session_coordinator_probe() {
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
@@ -979,13 +980,13 @@ fn official_remote_session_coordinator_probe() {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
-            kit_dir: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
-            home_path: Some(PathBuf::from(home)),
+            home_path: Some(PathBuf::from(&home)),
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::new(Some(PathBuf::from(home)))),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the
@@ -1688,7 +1689,9 @@ fn a_stream_error_is_an_explicit_stream_result() {
             assert_eq!(code, "internal");
             assert!(message.contains("closed"));
         }
-        SubscriptionLine::Event(_) => panic!("expected subscription error"),
+        SubscriptionLine::Event(_) | SubscriptionLine::EventsLost { .. } => {
+            panic!("expected subscription error")
+        }
     }
 }
 
@@ -1718,7 +1721,8 @@ fn fresh_catalog() -> CatalogCache {
         spaces: Vec::new(),
         worktrees: crate::model::WorktreeCatalogSnapshot::default(),
         workspaces: Vec::new(),
-        roots: workspace::RootIndex::new(),
+        asked: BTreeSet::new(),
+        paths: Default::default(),
         built_at: Instant::now(),
     }
 }
@@ -1737,7 +1741,7 @@ fn agent_refresh_reconciles_a_plain_new_panes_live_checkout_cwd() {
     replica.refresh_published_state().expect("publish live cwd");
     let projected = replica.project();
     assert_eq!(
-        Runtime::session_spaces(&projected)[0].cwds,
+        Runtime::session_spaces(&projected, &workspace::PathIndex::NONE)[0].cwds,
         vec!["/tmp/fixture".to_owned()],
         "the shell's live directory, not its inherited birth cwd, owns both tabs"
     );
@@ -2104,6 +2108,116 @@ fn coordinator_recovers_a_stream_error_with_one_fresh_snapshot_and_stops_its_rea
     let runtime = runtime_for_fixture(&socket_path, &state_path);
     let context = context_for_fixture(&runtime, &socket_path);
     let handle = spawn(context, None).expect("start session sync");
+    wait_until(Instant::now() + Duration::from_secs(3), || {
+        let snapshot = runtime.lock().expect("runtime lock").snapshot().clone();
+        snapshot.status.herdr.state == "connected"
+            && snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.label == "fixture-recovered")
+    });
+
+    drop(handle);
+    server.join().expect("fake server joins");
+    remove_fixture(&root, &socket_path, &state_path);
+}
+
+// Herdr's Socket API: a subscriber that falls behind gets `events_lost` and
+// its connection closed; the client resubscribes and replaces its cache with
+// a fresh snapshot. Herdr is still answering, so that is not a failure the
+// operator sees while the resync is in flight.
+#[test]
+fn coordinator_resyncs_after_events_lost_without_reporting_herdr_stale() {
+    let folder = tempfile::Builder::new()
+        .prefix("herdr-core-session-events-lost-")
+        .tempdir_in(socket_parent())
+        .expect("create socket directory");
+    let root = folder.path().to_path_buf();
+    let socket_path = root.join("herdr.sock");
+    let state_path = root.join("state.json");
+    let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
+    let (resync_asked, resync_seen) = std::sync::mpsc::channel::<()>();
+    let (answer_resync, resync_answered) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut first_subscription, first_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut first_subscription,
+            &first_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
+        let (mut first_snapshot_stream, first_snapshot_request) =
+            accept_request_for(&listener, "session.snapshot");
+        write_result(
+            &mut first_snapshot_stream,
+            &first_snapshot_request,
+            json!({"type": "session_snapshot", "snapshot": snapshot()}),
+        );
+        writeln!(
+            first_subscription,
+            "{}",
+            json!({
+                "id": first_subscribe_request["id"],
+                "error": {
+                    "code": "events_lost",
+                    "message": "subscriber fell behind retained event history"
+                }
+            })
+        )
+        .expect("write events_lost");
+        drop(first_subscription);
+
+        let (mut final_subscription, final_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut final_subscription,
+            &final_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
+        let (mut second_snapshot_stream, second_snapshot_request) =
+            accept_request_for(&listener, "session.snapshot");
+        // The coordinator handled the lost stream before it asked again, so
+        // whatever it published for it is already in the runtime.
+        resync_asked.send(()).expect("report the resync request");
+        resync_answered
+            .recv()
+            .expect("the test releases the resync snapshot");
+        let mut recovered = snapshot();
+        recovered["panes"][0]["cwd"] = json!("/tmp/fixture-recovered");
+        write_result(
+            &mut second_snapshot_stream,
+            &second_snapshot_request,
+            json!({"type": "session_snapshot", "snapshot": recovered}),
+        );
+        let mut byte = [0_u8; 1];
+        assert_eq!(
+            final_subscription
+                .read(&mut byte)
+                .expect("wait for shutdown"),
+            0
+        );
+    });
+
+    let runtime = runtime_for_fixture(&socket_path, &state_path);
+    let context = context_for_fixture(&runtime, &socket_path);
+    let handle = spawn(context, None).expect("start session sync");
+    resync_seen
+        .recv_timeout(Duration::from_secs(10))
+        .expect("events_lost leads to a fresh subscription and snapshot");
+    {
+        let snapshot = runtime.lock().expect("runtime lock").snapshot().clone();
+        assert_eq!(snapshot.status.herdr.state, "connected");
+        assert!(
+            snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.label == "fixture"),
+            "the last projection stays on screen during the resync"
+        );
+    }
+    answer_resync.send(()).expect("release the resync snapshot");
     wait_until(Instant::now() + Duration::from_secs(3), || {
         let snapshot = runtime.lock().expect("runtime lock").snapshot().clone();
         snapshot.status.herdr.state == "connected"

@@ -3,7 +3,8 @@
 //! the connection that started it (PRD S5.5 D-20).
 
 use std::io::{self, BufRead, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +17,7 @@ use crate::protocol::{
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
+use hide_node_link::process::ProcessStart;
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -201,16 +203,101 @@ pub fn session_activity(
     to_value(activity)
 }
 
-/// Answers one request. Public so the core's tests can drive the exact
-/// dispatch the helper runs without a process.
+/// What a node answers from besides the request: the account home its
+/// sessions, kit and Home folder live in, and where its kit's parts come
+/// from. A helper reads them from its process once; the core's own node is
+/// given the home the core was configured with, so a daemon running with a
+/// private home never answers from the operator's.
+#[derive(Clone, Debug)]
+pub struct Env {
+    pub home: Option<PathBuf>,
+    pub kit: KitPlace,
+    /// Raised when the node's owner goes away: a kit step still running
+    /// ends the child it waits on, and no further part starts.
+    pub stop: Arc<AtomicBool>,
+    /// The background AI backends this node keeps for its core.
+    pub ai: Arc<crate::ai::Backends>,
+}
+
+/// The AI backends a node answering for this process keeps, shared by every
+/// request it serves.
+fn process_ai() -> Arc<crate::ai::Backends> {
+    static BACKENDS: std::sync::OnceLock<Arc<crate::ai::Backends>> = std::sync::OnceLock::new();
+    Arc::clone(BACKENDS.get_or_init(Arc::default))
+}
+
+/// Where a node's install kit takes its parts from, which decides the
+/// target it installs into.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KitPlace {
+    /// A helper Hide installed under a helper root: the root the running
+    /// executable sits in (`kit::handle`).
+    Installed,
+    /// The resources folder of the desktop package the node runs from
+    /// (`hide_kit::bundled_kit_dir`).
+    Bundled(PathBuf),
+    /// A development or standalone daemon, which installs nothing
+    /// (`hide_kit::STANDALONE_REASON`).
+    Standalone,
+}
+
+impl Env {
+    pub fn of_process() -> Self {
+        Self {
+            home: std::env::var_os("HOME").map(PathBuf::from),
+            kit: KitPlace::Installed,
+            stop: crate::kit::process_stop(),
+            ai: process_ai(),
+        }
+    }
+
+    /// A node of its own, answering for `home`: it installs no kit and keeps
+    /// its own AI backends, which end when the last copy of it is dropped.
+    pub fn standalone(home: Option<PathBuf>) -> Self {
+        Self {
+            home,
+            kit: KitPlace::Standalone,
+            stop: Arc::default(),
+            ai: Arc::default(),
+        }
+    }
+
+    fn home(&self, missing: &str) -> HostResult<PathBuf> {
+        self.home
+            .clone()
+            .ok_or_else(|| HostError::new(ErrorCode::Unsupported, missing))
+    }
+}
+
+/// Answers one request with this process's environment. Public so the
+/// core's tests can drive the exact dispatch the helper runs without a
+/// process.
 pub fn handle(call: Call) -> HostResult<Value> {
+    handle_in(call, &Env::of_process())
+}
+
+/// Answers one request for the node whose environment is `env`.
+pub fn handle_in(call: Call, env: &Env) -> HostResult<Value> {
+    handle_with_progress(call, env, &mut |_| true)
+}
+
+/// [`handle_in`] for a caller that hears a long call's progress reports and
+/// answers whether it should go on.
+pub fn handle_with_progress(
+    call: Call,
+    env: &Env,
+    progress: &mut dyn FnMut(Value) -> bool,
+) -> HostResult<Value> {
     match call {
         Call::Hello => to_value(Hello {
             protocol: PROTOCOL_VERSION,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             os: std::env::consts::OS.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
-            home: std::env::var_os("HOME").map(|home| home.to_string_lossy().into_owned()),
+            home: env
+                .home
+                .as_ref()
+                .map(|home| home.to_string_lossy().into_owned()),
             machine_identity: match hide_platform::host::machine_id() {
                 Ok(id) => MachineIdentity::Available { id },
                 Err(error) => MachineIdentity::Unavailable {
@@ -278,12 +365,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
         }
         Call::Directory { path } => to_value(worktrees::directory(&absolute(&path)?)),
         Call::Registrable { path } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(
-                    ErrorCode::Unsupported,
-                    "HOME is not set, so no folder can be judged against it",
-                )
-            })?;
+            let home = env.home("HOME is not set, so no folder can be judged against it")?;
             // `~` is this host's home, as a shell on it would read it.
             let path = match path.strip_prefix('~') {
                 Some(rest) if rest.is_empty() || rest.starts_with('/') => {
@@ -294,12 +376,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
             to_value(crate::register::check(&absolute(&path)?, Path::new(&home))?)
         }
         Call::HomeSync { projects } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(
-                    ErrorCode::Unsupported,
-                    "HOME is not set, so Hide's Home folder has no place to live",
-                )
-            })?;
+            let home = env.home("HOME is not set, so Hide's Home folder has no place to live")?;
             if !Path::new(&home).is_absolute() {
                 return Err(HostError::new(
                     ErrorCode::Unsupported,
@@ -318,30 +395,228 @@ pub fn handle(call: Call) -> HostResult<Value> {
             &cli_dir,
             herdr_socket.as_deref(),
             &retirement_projects,
+            env,
         ),
-        Call::LabelTranscript { request } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(ErrorCode::Unsupported, "label_session_home_unavailable")
+        Call::WorktreesRegistered { root } => to_value(
+            worktrees::registered(&absolute(&root)?)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+        ),
+        Call::IgnoredRepository { worktree } => to_value(
+            worktrees::ignored_repository(&absolute(&worktree)?)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+        ),
+        Call::ProjectCreate {
+            path,
+            new_folder,
+            initialize_git,
+        } => to_value(
+            crate::project::create(&absolute(&path)?, new_folder, initialize_git)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+        ),
+        Call::PathFacts { paths } => to_value(crate::catalog::path_facts(&paths)?),
+        Call::RealPaths { paths } => {
+            let paths = paths
+                .iter()
+                .map(|path| absolute(path))
+                .collect::<HostResult<Vec<_>>>()?;
+            to_value(crate::cleanup::real_paths(&paths))
+        }
+        Call::Repository { path } => to_value(crate::cleanup::repository(&absolute(&path)?)),
+        Call::JudgeFolders {
+            root,
+            folders,
+            walk,
+        } => to_value(crate::cleanup::judge_folders(
+            &absolute(&root)?,
+            &folders,
+            walk,
+        )),
+        Call::SetAsideFolder { common, folder } => to_value(
+            worktrees::set_aside_folder(&absolute(&common)?, &absolute(&folder)?).map_err(
+                |error| {
+                    HostError::new(
+                        ErrorCode::Io,
+                        format!("The folder could not be moved aside: {error}"),
+                    )
+                },
+            )?,
+        ),
+        Call::WorktreeRemoveClean {
+            root,
+            checkout,
+            common,
+        } => to_value(crate::cleanup::clean_removal(
+            &absolute(&root)?,
+            &absolute(&checkout)?,
+            &absolute(&common)?,
+        )),
+        Call::DrainTrash {
+            common,
+            ours,
+            wait_ms,
+        } => to_value(crate::cleanup::drain_trash(
+            &absolute(&common)?,
+            &ours,
+            std::time::Duration::from_millis(wait_ms),
+        )),
+        Call::RepositoryClone { source, parent } => {
+            let parent = absolute(&parent)?;
+            to_value(crate::clone::clone_reporting(
+                &source,
+                &parent,
+                &mut |report| serde_json::to_value(report).map_or(true, &mut *progress),
+            ))
+        }
+        Call::GitWatch { common_dirs } => {
+            let common_dirs = common_dirs
+                .iter()
+                .map(|dir| absolute(dir))
+                .collect::<HostResult<Vec<_>>>()?;
+            to_value(crate::git_watch::watch(
+                &common_dirs,
+                &env.stop,
+                &mut |report| serde_json::to_value(report).is_ok_and(&mut *progress),
+            )?)
+        }
+        Call::Git { root, command } => {
+            to_value(crate::git_command::run(&absolute(&root)?, &command)?)
+        }
+        Call::AiAvailability { backend } => to_value(env.ai.availability(&backend)?),
+        Call::AiModels { backend } => to_value(env.ai.models(&backend)?),
+        Call::AiExecute { backend, request } => to_value(env.ai.execute(
+            &backend,
+            request,
+            &mut || progress(Value::Null),
+        )?),
+        Call::AiMeasurement { backend } => to_value(env.ai.measurement(&backend)?),
+        Call::AiRestart { backend } => to_value(env.ai.restart(&backend)?),
+        Call::AiRelease { instance } => {
+            env.ai.release(instance);
+            to_value(())
+        }
+        Call::CodexCredentials { codex_home } => {
+            to_value(crate::usage::codex_credentials(&absolute(&codex_home)?))
+        }
+        Call::CodexSessionUsage { codex_home } => {
+            to_value(crate::usage::codex_session_usage(&absolute(&codex_home)?))
+        }
+        Call::ClaudeUsageText { cwd } => {
+            let cwd = absolute(&cwd)?;
+            to_value(crate::usage::claude_usage_text(&cwd, &mut || {
+                progress(Value::Null)
+            }))
+        }
+        Call::ReadAttachments { paths } => to_value(
+            crate::attachments::read_sources(&paths, &mut |index| progress(Value::from(index)))
+                .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
+        ),
+        Call::AgentInstalled { name } => {
+            to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
+        }
+        Call::TerminateGroup { leader } => {
+            if leader <= 1 {
+                return Err(HostError::new(
+                    ErrorCode::InvalidPath,
+                    format!("Process group {leader} is not a pane's"),
+                ));
+            }
+            hide_platform::process::terminate_group(leader).map_err(|error| {
+                HostError::new(
+                    ErrorCode::Io,
+                    format!("ending process group {leader} failed: {error}"),
+                )
             })?;
+            to_value(())
+        }
+        Call::ProcessStarts { pids } => to_value(
+            pids.into_iter()
+                .map(|pid| match hide_platform::process::start_time(pid) {
+                    Ok(started) => ProcessStart::Running { started },
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => ProcessStart::Gone,
+                    Err(error) => ProcessStart::Unreadable {
+                        reason: format!("process {pid} could not be read: {error}"),
+                    },
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Call::DiskUsage { paths, shared_git } => {
+            let request = crate::disk::DiskRequest {
+                paths: paths.iter().map(PathBuf::from).collect(),
+                shared_git: shared_git.iter().map(PathBuf::from).collect(),
+            };
+            to_value(crate::disk::read_with(&request, |row| {
+                if let Ok(row) = serde_json::to_value(row) {
+                    progress(row);
+                }
+            }))
+        }
+        Call::Gh { cwd, args } => {
+            let cwd = cwd.as_deref().map(absolute).transpose()?;
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            to_value(crate::gh::run(cwd.as_deref(), &args))
+        }
+        Call::ListeningPorts => to_value(crate::ports::read()),
+        Call::VolumeFree { path } => to_value(crate::disk::volume_free_bytes(&absolute(&path)?)),
+        Call::HookDiagnosis => {
+            let home = env.home("HOME is not set, so the agent hooks have no account to read")?;
+            to_value(hide_agent_hooks::Diagnosis::read(&home))
+        }
+        Call::LabelTranscript { request } => {
+            let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)
         }
         Call::SessionActivity { request } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(ErrorCode::Unsupported, "session_activity_home_unavailable")
-            })?;
+            let home = env.home("session_activity_home_unavailable")?;
             session_activity(Path::new(&home), &request)
         }
         Call::LinkFiles {
             since_unix_ms,
             until_unix_ms,
         } => {
-            let home = std::env::var_os("HOME")
-                .ok_or_else(|| HostError::new(ErrorCode::Unsupported, "links_home_unavailable"))?;
+            let home = env.home("links_home_unavailable")?;
             let listed =
                 hide_session::links::candidates(Path::new(&home), since_unix_ms, until_unix_ms)
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
             to_value(listed)
         }
+        Call::SessionIndexRead { agent, path, saved } => {
+            let (step, _) =
+                hide_session::search_read::read_step(saved.as_ref(), agent, &absolute(&path)?)
+                    .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            to_value(step)
+        }
+        Call::SessionStamps { paths } => {
+            if paths.len() > hide_session::search::STAMP_LIMIT {
+                return Err(HostError::new(
+                    ErrorCode::InvalidRequest,
+                    format!(
+                        "At most {} session stamps are read at once",
+                        hide_session::search::STAMP_LIMIT
+                    ),
+                ));
+            }
+            to_value(hide_session::search_read::stamps(&paths))
+        }
+        Call::ProjectSessions { project } => {
+            let home = env.home("sessions_home_unavailable")?;
+            let sessions =
+                hide_session::SessionCatalog::new(Path::new(&home), project.device_id.clone())
+                    .project_sessions(&project)
+                    .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
+            to_value(sessions)
+        }
+        Call::SessionStat { path } => to_value(
+            crate::sessions::stat(&absolute(&path)?)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
+        Call::SessionChunk { path, checkpoint } => to_value(
+            crate::sessions::chunk(&absolute(&path)?, checkpoint)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
+        Call::SessionText { path } => to_value(
+            hide_session::read_bounded(&absolute(&path)?, hide_session::SESSION_READ_LIMIT_BYTES)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
                 return Err(HostError::new(
@@ -349,8 +624,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
                     "links_read_limit",
                 ));
             }
-            let home = std::env::var_os("HOME")
-                .ok_or_else(|| HostError::new(ErrorCode::Unsupported, "links_home_unavailable"))?;
+            let home = env.home("links_home_unavailable")?;
             to_value(hide_session::links::read(Path::new(&home), &requests))
         }
         Call::WorktreeRemove { removal } => {

@@ -13,13 +13,12 @@ pub mod cli_contract;
 pub mod core;
 pub mod delivery_cli;
 pub mod demand;
-pub mod device_watch;
 pub mod env;
 pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;
-pub mod opener;
+
 pub mod pane_auth;
 pub mod remote_bridge;
 pub mod server;
@@ -54,13 +53,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// system will not say, which the page shows as unavailable rather than a guess.
 fn host_name() -> Option<String> {
     hide_platform::host::name().ok()
-}
-
-/// Reads the operating system identity before the core is placed behind its
-/// runtime mutex. Failure is explicit in the diagnostic and leaves
-/// cross-device lineage unresolved rather than guessing from a host name.
-fn machine_id() -> Option<String> {
-    hide_platform::host::machine_id().ok()
 }
 
 fn find_ui_dir() -> Option<std::path::PathBuf> {
@@ -198,6 +190,50 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         return Err(error);
     }
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    // This machine's name in every key that names it. A machine Hide cannot
+    // name refuses to start rather than guess one (PRD core-host-node D-28).
+    let node = herdr_core::node::NodeId::of_this_machine()?;
+    // Stored state from before node ids is converted once, before the core
+    // reads it; a store that cannot be converted stops the start and names
+    // the file (PRD core-host-node B2).
+    let converted = herdr_core::node_migration::convert(&env.state_dir, &env.home, &node).map_err(
+        |refusal| {
+            let record = serde_json::json!({
+                "component": "hided",
+                "kind": "node_migration.refused",
+                "pid": std::process::id(),
+                "at_unix_ms": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis() as u64)
+                    .unwrap_or_default(),
+                "node": node.as_str(),
+                "file": refusal.file.display().to_string(),
+                "reason": &refusal.reason,
+            });
+            if let Err(error) =
+                herdr_core::diagnostics::record_now(&env.state_dir.join("core-state.json"), record)
+            {
+                eprintln!("the start refusal could not be logged: {error}");
+            }
+            refusal.to_string()
+        },
+    )?;
+    if !converted.files.is_empty() {
+        let record = serde_json::json!({
+            "component": "hided",
+            "kind": "node_migration.converted",
+            "node": node.as_str(),
+            "files": converted.files,
+            "projects": converted.projects,
+            "search_rows": converted.search_rows,
+            "search_rows_dropped": converted.search_rows_dropped,
+        });
+        if let Err(error) =
+            herdr_core::diagnostics::record_now(&env.state_dir.join("core-state.json"), record)
+        {
+            eprintln!("the conversion could not be logged: {error}");
+        }
+    }
     let host_id = state_file::host_id(&env.state_dir)
         .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;
     let token = new_token();
@@ -246,7 +282,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .home
             .is_absolute()
             .then(|| env.home.display().to_string()),
-        machine_id: machine_id(),
+        node_id: node.clone(),
         herdr_socket_path: env.herdr_socket_path.clone(),
         herdr_bin_path: env
             .herdr_bin_path
@@ -283,15 +319,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 .display()
                 .to_string(),
         ),
-        // The install kit's parts ship beside this binary in the app bundle;
-        // a daemon anywhere else installs nothing (PRD device-parity D-19).
-        kit_dir: std::env::current_exe()
-            .ok()
-            .as_deref()
-            .and_then(hide_kit::bundled_kit_dir)
-            .map(|dir| dir.display().to_string()),
     };
-    let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
+    let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
     // After the core installed the diagnostic log beside its state.
     #[cfg(unix)]
@@ -304,16 +333,13 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         env.workspace_bridge_dir.clone(),
     );
     let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
-    let watch = Arc::new(watch::WatchService::new(
-        Arc::clone(&boundary),
-        Arc::clone(&core),
-    ));
+    let watch = Arc::new(watch::WatchService::new(Arc::clone(&core)));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
     let supervisor_exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve opener supervisor executable: {error}"))?;
-    let opener = opener::OpenHandler::new(
+    let opener = hide_node::opener::OpenHandler::new(
         env.open_command.clone(),
         Arc::clone(&shutdown),
         supervisor_exe,
@@ -593,7 +619,7 @@ fn apply_snapshot(
 ) {
     let roots = roots_from_value(value);
     boundary.set_roots(roots.clone());
-    boundary.set_device_roots(device_roots_from_value(value));
+    boundary.set_device_roots(device_roots_from_value(value, boundary.node().as_str()));
     if let Err(error) = core.set_file_roots(boundary.opened_roots()) {
         eprintln!(
             "{}",
@@ -602,16 +628,11 @@ fn apply_snapshot(
             })
         );
     }
-    let device_roots = device_roots_from_value(value);
+    let device_roots = device_roots_from_value(value, boundary.node().as_str());
     index.set_roots(
         &roots
             .iter()
-            .map(|root| {
-                (
-                    herdr_core::workspace::LOCAL_DEVICE_ID.to_owned(),
-                    root.path.display().to_string(),
-                )
-            })
+            .map(|root| (boundary.node().to_string(), root.path.display().to_string()))
             .chain(
                 device_roots
                     .iter()
@@ -620,13 +641,19 @@ fn apply_snapshot(
             .collect::<Vec<_>>(),
     );
     let (root, expanded) = watch_state_from_value(value);
-    let root = root.filter(|root| boundary.known_root(root).is_some());
-    let expanded = expanded
+    let root = root.and_then(|root| {
+        boundary
+            .root_identity(&root)
+            .map(|identity| (root, identity))
+    });
+    let expanded: Vec<String> = expanded
         .into_iter()
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
-    watch.reconcile(boundary, root, expanded);
-    watch.reconcile_device(device_watch::target_from_value(value));
+    watch.reconcile(root.map(|(root, identity)| {
+        watch::Target::of(boundary.node().as_str(), root, &expanded).pinned_by(identity)
+    }));
+    watch.reconcile_device(watch::device_target(value, boundary.node().as_str()));
 }
 
 /// The folders whose changes the Explorer wants announced: the focused
@@ -714,7 +741,7 @@ fn roots_from_value(value: &Value) -> Vec<Root> {
 /// path there, which only that device's helper reads. A device's projects
 /// are the registered ones in the navigator and its Herdr session's, the
 /// same two places the core's `catalog_checkout` looks.
-fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
+fn device_roots_from_value(value: &Value, node: &str) -> Vec<boundary::DeviceRoot> {
     let registered = value
         .pointer("/rest/navigator/workspaces")
         .and_then(Value::as_array)
@@ -736,7 +763,7 @@ fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
         let Some(device_id) = workspace
             .get("device_id")
             .and_then(Value::as_str)
-            .filter(|device| *device != herdr_core::workspace::LOCAL_DEVICE_ID)
+            .filter(|device| *device != node)
         else {
             continue;
         };

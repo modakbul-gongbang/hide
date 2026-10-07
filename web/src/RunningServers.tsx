@@ -4,7 +4,7 @@ import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
-import type { Checkout } from "./snapshot";
+import { localDeviceId, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { WorkspaceView } from "./workspace";
@@ -25,8 +25,9 @@ export function RunningServers({ checkout, view, actions }: { checkout: Checkout
   const discovery = useShellStore((s) => s.rest?.status?.server_discovery);
   const [open, setOpen] = useState(false);
   const [gone, setGone] = useState(false);
+  const node = useShellStore((s) => localDeviceId(s.rest));
   const ports = runningServers(checkout);
-  const unavailable = view.device_id !== "local" ? t("documents.serversUnavailable") : !live ? t("documents.serversWaiting") : discovery?.loading ? t("documents.serversReading") : discovery?.failure;
+  const unavailable = view.device_id !== node ? t("documents.serversUnavailable") : !live ? t("documents.serversWaiting") : discovery?.loading ? t("documents.serversReading") : discovery?.failure;
   // The name says how many listeners are known, so a screen reader can tell
   // whether the globe opens a page at once or the picker; an unknown count
   // is left out rather than said as zero.

@@ -213,10 +213,17 @@ pub(crate) struct WatchWork {
     pub status: String,
     pub state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
-    pub home: Option<PathBuf>,
-    pub channel: Option<Arc<dyn crate::host_access::HostChannel>>,
+    pub source: ActivitySource,
     /// The watching Factory's own stall window, when it set one.
     pub inactivity_ms: Option<u64>,
+}
+
+/// The node whose files hold a watched session's conversation, through its
+/// link; `None` while no link is available. The core's own node answers in
+/// process, a device's through its helper.
+#[derive(Clone)]
+pub(crate) struct ActivitySource {
+    pub(crate) link: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 fn read_activity(work: WatchWork) -> watch::Reading {
@@ -243,24 +250,27 @@ fn read_activity(work: WatchWork) -> watch::Reading {
     reading.status_changed_at_unix_ms = observation.status_changed_at_unix_ms;
     let result = (|| {
         let request = observation.session.ok_or("session_reference_missing")?;
-        if observation.actor.device_id == "local" {
-            let home = work.home.ok_or("session_home_unavailable")?;
-            hide_session::session_activity::read(&home, &request)
-                .map_err(|_| "session_activity_failed")
-        } else {
-            let channel = work.channel.ok_or("helper_unavailable")?;
-            crate::host_access::call_as::<hide_session::session_activity::SessionActivity>(
-                channel.as_ref(),
-                hide_host::protocol::Call::SessionActivity { request },
-                Duration::from_secs(5),
-            )
-            .map_err(|error| match error {
-                crate::host_access::HostCallError::NotConnected(_) => "helper_unavailable",
-                crate::host_access::HostCallError::Busy => "helper_busy",
-                crate::host_access::HostCallError::Refused(_) => "session_activity_refused",
-                crate::host_access::HostCallError::Unknown(_) => "helper_timeout_or_format",
-            })
-        }
+        let link = work.source.link.ok_or("helper_unavailable")?;
+        // The failure words a watch warning carries stay those of the machine
+        // that answered: the core's own files, or a device's helper.
+        let own = link.in_process();
+        crate::node_access::call_as::<hide_session::session_activity::SessionActivity>(
+            link.as_ref(),
+            hide_node_link::protocol::Call::SessionActivity { request },
+            Duration::from_secs(5),
+        )
+        .map_err(|error| match error {
+            crate::node_access::LinkError::Refused(error)
+                if own && error.message == "session_activity_home_unavailable" =>
+            {
+                "session_home_unavailable"
+            }
+            crate::node_access::LinkError::Refused(_) if own => "session_activity_failed",
+            crate::node_access::LinkError::NotConnected(_) => "helper_unavailable",
+            crate::node_access::LinkError::Busy => "helper_busy",
+            crate::node_access::LinkError::Refused(_) => "session_activity_refused",
+            crate::node_access::LinkError::Unknown(_) => "helper_timeout_or_format",
+        })
     })();
     match result {
         Ok(activity) => reading.session_modified_at_unix_ms = Some(activity.modified_at_unix_ms),
@@ -282,8 +292,7 @@ fn same_target(left: &WatchWork, right: &WatchWork) -> bool {
         && left_observed.status == right_observed.status
         && left_observed.state_change_seq == right_observed.state_change_seq
         && left_observed.status_changed_at_unix_ms == right_observed.status_changed_at_unix_ms
-        && left.home == right.home
-        && match (&left.channel, &right.channel) {
+        && match (&left.source.link, &right.source.link) {
             (Some(left), Some(right)) => Arc::ptr_eq(left, right),
             (None, None) => true,
             _ => false,
@@ -854,14 +863,14 @@ mod tests {
             pane_id: "parent".into(),
             name: "parent".into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some("parent-session".into()),
         };
         let child = Actor {
             pane_id: "child".into(),
             name: "child".into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some("child-session".into()),
         };
         let mut ledger = Ledger::default();
@@ -903,15 +912,15 @@ mod tests {
     }
 
     struct ActivityPeer(std::sync::atomic::AtomicU64);
-    impl crate::host_access::HostChannel for ActivityPeer {
+    impl crate::node_access::NodeLink for ActivityPeer {
         fn call(
             &self,
-            call: hide_host::protocol::Call,
+            call: hide_node_link::protocol::Call,
             timeout: Duration,
-        ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
             assert!(matches!(
                 call,
-                hide_host::protocol::Call::SessionActivity { .. }
+                hide_node_link::protocol::Call::SessionActivity { .. }
             ));
             assert_eq!(timeout, Duration::from_secs(5));
             let sample = self.0.fetch_add(100, Ordering::Relaxed) + 100;
@@ -926,7 +935,7 @@ mod tests {
             pane_id: id.into(),
             name: id.into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some(format!("native-{id}")),
         };
         let target = Actor {
@@ -939,7 +948,7 @@ mod tests {
         let first = watch::start(&mut ledger, &parent("one"), &target, 1).unwrap();
         let second = watch::start(&mut ledger, &parent("two"), &target, 1).unwrap();
         let peer = Arc::new(ActivityPeer(std::sync::atomic::AtomicU64::new(0)));
-        let channel: Arc<dyn crate::host_access::HostChannel> = peer.clone();
+        let channel: Arc<dyn crate::node_access::NodeLink> = peer.clone();
         let observed = Observation {
             actor: target,
             raw_pane_id: "target".into(),
@@ -967,8 +976,9 @@ mod tests {
                     status: "idle".into(),
                     state_change_seq: Some(1),
                     status_changed_at_unix_ms: 1,
-                    home: None,
-                    channel: Some(channel.clone()),
+                    source: ActivitySource {
+                        link: Some(channel.clone()),
+                    },
                     inactivity_ms: None,
                 })
                 .collect();
@@ -994,7 +1004,7 @@ mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":1,"lineage_session":native,"agent_session":reference},
         ]})).unwrap();
-        runtime.observe_delivery("local", &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
     }
 
     #[test]
@@ -1086,7 +1096,7 @@ mod tests {
             } else {
                 let empty: SessionSnapshotPayload =
                     serde_json::from_value(json!({"agents":[]})).unwrap();
-                guard.observe_delivery("local", &empty, None);
+                guard.observe_delivery(crate::node::TEST_NODE, &empty, None);
             }
             let work = guard.delivery_watch_work();
             drop(guard);
@@ -1191,7 +1201,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &changed, None);
+                .observe_delivery(crate::node::TEST_NODE, &changed, None);
             let (worker, client) = Worker::spawn(
                 Arc::downgrade(&runtime),
                 ChangeNotifier::noop(),
@@ -1235,7 +1245,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &present, None);
+                .observe_delivery(crate::node::TEST_NODE, &present, None);
             let first = client
                 .submit(
                     Effect::Command {
@@ -1252,7 +1262,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &absent, None);
+                .observe_delivery(crate::node::TEST_NODE, &absent, None);
             let replay = client
                 .submit(
                     Effect::Command {

@@ -38,7 +38,7 @@ describe("focused-area recent tabs", () => {
   it("narrows a View area to its own tabs despite an Agent area with the same ID", () => {
     const rest = world(); draw(rest);
     const checkout = rest.navigator!.workspaces![0]!.checkouts[0]!;
-    observeEntries(rest, tabSurface(checkout, "t2"));
+    observeEntries(rest, tabSurface(checkout, "t2", "local"));
     expect(ids(areaCycle(rest, { kind: "view", workspace: "c", areaId: "a1" }))).toEqual(["d1", "d2"]);
     // The Agent area walks panes instead (see the Agent pane cycle below).
     expect(areaCycle(rest, owner)).toBeNull();

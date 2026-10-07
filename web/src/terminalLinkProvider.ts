@@ -19,7 +19,7 @@ import type { IBufferRange, ILink, ILinkHandler, Terminal } from "@xterm/xterm";
 import { hostBridge, holdsCommandKey, type ProbedPath } from "./host";
 import { remoteTargetOfPane } from "./remote";
 import { bufferRow, type CellRow } from "./selection";
-import type { SnapshotRest } from "./snapshot";
+import { localDeviceId, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { JOIN_ROWS, linkCandidates, osc8Target, type LinkCandidate, type LinkTarget } from "./terminalLinks";
 
@@ -120,7 +120,7 @@ export function pathLookups(written: string, cwd: string | null, root: string | 
 export function paneContext(rest: SnapshotRest | null, paneId: string): { cwd: string | null; root: string | null } | null {
   if (remoteTargetOfPane(rest, paneId)) return null;
   for (const workspace of rest?.navigator?.workspaces ?? []) {
-    if (workspace.device_id !== "local") continue;
+    if (workspace.device_id !== localDeviceId(rest)) continue;
     for (const checkout of workspace.checkouts) {
       const pane = checkout.tabs.flatMap((tab) => tab.panes).find((row) => row.id === paneId);
       if (pane) return { cwd: pane.cwd || null, root: checkout.path };

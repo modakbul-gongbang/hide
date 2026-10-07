@@ -11,22 +11,28 @@
 //! otherwise be a second of coordinator latency for every Herdr pane event.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use hide_platform::process::OwnedChild;
 use serde::Deserialize;
 
 use crate::model::{
     GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot,
     PullRequestBadge, PullRequestChecks, PullRequestSnapshot, ReviewDecision,
 };
+use crate::node_access::NodeLink;
 use crate::reader::BackgroundRead;
+use hide_node_link::gh::{
+    GhAnswer, ISSUE_DETAIL_FIELDS, PR_FEEDBACK_FIELDS, SEARCH_ISSUE_FIELDS, SEARCH_LIMIT,
+    SEARCH_PR_FIELDS, is_number,
+};
+pub(crate) use hide_node_link::gh::{SEARCH_QUERY_LIMIT, SEARCH_REPOSITORY_LIMIT};
+use hide_node_link::git::GitCommand;
+use hide_node_link::protocol::Call;
 
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+/// The node bounds one `gh` command at fifteen seconds.
+const GH_CALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// What the list of every pull request asks for. `statusCheckRollup` is
 /// left out: asking GitHub for the checks of all 200 pull requests, merged
@@ -117,13 +123,15 @@ pub struct GithubAnswer {
 }
 
 impl GithubReader {
-    pub fn new() -> Self {
+    /// A reader whose `gh` and git run on `node`, the core's own machine,
+    /// where the operator's GitHub login is.
+    pub fn new(node: Arc<dyn NodeLink>) -> Self {
         let cache: Cache = Arc::default();
         Self {
             inner: BackgroundRead::on_change(Duration::ZERO, move |request: &GithubRequest| {
                 GithubAnswer {
                     request: request.clone(),
-                    snapshot: read(&cache, request),
+                    snapshot: read(&cache, node.as_ref(), request),
                 }
             }),
         }
@@ -134,13 +142,11 @@ impl GithubReader {
     }
 }
 
-impl Default for GithubReader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest) -> GithubSnapshot {
+fn read(
+    cache: &Mutex<HashMap<PathBuf, CachedProject>>,
+    node: &dyn NodeLink,
+    request: &GithubRequest,
+) -> GithubSnapshot {
     // The worker is the only thread that touches the cache, and one worker
     // runs at a time; the lock exists so the closure can be shared with it.
     let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
@@ -171,13 +177,14 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
         // One authentication check for the pass, not one per repository: `gh
         // auth status` is the same answer every time and it is the expensive
         // half of an unauthenticated machine's cost.
-        let authentication = authentication();
+        let authentication = authentication(node);
         for (project, _) in due {
             let known = cache
                 .get(&project.root)
                 .map(|cached| cached.checks.clone())
                 .unwrap_or_default();
             let answer = read_root(
+                node,
                 &authentication,
                 &project.root,
                 project.generation,
@@ -216,6 +223,7 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
 /// One repository's answer, or an empty `root_path` when the path is not
 /// inside a git repository at all and so has nothing to report.
 fn read_root(
+    node: &dyn NodeLink,
     authentication: &Result<(), GhFailure>,
     root: &Path,
     generation: u64,
@@ -223,7 +231,7 @@ fn read_root(
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
     let started = Instant::now();
-    let Some(main) = main_worktree(root) else {
+    let Some(main) = main_worktree(node, root) else {
         return GithubProjectSnapshot::default();
     };
     let root_path = hide_platform::path::to_wire_lossy(&main);
@@ -238,7 +246,7 @@ fn read_root(
             },
             ..GithubProjectSnapshot::default()
         },
-        Ok(()) => read_project(&main, root_path, links, known),
+        Ok(()) => read_project(node, &main, root_path, links, known),
     };
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
@@ -262,27 +270,29 @@ fn read_root(
 }
 
 /// Authentication is read-only and uses the same bounded subprocess as PR listing.
-fn authentication() -> Result<(), GhFailure> {
-    gh(None, &["auth", "status"]).map(|_| ())
+fn authentication(node: &dyn NodeLink) -> Result<(), GhFailure> {
+    gh(node, None, &["auth", "status"]).map(|_| ())
 }
 
 fn read_project(
+    node: &dyn NodeLink,
     root: &Path,
     root_path: String,
     links: &[crate::issues::IssueReference],
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
-    let pull_requests = match list_pull_requests(&|arguments| gh(Some(root), arguments), known) {
-        Ok(value) => value,
-        Err(reason) => {
-            return GithubProjectSnapshot {
-                root_path,
-                status: failed(reason),
-                ..GithubProjectSnapshot::default()
-            };
-        }
-    };
-    match read_issues(root, links) {
+    let pull_requests =
+        match list_pull_requests(&|arguments| gh(node, Some(root), arguments), known) {
+            Ok(value) => value,
+            Err(reason) => {
+                return GithubProjectSnapshot {
+                    root_path,
+                    status: failed(reason),
+                    ..GithubProjectSnapshot::default()
+                };
+            }
+        };
+    match read_issues(node, root, links) {
         Ok((issues, warning)) => GithubProjectSnapshot {
             root_path,
             issues,
@@ -401,10 +411,15 @@ fn with_optional_projects<T>(
 }
 
 fn read_issues(
+    node: &dyn NodeLink,
     root: &Path,
     links: &[crate::issues::IssueReference],
 ) -> Result<(crate::issues::ProjectIssuesSnapshot, Option<GhFailure>), GhFailure> {
-    let repository_json = gh(Some(root), &["repo", "view", "--json", "nameWithOwner,id"])?;
+    let repository_json = gh(
+        node,
+        Some(root),
+        &["repo", "view", "--json", "nameWithOwner,id"],
+    )?;
     let repository: serde_json::Value = serde_json::from_str(&repository_json)
         .map_err(|error| GhFailure::network(format!("GitHub repository response: {error}")))?;
     let repository_id = repository
@@ -419,7 +434,10 @@ fn read_issues(
     crate::issues::IssueReference::parse(&format!("{repository}#1"), None)
         .map_err(GhFailure::network)?;
     let (listed, mut warning) = with_optional_projects(|include_projects| {
-        list_issues(&|arguments| gh(Some(root), arguments), include_projects)
+        list_issues(
+            &|arguments| gh(node, Some(root), arguments),
+            include_projects,
+        )
     })?;
     let mut overflow = listed.len() > crate::issues::ISSUE_LIMIT;
     let mut issues = Vec::new();
@@ -439,7 +457,7 @@ fn read_issues(
     let linked = if missing.is_empty() {
         Vec::new()
     } else {
-        let (linked, linked_warning) = read_linked_issues(root, &missing)?;
+        let (linked, linked_warning) = read_linked_issues(node, root, &missing)?;
         if warning.is_none() {
             warning = linked_warning;
         }
@@ -470,7 +488,7 @@ fn read_issues(
     // Every kept issue's blockers in one bounded query, never one per card. A
     // failure keeps each issue's earlier blockers (`ingest_github`) and is
     // said beside the tasks, not in place of them.
-    let dependencies_failure = match read_dependencies(root, &issues) {
+    let dependencies_failure = match read_dependencies(node, root, &issues) {
         Ok(mut dependencies) => {
             for issue in &mut issues {
                 let known = dependencies.remove(&issue.reference).unwrap_or_default();
@@ -555,6 +573,7 @@ type Dependencies = std::collections::BTreeMap<crate::issues::IssueReference, Is
 /// GraphQL query grouped by repository. A closed blocker no longer blocks and
 /// is left out.
 fn read_dependencies(
+    node: &dyn NodeLink,
     root: &Path,
     issues: &[crate::issues::IssueSnapshot],
 ) -> Result<Dependencies, GhFailure> {
@@ -563,6 +582,7 @@ fn read_dependencies(
     }
     let query = dependency_query(issues)?;
     let output = gh(
+        node,
         Some(root),
         &["api", "graphql", "-f", &format!("query={query}")],
     )?;
@@ -692,10 +712,11 @@ fn parse_dependencies(output: &str) -> Result<Dependencies, GhFailure> {
 }
 
 pub(crate) fn read_linked_issue(
+    node: &dyn NodeLink,
     root: &Path,
     reference: &crate::issues::IssueReference,
 ) -> Result<crate::issues::IssueSnapshot, String> {
-    read_linked_issues(root, &[reference])
+    read_linked_issues(node, root, &[reference])
         .map_err(|error| error.reason)?
         .0
         .into_iter()
@@ -708,11 +729,13 @@ pub(crate) fn read_linked_issue(
 /// with `write_closing_line`. `gh issue create` prints the new issue's URL,
 /// which names it.
 pub(crate) fn create_issue(
+    node: &dyn NodeLink,
     root: &Path,
     title: &str,
     body: &str,
 ) -> Result<crate::issues::IssueSnapshot, String> {
     let output = gh(
+        node,
         Some(root),
         &["issue", "create", "--title", title, "--body", body],
     )
@@ -743,20 +766,18 @@ pub(crate) fn create_issue(
     })
 }
 
-/// The fields `issue_detail` asks `gh issue view` for, and the only ones
-/// `run_gh` lets it ask for.
-const ISSUE_DETAIL_FIELDS: &str = "body,labels,author,assignees,comments,createdAt";
-
 /// One issue as its panel reads it when it opens (PRD overview-lenses-issues
 /// D-40), and the Start dialog's first prompt: the body, labels, author,
 /// assignees and the latest comments, in one `gh issue view` on the caller's
 /// worker.
 pub(crate) fn issue_detail(
+    node: &dyn NodeLink,
     root: &Path,
     reference: &crate::issues::IssueReference,
 ) -> Result<crate::tasks::TaskDetail, String> {
     let number = reference.number.to_string();
     let output = gh(
+        node,
         Some(root),
         &[
             "issue",
@@ -838,60 +859,6 @@ fn parse_issue_detail(output: &str) -> Result<crate::tasks::TaskDetail, String> 
     })
 }
 
-/// The fields `search` asks `gh search prs` and `gh search issues` for, and
-/// the only ones `run_gh` lets them ask for. The search has no head branch, and
-/// only a pull request has `isDraft`.
-const SEARCH_PR_FIELDS: &str = "isDraft,number,repository,state,title,url";
-const SEARCH_ISSUE_FIELDS: &str = "number,repository,state,title,url";
-
-/// Most pull requests, and most issues, one search returns in all, and what
-/// one `gh search` is asked for per repository.
-pub(crate) const SEARCH_LIMIT: usize = 20;
-
-/// Longest query, in characters, a search takes.
-pub(crate) const SEARCH_QUERY_LIMIT: usize = 200;
-
-/// Most repositories one search names (`runtime/issues.rs` caps the projects at the same number).
-pub(crate) const SEARCH_REPOSITORY_LIMIT: usize = 20;
-
-/// A query as `run_gh` lets it reach `gh`: some text, within the cap.
-fn is_search_query(query: &str) -> bool {
-    !query.trim().is_empty() && query.chars().count() <= SEARCH_QUERY_LIMIT
-}
-
-/// The one shape of `gh search prs|issues` Hide runs: `search <kind>`, one
-/// `--repo owner/name` per repository, the cap, that kind's fixed fields, then
-/// `--` and the query's words, each of which is just text to `gh`.
-fn is_search_call(arguments: &[&str]) -> bool {
-    let [first, kind, rest @ ..] = arguments else {
-        return false;
-    };
-    let fields = match (*first, *kind) {
-        ("search", "prs") => SEARCH_PR_FIELDS,
-        ("search", "issues") => SEARCH_ISSUE_FIELDS,
-        _ => return false,
-    };
-    let mut rest = rest;
-    let mut repositories = 0;
-    while let ["--repo", repository, tail @ ..] = rest {
-        if !crate::issues::is_repository(repository) {
-            return false;
-        }
-        repositories += 1;
-        rest = tail;
-    }
-    let limit = SEARCH_LIMIT.to_string();
-    let ["--limit", count, "--json", requested, "--", words @ ..] = rest else {
-        return false;
-    };
-    (1..=SEARCH_REPOSITORY_LIMIT).contains(&repositories)
-        && *count == limit
-        && *requested == fields
-        && !words.is_empty()
-        && words.iter().map(|word| word.chars().count()).sum::<usize>() <= SEARCH_QUERY_LIMIT
-        && words.iter().all(|word| is_search_query(word))
-}
-
 #[derive(Clone, Copy)]
 enum SearchKind {
     Pr,
@@ -934,11 +901,12 @@ pub(crate) struct SearchTarget {
 /// is resolved here with the same `gh repo view` the reader runs, so the
 /// search never depends on what was read earlier. See `search_with`.
 pub(crate) fn search(
+    node: &dyn NodeLink,
     targets: &[SearchTarget],
     query: &str,
 ) -> Result<Vec<crate::model::GithubSearchResult>, String> {
-    let repositories = resolve_repositories(gh, targets)?;
-    search_with(|arguments| gh(None, arguments), &repositories, query)
+    let repositories = resolve_repositories(|cwd, arguments| gh(node, cwd, arguments), targets)?;
+    search_with(|arguments| gh(node, None, arguments), &repositories, query)
 }
 
 /// The targets' repositories, once each by `owner/name` (GitHub names ignore
@@ -966,7 +934,7 @@ fn resolve_repositories(
                             .and_then(serde_json::Value::as_str)
                             .map(str::to_owned)
                     })
-                    .filter(|name| crate::issues::is_repository(name))
+                    .filter(|name| hide_node_link::gh::is_repository(name))
                     .ok_or_else(|| GhFailure::network("repository identity is missing".into()))
             }) {
                 Ok(repository) => repository,
@@ -1092,10 +1060,6 @@ fn parse_search(
     Ok(results)
 }
 
-/// The fields `pr_feedback` asks `gh pr view` for, and the only ones
-/// `run_gh` lets it ask for.
-const PR_FEEDBACK_FIELDS: &str = "body,statusCheckRollup,reviews";
-
 /// What a pull request says for the work handed on from it (PRD
 /// overview-lenses-prs): its body, which a new issue made from it starts
 /// with (B12), and its failed checks and the reviews still asking for
@@ -1108,9 +1072,14 @@ pub(crate) struct PrFeedback {
 }
 
 /// `PrFeedback`, in one `gh pr view` on the caller's worker.
-pub(crate) fn pr_feedback(root: &Path, number: u32) -> Result<PrFeedback, String> {
+pub(crate) fn pr_feedback(
+    node: &dyn NodeLink,
+    root: &Path,
+    number: u32,
+) -> Result<PrFeedback, String> {
     let number = number.to_string();
     let output = gh(
+        node,
         Some(root),
         &["pr", "view", &number, "--json", PR_FEEDBACK_FIELDS],
     )
@@ -1182,8 +1151,13 @@ fn parse_pr_feedback(output: &str) -> Result<PrFeedback, String> {
 /// D-47): the body is read first, and a body that already closes the issue
 /// is left as it is, so a retry never adds a second line. This is Hide's one
 /// write to a pull request.
-pub(crate) fn write_closing_line(root: &Path, number: u32, issue: u32) -> Result<bool, String> {
-    write_closing_line_with(|arguments| gh(Some(root), arguments), number, issue)
+pub(crate) fn write_closing_line(
+    node: &dyn NodeLink,
+    root: &Path,
+    number: u32,
+    issue: u32,
+) -> Result<bool, String> {
+    write_closing_line_with(|arguments| gh(node, Some(root), arguments), number, issue)
 }
 
 /// `write_closing_line` through `gh`, which a test answers with a fixture.
@@ -1257,12 +1231,14 @@ fn with_closing_line(body: &str, issue: u32) -> String {
 }
 
 fn read_linked_issues(
+    node: &dyn NodeLink,
     root: &Path,
     links: &[&crate::issues::IssueReference],
 ) -> Result<(Vec<crate::issues::IssueSnapshot>, Option<GhFailure>), GhFailure> {
     with_optional_projects(|include_projects| {
         let query = issue_query(links, include_projects)?;
         let output = gh(
+            node,
             Some(root),
             &["api", "graphql", "-f", &format!("query={query}")],
         )?;
@@ -1403,10 +1379,12 @@ struct GhMergedPullRequestProof {
 /// worktree is merged. A branch name alone is never deletion evidence: the
 /// caller matches the head commit and the base.
 pub(crate) fn merged_pull_request_proofs(
+    node: &dyn NodeLink,
     root: &Path,
     branch: &str,
 ) -> Result<Vec<MergedPullRequestProof>, String> {
     let listed = gh(
+        node,
         Some(root),
         &[
             "pr",
@@ -1769,17 +1747,14 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn main_worktree(path: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let common = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+/// The main worktree of the repository `path` is in, from its node's git;
+/// `None` when `path` is in no repository.
+fn main_worktree(node: &dyn NodeLink, path: &Path) -> Option<PathBuf> {
+    let call = Call::Git {
+        root: path.to_string_lossy().into_owned(),
+        command: GitCommand::CommonDir,
+    };
+    let common: String = crate::node_access::call_as(node, call, GH_CALL_TIMEOUT).ok()?;
     if common.is_empty() {
         return None;
     }
@@ -1801,151 +1776,21 @@ impl GhFailure {
     }
 }
 
-// gh exposes these failures only as human-readable stderr. Keep the classifier
-// at this external boundary and preserve unknown errors verbatim as network failures.
-fn classify_failure(reason: String, exit_code: Option<i32>) -> GhFailure {
-    let lower = reason.to_ascii_lowercase();
-    let category = if exit_code == Some(4)
-        || lower.contains("not logged")
-        || lower.contains("gh auth login")
-        || lower.contains("token") && lower.contains("invalid")
-    {
-        GithubFailureCategory::NotLoggedIn
-    } else if lower.contains("no git remotes")
-        || lower.contains("none of the git remotes")
-        || lower.contains("not a github repository")
-        || lower.contains("no github remote")
-    {
-        GithubFailureCategory::NoGithubRemote
-    } else {
-        GithubFailureCategory::NetworkOrRateLimit
+fn gh(node: &dyn NodeLink, cwd: Option<&Path>, arguments: &[&str]) -> Result<String, GhFailure> {
+    let call = Call::Gh {
+        cwd: cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
+        args: arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect(),
     };
-    GhFailure { category, reason }
-}
-
-fn gh(cwd: Option<&Path>, arguments: &[&str]) -> Result<String, GhFailure> {
-    run_gh(Path::new("gh"), cwd, arguments, COMMAND_TIMEOUT)
-}
-
-/// A pull request or issue number as `gh` takes it.
-fn is_number(argument: &str) -> bool {
-    !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn run_gh(
-    binary: &Path,
-    cwd: Option<&Path>,
-    arguments: &[&str],
-    timeout: Duration,
-) -> Result<String, GhFailure> {
-    if !(arguments.starts_with(&["auth", "status"])
-        || arguments.starts_with(&["pr", "list"])
-        || arguments.starts_with(&["issue", "list"])
-        || arguments == ["repo", "view", "--json", "nameWithOwner"]
-        || arguments == ["repo", "view", "--json", "nameWithOwner,id"]
-        // The two writes (docs/ARCHITECTURE.md): a new issue with a title and
-        // a body, and a pull request's body, nothing else of either.
-        || (arguments.len() == 6
-            && arguments[..3] == ["issue", "create", "--title"]
-            && arguments[4] == "--body")
-        || (arguments.len() == 5
-            && arguments[..2] == ["pr", "edit"]
-            && is_number(arguments[2])
-            && arguments[3] == "--body")
-        || (arguments.len() == 5
-            && arguments[..2] == ["pr", "view"]
-            && is_number(arguments[2])
-            && arguments[3] == "--json"
-            && (arguments[4] == "body" || arguments[4] == PR_FEEDBACK_FIELDS))
-        || (arguments.len() == 7
-            && arguments[..2] == ["issue", "view"]
-            && arguments[3] == "--repo"
-            && arguments[5..] == ["--json", ISSUE_DETAIL_FIELDS])
-        // The search (`search`): the registered repositories, the cap, fixed
-        // fields, and the query's words after `--` so none can be read as a flag.
-        || is_search_call(arguments)
-        || (arguments.len() == 4
-            && arguments[..3] == ["api", "graphql", "-f"]
-            && (arguments[3].starts_with("query=query HideLinkedIssues {")
-                || arguments[3].starts_with("query=query HideIssueDependencies {"))))
-    {
-        return Err(GhFailure::network("Unsupported gh command".to_owned()));
+    match crate::node_access::call_as(node, call, GH_CALL_TIMEOUT) {
+        Ok(GhAnswer::Output { stdout }) => Ok(stdout),
+        Ok(GhAnswer::Failed { category, reason }) => Err(GhFailure { category, reason }),
+        Err(error) => Err(GhFailure::network(format!(
+            "gh could not be asked for: {error}"
+        ))),
     }
-    let mut command = Command::new(binary);
-    command
-        .args(arguments)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PAGER", "cat")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let mut child = OwnedChild::spawn(&mut command).map_err(|error| GhFailure {
-        category: if error.kind() == std::io::ErrorKind::NotFound {
-            GithubFailureCategory::NotInstalled
-        } else {
-            GithubFailureCategory::NetworkOrRateLimit
-        },
-        reason: format!("gh could not be run: {error}"),
-    })?;
-    // Drain both pipes while waiting, otherwise a large PR list fills stdout
-    // and the child cannot exit before the timeout.
-    let mut stdout = child.take_stdout().expect("piped stdout");
-    let mut stderr = child.take_stderr().expect("piped stderr");
-    let out = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let err = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if started.elapsed() < timeout => {
-                std::thread::sleep(Duration::from_millis(10))
-            }
-            outcome => {
-                let reason = match outcome {
-                    Err(error) => format!("gh wait failed: {error}"),
-                    _ => format!("gh timed out after {} ms", timeout.as_millis()),
-                };
-                // Kill only the tree this invocation created, including helpers
-                // retaining the pipe handles, so draining cannot outlive the deadline.
-                let _ = child.kill_tree();
-                let _ = child.wait();
-                break Err(GhFailure::network(reason));
-            }
-        }
-    };
-    let stdout = out
-        .join()
-        .map_err(|_| GhFailure::network("gh stdout reader failed".to_owned()))?
-        .map_err(|error| GhFailure::network(format!("gh stdout: {error}")))?;
-    let stderr = err
-        .join()
-        .map_err(|_| GhFailure::network("gh stderr reader failed".to_owned()))?
-        .map_err(|error| GhFailure::network(format!("gh stderr: {error}")))?;
-    let status = status?;
-    if !status.success() {
-        let reason = String::from_utf8_lossy(&stderr).trim().to_owned();
-        return Err(classify_failure(
-            if reason.is_empty() {
-                format!("gh exited with {status}")
-            } else {
-                reason
-            },
-            status.code(),
-        ));
-    }
-    String::from_utf8(stdout)
-        .map_err(|error| GhFailure::network(format!("gh output was not UTF-8: {error}")))
 }
 
 #[cfg(test)]
@@ -1955,8 +1800,6 @@ mod tests {
     /// A fixture `gh` answers at once; a one-second deadline read a loaded
     /// machine's slow shell start as a timeout, the network category.
     #[cfg(unix)]
-    const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
-
     #[test]
     fn optional_project_permission_does_not_prevent_basic_issue_resolution() {
         let reference = crate::issues::IssueReference::parse("acme/project#42", None).unwrap();
@@ -2056,37 +1899,6 @@ mod tests {
         assert!(by_number(13).labels.is_empty());
     }
 
-    #[cfg(unix)]
-    struct GhFixture {
-        root: PathBuf,
-        binary: PathBuf,
-    }
-    #[cfg(unix)]
-    impl GhFixture {
-        fn new(body: &str) -> Self {
-            static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "hide-gh-{}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos(),
-                SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&root).unwrap();
-            let binary = root.join("gh");
-            crate::executable_fixture::write_executable(&binary, &format!("#!/bin/sh\n{body}\n"));
-            Self { root, binary }
-        }
-    }
-    #[cfg(unix)]
-    impl Drop for GhFixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
     #[test]
     fn an_issue_panel_read_keeps_the_latest_three_comments_and_drops_a_colour_that_is_not_hex() {
         let comment = |n: u32| {
@@ -2132,60 +1944,30 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    fn an_issue_panel_reads_only_its_fields_and_nothing_else_passes_issue_view() {
-        let fixture = GhFixture::new(
-            r#"
-case "$1 $2 $6 $7" in
-  "issue view --json body,labels,author,assignees,comments,createdAt") printf '{"body":"b","comments":[]}';;
-  *) touch forbidden; exit 91;;
-esac"#,
-        );
-        let viewed = |fields: &str| {
-            run_gh(
-                &fixture.binary,
-                Some(&fixture.root),
-                &["issue", "view", "7", "--repo", "acme/app", "--json", fields],
-                FIXTURE_DEADLINE,
-            )
-        };
-        assert!(viewed(ISSUE_DETAIL_FIELDS).is_ok());
-        assert!(viewed("body,title").is_err());
-        assert!(!fixture.root.join("forbidden").exists());
-    }
-
-    #[test]
-    #[cfg(unix)]
     fn a_closing_line_is_written_once_however_often_it_is_asked_for() {
-        // `gh` over a body kept in a file: `pr view` prints it, `pr edit` replaces it.
-        let fixture = GhFixture::new(
-            r#"
-body="$(dirname "$0")/body"
-case "$1 $2 $4" in
-  "pr view --json") python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' "$body";;
-  "pr edit --body") printf '%s' "$5" > "$body"; echo "https://github.com/acme/app/pull/$3";;
-  *) exit 91;;
-esac"#,
-        );
-        let body = fixture.root.join("body");
-        std::fs::write(&body, "Moves the reader off the lock.\n").unwrap();
-        let gh = |arguments: &[&str]| {
-            run_gh(
-                &fixture.binary,
-                Some(&fixture.root),
-                arguments,
-                Duration::from_secs(5),
-            )
+        // `gh` over a body kept in memory: `pr view` prints it, `pr edit` replaces it.
+        let body = std::cell::RefCell::new("Moves the reader off the lock.\n".to_owned());
+        let gh = |arguments: &[&str]| -> Result<String, GhFailure> {
+            match arguments {
+                ["pr", "view", "12", "--json", "body"] => {
+                    Ok(serde_json::json!({ "body": *body.borrow() }).to_string())
+                }
+                ["pr", "edit", "12", "--body", next] => {
+                    *body.borrow_mut() = (*next).to_owned();
+                    Ok("https://github.com/acme/app/pull/12".to_owned())
+                }
+                other => panic!("unexpected gh call {other:?}"),
+            }
         };
         assert_eq!(write_closing_line_with(gh, 12, 7), Ok(true));
         assert_eq!(
-            std::fs::read_to_string(&body).unwrap(),
+            *body.borrow(),
             "Moves the reader off the lock.\n\nCloses #7"
         );
         // The retry finds the line and writes nothing (D-47, B14).
         assert_eq!(write_closing_line_with(gh, 12, 7), Ok(false));
         assert_eq!(
-            std::fs::read_to_string(&body).unwrap(),
+            *body.borrow(),
             "Moves the reader off the lock.\n\nCloses #7"
         );
     }
@@ -2247,42 +2029,6 @@ esac"#,
     }
 
     #[test]
-    #[cfg(unix)]
-    fn a_pull_request_takes_only_its_body_write_and_its_two_reads() {
-        let fixture = GhFixture::new(r#"printf 'ok'"#);
-        let run = |arguments: &[&str]| {
-            run_gh(
-                &fixture.binary,
-                Some(&fixture.root),
-                arguments,
-                Duration::from_secs(5),
-            )
-        };
-        for allowed in [
-            &["pr", "view", "12", "--json", "body"][..],
-            &["pr", "view", "12", "--json", PR_FEEDBACK_FIELDS],
-            &["pr", "edit", "12", "--body", "Closes #7"],
-        ] {
-            if let Err(failure) = run(allowed) {
-                panic!("{allowed:?} must run: {}", failure.reason);
-            }
-        }
-        for refused in [
-            &["pr", "edit", "12", "--title", "x"][..],
-            &["pr", "edit", "12", "--add-label", "x"],
-            &["pr", "edit", "x12", "--body", "y"],
-            &["pr", "edit", "12", "--body", "y", "--title", "z"],
-            &["pr", "view", "12", "--json", "body,title"],
-            &["pr", "merge", "12"],
-            &["pr", "comment", "12", "--body", "y"],
-            &["pr", "review", "12", "--approve"],
-            &["pr", "close", "12"],
-        ] {
-            assert!(run(refused).is_err(), "{refused:?} must be refused");
-        }
-    }
-
-    #[test]
     fn ci_rollup_never_reports_absent_pending_or_failed_checks_as_passing() {
         let decode = |json: &str| serde_json::from_str::<Vec<GhCheck>>(json).unwrap();
         assert_eq!(rollup_checks(None), PullRequestChecks::Unknown);
@@ -2315,136 +2061,6 @@ esac"#,
             rollup_checks(Some(&decode(r#"[{"__typename":"FutureCheck"}]"#))),
             PullRequestChecks::Unknown
         );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
-        let fixture = GhFixture::new(
-            r#"
-[ "$GH_PROMPT_DISABLED" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 90
-case "$1 $2" in
-  "pr list"|"issue list") printf '[]';;
-  "auth status") printf 'not logged into any GitHub hosts' >&2; exit 1;;
-  *) touch forbidden; exit 91;;
-esac"#,
-        );
-        assert_eq!(
-            run_gh(
-                &fixture.binary,
-                Some(&fixture.root),
-                &["pr", "list"],
-                FIXTURE_DEADLINE
-            )
-            .unwrap(),
-            "[]"
-        );
-        assert_eq!(
-            run_gh(
-                &fixture.binary,
-                Some(&fixture.root),
-                &["issue", "list"],
-                FIXTURE_DEADLINE
-            )
-            .unwrap(),
-            "[]"
-        );
-        for write in [
-            ["issue", "create"],
-            ["issue", "edit"],
-            ["issue", "comment"],
-            ["issue", "close"],
-        ] {
-            assert!(
-                run_gh(
-                    &fixture.binary,
-                    Some(&fixture.root),
-                    &write,
-                    FIXTURE_DEADLINE
-                )
-                .is_err()
-            );
-        }
-        let failure = run_gh(
-            &fixture.binary,
-            Some(&fixture.root),
-            &["auth", "status"],
-            FIXTURE_DEADLINE,
-        )
-        .unwrap_err();
-        assert_eq!(failure.category, GithubFailureCategory::NotLoggedIn);
-        assert_eq!(failure.reason, "not logged into any GitHub hosts");
-        assert!(
-            run_gh(
-                &fixture.binary,
-                Some(&fixture.root),
-                &["auth", "login"],
-                FIXTURE_DEADLINE
-            )
-            .is_err()
-        );
-        assert!(!fixture.root.join("forbidden").exists());
-        assert_eq!(
-            std::fs::read_dir(&fixture.root).unwrap().count(),
-            1,
-            "no token or configuration was written"
-        );
-        assert_eq!(
-            run_gh(
-                &fixture.root.join("missing"),
-                None,
-                &["pr", "list"],
-                FIXTURE_DEADLINE
-            )
-            .unwrap_err()
-            .category,
-            GithubFailureCategory::NotInstalled
-        );
-        for (stderr, expected) in [
-            (
-                "none of the git remotes configured for this repository point to a known GitHub host",
-                GithubFailureCategory::NoGithubRemote,
-            ),
-            (
-                "HTTP 429 rate limit exceeded",
-                GithubFailureCategory::NetworkOrRateLimit,
-            ),
-        ] {
-            let fixture = GhFixture::new(&format!("printf '%s' '{stderr}' >&2; exit 1"));
-            let failure =
-                run_gh(&fixture.binary, None, &["pr", "list"], FIXTURE_DEADLINE).unwrap_err();
-            assert_eq!(failure.category, expected);
-            assert_eq!(failure.reason, stderr);
-        }
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn timed_out_gh_and_its_pipe_holding_helper_are_terminated() {
-        let fixture = GhFixture::new("echo $$ > pid; sleep 5; touch survived");
-        let started = Instant::now();
-        // The shell must get a turn to write its PID under parallel workspace
-        // tests; the deadline still precedes the script's five-second work.
-        let failure = run_gh(
-            &fixture.binary,
-            Some(&fixture.root),
-            &["pr", "list"],
-            Duration::from_secs(3),
-        )
-        .unwrap_err();
-        assert_eq!(failure.category, GithubFailureCategory::NetworkOrRateLimit);
-        assert!(failure.reason.contains("timed out"));
-        assert!(started.elapsed() < Duration::from_secs(5));
-        let pid: u32 = std::fs::read_to_string(fixture.root.join("pid"))
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        assert!(
-            !hide_platform::process::is_alive(pid),
-            "the gh child has ended"
-        );
-        assert!(!fixture.root.join("survived").exists());
     }
 
     #[test]
@@ -2981,15 +2597,12 @@ esac"#,
         assert!(query.contains("i171:issue(number:171)") && query.contains("i9:issue(number:9)"));
         assert!(query.contains("blockedBy(first:20)"));
         assert!(query.contains("subIssuesSummary{total completed} subIssues(first:100)"));
-        assert!(
-            run_gh(
-                Path::new("/nonexistent/gh"),
-                None,
-                &["api", "graphql", "-f", &format!("query={query}")],
-                COMMAND_TIMEOUT
-            )
-            .is_err_and(|failure| failure.category == GithubFailureCategory::NotInstalled)
-        );
+        assert!(hide_node_link::gh::allowed(&[
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={query}")
+        ]));
 
         let answer = serde_json::json!({"data": {
             "r0": {"nameWithOwner": "acme/app",
@@ -3222,12 +2835,8 @@ esac"#,
     }
 
     #[test]
-    #[cfg(unix)]
     fn a_search_takes_its_repositories_the_cap_fixed_fields_and_the_query_words_after_the_dashes() {
-        let fixture = GhFixture::new(r#"printf '[]'"#);
-        let allowed = |arguments: &[&str]| {
-            run_gh(&fixture.binary, None, arguments, Duration::from_secs(5)).is_ok()
-        };
+        let allowed = |arguments: &[&str]| hide_node_link::gh::allowed(arguments);
         let prs = |repositories: &[&'static str], words: &[&'static str]| {
             let mut arguments = vec!["search", "prs"];
             for repository in repositories {

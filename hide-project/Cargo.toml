@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+hide-platform = { path = "../hide-platform" }
 serde = { version = "=1.0.229", features = ["derive"] }
 sha2 = "=0.10.9"
 

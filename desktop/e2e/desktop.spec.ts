@@ -228,6 +228,22 @@ test("failure: a missing CLI shows its reason and Retry attaches once it exists"
   await shellShown(page);
 });
 
+test("failure: a state folder another node owns names the file and starts nothing", async () => {
+  // PRD core-host-node B2: the daemon refuses the folder and the screen says which file.
+  const marker = path.join(run.env.HIDE_STATE_DIR!, "node.json");
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.writeFileSync(marker, JSON.stringify({ version: 1, node: "another-node" }));
+  ({ app } = await launch(run.env));
+  const page = await app.firstWindow();
+  await expect(page.locator("#reason")).toHaveText("hided could not start because of this file, which was left unchanged.", { timeout: 20_000 });
+  // The daemon names the file as it resolved its state folder, which may spell the temporary root differently.
+  await expect(page.locator("#file")).toHaveText(/\/state\/node\.json$/);
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await screenshot(page, "desktop-state-refused");
+  expect(run.daemonPid()).toBeNull();
+  expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({ version: 1, node: "another-node" });
+});
+
 test("discovery: a Finder-style PATH still lets a new daemon run installed tools", async () => {
   // launchd's bare PATH, no override, no worktree build beside it. Playwright runs the app
   // unpackaged, so the login-shell step is skipped here; cli.test.ts covers its place in the order.

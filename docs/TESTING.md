@@ -116,14 +116,16 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Set `terminal.default_shell` in the private Herdr config, because Windows Herdr does not select its shell from `SHELL`.
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
-  Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
-  Every `agent start` the fixture sends (setup's and every `fixture.run`'s) goes through `startAgentAtShell`, which sends it only while `pane process-info` says the shell alone holds the terminal, the condition the pinned Herdr checks (`docs/ARCHITECTURE.md`, Starting an agent), as the product's `agent_start::start_at_shell` does.
+  Before each initial agent start, the fixture waits for the prompt and for the shell to be available to `agent start`, decided by the one check below (`shellAvailability`), within the existing ten-second setup bound.
+  Every `agent start` the fixture sends (setup's and every `fixture.run`'s) goes through `startAgentAtShell`, which sends it only while `shellAvailability` says the pinned Herdr counts the shell as available (`docs/ARCHITECTURE.md`, Starting an agent), as the product's `agent_start::start_at_shell` does.
+  On macOS and Linux that is while `pane process-info` says the shell alone holds the terminal; on Windows it is while no process names the shell as its parent, which `pane process-info` does not show, so the fixture lists those processes with the compiled `hide-children.exe`.
   A refusal as `agent_pane_busy` typed nothing, so the fixture goes back to waiting within the same ten-second bound; any other answer is the start's.
-  A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has, listed by the compiled `hide-children.exe` (a child count of zero is not the condition: a shell can keep a resident child).
+  A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has.
   On Windows `globalSetup` ends every `vctip.exe` after the run's last compile and prints the pids it ended (`endVctip`): MSVC's compiler and linker leave that telemetry helper running, still naming as its parent a linker whose pid Windows can give a pane's shell, and the pinned Herdr counts a shell's children by parent pid alone, so it would refuse that pane as busy for as long as the helper ran.
   A process Windows started at boot can do the same and cannot be ended: `csrss.exe` names as its parent the `smss.exe` that started it and exited, and a pane's shell can be given that pid.
-  So on Windows `startHerdr` lists, for each of its two shells, the processes that started before the shell yet name it as their parent (`hide-children.exe` compares start times; the name does not matter).
-  When there is one, it logs a line, opens the two panes again in a new workspace while the claimed shells still hold their pids, and closes the claimed workspace; a replacement that is claimed too fails setup with each process's pid, start time and name.
+  So on Windows every workspace the fixture opens, `startHerdr`'s and each `workspace create` a spec sends through `fixture.run` (`spawnAgent`'s included), is checked, as soon as Herdr answers the create, for processes that started before a pane's shell yet name it as their parent (`hide-children.exe` compares start times; the name does not matter).
+  When there is one, `unclaimedWorkspace` logs a line, opens the workspace again while the claimed shells still hold their pids, and closes the claimed one; a replacement that is claimed too fails with each process's pid, start time and name.
+  A pane opened another way (`tab create`, `pane split`) is not replaced: an agent start in it fails at once and names the process, since no wait reaches a start there.
   A fixture's processes on Windows are listed and ended by the compiled `hide-processes.exe` (`windowsProcessTree`, `endWindowsProcesses`), which reads the system's process table and waits for each end on the process's own handle, not through PowerShell and WMI: a teardown that asked WMI once outlasted its 30-second limit (`spawnSync powershell.exe ETIMEDOUT`, #560), and a wait that polls a query waits on the query's speed, not on the process.
   Herdr's `agent start` takes no start time into account (an upstream candidate), so a product pane given such a pid refuses agents the same way.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
@@ -335,7 +337,7 @@ Choose by that difference, not by whether the test passes on Linux or Windows; a
 A test for a macOS-only behavior, or one that checks no OS difference, carries no tag and runs on macOS only; `CONTRIBUTING.md` lists what the tag covers.
 A push to main plans every lane but `package`, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
 Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
-Nightly calls `verify` on main with the same lanes, and `package.yml` on its own: a lane it fails opens the nightly issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
+Nightly calls `verify` on main with the same lanes, and `package.yml` on its own: a lane it fails opens a `nightly-failure` issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 A path is narrower than every lane only by being named in `POLICY_ONLY` or `NAMED_LANES`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
 ### Where the macOS runners went
@@ -351,7 +353,7 @@ The organization runs 20 jobs at once and five of them on macOS, so a pull reque
 | the remote mailbox lane on macOS | never | The nightly's `remote mailbox (macOS)` job; a pull request runs the lane on Linux, and the Mac-only parts of the fixture (codesign of the staged binaries, the system's SFTP server, the macOS Herdr asset) are checked there |
 
 A change to `herdr-core` or `hided` alone, outside `hided/build.rs` and `hided/src/cli.rs`, therefore starts no macOS job.
-What only macOS shows for such a change (Trash, file watching, process ownership, the ⌘ chords) is found by the next nightly, which opens the nightly issue when it fails; the cost is that delay.
+What only macOS shows for such a change (Trash, file watching, process ownership, the ⌘ chords) is found by the next nightly, which opens a `nightly-failure` issue when it fails; the cost is that delay.
 Running the desktop `@platform` tests on Linux and Windows for a `desktop/src/main` change waits for the desktop operating-system scope change (issue #561).
 
 ### How many jobs a run starts
@@ -409,13 +411,15 @@ CI retries a failed test once, for classification and for the report, and for no
   On Windows CI the web suite also logs, for each failed attempt and at that moment, what holds TCP connections (count by state and by process name, `[windows sockets]` lines from `web/e2e/windows-sockets-reporter.ts`), because a Chromium `ERR_NO_BUFFER_SPACE` on a loopback connect left nothing saying who held the sockets; a passing attempt runs nothing.
   The desktop suite keeps, for each failed attempt, the end of each private daemon's `Logs/core.jsonl` (at most 256 KiB, whole records) as `hided-<n>.jsonl` in that attempt's `test-results` folder, which the same artifact carries, with the run's folders, the repository, the home and the temporary folder written as placeholders, because the host log alone could not show the order of the core's focus records behind a flaky ⌃Tab cycle (issue 629); a passing attempt copies nothing.
   A test that fails its retry too fails the lane; nothing else is retried anywhere.
+  The report step writes it on the job as an error annotation titled `Failed test` (its file and line, and its name on the first line of the message), which the run's summary page shows and the nightly report files (below).
 - At the deadline a flaky test is fixed or deleted.
   Whoever knows the cause opens the fix or the deletion; if nobody does, the issue goes to the operator.
   The deadline is not a timer that moves the test somewhere quieter, and a later flake on an issue past its deadline says so in its comment.
 - A green lane is not proof that a flaky test passed on that commit: its first attempt failed.
-  Read the `Report flaky tests` step and the `quarantine` issues before claiming a flow verified.
+  Read the `Report flaky and failed tests` step and the `quarantine` issues before claiming a flow verified.
 - The report step cannot fail a lane: the run already passed.
   If it cannot file (a GitHub error, a read-only token), it leaves the unfiled tests in a warning annotation and in the job summary under "Flaky tests that were not filed", and the next flaky run files them; a filed run lists its issues in the same summary.
+- GitHub keeps 10 error annotations per step, so one report step runs the script once and annotates at most 8 failed tests; past that it writes one more annotation, `Failed tests not annotated`, whose message is the count it left out.
 - `cargo nextest` runs no doc test.
   The workspace has none that runs (its three doc blocks are `ignore`, `text` and `sh`); a runnable doc test needs its own `cargo test --doc` step.
 - `verify-cargo.sh test` and `test-scoped` stay `cargo test` for local runs and the sealed harness; they never retry.
@@ -434,6 +438,22 @@ No test leaves a required lane:
 - There is no quarantine tag and no quarantine step: every web and desktop e2e test runs in the lanes its plan picks, and a flaky one is retried, filed and fixed or deleted like any other.
 - Rust has no quarantine either: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
   An `ignore` that names an external binary, such as `real_herdr` and `remote_delivery`, is an opt-in run with its own step and says what it needs; it is not a quarantine.
+
+### Nightly failures
+
+The nightly's `report` job (`scripts/ci-flaky-report.py --nightly`) is the one writer of `nightly-failure` issues, so the run's cap, the comments and the closing never race between lanes; a lane only writes its annotations.
+
+- A failure is one issue: a test a lane annotated as `Failed test`, or, for a failed job that annotated none (its report step died, wrote nothing or never ran), the lane and its failed step.
+  The lane is the job's name without its shard, so a test is the same failure in whichever shard ran it; `verify`'s gate, which fails whenever a lane it waits for did, is not a lane.
+  A step that only prepares the runner (checking out, installing, fetching Herdr, a lost runner) adds the label `infra`; any other step, a build included, does not.
+- The issue names the test or step, the lane and its runner, an excerpt of the error (run through the same cleaning as a flaky issue's, since the page is public), the run and its commit, the lane's last green nightly within 14 runs, the pull requests merged since then that touched the failing test's file (or, for a step, the lane's workflows and the scripts they call) as candidates, and an expiry two days out.
+  It is ended by fixing the cause or reverting the candidate; a longer timeout, more retries or a skip does not end it.
+- The same failure again (a hidden `nightly-failure:<lane>:<test or step>` marker) is one comment per run attempt on the open issue, never a second issue.
+- A scheduled run on main, or a hand run of `all`, that passes a lane closes that lane's issues with a comment naming the commit and the run; a skipped or cancelled lane closes nothing.
+- One run opens at most 10 issues; the rest, with the count of failed tests a lane had no annotation room for, go into one issue, `nightly: N more failures in run <id>`, which the next scheduled run closes as it files its own.
+- A run of any other branch writes no issue.
+- The report fails its job when GitHub does, so a failure it could not file shows as a red report job rather than a silence.
+  `--dry-run` with `--repo` and `--run` prints what it would write for any finished run and writes nothing.
 
 ## Reviewing a pull request that adds or changes a test
 

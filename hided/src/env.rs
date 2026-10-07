@@ -296,6 +296,15 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
             });
             None
         }
+        // Pane credentials are proven against this socket, which has to name
+        // one file wherever the daemon runs from.
+        Some(value) if !Path::new(&value).is_absolute() => {
+            errors.push(EnvError {
+                key: HERDR_SOCKET_PATH,
+                kind: "invalid",
+            });
+            None
+        }
         Some(value) => Some(value),
         None => host::herdr_socket_default_from(&host_variables)
             .ok()
@@ -575,6 +584,16 @@ mod tests {
         (HIDE_HOST_HELPER_ROOT, "relative"),
         (HIDE_TAILSCALE_BIN, "relative"),
     ];
+
+    #[test]
+    fn a_relative_herdr_socket_is_refused_by_name() {
+        let err =
+            from_map(&[(HOME, "/Users/example"), (HERDR_SOCKET_PATH, "herdr.sock")]).unwrap_err();
+        assert_eq!(
+            err.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [format!("{HERDR_SOCKET_PATH}: invalid")]
+        );
+    }
 
     #[test]
     fn the_state_folder_is_all_stop_and_status_json_ask_for() {

@@ -44,7 +44,7 @@ impl Runtime {
             );
             return;
         }
-        let local = device_id == workspace::LOCAL_DEVICE_ID;
+        let local = device_id == self.node.as_str();
         self.snapshot.navigator.focused_device_id = Some(device_id);
         self.yield_surface_to_terminal();
         if local {
@@ -61,7 +61,7 @@ impl Runtime {
             .navigator
             .focused_device_id
             .as_deref()
-            .unwrap_or(workspace::LOCAL_DEVICE_ID)
+            .unwrap_or(self.node.as_str())
             == device_id
     }
 
@@ -254,7 +254,7 @@ impl Runtime {
             .retain(|status| status.target_id != device_id);
         self.reconcile_remote_terminal_panes(device_id, &HashSet::new(), &HashSet::new());
         if self.snapshot.navigator.focused_device_id.as_deref() == Some(device_id) {
-            self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+            self.snapshot.navigator.focused_device_id = Some(self.node.as_str().to_owned());
             self.snapshot.ui_state.focused_device_id = None;
             self.return_keyboard_to_local_pane();
             self.sync_recent_closed_snapshot();
@@ -276,7 +276,8 @@ impl Runtime {
             .iter()
             .map(|device| (device.id.clone(), device.agent_count))
             .collect::<HashMap<_, _>>();
-        let mut devices = workspace::devices(&self.snapshot.ui_state.device_registrations);
+        let mut devices =
+            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
         for device in &mut devices {
             if let Some(count) = counts.get(&device.id) {
                 device.agent_count = *count;

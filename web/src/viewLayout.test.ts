@@ -185,8 +185,8 @@ describe("split eligibility", () => {
 describe("a display's menu", () => {
   const tree = split("s1", "row", 0.5, area("a1", [display("d1", { preview: true }), "d2"]), area("a2", ["d3"]));
   const g = viewGeometry(tree, body(2000), SIZES);
-  const desktop: ExternalReveal = { host: { label: "explorer.revealFinder" }, device: "local" };
-  const browser: ExternalReveal = { host: null, device: "local" };
+  const desktop: ExternalReveal = { host: { label: "explorer.revealFinder" }, device: "local", node: "local" };
+  const browser: ExternalReveal = { host: null, device: "local", node: "local" };
   const ids = (displayId: string, external = desktop) => displayMenu(layout(tree), g, SIZES, displayId, external).map((entry) => entry.id);
 
   it("offers Keep open only for a preview, moves only toward an area, and nothing else", () => {
@@ -204,7 +204,7 @@ describe("a display's menu", () => {
       ["Close view", null, true],
     ]);
     expect(ids("d3", browser).slice(-3)).toEqual(["copy_path", "select_in_tree", "close_view"]);
-    const remote = displayMenu(layout(tree), g, SIZES, "d3", { host: { label: "explorer.revealFileExplorer" }, device: "studio" }).find((entry) => entry.id === "reveal_external");
+    const remote = displayMenu(layout(tree), g, SIZES, "d3", { host: { label: "explorer.revealFileExplorer" }, device: "studio", node: "local" }).find((entry) => entry.id === "reveal_external");
     expect(remote).toMatchObject({ label: "Reveal in File Explorer", unavailable: "Only for files and folders on this computer." });
     const page = split("s1", "row", 0.5, area("a1", [display("d1", { kind: "browser", path: "", url: "https://example.invalid/" }), "d2"]), area("a2", ["d3"]));
     expect(displayMenu(layout(page), g, SIZES, "d1", desktop).map((entry) => entry.id)).not.toContain("reveal_external");

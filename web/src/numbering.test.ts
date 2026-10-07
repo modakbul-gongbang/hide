@@ -43,7 +43,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
       active_area: "a2", canvases: {}, limits: { areas: 6, depth: 3, displays: 64 }, display_count: 2,
     };
     const rest = {
-      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [], workspaces: [{ id: "w1", checkouts: [checkout] }] },
+      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [{ id: "w1", checkouts: [checkout] }] },
       workspace_view: { device_id: "local", path: checkout.path, agent_layout: layout },
     } as unknown as SnapshotRest;
     const numbers = numberedTabs(checkout, layout);
@@ -88,7 +88,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     const child = agent("p2", { delegated: true, lineage_parent_pane_id: "p1" });
     const other = agent("p3", { group: "needs_you" });
     const rest = {
-      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [], workspaces: [{ id: "w1", label: "w", checkouts: [checkoutWith(["t1", "t2"])] }] },
+      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [{ id: "w1", label: "w", checkouts: [checkoutWith(["t1", "t2"])] }] },
       status: { remote: [] },
     } as unknown as SnapshotRest;
     const state = { rest, agents: [parent, child, other] };

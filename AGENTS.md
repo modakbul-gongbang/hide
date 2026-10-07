@@ -96,7 +96,7 @@ The CLI is a wrapper over the same local socket API: use CLI wrappers for shell 
   `docs/ARCHITECTURE.md` lists the schema gaps the boundary still handwrites and the tests that demand migration when the schema closes them.
 
 <!-- herdr-provenance:start -->
-hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
+hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
 The bundled binary is not modified by hide.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
@@ -108,7 +108,7 @@ It owns the reproduction procedure, the isolation checklist, the measurement bou
 
 - Explain the added work per input, the notification fan-out, and the pending-work bound before adding anything to a high-frequency path; publish only actual state transitions, and never drop input to do so.
 - No subprocesses, blocking I/O, or large serialization under `Mutex<Runtime>`: `snapshot_delta_payload` takes owned data under the lock and `serialize_snapshot_delta` serializes outside it, and `ChangeNotifier` announces once per burst.
-  No per-tick or per-tab git forks: the catalog reads repository facts from the repository's own files (`git_dir.rs`), never from a `git` process.
+  No per-tick or per-tab git forks: the catalog reads repository facts from what the core's own node answers about its paths (`Call::PathFacts`, read from the repository's own files there, never from a `git` process), asked off the lock.
 - Report idle and driven measurements separately, with the load and workload recorded for each.
 - Native verification targets one precisely identified candidate PID/window and an isolated Herdr server; the operator app may remain running. Never quit, restart, focus, or manipulate the operator's app, panes, or server for QA without explicit coordination. Prefer background exact-window capture; see `docs/PERFORMANCE_TESTING.md` for isolation and foreground-interaction boundaries.
 

@@ -22,7 +22,6 @@ pub(crate) fn connect(
     generation: &mut u64,
     has_projection: bool,
 ) -> Result<Connected, SessionFetchError> {
-    require_local_socket(context)?;
     let params = crate::wire::subscription_params(TOPOLOGY_SUBSCRIPTIONS)
         .map_err(SessionFetchError::Malformed)?;
     let subscription = hide_herdr_client::subscribe_with_connector(
@@ -103,22 +102,7 @@ pub(crate) fn stop_subscription(subscription: &mut Option<ActiveSubscription>) {
     }
 }
 
-/// A local read against a socket file that is gone is the server being
-/// down, which is its own state, not a transport error.
-fn require_local_socket(context: &SessionSyncContext) -> Result<(), SessionFetchError> {
-    if let SessionSyncTarget::Local { socket_path } = &context.target
-        && !socket_path.exists()
-    {
-        return Err(SessionFetchError::SocketMissing(format!(
-            "Herdr socket file does not exist at {}; the herdr server is not running",
-            socket_path.display()
-        )));
-    }
-    Ok(())
-}
-
 fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, SessionFetchError> {
-    require_local_socket(context)?;
     let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "session.snapshot",
@@ -132,7 +116,6 @@ fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, Session
 pub(crate) fn fetch_agents(
     context: &SessionSyncContext,
 ) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
-    require_local_socket(context)?;
     let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "agent.list",
@@ -151,7 +134,6 @@ pub(crate) fn fetch_workspace_active_tab(
     context: &SessionSyncContext,
     workspace_id: &str,
 ) -> Result<String, SessionFetchError> {
-    require_local_socket(context)?;
     let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "workspace.get",
@@ -170,7 +152,6 @@ pub(crate) fn fetch_pane_cwd(
     context: &SessionSyncContext,
     pane_id: &str,
 ) -> Result<Option<String>, SessionFetchError> {
-    require_local_socket(context)?;
     let result = match hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "pane.get",
@@ -187,6 +168,7 @@ pub(crate) fn fetch_pane_cwd(
 
 fn session_error_from_api(error: ApiError) -> SessionFetchError {
     match error {
+        ApiError::NotRunning(message) => SessionFetchError::SocketMissing(message),
         ApiError::Transport(message) | ApiError::Remote { message, .. } => {
             SessionFetchError::Unreachable(message)
         }
@@ -198,6 +180,7 @@ fn session_error_from_api(error: ApiError) -> SessionFetchError {
 /// the failure is what makes it stale; without one the server is unreachable.
 pub(crate) fn connect_failure_from_api(error: ApiError, has_projection: bool) -> SessionFetchError {
     match error {
+        ApiError::NotRunning(message) => SessionFetchError::SocketMissing(message),
         ApiError::Malformed(message) => SessionFetchError::Malformed(message),
         ApiError::Transport(message) | ApiError::Remote { message, .. } if has_projection => {
             SessionFetchError::Stale(message)

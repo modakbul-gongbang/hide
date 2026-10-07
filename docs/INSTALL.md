@@ -266,6 +266,12 @@ The first launch of a newer app moves them once:
 - the state folder is renamed to `~/.hide/state` as a whole after the daemon running from it is stopped; a `~/.hide/state` that already exists is used, the old folder is left untouched, and the daemon's log records `state.legacy_left` with both paths;
 - `~/.local/state/hide-plugin-upgrade`, `~/.local/share/hide/agent-context-labels`, and then `~/.local/share/hide` if it is empty, are removed; `~/.local/state` and `~/.local/share` stay.
 
+A build that names this machine by its own id rather than `local` converts the state folder once, when its daemon first starts (see [ARCHITECTURE.md](ARCHITECTURE.md#the-cores-node-id)).
+The files it rewrites are copied first to `~/.hide/state/node-migration-backup/<time>/`, the Project Memory under `~/Library/Application Support/hide` among them, except the session search index, which is rebuilt from the session files; `~/.hide/state/node.json` records the machine the folder belongs to.
+An older app started on a converted folder reads this Mac's projects as another device's; to go back, stop the daemon and copy the backup's files over the converted ones.
+A state folder whose `node.json` names another machine is not started, nor is one with a store that cannot be converted: the daemon stops, the app's window names the file, and the log records the reason with both machines.
+A Mac whose machine id changed (a new Mac set up from this one, or a reinstall that changes it) reads its own old folder as another machine's; until a core can read another node's state, start it with a fresh state folder and keep the old one.
+
 
 Settings > Devices shows each of these on This Mac's row, with where it is or why it is not.
 A part you remove by hand stays removed; Reinstall on that row puts it back.
@@ -327,7 +333,7 @@ The coordination transition has no rollback; the preserved old folders remain av
 
 ### The window shows a connection failure instead of the app
 
-The desktop host shows a status page while it is connecting, and a failure page with a `Retry` button when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, and `no_response` when it started but never answered.
+The desktop host shows a status page while it is connecting, and a failure page with a `Retry` button when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, `no_response` when it started but never answered, and `state_refused`, with the file's path under the reason, when the daemon stopped on a stored file it could not make this machine's.
 Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/Application Support/hide-desktop`, or `HIDE_DESKTOP_USER_DATA_DIR`) for the detail behind whichever reason the page shows.
 
 ### No Herdr session
@@ -340,7 +346,7 @@ When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the
 The packaged app replaces that pane value with its own bundled `herdr`, but the `hide` CLI run directly in such a pane, and an unpackaged development host, still inherit it; unset `HERDR_BIN_PATH` there, or hand the server off to the new bundle's `herdr`.
 
 <!-- herdr-provenance:start -->
-hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
+hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
 The bundled binary is not modified by hide.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->

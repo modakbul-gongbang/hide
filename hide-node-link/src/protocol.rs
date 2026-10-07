@@ -9,8 +9,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::RootIdentity;
 use crate::error::HostError;
-use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
@@ -55,7 +55,12 @@ use crate::root::RootIdentity;
 /// did not take effect as `stop_failed` (PRD codex-daemon-apply D-11). A
 /// helper on 20 is refused when it connects, so it never receives a request
 /// that would only turn autostart off.
-pub const PROTOCOL_VERSION: u32 = 21;
+/// 22: the node answers the machine work the core used to do itself (PRD
+/// core-host-node D-21): Git, `gh`, the provider CLIs, sessions, ports,
+/// disk, attachments, project creation, clone, worktree cleanup and the Git
+/// watch, each its own call. A helper on 21 would refuse each as unknown, so
+/// it is refused at Hello instead.
+pub const PROTOCOL_VERSION: u32 = 22;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -215,6 +220,173 @@ pub enum Call {
         #[serde(default)]
         retirement_projects: Vec<String>,
     },
+    /// Whether the node's account has Hide's agent hooks in place, read from
+    /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
+    HookDiagnosis,
+    /// Every worktree Git registers for the repository at `root`, the main
+    /// one first (`worktrees::Registered`).
+    WorktreesRegistered {
+        root: String,
+    },
+    /// The first ignored folder of the worktree that holds a repository of
+    /// its own, relative to it, or `null`.
+    IgnoredRepository {
+        worktree: String,
+    },
+    /// Makes a project at `path` (`project::ProjectCreated`): its folder
+    /// first when `new_folder`, at the literal path the shell checked, then
+    /// a repository in it when `initialize_git` and it has none.
+    ProjectCreate {
+        path: String,
+        new_folder: bool,
+        initialize_git: bool,
+    },
+    /// What each path is on this node, as the core's catalog reads it
+    /// (`catalog::PathFacts`), at most `catalog::PATH_FACTS_LIMIT` paths.
+    PathFacts {
+        paths: Vec<String>,
+    },
+    /// Each path with its links and aliases resolved (`cleanup::PathState`).
+    RealPaths {
+        paths: Vec<String>,
+    },
+    /// The repository that holds `path`, read from its `.git` files
+    /// (`cleanup::RepositoryDirs`), or `null`.
+    Repository {
+        path: String,
+    },
+    /// Judges each chosen folder of the checkout at `root` again from its
+    /// files, looking for a nested repository within `walk`
+    /// (`cleanup::FolderJudgments`).
+    JudgeFolders {
+        root: String,
+        folders: Vec<crate::cleanup::FolderToJudge>,
+        walk: crate::cleanup::WalkAllowance,
+    },
+    /// Moves `folder` into the trash under `common` with one rename;
+    /// answers the trash entry.
+    SetAsideFolder {
+        common: String,
+        folder: String,
+    },
+    /// Removes the clean worktree at `checkout` without force
+    /// (`cleanup::CleanRemoval`).
+    WorktreeRemoveClean {
+        root: String,
+        checkout: String,
+        common: String,
+    },
+    /// Deletes what waits in the trash under `common`, waiting up to
+    /// `wait_ms` for `ours`; answers how many of them remain.
+    DrainTrash {
+        common: String,
+        ours: Vec<String>,
+        wait_ms: u64,
+    },
+    /// Clones `source` into `parent/<name>` (`clone::CloneAnswer`),
+    /// reporting while Git runs (`clone::CloneReport`); a report answered
+    /// with false cancels the clone.
+    RepositoryClone {
+        source: crate::clone::CloneSource,
+        parent: String,
+    },
+    /// One fixed git command in the repository at `root`; answers its
+    /// output, trimmed.
+    Git {
+        root: String,
+        command: crate::git::GitCommand,
+    },
+    /// Whether a background AI backend can answer now
+    /// (`ai::Logged<ai::Availability>`).
+    AiAvailability {
+        backend: crate::ai::BackendSpec,
+    },
+    /// The models a backend's provider offers the logged-in account
+    /// (`ai::Logged<ai::ModelCatalog>`).
+    AiModels {
+        backend: crate::ai::BackendSpec,
+    },
+    /// One request to a backend (`ai::Logged<Result<ai::AiResponse,
+    /// ai::AiError>>`), reporting at least once a second; a report answered
+    /// with false cancels it.
+    AiExecute {
+        backend: crate::ai::BackendSpec,
+        request: crate::ai::AiRequest,
+    },
+    /// The backend's process measurement from its last request
+    /// (`ai::ProcessMeasurement`).
+    AiMeasurement {
+        backend: crate::ai::BackendSpec,
+    },
+    /// Ends the backend's resident process so its next request starts a
+    /// fresh one.
+    AiRestart {
+        backend: crate::ai::BackendSpec,
+    },
+    /// Drops the backend the core no longer has, ending its process.
+    AiRelease {
+        instance: u64,
+    },
+    /// The Codex login in `<codex_home>/auth.json`
+    /// (`usage::CredentialsAnswer`).
+    CodexCredentials {
+        codex_home: String,
+    },
+    /// The weekly window the newest Codex session under `codex_home`
+    /// recorded (`usage::CodexWeeklyUsage`), or `null`.
+    CodexSessionUsage {
+        codex_home: String,
+    },
+    /// `claude -p /usage` run in `cwd` with the operator's login
+    /// (`usage::UsageText`), reporting at least once a second; a report
+    /// answered with false cancels it.
+    ClaudeUsageText {
+        cwd: String,
+    },
+    /// Reads files the operator picked to attach to a terminal
+    /// (`attachments::ReadFile`, in order), reporting before each file; a
+    /// report answered with false ends the read as cancelled.
+    ReadAttachments {
+        paths: Vec<String>,
+    },
+    /// `SIGTERM` to every member of the process group `leader` leads: a
+    /// pane's foreground job, ended for agent sleep. A group of 1 or less is
+    /// refused unsent, since kill(-0) and kill(-1) reach far more.
+    TerminateGroup {
+        leader: u32,
+    },
+    /// Whether an agent CLI named `name` is on the node's `PATH`, answered
+    /// as a bool before a pane is asked to start it.
+    AgentInstalled {
+        name: String,
+    },
+    /// The start time of each pid, in order (`process::ProcessStart`).
+    ProcessStarts {
+        pids: Vec<u32>,
+    },
+    /// Measures each of `paths` (`disk::DiskUsage`), reporting each one as
+    /// it finishes and answering them all. The entries of `shared_git` are
+    /// a repository's shared Git directory, measured as one size.
+    DiskUsage {
+        paths: Vec<String>,
+        #[serde(default)]
+        shared_git: Vec<String>,
+    },
+    /// One `gh` command with the operator's login, in `cwd` when named
+    /// (`gh::allowed` names the command lines; any other is refused unrun).
+    /// Answers `gh::GhAnswer`.
+    Gh {
+        cwd: Option<String>,
+        args: Vec<String>,
+    },
+    /// The machine's TCP listeners and where each was started
+    /// (`ports::ListeningPorts`).
+    ListeningPorts,
+    /// Bytes free to an unprivileged writer on the volume holding `path`;
+    /// `None` when the volume cannot say.
+    VolumeFree {
+        path: String,
+    },
     /// One bounded read of a pane's conversation for its label, from the
     /// checkpoint the caller kept (`hide_session::label_transcript::read`).
     /// The helper keeps nothing between reads; it answers events and the
@@ -240,6 +412,49 @@ pub enum Call {
     /// conversation; a path outside the agent roots is refused.
     LinkRead {
         requests: Vec<hide_session::links::ReadRequest>,
+    },
+    /// One bounded read of a session file for the core's search index, on
+    /// from what the index saved (`hide_session::search_read::read_step`);
+    /// the answer is a `hide_session::search::IndexStep`.
+    SessionIndexRead {
+        agent: hide_session::Agent,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        saved: Option<hide_session::search::SavedFile>,
+    },
+    /// Each session file's current stamp, `null` for one gone or
+    /// unreadable, at most `hide_session::search::STAMP_LIMIT` paths.
+    SessionStamps {
+        paths: Vec<String>,
+    },
+    /// The agent sessions the node holds for `project`, newest first, at most
+    /// `hide_session::SESSION_DISCOVERY_LIMIT` files visited
+    /// (`hide_session::ProjectSession`).
+    ProjectSessions {
+        project: hide_project::ProjectIdentity,
+    },
+    /// Watches the Git facts of each repository whose common directory is in
+    /// `common_dirs`, at most `worktrees::GIT_WATCH_LIMIT`, reporting
+    /// `worktrees::GitWatchReport` at least once a second until the caller
+    /// answers a report with false; the call then answers nothing.
+    GitWatch {
+        common_dirs: Vec<String>,
+    },
+    /// The session file's size and modification time (`sessions::SessionStat`).
+    SessionStat {
+        path: String,
+    },
+    /// The complete lines of the session file at `path` past `checkpoint`,
+    /// one bounded read (`sessions::SessionChunk`).
+    SessionChunk {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::CursorCheckpoint>,
+    },
+    /// The whole session file at `path`, at most
+    /// `hide_session::SESSION_READ_LIMIT_BYTES`, as text.
+    SessionText {
+        path: String,
     },
 }
 

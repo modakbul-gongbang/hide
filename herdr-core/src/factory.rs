@@ -1084,7 +1084,13 @@ impl WorkerRuntime for CoreWorkers {
             false => None,
         };
         let runtime = self.runtime()?;
-        let connector = guard(&runtime).delivery_connector("local");
+        let (connector, node) = {
+            let guard = guard(&runtime);
+            (
+                guard.delivery_connector(guard.node().as_str()),
+                guard.own_node(),
+            )
+        };
         drop(runtime);
         let connector = connector
             .ok_or_else(|| Failure::environment("worktree", EnvSignal::HerdrSocket, "no Herdr"))?;
@@ -1092,6 +1098,7 @@ impl WorkerRuntime for CoreWorkers {
         // The worker's panes close first so nothing runs in a removed folder.
         crate::live::close_checkout_panes(
             connector.as_ref(),
+            node.as_ref(),
             std::slice::from_ref(&worker.worktree),
             &panes,
             crate::live::ProcessWait::for_folder_removal(true),
@@ -1356,7 +1363,10 @@ impl Notifier for CoreNotifier {
         let Some(runtime) = lock(&self.runtime) else {
             return;
         };
-        let connector = guard(&runtime).delivery_connector("local");
+        let connector = {
+            let guard = guard(&runtime);
+            guard.delivery_connector(guard.node().as_str())
+        };
         drop(runtime);
         if let Some(connector) = connector {
             let _ = hide_herdr_client::request_small_response(
@@ -1509,8 +1519,14 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
                 };
             }
         };
-        let settings = lock(&runtime)
-            .and_then(|runtime| guard(&runtime).factory_ai_settings())
+        // The core ended: nothing is left to answer the judgment to.
+        let Some(core) = lock(&runtime) else { return };
+        let (settings, node) = {
+            let core = guard(&core);
+            (core.factory_ai_settings(), core.own_node())
+        };
+        drop(core);
+        let settings = settings
             .or_else(|| {
                 home.as_deref()
                     .and_then(|home| hide_ai::settings::load(home).ok())
@@ -1520,11 +1536,14 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             .as_ref()
             .is_none_or(|(current, _)| *current != settings)
         {
-            router = Some((settings.clone(), crate::ai::factory_router(&settings)));
+            router = Some((
+                settings.clone(),
+                crate::ai::factory_router(&node, &settings),
+            ));
         }
         let Some((_, router)) = &router else { continue };
         let request = hide_ai::AiRequest {
-            feature_id: judgment.feature_id(),
+            feature_id: judgment.feature_id().into(),
             request_id: hide_ai::RequestId(judgment.id.clone()),
             subject_id: judgment
                 .task
@@ -1534,7 +1553,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             input: judgment.render_input(),
             output_schema: judgment.schema(),
             deadline: JUDGMENT_DEADLINE,
-            schema_version: hide_factory::judgment::SCHEMA_VERSION,
+            schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
         };
         let started = Instant::now();
         let outcome = match router.execute(&request, &shared.cancel) {

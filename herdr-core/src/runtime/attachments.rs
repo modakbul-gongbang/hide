@@ -504,12 +504,15 @@ impl Runtime {
             .cloned();
         let clipboard = pending.clipboard;
         let state_path = self.state_path.clone();
+        // The picked files are on the core's own machine until a screen can
+        // attach from another node.
+        let node = self.own_node();
         match thread::Builder::new()
             .name("hide-terminal-attachment".to_owned())
             .spawn(move || {
                 let prepared = match prepared {
                     Some(files) => Ok(files),
-                    None => ingress::read_sources(&paths, &cancelled).map(Arc::new),
+                    None => ingress::read_sources(node.as_ref(), &paths, &cancelled).map(Arc::new),
                 };
                 let result =
                     prepared
@@ -686,7 +689,7 @@ mod tests {
             CoreOptions {
                 schema_version: SCHEMA_VERSION,
                 home: None,
-                machine_id: None,
+                node_id: crate::node::test_node(),
                 herdr_socket_path: None,
                 herdr_bin_path: None,
                 app_state_path: folder
@@ -700,13 +703,13 @@ mod tests {
                 workspace_views_path: None,
                 shortcut_import_path: None,
                 local_issues_path: None,
-                kit_dir: None,
             },
             environment::EnvironmentReport {
                 statuses: Vec::new(),
                 home_path: None,
                 codex_home: None,
             },
+            std::sync::Arc::new(hide_node::Local::of_process()),
         );
         runtime.test_dirs.push(folder);
         runtime.ensure_terminal_pane("pane-one");
@@ -845,7 +848,7 @@ mod tests {
             serde_json::json!({"agents":[{"id":"a","pane_id":"pane-one","agent":"claude","agent_status":"idle","state_change_seq":1,"lineage_session":"s"}]}),
         )
         .unwrap();
-        runtime.observe_delivery("local", &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
         let clocks = |runtime: &mut Runtime| {
             let observation = runtime.delivery_observations.get_mut("pane-one").unwrap();
             let read = (

@@ -519,7 +519,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
             id: "workspace:local-other".to_owned(),
             label: "Local other".to_owned(),
             path: t.other.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         });
@@ -547,7 +547,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
     assert!(runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
-        Ok(hide_host::register::Registrable {
+        Ok(hide_node_link::register::Registrable {
             root: t.other.clone(),
             is_git: false,
         }),
@@ -586,7 +586,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
     assert_eq!(rows(&runtime), vec![(t.main.clone(), false, false)]);
     let registrations = &runtime.snapshot.ui_state.workspace_registrations;
     assert_eq!(registrations.len(), 1);
-    assert_eq!(registrations[0].device_id, "local");
+    assert_eq!(registrations[0].device_id, crate::node::TEST_NODE);
     assert!(
         Path::new(&t.other).is_dir(),
         "removal never touches the folder"
@@ -687,7 +687,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
     assert!(runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
-        Ok(hide_host::register::Registrable {
+        Ok(hide_node_link::register::Registrable {
             root: t.other.clone(),
             is_git: false,
         }),
@@ -929,7 +929,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         home: false,
     };
     runtime.snapshot.ui_state.workspace_registrations = vec![
-        registration("workspace:here", "local"),
+        registration("workspace:here", crate::node::TEST_NODE),
         registration(&format!("remote:{TARGET}:project:p1"), TARGET),
     ];
     runtime
@@ -964,7 +964,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
     };
     runtime.snapshot.ui_state.recent_checkouts = vec![
         recent(TARGET, &format!("remote:{TARGET}:checkout:w1")),
-        recent("local", "checkout:here"),
+        recent(crate::node::TEST_NODE, "checkout:here"),
     ];
     runtime.push_recent_closed(ClosedItem::File {
         key: "closed-device".to_owned(),
@@ -1027,7 +1027,7 @@ fn a_registration_answer_after_its_device_was_removed_is_dropped() {
     assert!(!runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
-        Ok(hide_host::register::Registrable {
+        Ok(hide_node_link::register::Registrable {
             root: t.other.clone(),
             is_git: false,
         }),
@@ -1907,10 +1907,19 @@ fn connected_device_runtime() -> Runtime {
 }
 
 /// `target`'s Herdr as it reports one workspace with the tabs `tabs`, tab
-/// `t1` zoomed or not.
+/// `t1` holding a second pane (`t1b`) for a zoom to hide, zoomed or not.
 fn device_report(target: &str, path: &str, tabs: &[&str], zoomed: bool) -> RemoteSessionSnapshot {
     let tabs = tabs.iter().map(|tab| (*tab, path)).collect::<Vec<_>>();
     let mut raw = session(vec![herdr_workspace(target, "w1", path, &tabs)]);
+    let t1 = format!("remote:{target}:tab:t1");
+    if let Some(tab) = raw.workspaces[0].checkouts[0]
+        .tabs
+        .iter_mut()
+        .find(|tab| tab.id.as_deref() == Some(t1.as_str()))
+    {
+        tab.panes
+            .push(pane(&format!("remote:{target}:pane:t1b"), path));
+    }
     raw.pane_layouts
         .push(crate::model::RemotePaneLayoutSnapshot {
             workspace_id: format!("remote:{target}:workspace:w1"),
@@ -1993,6 +2002,34 @@ fn close_pane_t2() -> RemoteControlRequest {
         pane_id: format!("remote:{TARGET}:pane:t2"),
         confirmed: true,
     }
+}
+
+/// Zoom has nothing to hide on a tab's only pane: the device's Herdr answers
+/// it unchanged (`single_pane`), so no session would confirm it, and the
+/// operation left waiting turned away every later split, zoom and close in
+/// the tab. Such a zoom is not sent, and the tab stays free.
+#[test]
+fn a_zoom_on_a_device_tabs_only_pane_is_not_sent() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    let mut report = device_report(TARGET, &t.main, &["t1"], false);
+    report.workspaces[0].checkouts[0].tabs[0].panes.truncate(1);
+    runtime.ingest_remote_session(TARGET, Ok(report));
+    let requests = recording_device(&mut runtime);
+
+    assert!(!zoom_t1(&mut runtime, "zoom-1"));
+    assert!(
+        runtime.remote_operations.is_empty(),
+        "nothing waits on the tab"
+    );
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "the device was not asked"
+    );
+    assert_eq!(
+        diagnostic_messages(&runtime, "remote.control.zoom_single_pane"),
+        ["Pane remote:mini:pane:t1 on mini is its tab's only pane; zoom was not sent"]
+    );
 }
 
 /// A device's session update that shows a pane operation's effect can reach

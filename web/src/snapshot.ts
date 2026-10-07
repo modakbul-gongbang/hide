@@ -1499,9 +1499,18 @@ export type SnapshotRest = {
  * looking at, so the shell neither draws them nor sends them pane commands
  * (PRD S5 B19), the way the native shell's remote context works.
  */
+/**
+ * The core's own node id: the row of kind `local`, which the core names by
+ * its machine's id. Before the snapshot names it the id is empty, which an
+ * event carries as no `device_id`, and the core reads that as its own node.
+ */
+export function localDeviceId(rest: SnapshotRest | null): string {
+  return rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.id ?? "";
+}
+
 export function focusedRemoteDevice(rest: SnapshotRest | null): Device | null {
   const id = rest?.navigator?.focused_device_id;
-  if (!id || id === "local") return null;
+  if (!id) return null;
   return rest?.navigator?.devices?.find((device) => device.id === id && device.kind === "remote") ?? null;
 }
 
@@ -1536,9 +1545,9 @@ export function checkoutById(rest: SnapshotRest | null, id: string): Checkout | 
   return null;
 }
 
-/** The device a catalog checkout lives on; `local` for this machine's. */
+/** The device a catalog checkout lives on; the core's own node for one it does not list. */
 export function deviceOfCheckout(rest: SnapshotRest | null, id: string): string {
-  return catalogWorkspaces(rest).find((workspace) => workspace.checkouts.some((c) => c.id === id))?.device_id ?? "local";
+  return catalogWorkspaces(rest).find((workspace) => workspace.checkouts.some((c) => c.id === id))?.device_id ?? localDeviceId(rest);
 }
 
 /**
@@ -1588,12 +1597,13 @@ const NO_PATHS: string[] = [];
  * own device, so the same path on two machines never shares a row (S5.5 B2).
  */
 export function explorerContext(rest: SnapshotRest | null): { device: string; checkout: Checkout | null; expanded: string[] } {
-  const device = focusedRemoteDevice(rest)?.id ?? "local";
+  const node = localDeviceId(rest);
+  const device = focusedRemoteDevice(rest)?.id ?? node;
   const state = rest?.ui_state;
   return {
     device,
     checkout: frontCheckout(rest),
-    expanded: (device === "local" ? state?.expanded_paths : state?.device_expanded_paths?.[device]) ?? NO_PATHS,
+    expanded: (device === node ? state?.expanded_paths : state?.device_expanded_paths?.[device]) ?? NO_PATHS,
   };
 }
 

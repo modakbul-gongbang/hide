@@ -354,7 +354,7 @@ fn what_codex_does_not_do_is_a_failure_with_its_cause() {
 }
 
 #[test]
-fn a_codex_that_does_not_answer_is_stopped_and_nothing_of_it_is_left() {
+fn a_codex_that_does_not_answer_in_time_is_timed_out_and_what_it_started_is_gone() {
     let fixture = Fixture::new();
     fixture.install();
     fixture.mode("hang");
@@ -362,10 +362,15 @@ fn a_codex_that_does_not_answer_is_stopped_and_nothing_of_it_is_left() {
         failed(fixture.trust_within(quick())),
         TrustFailureKind::TimedOut
     );
-    let server = fixture.pid("fake-pid").expect("the app-server started");
-    let child = fixture.pid("fake-child-pid").expect("it started a child");
-    assert!(!hide_platform::process::is_alive(server), "the app-server");
-    assert!(!hide_platform::process::is_alive(child), "its child");
+    // The deadline can come before the stand-in reached its hang (a loaded
+    // host answers `initialize` late), so which pids it wrote down is the
+    // host's; that each of them has ended is not. The end of one known to
+    // hang with a child is `hide_quitting_while_codex_is_being_waited_on_ends_it_and_its_child`.
+    for file in ["fake-pid", "fake-child-pid"] {
+        if let Some(pid) = fixture.pid(file) {
+            assert!(!hide_platform::process::is_alive(pid), "{file}");
+        }
+    }
 }
 
 #[test]
@@ -418,14 +423,15 @@ fn wait_for(what: &str, condition: impl Fn() -> bool) {
 }
 
 #[test]
-fn hide_quitting_while_codex_is_being_waited_on_ends_the_wait() {
+fn hide_quitting_while_codex_is_being_waited_on_ends_it_and_its_child() {
     let fixture = Fixture::new();
     fixture.install();
     fixture.mode("hang");
     let outcome = std::thread::scope(|scope| {
         scope.spawn(|| {
-            wait_for("the app-server to be asked for the list", || {
-                fixture.calls("hooks/list") == 1
+            // Asked for the list, it started a child and does not answer.
+            wait_for("the app-server to hang with a child", || {
+                fixture.pid("fake-child-pid").is_some()
             });
             fixture
                 .stop
@@ -439,7 +445,9 @@ fn hide_quitting_while_codex_is_being_waited_on_ends_the_wait() {
     });
     assert_eq!(failed(outcome), TrustFailureKind::Stopped);
     let server = fixture.pid("fake-pid").unwrap();
-    assert!(!hide_platform::process::is_alive(server));
+    let child = fixture.pid("fake-child-pid").unwrap();
+    assert!(!hide_platform::process::is_alive(server), "the app-server");
+    assert!(!hide_platform::process::is_alive(child), "its child");
 }
 
 #[test]
