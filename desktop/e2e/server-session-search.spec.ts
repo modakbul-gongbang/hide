@@ -6,6 +6,7 @@ import os from "node:os";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { openServerButton, openSessions, startServer, writeConversation } from "../../web/e2e/server-session-fixture";
+import { seedKitRecord } from "./device-home";
 import { assertIsolated, isolate, launch, shellPage, test } from "./fixture";
 import { compositorPresents } from "../../web/e2e/wait";
 
@@ -36,6 +37,10 @@ test("server picker and conversation search in a background native window", asyn
       run.env.HIDE_CLI_PATH = path.resolve(executablePath, "../../Resources/hide");
       delete run.env.HIDED_UI_DIR;
     }
+    // A packaged daemon runs this Mac's kit, which holds a HOME with no kit
+    // record for the first-run agent choice: a modal over the whole shell that
+    // hides the sidebar from the page. This HOME is a machine the kit has run on.
+    seedKitRecord(run.env.HOME!);
     const cwd = fs.realpathSync(path.join(herdr.root, "fixture"));
     execFileSync("git", ["init", "-q"], { cwd });
     execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "Fixture"], { cwd });
