@@ -217,5 +217,99 @@
       "Are Korean text and the native page content readable in the app, including narrow and expanded panels?",
       "Does the foreground underline identify the keyboard area without a colored perimeter?"
     ]
+  },
+  "factory": {
+    "description": "The Factory screens: 내 차례 with its top item open, the graph and a Task page, beside the shell's sidebar with the Factory row and the 비서 row.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-factory",
+    "scene": "factory",
+    "selector": "[data-gallery-scene=\"factory\"]",
+    "measurement": "web/e2e/factory-geometry.mjs",
+    "frames": [
+      {
+        "node": "fx-turn-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest",
+        "referenceNode": "e1"
+      },
+      {
+        "node": "fx-turn-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest",
+        "referenceNode": "e1"
+      },
+      {
+        "node": "fx-graph-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "graph",
+        "referenceNode": "e3"
+      },
+      {
+        "node": "fx-graph-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "graph",
+        "referenceNode": "e3"
+      },
+      {
+        "node": "fx-task-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "task",
+        "referenceNode": "e2"
+      },
+      {
+        "node": "fx-task-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "task",
+        "referenceNode": "e2"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1440
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "states": {
+      "rest": "내 차례 at rest: the first item open with its suggestion picked, nothing hovered or focused.",
+      "board": "보드: four columns with the person-turn cards in the warning border on top and old completions folded.",
+      "graph": "그래프: layered Tasks with arrows, none for a dependency a longer path implies, and the unrelated Tasks below.",
+      "task": "Task page of the running Task with its chain, card fields, progress and decision record."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Each reference, current Pen and actual trio: do spacing, weight, color and alignment carry the same intent? The flow bar has no 사람 차례 cell on purpose (PRD B12), so that cell is the one expected difference from the reference pictures.",
+      "The Dark frames have no reference picture of their own; they are set against the Light one. Does Dark use the tokens as the Light does, with the same hierarchy?",
+      "Does the top item of 내 차례 read as one decision: the answer on the button, the result beside it, the default line below, and 자세히 as the way out?",
+      "Does the person-turn card read as the person's turn in the warning border without a separate column, on the board and in the graph?",
+      "Long Korean titles and the long issue number: is a title still recognizable where the card or row cuts it, and does nothing overlap?"
+    ]
   }
 }

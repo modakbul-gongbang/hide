@@ -37,6 +37,7 @@ import path from 'node:path';
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
+import {factoryRows} from './pen-screens-factory.mjs';
 
 const LOCAL_TOKEN = /^\$--[A-Za-z0-9_-]+$/;
 const THEMED_PROPS = ['fill', 'stroke'];
@@ -5017,6 +5018,13 @@ function buildDiskCleanup(tokens) {
   return screenSheet('screen-disk-cleanup', 'Screen / Disk Cleanup', DISK_CLEANUP_SPEC, build, build);
 }
 
+const FACTORY_SPEC = 'web/src/factory/ (FactoryScreen.tsx, MyTurn.tsx, FactoryBoard.tsx, FactoryGraph.tsx, FactoryCard.tsx, TaskPage.tsx, CreateSheet.tsx), web/src/components/sidebar-header.tsx (PRD software-factory-ui D-03, D-18, B1-B24): the Factory place in the window, drawn from one invented example data set so every count agrees. The sidebar carries the Factory row under Overview with the 내 차례 number in warning and ⇧⌘F, and the 비서 row beneath it once a Factory exists. The header is Factory, the project filter, + Factory 만들기 and 비서에게 묻기; under it the flow bar 정리 중 · 대기 · 실행 중 · 완료 오늘 (no person-turn cell, B12) with the last GitHub read at its end, then the tabs 내 차례 · 보드 · 그래프 · 설정. 내 차례 is one column grouped 답할 것 / 머지 대기 / 멈춤 / 알림 whose top item opens with numbered choices, the suggestion picked, a send button that says the answer, the result beside it, the default line and 자세히 →; the other items are one line, and 요청 N → 요청 closes the list. 보드 has the four columns with the person-turn cards in the warning border on top, a state mark on every card, and old completions folded into one line. 그래프 lays the Tasks out in layers with arrows and none for a dependency a longer path implies, finished work dimmed, and the unrelated Tasks below. The Task page is full width: the chain, the card fields on the left, the progress and the decision record on the right, and only the buttons the state allows. The create sheet asks for the project, the verification (the engine detected candidates, or none, which leaves auto unavailable) and the merge mode, and lists what it writes on GitHub before the button; the empty states are no Factory (only + Factory 만들기) and no Tasks (the intake line). The reference pictures are the Light frames e1 (내 차례), e2 (Task page) and e3 (그래프) of the delegated proposal, with one deliberate difference: the flow bar has no person-turn cell. Every name, title and number is invented mock content.';
+
+function buildFactory(tokens) {
+  const build = suffix => factoryRows(tokens, {themedXref, screenButton, screenSelect, screenIconButton, screenDialogSurface, screenRadioItem}, suffix);
+  return screenSheet('screen-factory', 'Screen / Factory', FACTORY_SPEC, build, build);
+}
+
 export function readLocalVariables(root) {
   const {expected} = readTokenPlan(root);
   const {document} = loadCanvas(root);
@@ -5156,5 +5164,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
     {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},
     {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens, root)},
+    {name: 'Screen / Factory', build: () => buildFactory(tokens)},
   ];
 }

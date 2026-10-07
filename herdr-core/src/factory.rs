@@ -27,7 +27,14 @@ use hide_factory::{Command, Engine, Inbound, Ports, Refusal};
 use serde_json::{Value, json};
 
 use crate::delivery;
+use crate::handle::ChangeNotifier;
 use crate::runtime::Runtime;
+
+pub mod screen;
+
+use screen::{
+    ActionAnswer, FactoryTaskSection, Publisher, ScreenRequest, ScreenSink, ScreenSource,
+};
 
 /// How often time and the outside world move the engine.
 const TICK: Duration = Duration::from_secs(2);
@@ -100,6 +107,27 @@ enum Request {
         command: Command,
         reply: SyncSender<Value>,
     },
+    /// From a Factory screen, through a runtime event (PRD
+    /// software-factory-ui); its answer comes back on the snapshot.
+    Screen(ScreenRequest),
+}
+
+/// The runtime's way to the engine thread for the screens: a full queue is
+/// refused at once, never waited on under the runtime lock.
+#[derive(Clone)]
+pub(crate) struct ScreenPort {
+    requests: SyncSender<Request>,
+}
+
+impl ScreenPort {
+    pub(crate) fn send(&self, request: ScreenRequest) -> Result<(), &'static str> {
+        self.requests
+            .try_send(Request::Screen(request))
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => "factory_busy",
+                mpsc::TrySendError::Disconnected(_) => "factory_unavailable",
+            })
+    }
 }
 
 pub(crate) struct FactoryHost {
@@ -136,6 +164,7 @@ impl FactoryHost {
         state_dir: &Path,
         home: Option<PathBuf>,
         runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
     ) -> Result<Self, String> {
         let (requests, receiver) = mpsc::sync_channel(QUEUE_LIMIT);
         let stop = Arc::new(AtomicBool::new(false));
@@ -146,13 +175,19 @@ impl FactoryHost {
         let thread_stop = Arc::clone(&stop);
         let thread = thread::Builder::new()
             .name("herdr-core-factory".into())
-            .spawn(move || run(paths, home, runtime, receiver, thread_stop))
+            .spawn(move || run(paths, home, runtime, notifier, receiver, thread_stop))
             .map_err(|error| format!("factory engine thread could not start: {error}"))?;
         Ok(Self {
             requests,
             stop,
             thread: Some(thread),
         })
+    }
+
+    pub(crate) fn screen_port(&self) -> ScreenPort {
+        ScreenPort {
+            requests: self.requests.clone(),
+        }
     }
 
     pub(crate) fn prepare(&self, caller: FactoryCaller, command: Command) -> PreparedFactory {
@@ -325,9 +360,15 @@ fn run(
     paths: Paths,
     home: Option<PathBuf>,
     runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
     requests: Receiver<Request>,
     stop: Arc<AtomicBool>,
 ) {
+    let mut publisher = Publisher::default();
+    let mut sink = RuntimeSink {
+        runtime: runtime.clone(),
+        notifier,
+    };
     let workers = Arc::new(Mutex::new(WorkerState::default()));
     let (start_queue, start_jobs) = mpsc::sync_channel(START_QUEUE_LIMIT);
     if let Ok(mut state) = workers.lock() {
@@ -426,6 +467,9 @@ fn run(
                 };
                 let added = matches!(command, Command::Add { .. });
                 let answer = handle(engine, &runtime, &caller, command);
+                // A worker's `decide` or a comment changes the open page and
+                // may leave the summary as it was.
+                publisher.touched();
                 publish_recipients(Some(engine), &runtime);
                 if added
                     && answer["result"] == "pending"
@@ -442,16 +486,27 @@ fn run(
                 }
                 let _ = reply.send(answer);
             }
+            Ok(Request::Screen(request)) => {
+                if engine.is_none() && !matches!(request, ScreenRequest::CloseTask) {
+                    engine = open(&mut judge);
+                }
+                screen_request(engine.as_mut(), &mut publisher, &mut sink, request);
+                publish_recipients(engine.as_ref(), &runtime);
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
         let Some(engine) = engine.as_mut() else {
+            publisher.publish(None, &mut sink);
             continue;
         };
         if last_tick.elapsed() >= TICK {
             last_tick = Instant::now();
             pump_letters(engine, &runtime);
             engine.tick();
+            // A running attempt's log tail grows on the open page between
+            // summary changes; an unchanged page is still dropped.
+            publisher.touched();
             settle_sleeps(&workers, &runtime);
             let mut port = CoreWorkers {
                 runtime: runtime.clone(),
@@ -480,6 +535,8 @@ fn run(
             }
             true
         });
+        // Off the runtime lock; an unchanged summary hands nothing over.
+        publisher.publish(Some(&*engine as &dyn ScreenSource), &mut sink);
     }
     drop(engine);
     drop(judge);
@@ -492,6 +549,81 @@ fn run(
         && starter.join().is_err()
     {
         crate::diagnostic!(json!({"component":"factory","kind":"starts.join_failed"}));
+    }
+}
+
+/// Runs one screen request with the operator role the screen holds; every
+/// answer it gives is recorded as relayed by `screen`.
+fn screen_request(
+    engine: Option<&mut Engine>,
+    publisher: &mut Publisher,
+    sink: &mut RuntimeSink,
+    request: ScreenRequest,
+) {
+    let operator = Role::Operator {
+        pane: screen::SCREEN_OPERATOR.into(),
+    };
+    match request {
+        ScreenRequest::Action {
+            request_id,
+            command,
+        } => {
+            let answer = match engine {
+                None => Refusal::new("factory_unavailable", "See the diagnostic log").to_json(),
+                Some(_) if !screen::screen_may_send(&command) => {
+                    Refusal::new("factory_screen_verb", "Use hide factory for this command")
+                        .to_json()
+                }
+                Some(engine) => engine.command(&operator, command),
+            };
+            publisher.touched();
+            sink.answered(ActionAnswer { request_id, answer });
+        }
+        ScreenRequest::OpenTask { factory, task } => {
+            // A person opening a finished Task has seen it (D-30): the same
+            // `show` the CLI runs, as the operator.
+            if let Some(engine) = engine {
+                let _ = engine.command(
+                    &operator,
+                    Command::Show {
+                        task: format!("{factory}/{task}"),
+                    },
+                );
+            }
+            publisher.open(factory, task);
+        }
+        ScreenRequest::CloseTask => publisher.close(),
+    }
+}
+
+/// Hands the screens' values to the runtime under one short lock each and
+/// announces them.
+struct RuntimeSink {
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+}
+
+impl ScreenSink for RuntimeSink {
+    fn publish(
+        &mut self,
+        summary: Option<Arc<hide_factory::FactorySummary>>,
+        task: Option<Option<FactoryTaskSection>>,
+    ) {
+        let Some(runtime) = lock(&self.runtime) else {
+            return;
+        };
+        guard(&runtime).set_factory_screen(summary, task);
+        drop(runtime);
+        self.notifier.notify();
+    }
+
+    fn answered(&mut self, answer: ActionAnswer) {
+        let Some(runtime) = lock(&self.runtime) else {
+            return;
+        };
+        guard(&runtime).factory_answered(answer);
+        drop(runtime);
+        self.notifier.notify();
     }
 }
 
@@ -764,6 +896,25 @@ struct SystemClock;
 impl Clock for SystemClock {
     fn now(&self) -> UnixMs {
         now_ms()
+    }
+
+    fn utc_offset_ms(&self) -> i64 {
+        match hide_platform::time::local_utc_offset_ms() {
+            Ok(offset) => offset,
+            Err(error) => {
+                // Counted in UTC until the system names its zone again; said once.
+                static SAID: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "factory",
+                        "kind": "clock.offset_unavailable",
+                        "error": error.to_string(),
+                    }));
+                }
+                0
+            }
+        }
     }
 }
 

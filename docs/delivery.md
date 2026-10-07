@@ -69,20 +69,22 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
   A pane that entered `working` was submitted to as well, which is how an answered menu or a custom slash command that starts a turn clears the hold.
   A key after both is an unsent draft, an Esc-restored prompt or a recalled input; a pane held by one stays held until the next real prompt.
 - The pane still hosts the native session the letter was written for, and the agent kind is one the bell targets.
+- For an agent whose session read reports its turns (today Codex), that read, made for Herdr's current state, says nothing waits for the operator (see [A menu Herdr reads as a stop](#a-menu-herdr-reads-as-a-stop)).
 - Herdr does not report the agent as starting or not ready.
   Herdr reports readiness only for an agent it launched itself (`herdr agent start`, which `hide agent spawn` uses): `launch_pending: true` while that start settles or is blocked, then `interactive_ready: true`.
   An agent the operator started by typing its program in a Herdr shell, the usual way a lead is started, carries neither flag; its readiness is unreported, not refused, and the facts above decide it.
   Only `launch_pending: true` or an explicit `interactive_ready: false` holds the letter.
 
-Herdr's `blocked` status is the only menu guard, so only kinds whose permission and selection menus were observed to read `blocked` are bell targets.
+Herdr's `blocked` status guards every permission and selection menu Herdr reads as `blocked`, so only kinds whose menus were observed to read `blocked` are bell targets.
 Today those are Claude Code and Codex.
+Claude Code's plan approval reads `blocked`; Codex's does not, and the session read guards it instead (next section).
 Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); OpenCode, Pi and every other kind keep today's behavior, with letters read through `hide inbox` or a prompt hook.
 Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
 Three residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, a prompt queued while the pane works leaves it held after its turn until the next prompt submitted from rest (its hook runs while `working` and clears nothing), and a pane restarted with hided or whose observation is dropped from a snapshot starts with no draft known.
 A letter that cannot be belled waits, and the reason is logged as `doorbell.held` once per change with the letter and pane ids, never with its body and never on screen.
-The verdict's reasons are `working`, `blocked`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable` and `status_not_at_rest`.
+The verdict's reasons are `working`, `blocked`, `awaiting_operator`, `session_unread`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable` and `status_not_at_rest`.
 Between the verdict and the input the doorbell asks Herdr again and checks its own memory last, and each refusal there has its own reason: `launch_pending` and `not_ready` (Herdr's readiness), `identity_changed` (Herdr's agent in the pane has another name, kind or native session), `sequence_moved` (Herdr's status or state sequence moved), `input_after_verdict` (hide routed input to the pane) and `letter_changed` (the letter was confirmed, cancelled, expired or reserved meanwhile).
 A letter refused there is tried again in the same pane episode after 5 seconds, then 10, 20, 40 and 80, then every two minutes, because readiness and the letter are facts the pane episode does not carry; a change of the pane's status, sequence, input or session tries it at once.
 A failed Herdr call is not retried on that schedule, since the bell may already have been typed; it waits for the pane to move.
@@ -121,6 +123,27 @@ Manual `hide inbox` and `hide request show` remain available when the hook is mi
 The pinned Herdr API has no atomic composer guard.
 Hide checks the occupant before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
 That residual limit is the approved D-18 boundary; external input is not represented as a Hide key event.
+
+### A menu Herdr reads as a stop
+
+Codex's plan approval, "Implement this plan?", reads to Herdr 0.9.3 as an ordinary stop rather than `blocked`, and a bell's Enter there picks its first item, "Yes, implement this plan", so a letter would start a plan the operator never approved (measured 2026-10-07, three runs of three, with the menu read as `done`).
+What Herdr reads depends on its Codex detection manifest: the current one (2026.10.01.1, fetched while Herdr's manifest updates are on) reads the menu `idle`, and the one bundled with 0.9.3 (2026.09.23.1, which the e2e fixture runs with updates off) reads it `unknown`, which the status guard already holds (measured 2026-10-07 with Codex CLI 0.160.1 on an isolated server).
+Hide reads that wait from the Codex session file instead of the screen (PRD codex-plan-approval-hold).
+The label worker's session read, which already runs on each change of the pane's Herdr state, on its own thread and from where it last stopped, folds Codex's turn records into an agent-neutral turn tracker (`hide-session/src/turns.rs`): `task_started` with its `collaboration_mode_kind`, the `Plan` item a plan-mode turn proposes (or its `<proposed_plan>` reply), `task_complete`, `turn_aborted`, and each person's message.
+A plan-mode turn that proposed a plan and finished, with no later turn or message from a person, waits for the operator's approval; the next `task_started` or a person's message ends the wait.
+Records the parser does not recognise are not known rather than "nothing waits": a `task_started` whose mode is missing or not one it knows, a plan proposed in a turn whose mode says it runs none, and a person's messages with no turn record at all.
+The rule and its basis (codex-cli 0.160.1) are written beside the Codex parser, and nothing outside it names Codex.
+The answer is kept with the Herdr `state_change_seq` the read was asked under, and it holds for that state only.
+Herdr can read the agent at rest before Codex writes how the turn ended; that state's read then does not settle a plan-mode turn, so the bell holds and the row shows no wait until Herdr's next state is read, because this rule adds no session reads of its own (PRD codex-plan-approval-hold B10).
+While it says a plan waits, the bell holds with `awaiting_operator`.
+For an agent whose read reports turns, a state that no read has settled holds the bell too, with `session_unread`: a session file not found (Codex is looked up in its seven newest day folders), a failed read, a device helper that predates the field, a read still behind Herdr's newest state, or a daemon that does not hold the label generator lock and so reads nothing.
+That lock is one per Herdr server and taken with `flock` (`herdr-core/src/labels/generator.rs`): the operator's single daemon lacks it only while another hided follows the same Herdr server (a candidate or development daemon pointed at the operator's socket, even with a private HOME), or, after a restart that overlapped the old daemon, until its next attempt, at most thirty seconds after the old one exits; the kernel frees a crashed holder's lock.
+Unknown is never read as "nothing waits".
+An agent whose read reports no turns (Claude Code and every other kind) is belled exactly as before.
+"No, stay in Plan mode" writes nothing to the session (measured with Codex CLI 0.160.1), so the wait, the hold and the row in Needs You last until Codex's next turn starts or a person's message is written.
+The first start of a build with this rule resumes a stored session at its last person's message, after that turn's `task_started`, so a plan already waiting then is not known until Herdr's next state; that start holds the bell rather than ringing it.
+The rule reads the session Herdr reports for the pane, so a pane reported with another session is judged by that session.
+It guards against hide's own bell, not against a process of the same account, which could append records to the session file or type into the pane through Herdr directly.
 
 ## Persistence, clocks and limits
 
@@ -261,7 +284,7 @@ The full Rust test and lint lanes still apply to the final committed head.
 Actual Linux and Windows OS-contract runner results are required for the state-machine, ledger and activity portability claim; declaring a workflow does not prove it passed.
 Real TUI delivery requires an isolated Herdr server, private HOME/state, precisely identified candidate processes and disposable provider sessions with observed native identity and registered lineage.
 Register only an actual parent session and spawn its child through `hide agent spawn`; never seed a capability or coordination ledger.
-Exercise idle/done delivery to a Claude pane with a statusline and to a Codex pane, working delay, a pending letter held while a permission, question or plan menu is open and delivered after it is answered, each target's menus read as Herdr `blocked`, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
+Exercise idle/done delivery to a Claude pane with a statusline and to a Codex pane, working delay, a pending letter held while a permission, question or plan menu is open and delivered after it is answered, each target's menus read as Herdr `blocked` or, for Codex's plan approval, held as `awaiting_operator`, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
 Label protocol fixtures separately from actual provider runtime observations.
 Measure matched baseline/candidate input latency and idle/driven load through [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); a headless or socket-only check does not prove native presentation.
 Own every fixture process with a deadline and teardown, preserve the operator's app/server/panes/hooks, and remove private authentication caches after the owned agents exit.

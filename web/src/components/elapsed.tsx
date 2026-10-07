@@ -48,6 +48,23 @@ export function useElapsed(since: number | null | undefined): string | null {
   return useSyncExternalStore(subscribe, () => (since == null ? null : formatElapsed(language, (timer === null ? Date.now() : now) - since)));
 }
 
+/**
+ * The time left before `deadline` on the same clock, in the largest whole
+ * unit rounded up (a Factory question's 21h left); `past` once it passed and
+ * `null` without a deadline.
+ */
+export function useRemaining(deadline: number | null | undefined): { text: string } | "past" | null {
+  const language = requireInterfaceLanguage(useInterfaceTranslation().i18n.language);
+  const text = useSyncExternalStore(subscribe, () => {
+    if (deadline == null) return null;
+    const left = deadline - (timer === null ? Date.now() : now);
+    if (left <= 0) return "";
+    const hours = Math.ceil(left / 3_600_000);
+    return hours >= 1 && left >= 3_600_000 ? formatUnit(language, hours, "hour") : formatUnit(language, Math.ceil(left / 60_000), "minute");
+  });
+  return text === null ? null : text === "" ? "past" : { text };
+}
+
 /** A span holding the elapsed text; nothing at all when the core has no time for the agent. */
 export function Elapsed({ since, ...props }: { since: number | null | undefined } & HTMLAttributes<HTMLSpanElement>) {
   const text = useElapsed(since);

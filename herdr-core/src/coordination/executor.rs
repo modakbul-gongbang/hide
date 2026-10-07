@@ -831,7 +831,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery(crate::node::TEST_NODE, &payload, None);
+                .observe_delivery(crate::node::TEST_NODE, &payload, None, None);
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

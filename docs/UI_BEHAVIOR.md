@@ -325,6 +325,8 @@ The pane menu offers Sleep agent on a local agent pane that is awake, disabled w
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
 The sidebar's Agents tab groups the device in front's current agents under Needs You, Done, Working, and Seen, and leaves an empty group out; no row names its device, since the whole list is that device's, and a device that is not connected lists nothing it only last reported (the Palette still names a remote row's device).
+A Codex agent whose plan waits for approval ("Implement this plan?"), which Herdr reads as an ordinary stop, is drawn as an approval: in Needs You with the `!` mark and the request view's `answer` verb, as a prompt Herdr reports `blocked` is, and it stays there after it is read until Codex's next turn starts, also after "No, stay in Plan mode", which writes nothing to the session (docs/status-model.md, Where each axis comes from).
+It is drawn from the session file only for the agent's current Herdr state; a wait not read for that state is not drawn, and a letter the doorbell holds for it is never named on screen (docs/delivery.md).
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
 In the desktop app ⌥1 to ⌥9 open the first to ninth row the list draws, top to bottom across the groups, exactly as clicking that row does; the order is the list's whether or not the sidebar shows it, a folded child takes no number, and a number with no row does nothing.
@@ -658,7 +660,8 @@ The filter applies to Board, List and Dependencies alike, and `필터 지우기`
 A project's filter lives with its Overview's lens and comes back with it; the Overview of every project keeps its own while the page is open.
 The mode is a mode of the Issues view, not a tab; it belongs to the page, so the Overview of every project's Tasks and every entry into a project keep it.
 List draws the same cards one row each, grouped by stage with the moving work first (진행 중, 리뷰, 백로그, 완료 folded): the stage glyph, the id and title, at most two labels as a card draws them, a `질문` or `확인` badge on a row waiting on the operator, and on the right the agents' marks, the PR chip, the branch, `↑N` and the age; a row with agents unfolds them under it, one waiting on the operator starts unfolded, and a row's click opens the issue panel.
-Dependencies draws the Board's cards left to right with a quiet stage word at each card's top right: an issue sits one column right of the longest chain of issues it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle; a card's click opens the issue panel.
+Dependencies draws the Board's cards left to right with a quiet stage word at each card's top right, placed by elkjs's layered layout (`web/src/dependencyLayout.ts`, used unmodified under EPL-2.0): a blocker sits in a column left of what it blocks, crossings are kept few, and an arrow that spans columns bends through the gaps between cards instead of crossing them; a card's click opens the issue panel.
+The layout loads when a graph first opens and runs in its own Web Worker; until it answers, or when it fails, runs past three seconds or is asked for more than 400 cards, the cards stand one column right of the longest chain they wait on with arrows from right middle to left middle, and the reason goes to the diagnostic log.
 Arrows carry no label; one legend line above the graph says the left issue has to finish first.
 A blocked card is dimmed with its lock line, a done card is dimmed, and a card waiting on the operator keeps the Board's warning outline.
 Issues with no relation in scope gather below the graph under `관계 없는 태스크`.
@@ -1119,6 +1122,78 @@ A link whose project folder moved away is dropped at the next sync with nothing 
 A `~/hide` that Hide did not make is left untouched, and the start that wanted it says so where it was asked for, in the start panel or under the Home row for its `+`, with what to do.
 A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its row stays under the Home row.
 
+## Factory
+
+Core owner: `herdr-core/src/factory/screen.rs`, `herdr-core/src/runtime/factory.rs` (see ARCHITECTURE.md, The Factory host). Web owner: `web/src/factory/`, the Factory and secretary rows in `web/src/components/sidebar-header.tsx` and `web/src/sidebar.tsx`.
+
+The Factory screens draw the Software Factory engine ([factory.md](factory.md)) and change nothing it decides.
+Every count, name, state, order and reason on them is a field of the engine's `FactorySummary` or `TaskDetail`, and every action they offer is one stage-1 command the engine may refuse.
+A refusal keeps the thing that was acted on in place with the engine's next action on one line beneath it, and the text typed into a form (a change request, a priority, a check) stays until the engine takes it, while a settings field goes back to the saved value; a taken answer is not sent again while its item is still drawn.
+An action the engine has not answered within 20 seconds reads as unanswered, says the Factory may still finish it, and still takes the engine's answer when it comes, because one `gh` call can outlast the wait.
+
+### The Factory place
+
+The sidebar has a Factory row of its own beside Home, and its badge is the number of items in 내 차례, with no badge at zero.
+The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind a dialog or another overlay (Settings, the find bar, a confirmation), where the Overview waits too; the screen is kept out of Recent Panels.
+With no open Factory the screen offers only '+ Factory 만들기'.
+Under the Factory row, once a Factory exists, is the secretary row: an ordinary agent tab in the core device's Home with the Factory's guide in its first prompt, which reads the board with `hide factory status` each time it answers, so closing the tab loses nothing.
+There is one secretary; the row and '비서에게 묻기' go to it, and when there is none they start one with the Factory's default runtime.
+The core remembers the secretary's pane in its UI state once a tab lists it, so a restart keeps the row on the same pane while that pane is listed.
+A start whose default-runtime read is refused, or that gets no answer within 20 seconds, starts nothing and goes to the diagnostic log; the next press tries again.
+
+### The screen
+
+The header holds the Factory name, the project filter, the flow bar and '비서에게 묻기'.
+The flow bar shows 정리 중 · 대기 · 실행 중 · 완료 오늘 (today in the machine's time zone) and never a person's-turn cell; a cell opens the board filtered to that column.
+The flow bar ends with the time of the last GitHub read, which turns the warning colour after three failed reads in a row and back when a read succeeds; there is no banner.
+The tabs are 내 차례 · 보드 · 그래프 · 설정, and the screen opens on 내 차례; the project filter applies to every tab.
+The 내 차례 tab's count and the sidebar badge are the engine's `my_turn` and are always the same number.
+Before the core's first summary arrives the screen draws its frame and no empty state.
+
+### 내 차례
+
+내 차례 is one column of every Factory's person-facing items in the engine's order and under its groups: 답할 것, 머지 대기, 멈춤, 알림.
+The top item opens expanded with the engine's suggestion chosen and the send button focused, so ⏎ once answers.
+The send button names the answer, the line beside it the result the engine gave for its own pick (the suggestion, or a notice's first choice), the line under it the default action, the time cue at the item's right as on every item, and '자세히 →' opens the Task page.
+The other items are one line each: the id (the Task id before Ready, the issue number after), the title, the project and a time cue, with a question that blocks progress reading 'N일째 기다림' at the top.
+↑ and ↓ move between items and open the one reached, a digit picks another choice, and ⏎ sends; ⏎ on '자세히' opens the Task instead, and ⏎ that finishes a Hangul syllable sends nothing.
+While an answer is sent its button shows sending; when the engine takes it the item leaves and the next one opens.
+An empty 내 차례 shows one line that nothing is waiting, and a Factory with no Task shows the two ways to add one: ask the agent you are talking to, or put the `factory` label on a GitHub issue.
+There is no button that adds a Task.
+Under the list, only while agents outside the Factory have requests, one line 'Factory 밖 에이전트 요청 N → 요청' opens the Overview 요청 view, and that view has one line back to the Factory while 내 차례 has items.
+Factory workers are left out of the 요청 view and the Overview's yellow count.
+
+### Board and graph
+
+The board has four columns, 정리 중 · 대기 · 실행 중 · 완료, in the engine's order within each column.
+A card that needs the person (blocked, stopped, waiting to merge, an open question) has the warning border and stands at the top of its column; verifying, waiting to merge, blocked, stopped, relanding and outside work sit in 실행 중 with their state mark.
+A done Task the person has not seen has the unread dot; done Tasks older than three days fold into one group, and those past 90 days leave the group while their Task page still opens.
+A cancelled Task leaves the board and is found under the '취소됨' filter, which offers 되살리기 for seven days; cancelling asks nothing and leaves '취소됨 · 되살리기' in its place.
+The graph tab draws each Factory's dependencies in the Issues view's Dependencies layout with every arrow a longer path implies left out (A→B→C draws no A→C), which the Issues view does not do; the engine's data keeps every edge.
+Only cards that need the person are emphasised, done cards are dimmed, waiting cards say what they wait for, unrelated Tasks sit below, folded completions leave the drawing, and a node opens its Task page.
+A filter that leaves the board or graph empty offers to clear it; a Factory whose cards are all archived is empty, not filtered.
+
+### The Task page
+
+The Task page is full width: the chain (its predecessors → this Task → the Tasks waiting on it) at the top, the goal, completion criteria, out of scope and attachments on the left, and progress (pull request and CI, verification n/3, each attempt's log tail and CI link, the external wait, 'worker 보기') and the decision record on the right.
+Verification n/3 counts the worker's resubmissions and reads '검증 실패 n/3'; a Factory without verification shows '검증 없음'.
+A done Task's completion criteria read as met, and a muted '… (줄임)' stands where the engine shortened a text, at its end or mid-sentence, instead of the store's cut mark.
+The page offers only the actions the engine allows in the Task's state: 정리 중 edit (which opens the secretary) and cancel, 대기 priority, removing a dependency and cancel, 실행 중 pause and cancel, 멈춤 retry and cancel, 머지 대기 merge, request changes and cancel, a blocked Task nothing but its answer, and a cancelled Task 되살리기 while it lasts.
+An open question is answered only in 내 차례: '내 차례에서 답하기 →' opens that item there.
+'worker 보기' opens the worker's pane in its Workspace.
+A Task whose Factory has left the summary reads as gone rather than loading.
+
+### Creating and configuring
+
+'+ Factory 만들기' asks three things: the project, the verification and the merge mode.
+The verification step shows the required checks and verify commands the engine detected for the project, with a loading mark while it detects, and the person picks the required checks, a set of verify commands, or none.
+The sheet first picks what the engine lists first, the required checks before the commands; when the engine refuses that first pick because the repository requires no checks, the sheet picks the detected commands instead, or none.
+The merge mode starts on auto; with no verification auto cannot be picked and says why in its place, and the Factory is made manual.
+A project with a GitHub remote shows, above the create button, the account, the repository and every GitHub read and write the engine will make; a project without one has no GitHub step.
+Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed project check shows the step that failed and the engine's next action as the engine wrote it (`gh auth login` for a logged-out `gh`), and a project that already has a Factory opens it.
+The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision, and a value the engine refuses, an emptied number or one the field cannot take goes back to the saved one.
+'Factory 닫기' can be pressed only while the 실행 중 column is empty, a paused, verifying or merge-waiting Task included, because the engine refuses to close the Factory until then.
+
 ## Recent navigation
 
 Web owner: `web/src/recent.ts`, `web/src/areaCycle.ts`, `web/src/viewFocus.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
@@ -1565,6 +1640,7 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Search | `⌘K` | `Ctrl+Shift+K` | `⌘K` | `Ctrl+Shift+K` |
 | Open file | `⌘P` | `Ctrl+Shift+P` | `⌘P` | `Ctrl+Shift+P` |
 | Overview | `⇧⌘O` | `Alt+Shift+O` | `⇧⌘O` | `Alt+Shift+O` |
+| Open Factory | `⇧⌘F` | `Alt+Shift+F` | `⇧⌘F` | `Alt+Shift+F` |
 | Projects sidebar | `⇧⌘P` | `Alt+Shift+P` | `⇧⌘P` | `Alt+Shift+P` |
 | Agents sidebar | `⇧⌘A` | `Alt+Shift+A` | `⇧⌘A` | `Ctrl+Alt+A` |
 | Toggle left sidebar | `⌘B` | `Ctrl+Shift+B` | `⌘B` | `Ctrl+Shift+B` |

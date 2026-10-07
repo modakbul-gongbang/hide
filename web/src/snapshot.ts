@@ -1473,6 +1473,8 @@ export type SnapshotRest = {
     recent_checkouts?: RecentCheckout[];
     /** The terminal panes the keyboard has been in, newest first, up to fifty: the Agent cycle's order (issue 301). */
     recent_pane_ids?: string[];
+    /** The Home agent pane started as the Factory secretary (PRD software-factory-ui B23). */
+    factory_secretary_pane?: string | null;
     [key: string]: unknown;
   };
   status?: {
