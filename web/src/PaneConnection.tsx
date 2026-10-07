@@ -50,6 +50,9 @@ function ConnectionPopover({
   const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState(false);
   const [askedOff, setAskedOff] = useState(false);
+  // The answer on screen when the operator confirmed: it belongs to an
+  // earlier request, so it stays hidden until the core's state moves on.
+  const [askedOver, setAskedOver] = useState<string | null>(null);
   const [confirmingOff, setConfirmingOff] = useState(false);
   // One press is one event: a second press before the next snapshot would
   // otherwise send again, because the core's pending state has not arrived.
@@ -60,7 +63,11 @@ function ConnectionPopover({
   const copy = connectionCopy(connection.reason);
   const pending = reopenPending(connection);
   const failure = reopenFailureKey(connection);
-  const outcome = sharedServerOutcome(device?.kit?.codex_daemon_off, askedOff);
+  const offState = JSON.stringify(device?.kit?.codex_daemon_off ?? null);
+  useEffect(() => {
+    if (askedOver !== null && offState !== askedOver) setAskedOver(null);
+  }, [askedOver, offState]);
+  const outcome = askedOver === offState ? null : sharedServerOutcome(device?.kit?.codex_daemon_off, askedOff);
   const offersOff = offersSharedServerOff(connection) && machineId !== null && outcome?.phase !== "pending";
   // A confirmation whose link went away (the server is off, the pane
   // reconnected, a turn-off already runs) closes rather than send a request
@@ -168,6 +175,7 @@ function ConnectionPopover({
                 onClick={() =>
                   once(() => {
                     setAskedOff(true);
+                    setAskedOver(offState);
                     actions.turnOffCodexSharedServer(machineId);
                   })
                 }

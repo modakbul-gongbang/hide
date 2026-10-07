@@ -195,6 +195,20 @@ it("says when autostart went off but the running server did not stop, and keeps 
   await unmount();
 });
 
+it("does not show the last request's answer as the next one's until the core moves on (B9: a second turn-off)", async () => {
+  const { events, unmount } = await mount(pane(not({ reason: "codex_shared_server" })), snapshot({ state: "done" }));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-go]");
+  expect(events).toHaveLength(1);
+  expect(document.querySelector("[data-codex-shared-server-outcome]")).toBeNull();
+  await act(async () => { useShellStore.setState(snapshot({ state: "pending" }) as never); });
+  expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("pending");
+  await act(async () => { useShellStore.setState(snapshot({ state: "done" }) as never); });
+  expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("done");
+  await unmount();
+});
+
 it("does not open on an old answer: a finished turn-off nobody asked for in this popover is not shown", async () => {
   const { unmount } = await mount(pane(not({ reason: "codex_shared_server" })), snapshot({ state: "failed", reason: "timed_out" }));
   await open();
