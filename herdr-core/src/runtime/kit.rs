@@ -629,7 +629,7 @@ impl Runtime {
         // later helper connection would end sessions it never named, so a
         // device takes it only over the connection it was confirmed on
         // (design principle 13: the refusal goes to the log).
-        if device_id != LOCAL_DEVICE_ID
+        if device_id != self.node.as_str()
             && !matches!(
                 self.device_hosts.get(device_id).map(|host| &host.phase),
                 Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none()

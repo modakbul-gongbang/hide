@@ -593,7 +593,7 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
 #[test]
 fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_turn_off() {
     use crate::model::CodexDaemonOffSnapshot as Off;
-    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let local = crate::node::TEST_NODE;
     let read = |running: Option<bool>, off: Option<hide_kit::CodexDaemonOff>| hide_kit::KitReport {
         codex_daemon_running: running,
         ..report_with(false, off)
@@ -610,7 +610,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         Some(PaneConnectionReason::StartedBeforeHide)
     );
     assert!(
-        !disable(&mut runtime, "local"),
+        !disable(&mut runtime, crate::node::TEST_NODE),
         "nothing answers: nothing to turn off"
     );
 
@@ -619,7 +619,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         reason(&runtime),
         Some(PaneConnectionReason::CodexSharedServer)
     );
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
 
     runtime.ingest_kit_report(
@@ -643,7 +643,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         Some(PaneConnectionReason::CodexSharedServer)
     );
     assert!(
-        disable(&mut runtime, "local"),
+        disable(&mut runtime, crate::node::TEST_NODE),
         "a failed stop can be asked again"
     );
 
@@ -659,7 +659,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         reason(&runtime),
         Some(PaneConnectionReason::StartedBeforeHide)
     );
-    assert!(!disable(&mut runtime, "local"));
+    assert!(!disable(&mut runtime, crate::node::TEST_NODE));
 }
 
 /// B7: a stop that failed because the daemon's answer could not be read
@@ -667,7 +667,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
 /// read says no daemon answers.
 #[test]
 fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_answers() {
-    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let local = crate::node::TEST_NODE;
     let read = |running: Option<bool>, off: Option<hide_kit::CodexDaemonOff>| hide_kit::KitReport {
         codex_daemon_running: running,
         ..report_with(false, off)
@@ -680,7 +680,7 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
         connection_of(runtime, "w1:p1").and_then(|connection| connection.reason)
     };
     runtime.ingest_kit_report(local, &read(Some(true), None));
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
 
     runtime.ingest_kit_report(
         local,
@@ -703,7 +703,7 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
         Some(PaneConnectionReason::CodexSharedServer),
         "a later read that still cannot tell keeps the retry"
     );
-    assert!(disable(&mut runtime, "local"), "the retry is accepted");
+    assert!(disable(&mut runtime, crate::node::TEST_NODE), "the retry is accepted");
 
     runtime.ingest_kit_report(local, &read(Some(false), None));
     assert_eq!(
@@ -716,7 +716,7 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
 /// goes to the log once, not on every read (B13).
 #[test]
 fn an_unreadable_daemon_answer_is_no_answer_and_is_logged_once() {
-    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let local = crate::node::TEST_NODE;
     let mut runtime = runtime();
     let unreadable = hide_kit::KitReport {
         codex_daemon_unreadable: Some("codex answered `daemon: ok?`".to_owned()),
