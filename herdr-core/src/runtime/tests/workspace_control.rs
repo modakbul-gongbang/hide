@@ -1491,6 +1491,20 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
         .workspace_control_query("local", &caller("k1", "/checkouts/b"), Query::Info)
         .unwrap();
     assert_eq!(exact.context.checkout_id, "checkout-b");
+    // A checkout caller is offered the Workspace, never delivery, which acts
+    // as one agent and so needs a pane-bound caller.
+    let offered = |caller: &str| {
+        runtime
+            .workspace_control_query("local", caller, Query::Info)
+            .unwrap()
+            .capabilities
+    };
+    let checkout_offer = offered(&caller("k1", "/checkouts/b"));
+    assert!(checkout_offer.contains(&"view.list"));
+    for delivery in ["request.send", "inbox", "inbox.hook", "watch.assign"] {
+        assert!(!checkout_offer.contains(&delivery), "{delivery}");
+        assert!(offered("pane-b").contains(&delivery), "{delivery}");
+    }
 
     for outside in ["/checkouts/ab", "/checkouts", "/elsewhere/checkouts/a"] {
         assert_eq!(

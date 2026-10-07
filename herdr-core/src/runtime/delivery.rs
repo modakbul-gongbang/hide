@@ -235,37 +235,17 @@ impl Runtime {
                 format!("remote:{device}:pane:{pane}")
             }
         };
-        let actor_pane = match Caller::parse(caller) {
-            Caller::Pane(pane) => {
-                if hint.is_some_and(|hint| qualify(hint) != pane) {
-                    return Err("caller_identity_conflict".into());
-                }
-                pane.to_owned()
-            }
-            // A checkout-bound credential names a pane only by the caller's
-            // hint, which cannot say who the caller is.
-            Caller::Checkout { .. }
-                if matches!(
-                    &command,
-                    Command::Agents {
-                        command: crate::coordination::Command::Show { id },
-                    } if id == crate::coordination::HERE
-                ) =>
-            {
-                return Err("pane_capability_required".into());
-            }
-            Caller::Checkout { .. } => qualify(hint.ok_or("agent_pane_required")?),
+        // Only Hide's pane attestation names the agent a command acts as; a
+        // checkout-bound caller has no pane, and a hint cannot lend it one.
+        let Caller::Pane(actor_pane) = Caller::parse(caller) else {
+            return Err("agent_pane_required".into());
         };
-        let actor_context = self
-            .workspace_control_query(device, &actor_pane, Query::Info)
-            .map_err(|_| "agent_pane_required")?
-            .context;
-        if actor_context != context {
+        if hint.is_some_and(|hint| qualify(hint) != actor_pane) {
             return Err("caller_identity_conflict".into());
         }
         let actor = self
             .delivery_observations
-            .get(&actor_pane)
+            .get(actor_pane)
             .ok_or("agent_pane_required")?
             .actor
             .clone();
@@ -980,10 +960,10 @@ pub(crate) mod tests {
     }
 
     /// `hide agent show here` answers who the caller is, so only a
-    /// pane-bound credential can ask: a checkout-bound one would name its
-    /// pane by the caller's hint alone, and a pane-bound one cannot borrow
-    /// another pane by hint. What it answers is the caller's own record and
-    /// never another pane's, with no renderer connected.
+    /// pane-bound credential can ask, as for every delivery command, and a
+    /// pane-bound one whose hint names another pane is refused. What it
+    /// answers is the caller's own record and never another pane's, with no
+    /// renderer connected.
     #[test]
     fn only_the_attested_pane_asks_who_it_is() {
         let root = tempfile::tempdir().unwrap();
@@ -1013,7 +993,7 @@ pub(crate) mod tests {
         };
         assert_eq!(
             ask(&checkout, Some("recipient"), "here").err().as_deref(),
-            Some("pane_capability_required")
+            Some("agent_pane_required")
         );
         assert_eq!(
             ask("sender", Some("recipient"), "here").err().as_deref(),
@@ -1053,10 +1033,12 @@ pub(crate) mod tests {
             ask("sender", None, "here").err().as_deref(),
             Some("participant_unavailable")
         );
-        // A checkout-bound credential still shows a named agent.
+        // Another pane shows the agent by name; a checkout-bound credential
+        // shows none, since every agent command needs a pane-bound caller.
+        assert_eq!(ask("sender", None, "agent-7").unwrap()["id"], "agent-7");
         assert_eq!(
-            ask(&checkout, Some("sender"), "agent-7").unwrap()["id"],
-            "agent-7"
+            ask(&checkout, Some("sender"), "agent-7").err().as_deref(),
+            Some("agent_pane_required")
         );
         drop(worker);
     }
@@ -1313,70 +1295,126 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn prepared_command_refuses_changed_pane_or_checkout_capability_context_without_saving() {
-        for checkout_bound in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let (runtime, actor, _, path) = fixture(root.path());
-            let before = std::fs::read(&path).unwrap();
-            let (worker, client) = Worker::spawn(
-                Arc::downgrade(&runtime),
-                ChangeNotifier::noop(),
-                path.clone(),
+    fn a_checkout_bound_caller_is_refused_delivery_and_agent_commands_with_or_without_a_hint() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, _, path) = fixture(root.path());
+        let before = std::fs::read(&path).unwrap();
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let caller = crate::workspace_control::checkout_caller_id("cap", "/checkouts/fixture");
+        let context = authority(&actor).context;
+        let commands = [
+            Command::Send {
+                target: "recipient".into(),
+                intent: "checkout-send".into(),
+                body: "hello".into(),
+                kind: "request".into(),
+            },
+            Command::Inbox,
+            Command::WatchStart {
+                target: "recipient".into(),
+                observer: None,
+                actor: None,
+            },
+            Command::Agents {
+                command: crate::coordination::Command::List,
+            },
+        ];
+        let mut guard = runtime.lock().unwrap();
+        guard.install_delivery_client(client);
+        for hint in [None, Some("sender"), Some("recipient")] {
+            for command in commands.clone() {
+                assert_eq!(
+                    guard
+                        .prepare_delivery("local", &caller, &context, hint, command.clone())
+                        .err()
+                        .as_deref(),
+                    Some("agent_pane_required"),
+                    "hint {hint:?} command {command:?}"
+                );
+            }
+        }
+        // The pane-bound caller is unchanged: its own pane, and a hint that
+        // names another pane is a conflict.
+        assert_eq!(
+            guard
+                .prepare_delivery(
+                    "local",
+                    "sender",
+                    &context,
+                    Some("recipient"),
+                    Command::Inbox
+                )
+                .err()
+                .as_deref(),
+            Some("caller_identity_conflict")
+        );
+        let prepared = guard
+            .prepare_delivery(
+                "local",
+                "sender",
+                &context,
+                Some("sender"),
+                commands[0].clone(),
             )
             .unwrap();
-            let context = authority(&actor).context;
-            let caller = if checkout_bound {
-                crate::workspace_control::checkout_caller_id("cap", "/checkouts/fixture/sub")
-            } else {
-                actor.pane_id.clone()
-            };
-            let prepared = {
-                let mut guard = runtime.lock().unwrap();
-                guard.install_delivery_client(client);
-                guard
-                    .prepare_delivery(
-                        "local",
-                        &caller,
-                        &context,
-                        checkout_bound.then_some(actor.pane_id.as_str()),
-                        Command::Send {
-                            target: "recipient".into(),
-                            intent: "must-refuse".into(),
-                            body: "private".into(),
-                            kind: "request".into(),
-                        },
-                    )
-                    .unwrap()
-            };
-            {
-                let mut guard = runtime.lock().unwrap();
-                let checkouts = &mut guard.snapshot.navigator.workspaces[0].checkouts;
-                if checkout_bound {
-                    let mut narrower = checkouts[0].clone();
-                    narrower.id = "nested".into();
-                    narrower.path = "/checkouts/fixture/sub".into();
-                    narrower.tabs.clear();
-                    narrower.has_panes = false;
-                    checkouts.push(narrower);
-                } else {
-                    checkouts[0].path = "/checkouts/moved".into();
-                }
-            }
-            assert_eq!(
-                prepared.run(Duration::from_secs(5)).unwrap_err(),
-                "caller_context_changed"
-            );
-            assert!(
-                runtime
-                    .lock()
-                    .unwrap()
-                    .delivery_state()
-                    .unwrap()
-                    .letters
-                    .is_empty()
-            );
-            assert_eq!(std::fs::read(&path).unwrap(), before);
-            drop(worker);
-        }
+        drop(guard);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let result = prepared.run(Duration::from_secs(5)).unwrap();
+        assert_eq!(result["sender"]["pane_id"], "sender");
+        drop(worker);
+    }
+
+    #[test]
+    fn prepared_command_refuses_a_changed_pane_context_without_saving() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, _, path) = fixture(root.path());
+        let before = std::fs::read(&path).unwrap();
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let context = authority(&actor).context;
+        let prepared = {
+            let mut guard = runtime.lock().unwrap();
+            guard.install_delivery_client(client);
+            guard
+                .prepare_delivery(
+                    "local",
+                    &actor.pane_id,
+                    &context,
+                    None,
+                    Command::Send {
+                        target: "recipient".into(),
+                        intent: "must-refuse".into(),
+                        body: "private".into(),
+                        kind: "request".into(),
+                    },
+                )
+                .unwrap()
+        };
+        runtime.lock().unwrap().snapshot.navigator.workspaces[0].checkouts[0].path =
+            "/checkouts/moved".into();
+        assert_eq!(
+            prepared.run(Duration::from_secs(5)).unwrap_err(),
+            "caller_context_changed"
+        );
+        assert!(
+            runtime
+                .lock()
+                .unwrap()
+                .delivery_state()
+                .unwrap()
+                .letters
+                .is_empty()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(worker);
     }
 }
