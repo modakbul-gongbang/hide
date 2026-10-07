@@ -150,8 +150,10 @@ fn run_gh(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::path::PathBuf;
 
+    #[cfg(unix)]
     use hide_node_link::gh::{ISSUE_DETAIL_FIELDS, PR_FEEDBACK_FIELDS};
 
     use super::*;

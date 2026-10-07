@@ -644,6 +644,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::model::DocumentKind;
     use std::fs;
+    #[cfg(unix)]
     use std::fs::File;
     use std::time::UNIX_EPOCH;
 
