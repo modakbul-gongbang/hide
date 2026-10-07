@@ -14,6 +14,7 @@ pub mod delivery_cli;
 pub mod demand;
 pub mod device_watch;
 pub mod env;
+pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;

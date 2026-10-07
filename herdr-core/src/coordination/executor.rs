@@ -293,6 +293,45 @@ fn publish_tokens(client: &Client, connector: &dyn ApiConnector, id: &str) -> Re
     }
     Ok(())
 }
+/// Registers a Factory's code-owned identity as the parent its workers are
+/// spawned under (D-14); converges on the existing record.
+pub(crate) fn register_code_owned(
+    client: &Client,
+    authority: &Authority,
+    actor: &Actor,
+) -> Result<String, String> {
+    if !actor.code_owned() {
+        return Err("reserved_name".into());
+    }
+    let record = AgentRecord {
+        id: String::new(),
+        name: actor.name.clone(),
+        machine: actor.device_id.clone(),
+        host_scope: crate::delivery::FACTORY_KIND.into(),
+        native_machine: crate::delivery::FACTORY_KIND.into(),
+        session: actor.name.clone(),
+        instance: actor.pane_id.clone(),
+        pane: actor.pane_id.clone(),
+        parent: None,
+        project: None,
+        actor: actor.clone(),
+        ended: false,
+    };
+    let registered = mutate(
+        client,
+        authority,
+        actor,
+        Mutation::Register {
+            record,
+            check: false,
+        },
+    )?;
+    registered["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "parent_unavailable".into())
+}
+
 fn spawn(
     client: &Client,
     authority: &Authority,
