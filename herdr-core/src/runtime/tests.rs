@@ -458,7 +458,6 @@ pub(super) fn runtime() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     let mut runtime = Runtime::new(
         options,
@@ -467,6 +466,7 @@ pub(super) fn runtime() -> Runtime {
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     );
     runtime.test_dirs.push(state);
     runtime
@@ -494,6 +494,7 @@ fn live_runtime() -> Runtime {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     runtime
 }
@@ -906,6 +907,7 @@ fn live_tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     (runtime, checkout_id)
 }

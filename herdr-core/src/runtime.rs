@@ -1116,7 +1116,7 @@ pub struct Runtime {
     /// (`hide_host::worktrees`); the device's rows carry them.
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
     /// This machine's file host: the helper's dispatch, run in place.
-    local_host: Arc<dyn crate::host_access::HostChannel>,
+    own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Where each open file tab's saves go.
     document_places: HashMap<String, crate::files::DocumentPlace>,
     /// Each file tab's save in flight, the newest draft waiting behind it,
@@ -1474,7 +1474,12 @@ pub struct Runtime {
     /// coordinator, reused when a later precomputation arrives stale so the
     /// reconcile never rebuilds under the runtime lock.
     last_accepted_catalog: Option<Vec<WorkspaceSnapshot>>,
-    catalog_roots: workspace::RootIndex,
+    /// The path facts the accepted catalog was built from.
+    catalog_paths: Arc<workspace::PathIndex>,
+    /// Whether the sync coordinator has handed this runtime a catalog. From
+    /// then on the coordinator is what asks the node, off the lock, and a
+    /// session applied without a catalog reads the last paths it brought.
+    catalog_from_coordinator: bool,
     /// The strip order each local checkout has, as strip entry ids. It is
     /// memory only by decision: Herdr persists its own tab order and file tabs
     /// do not survive a restart, so there is nothing here worth writing to
@@ -1528,10 +1533,10 @@ pub struct Runtime {
     /// in the snapshot because the shell renders the checkout rows these
     /// produce, not the raw list.
     worktree_catalog: crate::model::WorktreeCatalogSnapshot,
-    /// Each repository's worktree paths as the file system names them, read
-    /// when the catalog arrives so a created tab's clamp compares by names
-    /// on every session (`session.rs`, `CreatedTabClamp`).
-    local_worktree_paths: Vec<Vec<String>>,
+    /// Each repository's worktree paths as the catalog lists them, which a
+    /// created tab's clamp reads through the newest path index on every
+    /// session (`session.rs`, `CreatedTabClamp`).
+    local_worktree_paths: Arc<Vec<Vec<String>>>,
     /// Every open repository's pull requests, from the operator's own `gh`.
     github: crate::model::GithubSnapshot,
     /// Measurements for the focused project's worktrees. The reader updates
@@ -1646,7 +1651,11 @@ struct RuntimeWorkerContext {
 }
 
 impl Runtime {
-    pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
+    pub fn new(
+        options: CoreOptions,
+        environment: environment::EnvironmentReport,
+        own_node: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
         let delivery_path =
             hide_kit::layout::delivery_ledger(state_path.parent().unwrap_or(Path::new(".")));
@@ -1693,11 +1702,29 @@ impl Runtime {
                 .unwrap_or_else(|| options.node_id.to_string()),
         );
         snapshot.navigator.focused_checkout_id = snapshot.ui_state.focused_checkout_id.clone();
+        // Built before any lock exists, so the own node is asked here.
+        let wanted = workspace::PathIndex::wanted(
+            &options.node_id,
+            &snapshot.ui_state.workspace_registrations,
+            &[],
+            &crate::model::WorktreeCatalogSnapshot::default(),
+        );
+        let catalog_paths = Arc::new(
+            workspace::PathIndex::ask(own_node.as_ref(), wanted).unwrap_or_else(|error| {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "workspace_catalog",
+                    "kind": "catalog.path_facts_failed",
+                    "message": error,
+                }));
+                workspace::PathIndex::default()
+            }),
+        );
         snapshot.navigator.workspaces = workspace::build_catalog(
             &options.node_id,
             &snapshot.ui_state.workspace_registrations,
             &[],
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &catalog_paths,
         );
         let diagnostic = match disposition {
             persistence::LoadDisposition::Loaded => None,
@@ -1815,7 +1842,7 @@ impl Runtime {
             device_facts: HashMap::new(),
             device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
-            local_host: Arc::new(crate::host_access::InProcessHost),
+            own_node,
             document_places: HashMap::new(),
             document_saves: HashMap::new(),
             document_opens: HashMap::new(),
@@ -1967,7 +1994,8 @@ impl Runtime {
             task_agent_launch: None,
             home_links: HashMap::new(),
             last_accepted_catalog: None,
-            catalog_roots: workspace::RootIndex::new(),
+            catalog_paths,
+            catalog_from_coordinator: false,
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
             herdr_worktrees: BTreeMap::new(),
@@ -1982,7 +2010,7 @@ impl Runtime {
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
             worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),
-            local_worktree_paths: Vec::new(),
+            local_worktree_paths: Arc::default(),
             github: crate::model::GithubSnapshot::default(),
             disk_usage: Vec::new(),
             github_generations: HashMap::new(),
@@ -2340,7 +2368,7 @@ fn find_workspace_for_context<'a>(
     workspaces: &'a mut Vec<crate::model::WorkspaceSnapshot>,
     context_path: Option<&str>,
     session_workspace_id: &str,
-    roots: &workspace::RootIndex,
+    paths: &workspace::PathIndex,
     unresolved_roots: &mut Vec<String>,
 ) -> Option<&'a mut crate::model::WorkspaceSnapshot> {
     let Some(raw_path) = context_path else {
@@ -2349,14 +2377,13 @@ fn find_workspace_for_context<'a>(
             .position(|workspace| workspace.id == session_workspace_id)
             .and_then(|index| workspaces.get_mut(index));
     };
-    let path = Path::new(raw_path);
-    // The root was resolved outside the runtime lock; a directory the index
-    // does not carry is placed by its own path and reported, never by asking
-    // git from here.
-    let root = roots.get(raw_path).cloned().unwrap_or_else(|| {
+    // The root was read by the node outside the runtime lock; a directory
+    // the index does not carry is placed by its own path and reported,
+    // never by reading the folder from here.
+    if !paths.knows(raw_path) {
         unresolved_roots.push(raw_path.to_owned());
-        workspace::normalized_for_comparison(path)
-    });
+    }
+    let root = paths.root(raw_path);
     let normalized = root.clone();
     // A navigator project records the Herdr workspaces occupying it. One
     // Herdr workspace can span two repositories and so two projects, so the
@@ -2381,41 +2408,40 @@ fn find_workspace_for_context<'a>(
             workspaces[*index]
                 .checkouts
                 .iter()
-                .any(|checkout| path_is_within_checkout(raw_path, &checkout.path))
+                .any(|checkout| path_is_within_checkout(paths, raw_path, &checkout.path))
         })
         .or_else(|| carrying.first().copied())
     {
         return workspaces.get_mut(index);
     }
     if let Some(index) = workspaces.iter().position(|workspace| {
-        workspace.checkouts.iter().any(|checkout| {
-            workspace::normalized_for_comparison(Path::new(&checkout.path)) == normalized
-        })
+        workspace
+            .checkouts
+            .iter()
+            .any(|checkout| workspace::comparison_by_names(Path::new(&checkout.path)) == normalized)
     }) {
         return workspaces.get_mut(index);
     }
     if let Some(index) = workspaces.iter().position(|workspace| {
-        workspace::normalized_for_comparison(Path::new(&workspace.path)) == normalized
+        workspace::comparison_by_names(Path::new(&workspace.path)) == normalized
     }) {
         return workspaces.get_mut(index);
     }
     if let Some(index) = workspaces.iter().position(|workspace| {
-        let workspace_path = workspace::normalized_for_comparison(Path::new(&workspace.path));
+        let workspace_path = workspace::comparison_by_names(Path::new(&workspace.path));
         normalized.starts_with(&format!("{workspace_path}/"))
     }) {
         return workspaces.get_mut(index);
     }
-    let mut temporary = workspace::inspect_temporary(Path::new(&root), node.as_str());
+    let mut temporary = workspace::inspect_temporary(&root, node.as_str(), paths);
     temporary.session_workspace_ids = vec![session_workspace_id.to_owned()];
     workspaces.push(temporary);
     workspaces.last_mut()
 }
 
-fn path_is_within_checkout(path: &str, checkout_path: &str) -> bool {
-    let path = PathBuf::from(workspace::normalized_for_comparison(Path::new(path)));
-    let checkout_path = PathBuf::from(workspace::normalized_for_comparison(Path::new(
-        checkout_path,
-    )));
+fn path_is_within_checkout(paths: &workspace::PathIndex, path: &str, checkout_path: &str) -> bool {
+    let path = PathBuf::from(paths.comparison(path));
+    let checkout_path = PathBuf::from(workspace::comparison_by_names(Path::new(checkout_path)));
     // `Path::starts_with` compares path components, so `barista` cannot
     // match the checkout component `bar`.
     path.starts_with(checkout_path.as_path())

@@ -703,6 +703,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     let payload = |focused_workspace_id: &str, focused_pane_id: &str| {
         crate::sidebar::owned_label_fixture(serde_json::json!({
@@ -2972,6 +2973,7 @@ fn tab_strip_reorder_asks_herdr_and_lands_only_once_herdr_reports_the_order() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 
     // Move the first Herdr tab behind the second. The file tab does not
@@ -3052,6 +3054,7 @@ fn tab_strip_reorder_indexes_a_move_in_the_whole_workspace_not_one_checkout() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 
     // Drag the first tab to the end of this checkout's strip. In the
@@ -3182,6 +3185,7 @@ fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 
     // The first drag is refused.
@@ -3480,7 +3484,10 @@ fn an_exited_panes_root_directory_does_not_become_a_checkout() {
     }))
     .expect("exited pane payload");
 
-    let spaces = Runtime::session_spaces(&payload);
+    let spaces = Runtime::session_spaces(
+        &payload,
+        &workspace::paths_here(Runtime::session_cwds(&payload)),
+    );
 
     assert_eq!(spaces.len(), 1);
     assert_eq!(
@@ -3577,7 +3584,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -3660,7 +3667,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -3712,7 +3719,7 @@ fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
         Some(session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
             workspaces: Vec::new(),
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     assert_eq!(runtime.snapshot().status.last_error, None);
@@ -3819,6 +3826,7 @@ fn tab_strip_reorder_a_drag_within_one_workspace_uses_that_workspaces_index() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 
     // Move the right workspace's first tab behind its second.
@@ -3915,6 +3923,7 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 
     // The right workspace's second tab is dragged to the very front, over
@@ -4376,6 +4385,7 @@ fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     runtime.rename_tab(request("slow", "First"));
     runtime.rename_tab(request("newer", "Retry me"));

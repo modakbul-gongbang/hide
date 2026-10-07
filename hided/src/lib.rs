@@ -13,13 +13,12 @@ pub mod cli_contract;
 pub mod core;
 pub mod delivery_cli;
 pub mod demand;
-pub mod device_watch;
 pub mod env;
 pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;
-pub mod opener;
+
 pub mod pane_auth;
 pub mod remote_bridge;
 pub mod server;
@@ -320,13 +319,6 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 .display()
                 .to_string(),
         ),
-        // The install kit's parts ship beside this binary in the app bundle;
-        // a daemon anywhere else installs nothing (PRD device-parity D-19).
-        kit_dir: std::env::current_exe()
-            .ok()
-            .as_deref()
-            .and_then(hide_kit::bundled_kit_dir)
-            .map(|dir| dir.display().to_string()),
     };
     let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
@@ -341,16 +333,13 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         env.workspace_bridge_dir.clone(),
     );
     let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
-    let watch = Arc::new(watch::WatchService::new(
-        Arc::clone(&boundary),
-        Arc::clone(&core),
-    ));
+    let watch = Arc::new(watch::WatchService::new(Arc::clone(&core)));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
     let supervisor_exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve opener supervisor executable: {error}"))?;
-    let opener = opener::OpenHandler::new(
+    let opener = hide_node::opener::OpenHandler::new(
         env.open_command.clone(),
         Arc::clone(&shutdown),
         supervisor_exe,
@@ -652,16 +641,19 @@ fn apply_snapshot(
             .collect::<Vec<_>>(),
     );
     let (root, expanded) = watch_state_from_value(value);
-    let root = root.filter(|root| boundary.known_root(root).is_some());
-    let expanded = expanded
+    let root = root.and_then(|root| {
+        boundary
+            .root_identity(&root)
+            .map(|identity| (root, identity))
+    });
+    let expanded: Vec<String> = expanded
         .into_iter()
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
-    watch.reconcile(boundary, root, expanded);
-    watch.reconcile_device(device_watch::target_from_value(
-        value,
-        boundary.node().as_str(),
-    ));
+    watch.reconcile(root.map(|(root, identity)| {
+        watch::Target::of(boundary.node().as_str(), root, &expanded).pinned_by(identity)
+    }));
+    watch.reconcile_device(watch::device_target(value, boundary.node().as_str()));
 }
 
 /// The folders whose changes the Explorer wants announced: the focused

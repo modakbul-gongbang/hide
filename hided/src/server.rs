@@ -23,10 +23,10 @@ use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
-use crate::opener::OpenHandler;
 use crate::pane_auth::Registry;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
+use hide_node::opener::OpenHandler;
 
 const FALLBACK_INDEX: &str = include_str!("../fallback-ui/index.html");
 
@@ -1118,7 +1118,11 @@ async fn scoped_client_loop(
                                         "links_unavailable".to_owned(),
                                         "Retry; the reason is in Hide's diagnostic log",
                                     ))?;
-                                    herdr_core::links::query::run(&scope, &query)
+                                    let own = core.node_link(&scope.local_device).map_err(|_| (
+                                        "links_unavailable".to_owned(),
+                                        "Retry; the reason is in Hide's diagnostic log",
+                                    ))?;
+                                    herdr_core::links::query::run(&scope, &query, own.as_ref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
                                 }
                                 ScopedRequest::Query(query) => {
@@ -1547,12 +1551,12 @@ fn device_listing(
             "kind": "file_list", "device_id": device, "root_path": folder, "code": code, "message": message,
         }})
     };
-    let channel = match core.device_channel(&device) {
+    let channel = match core.node_link(&device) {
         Ok(channel) => channel,
         Err(message) => return unavailable("not_ready", message),
     };
-    use herdr_core::host_access::HostCallError;
-    match herdr_core::host_access::list_folder(channel.as_ref(), &root, &relative) {
+    use herdr_core::node_access::LinkError;
+    match herdr_core::node_access::list_folder(channel.as_ref(), &root, &relative) {
         Ok(listing) => {
             let base = folder.trim_end_matches('/');
             let entries: Vec<Value> = listing
@@ -1572,10 +1576,10 @@ fn device_listing(
                 "entries": entries, "truncated": listing.truncated,
             }})
         }
-        Err(HostCallError::NotConnected(message)) => unavailable("not_ready", message),
-        Err(error @ HostCallError::Busy) => unavailable("busy", error.to_string()),
-        Err(HostCallError::Unknown(message)) => unavailable("unknown", message),
-        Err(HostCallError::Refused(error)) => unavailable("refused", error.message),
+        Err(LinkError::NotConnected(message)) => unavailable("not_ready", message),
+        Err(error @ LinkError::Busy) => unavailable("busy", error.to_string()),
+        Err(LinkError::Unknown(message)) => unavailable("unknown", message),
+        Err(LinkError::Refused(error)) => unavailable("refused", error.message),
     }
 }
 
@@ -2134,8 +2138,8 @@ fn device_file_index(state: &AppState, device: &str, root: &str, query: &str) ->
     let core = Arc::clone(&state.core);
     let (walk_device, walk_root) = (device.to_owned(), root.to_owned());
     let answer = state.index.query(device, root, query, move || {
-        let channel = core.device_channel(&walk_device)?;
-        herdr_core::host_access::index_root(channel.as_ref(), &walk_root).map_err(|error| {
+        let channel = core.node_link(&walk_device)?;
+        herdr_core::node_access::index_root(channel.as_ref(), &walk_root).map_err(|error| {
             eprintln!(
                 "{}",
                 json!({
@@ -2255,8 +2259,8 @@ async fn stream_device_file_bytes(
         let (read_device, read_root, read_relative) =
             (device.to_owned(), root.clone(), relative.clone());
         let range = tokio::task::spawn_blocking(move || {
-            let channel = core.device_channel(&read_device)?;
-            herdr_core::host_access::read_bytes(
+            let channel = core.node_link(&read_device)?;
+            herdr_core::node_access::read_bytes(
                 channel.as_ref(),
                 &read_root,
                 &read_relative,

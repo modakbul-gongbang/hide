@@ -21,8 +21,8 @@ use super::view_areas::ViewPlacement;
 use super::workspace_view::WorkspaceKey;
 use super::*;
 use crate::files::{DocumentPlace, DocumentRoot, OpenFailure, SaveOutcome};
-use crate::host_access::{HostCallError, HostChannel};
 use crate::model::{EditorConflictSnapshot, EditorOpeningSnapshot, EditorSaveSnapshot};
+use crate::node_access::{LinkError, NodeLink};
 
 #[derive(Default)]
 pub(super) struct SaveSlot {
@@ -277,16 +277,16 @@ impl Runtime {
         &mut self,
         workspace_id: &str,
         checkout_id: &str,
-    ) -> Result<(DocumentRoot, Arc<dyn HostChannel>), String> {
+    ) -> Result<(DocumentRoot, Arc<dyn NodeLink>), String> {
         let root = self.document_root(workspace_id, checkout_id)?;
-        let channel = self.device_channel(&root.device_id)?;
+        let channel = self.node_link(&root.device_id)?;
         Ok((root, channel))
     }
 
     pub(super) fn start_document_open(
         &mut self,
         root: DocumentRoot,
-        channel: Arc<dyn HostChannel>,
+        channel: Arc<dyn NodeLink>,
         request: OpenRequestFields,
     ) {
         let tab_id =
@@ -791,7 +791,7 @@ impl Runtime {
             );
             return;
         };
-        let channel = match self.device_channel(&place.device_id) {
+        let channel = match self.node_link(&place.device_id) {
             Ok(channel) => channel,
             Err(message) if self.device_host_connecting(&place.device_id) => {
                 let slot = self.document_saves.entry(tab_id.to_owned()).or_default();
@@ -997,7 +997,7 @@ impl Runtime {
         let Some(place) = self.document_places.get(tab_id).cloned() else {
             return;
         };
-        let channel = match self.device_channel(&place.device_id) {
+        let channel = match self.node_link(&place.device_id) {
             Ok(channel) => channel,
             Err(message) => {
                 if let Some(slot) = self.document_saves.get_mut(tab_id) {
@@ -1044,7 +1044,7 @@ impl Runtime {
         &mut self,
         tab_id: &str,
         unsettled: UnsettledSave,
-        result: Result<Option<String>, HostCallError>,
+        result: Result<Option<String>, LinkError>,
     ) -> bool {
         let Some(slot) = self.document_saves.get_mut(tab_id) else {
             return false;
@@ -1057,7 +1057,7 @@ impl Runtime {
             self.document_saves.remove(tab_id);
             return false;
         };
-        let saved = hide_host::document::revision_of(unsettled.contents.as_bytes());
+        let saved = hide_node_link::document::revision_of(unsettled.contents.as_bytes());
         match result {
             Ok(Some(revision)) if revision == saved => {
                 slot.unsettled = None;
@@ -1094,7 +1094,7 @@ impl Runtime {
                     true,
                 );
             }
-            Err(HostCallError::Refused(error)) => {
+            Err(LinkError::Refused(error)) => {
                 slot.unsettled = None;
                 slot.waiting = None;
                 document.dirty = true;

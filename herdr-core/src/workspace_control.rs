@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::changes::{self, ChangesRequest, ChannelRef};
 use crate::files::{self, DocumentPlace, DocumentRoot, OpenFailure};
-use crate::host_access::HostChannel;
 use crate::model::EditorDocumentSnapshot;
+use crate::node_access::NodeLink;
 
 pub use crate::view_layout::Edge;
 
@@ -170,7 +170,7 @@ pub struct Refusal {
 /// The daemon reads it on a request worker before asking the owner to commit.
 pub struct ActionSource {
     root: DocumentRoot,
-    channel: Arc<dyn HostChannel>,
+    channel: Arc<dyn NodeLink>,
     path: String,
     kind: SourceKind,
     already_open: bool,
@@ -196,7 +196,7 @@ pub enum ActionPreparation {
 impl ActionSource {
     pub(crate) fn file(
         root: DocumentRoot,
-        channel: Arc<dyn HostChannel>,
+        channel: Arc<dyn NodeLink>,
         path: String,
         already_open: bool,
     ) -> Self {
@@ -209,7 +209,7 @@ impl ActionSource {
         }
     }
 
-    pub(crate) fn diff(root: DocumentRoot, channel: Arc<dyn HostChannel>, path: String) -> Self {
+    pub(crate) fn diff(root: DocumentRoot, channel: Arc<dyn NodeLink>, path: String) -> Self {
         Self {
             root,
             channel,
@@ -219,7 +219,7 @@ impl ActionSource {
         }
     }
 
-    pub(crate) fn browser(root: DocumentRoot, channel: Arc<dyn HostChannel>, path: String) -> Self {
+    pub(crate) fn browser(root: DocumentRoot, channel: Arc<dyn NodeLink>, path: String) -> Self {
         Self {
             root,
             channel,

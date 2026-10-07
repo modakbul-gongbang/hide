@@ -166,12 +166,19 @@ impl Runtime {
                 });
                 let root = PathBuf::from(&workspace.path);
                 let number = pull_request.number;
+                let node = self.own_node();
                 let spawned = self.spawn_issue_worker(
                     "pr-issue-create",
                     move || {
-                        let created = crate::github::create_issue(&root, &title, &body);
+                        let created =
+                            crate::github::create_issue(node.as_ref(), &root, &title, &body);
                         let written = created.as_ref().ok().map(|issue| {
-                            crate::github::write_closing_line(&root, number, issue.reference.number)
+                            crate::github::write_closing_line(
+                                node.as_ref(),
+                                &root,
+                                number,
+                                issue.reference.number,
+                            )
                         });
                         (created, written)
                     },
@@ -288,9 +295,10 @@ impl Runtime {
         let root = PathBuf::from(&workspace.path);
         let number = pull_request.number;
         let issue = reference.number;
+        let node = self.own_node();
         let spawned = self.spawn_issue_worker(
             "pr-body-write",
-            move || crate::github::write_closing_line(&root, number, issue),
+            move || crate::github::write_closing_line(node.as_ref(), &root, number, issue),
             move |runtime, written| runtime.finish_pr_body(&request_id, &reference, written),
         );
         if let Err(message) = spawned {
@@ -432,9 +440,10 @@ impl Runtime {
         let root = PathBuf::from(&workspace.path);
         let number = payload.pr_number;
         let answered = request_id.clone();
+        let node = self.own_node();
         if let Err(message) = self.spawn_issue_worker(
             "pr-feedback",
-            move || crate::github::pr_feedback(&root, number),
+            move || crate::github::pr_feedback(node.as_ref(), &root, number),
             move |runtime, answer| runtime.ingest_pr_feedback(&answered, answer),
         ) {
             self.ingest_pr_feedback(&request_id, Err(message));

@@ -13,7 +13,7 @@ pub(super) enum PreparedFileTab {
     /// read lands.
     Reading {
         root: crate::files::DocumentRoot,
-        channel: std::sync::Arc<dyn crate::host_access::HostChannel>,
+        channel: std::sync::Arc<dyn crate::node_access::NodeLink>,
     },
 }
 
@@ -2459,7 +2459,7 @@ impl Runtime {
         {
             let located = self
                 .document_root(workspace_id, checkout_id)
-                .and_then(|root| Ok((self.device_channel(&root.device_id)?, root)));
+                .and_then(|root| Ok((self.node_link(&root.device_id)?, root)));
             located.and_then(|(channel, root)| {
                 self.worker_context
                     .as_ref()

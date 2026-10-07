@@ -258,12 +258,12 @@ impl Runtime {
     fn changes_channel(
         &mut self,
         device_id: &str,
-    ) -> Result<Arc<dyn crate::host_access::HostChannel>, String> {
+    ) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
         if device_id != self.node.as_str() && !self.device_hosts.contains_key(device_id) {
             self.start_device_host(device_id);
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
-            _ if device_id == self.node.as_str() => Ok(Arc::clone(&self.local_host)),
+            _ if device_id == self.node.as_str() => Ok(Arc::clone(&self.own_node)),
             Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
                 Ok(Arc::clone(host))
             }
@@ -394,17 +394,19 @@ impl Runtime {
         let loading = self.snapshot.git_worktrees_loading && !current;
         let changed =
             self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading != loading;
-        self.local_worktree_paths = catalog
-            .projects
-            .iter()
-            .map(|project| {
-                project
-                    .worktrees
-                    .iter()
-                    .map(|worktree| session::PathRules::Local.read(&worktree.path))
-                    .collect()
-            })
-            .collect();
+        self.local_worktree_paths = Arc::new(
+            catalog
+                .projects
+                .iter()
+                .map(|project| {
+                    project
+                        .worktrees
+                        .iter()
+                        .map(|worktree| worktree.path.clone())
+                        .collect()
+                })
+                .collect(),
+        );
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
@@ -659,7 +661,7 @@ impl Runtime {
         // emptied one by one.
         let mut cells: Vec<live::cleanup::CellChoice> = Vec::new();
         for cell in payload.cells.into_iter().take(limit) {
-            let Some(layer) = crate::disk_layers::Layer::from_code(&cell.layer) else {
+            let Some(layer) = hide_node_link::disk::Layer::from_code(&cell.layer) else {
                 continue;
             };
             let choice = live::cleanup::CellChoice {
@@ -863,7 +865,7 @@ impl Runtime {
             if workspace.remote_target_id.is_some() {
                 continue;
             }
-            workspace::apply_worktrees(workspace, &self.worktree_catalog);
+            workspace::apply_worktrees(workspace, &self.worktree_catalog, &self.catalog_paths);
             // The commit a checkout is on is what ties a settled pull request
             // to it, so a catalog read that moved a HEAD decides again here,
             // and whether its work landed follows the same read.
@@ -2588,14 +2590,14 @@ impl Runtime {
     pub(crate) fn confirmed_worktree_removal(
         &self,
         id: u64,
-    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+    ) -> Option<hide_node_link::worktrees::ConfirmedRemoval> {
         self.worktree_removal_request(id, "removing")
     }
 
     pub(crate) fn worktree_preflight_request(
         &self,
         id: u64,
-    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+    ) -> Option<hide_node_link::worktrees::ConfirmedRemoval> {
         self.worktree_removal_request(id, "checking")
     }
 
@@ -2603,10 +2605,10 @@ impl Runtime {
         &self,
         id: u64,
         phase: &str,
-    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+    ) -> Option<hide_node_link::worktrees::ConfirmedRemoval> {
         let removal = self.snapshot.worktree_removal.as_ref()?;
         (removal.id == id && removal.phase == phase).then(|| {
-            hide_host::worktrees::ConfirmedRemoval {
+            hide_node_link::worktrees::ConfirmedRemoval {
                 repository_root: removal.repository_root.clone(),
                 checkout_path: removal.checkout_path.clone(),
                 expected_head_sha: removal.expected_head_sha.clone(),
@@ -2694,7 +2696,7 @@ impl Runtime {
     pub(super) fn local_worktree_target(&self) -> Result<live::WorktreeTarget, String> {
         self.live
             .as_ref()
-            .map(|context| live::WorktreeTarget::local(context, Arc::clone(&self.local_host)))
+            .map(|context| live::WorktreeTarget::local(context, Arc::clone(&self.own_node)))
             .ok_or_else(|| "A live Herdr connection is required".to_owned())
     }
 
@@ -2710,7 +2712,7 @@ impl Runtime {
             .get(device)
             .cloned()
             .ok_or_else(|| "The device's Herdr connection is unavailable".to_owned())?;
-        let host = self.device_channel(device)?;
+        let host = self.node_link(device)?;
         Ok(live::WorktreeTarget::device(&control, host))
     }
 
@@ -3642,7 +3644,9 @@ impl Runtime {
                 Err("move branch: a live Herdr connection is required".into()),
             );
         };
-        if let Err(message) = live::spawn_branch_migration(context, request) {
+        if let Err(message) =
+            live::spawn_branch_migration(context, Arc::clone(&self.own_node), request)
+        {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true

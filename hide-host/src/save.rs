@@ -54,16 +54,11 @@ use cap_std::fs::{Dir, OpenOptions};
 use hide_platform::fs::lock::{self, Mode, Waited};
 use hide_platform::fs::permissions::Permissions;
 use hide_platform::fs::{atomic, identity, private};
-use serde::{Deserialize, Serialize};
 
 use crate::document::{MAX_EDITABLE_BYTES, read_bounded, revision_of};
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::root::open_parent;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Saved {
-    pub revision: String,
-}
+pub use hide_node_link::save::Saved;
 
 /// The points a test can stop a save at to change the world underneath it.
 #[doc(hidden)]

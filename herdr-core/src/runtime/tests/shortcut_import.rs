@@ -18,13 +18,13 @@ fn runtime_at(state: &std::path::Path, native: &std::path::Path) -> Runtime {
             workspace_views_path: None,
             shortcut_import_path: Some(native.to_string_lossy().into_owned()),
             local_issues_path: None,
-            kit_dir: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )
 }
 

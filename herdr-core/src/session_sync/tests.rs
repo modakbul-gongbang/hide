@@ -566,13 +566,13 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
-            kit_dir: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )))
 }
 
@@ -583,8 +583,9 @@ fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> Ses
         runtime: Arc::downgrade(runtime),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     };
-    SessionSyncContext::local(&live)
+    SessionSyncContext::local(&live, std::sync::Arc::new(hide_node::Local::of_process()))
 }
 
 fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
@@ -979,13 +980,13 @@ fn official_remote_session_coordinator_probe() {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
-            kit_dir: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
-            home_path: Some(PathBuf::from(home)),
+            home_path: Some(PathBuf::from(&home)),
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::new(Some(PathBuf::from(home)))),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the
@@ -1718,7 +1719,8 @@ fn fresh_catalog() -> CatalogCache {
         spaces: Vec::new(),
         worktrees: crate::model::WorktreeCatalogSnapshot::default(),
         workspaces: Vec::new(),
-        roots: workspace::RootIndex::new(),
+        asked: BTreeSet::new(),
+        paths: Default::default(),
         built_at: Instant::now(),
     }
 }
@@ -1737,7 +1739,7 @@ fn agent_refresh_reconciles_a_plain_new_panes_live_checkout_cwd() {
     replica.refresh_published_state().expect("publish live cwd");
     let projected = replica.project();
     assert_eq!(
-        Runtime::session_spaces(&projected)[0].cwds,
+        Runtime::session_spaces(&projected, &workspace::PathIndex::NONE)[0].cwds,
         vec!["/tmp/fixture".to_owned()],
         "the shell's live directory, not its inherited birth cwd, owns both tabs"
     );

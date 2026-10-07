@@ -1,0 +1,23 @@
+[package]
+name = "hide-node"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The machine side of Hide (PRD core-host-node D-21): the work a node does on
+# the machine it runs on, answered through `hide_node_link::NodeLink`.
+
+[dependencies]
+cap-std = "=4.0.3"
+hide-herdr-client = { path = "../hide-herdr-client" }
+hide-host = { path = "../hide-host" }
+hide-node-link = { path = "../hide-node-link" }
+hide-platform = { path = "../hide-platform" }
+serde_json = "=1.0.151"
+tokio = { version = "=1.53.1", features = ["process", "rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"

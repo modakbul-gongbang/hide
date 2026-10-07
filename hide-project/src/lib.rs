@@ -151,12 +151,44 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
 
 pub mod git {
     use super::ResolveError;
+    use serde::{Deserialize, Serialize};
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::io::{BufRead, BufReader, Read};
     use std::path::{Path, PathBuf};
 
     /// The most of `packed-refs` `head_oid` reads.
     const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
+    /// The most of a repository's config read; past it the config is refused
+    /// rather than read in part, which also bounds how many branch notes one
+    /// answer can carry.
+    const CONFIG_LIMIT: u64 = 1024 * 1024;
+    /// The most of a pointer file (`HEAD`, a loose ref, `.git`, `gitdir`,
+    /// `commondir`), each a line long when Git writes it.
+    const POINTER_LIMIT: u64 = 64 * 1024;
+
+    /// The regular file a repository's name resolves to. A repository's files
+    /// are written by whatever runs in it, so a pipe or a device is refused
+    /// without blocking the reader. A link is followed, as Git follows it: a
+    /// config a dotfile manager links in still names its branches. Discovery
+    /// still takes only a repository whose `HEAD` is a regular file.
+    fn open_file(path: &Path) -> std::io::Result<std::fs::File> {
+        hide_platform::fs::open_regular(&std::fs::canonicalize(path)?)
+    }
+
+    /// The text of the file `open_file` opens at `path`, refused past `limit`
+    /// bytes rather than read whole.
+    fn read_small(path: &Path, limit: u64) -> std::io::Result<String> {
+        let mut text = String::new();
+        open_file(path)?.take(limit + 1).read_to_string(&mut text)?;
+        if text.len() as u64 > limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::FileTooLarge,
+                format!("larger than {limit} bytes"),
+            ));
+        }
+        Ok(text)
+    }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Repository {
@@ -174,7 +206,7 @@ pub mod git {
         }
 
         pub fn branch(&self) -> Option<String> {
-            let head = fs::read_to_string(self.git_dir.join("HEAD")).ok()?;
+            let head = read_small(&self.git_dir.join("HEAD"), POINTER_LIMIT).ok()?;
             let reference = head.trim().strip_prefix("ref:")?.trim();
             let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
             (!name.is_empty()).then(|| name.to_owned())
@@ -188,7 +220,7 @@ pub mod git {
         /// commit yet or a ref holds something that is not an object name;
         /// a wrong commit is never made up.
         pub fn head_oid(&self) -> Option<String> {
-            let head = fs::read_to_string(self.git_dir.join("HEAD")).ok()?;
+            let head = read_small(&self.git_dir.join("HEAD"), POINTER_LIMIT).ok()?;
             let head = head.trim();
             let Some(reference) = head.strip_prefix("ref:") else {
                 return object_name(head);
@@ -206,13 +238,13 @@ pub mod git {
             if !safe {
                 return None;
             }
-            if let Ok(loose) = fs::read_to_string(self.common_dir.join(reference)) {
+            if let Ok(loose) = read_small(&self.common_dir.join(reference), POINTER_LIMIT) {
                 return object_name(loose.trim());
             }
             // Streamed and capped: a repository that has packed many refs
             // can hold a file of megabytes, and a missing line in the first
             // `PACKED_REFS_LIMIT` bytes is no answer rather than a guess.
-            let packed = fs::File::open(self.common_dir.join("packed-refs")).ok()?;
+            let packed = open_file(&self.common_dir.join("packed-refs")).ok()?;
             BufReader::new(packed.take(PACKED_REFS_LIMIT))
                 .lines()
                 .map_while(Result::ok)
@@ -227,17 +259,35 @@ pub mod git {
 
         pub fn branch_description(&self, branch: &str) -> Result<Option<String>, String> {
             let path = self.common_dir.join("config");
-            let text = fs::read_to_string(&path)
+            let text = read_small(&path, CONFIG_LIMIT)
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
             Ok(parse_branch_description(&text, branch))
         }
 
         pub fn branch_issue(&self, branch: &str) -> Result<Option<String>, String> {
             let path = self.common_dir.join("config");
-            let text = fs::read_to_string(&path)
+            let text = read_small(&path, CONFIG_LIMIT)
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
             Ok(parse_branch_value(&text, branch, "issue"))
         }
+
+        /// Every branch's description and issue in the repository's config,
+        /// each read as [`Repository::branch_description`] and
+        /// [`Repository::branch_issue`] read one branch; a branch with
+        /// neither is not listed.
+        pub fn branch_notes(&self) -> Result<BTreeMap<String, BranchNote>, String> {
+            let path = self.common_dir.join("config");
+            let text = read_small(&path, CONFIG_LIMIT)
+                .map_err(|error| format!("repository config could not be read: {error}"))?;
+            Ok(parse_branch_notes(&text))
+        }
+    }
+
+    /// What a repository's config says of one branch.
+    #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+    pub struct BranchNote {
+        pub description: Option<String>,
+        pub issue: Option<String>,
     }
 
     pub fn discover(path: &Path) -> Option<Repository> {
@@ -291,7 +341,7 @@ pub mod git {
             return Err(invalid(&dotgit, "dotgit_not_file_or_directory"));
         }
 
-        let text = fs::read_to_string(&dotgit)
+        let text = read_small(&dotgit, POINTER_LIMIT)
             .map_err(|error| invalid(&dotgit, format!("pointer_read:{error}")))?;
         let named = text
             .trim()
@@ -317,7 +367,7 @@ pub mod git {
 
         let reciprocal = candidate.join("gitdir");
         require_regular_file(&reciprocal, "worktree_gitdir")?;
-        let reciprocal_text = fs::read_to_string(&reciprocal)
+        let reciprocal_text = read_small(&reciprocal, POINTER_LIMIT)
             .map_err(|error| invalid(&reciprocal, format!("worktree_gitdir_read:{error}")))?;
         let reciprocal_target = canonical(
             &absolute(&candidate, Path::new(reciprocal_text.trim())),
@@ -332,7 +382,7 @@ pub mod git {
     fn common_dir_of(git_dir: &Path) -> Result<PathBuf, ResolveError> {
         let path = git_dir.join("commondir");
         require_regular_file(&path, "commondir")?;
-        let text = fs::read_to_string(&path)
+        let text = read_small(&path, POINTER_LIMIT)
             .map_err(|error| invalid(&path, format!("commondir_read:{error}")))?;
         canonical(
             &absolute(git_dir, Path::new(text.trim())),
@@ -394,6 +444,52 @@ pub mod git {
             return (!first.is_empty()).then(|| first.to_owned());
         }
         None
+    }
+
+    /// Each branch's first `description` and first `issue`, in the order
+    /// [`parse_branch_value`] would find them.
+    fn parse_branch_notes(config: &str) -> BTreeMap<String, BranchNote> {
+        let mut notes = BTreeMap::<String, BranchNote>::new();
+        let mut seen = BTreeSet::<(String, bool)>::new();
+        let mut branch = None;
+        for raw_line in config.lines() {
+            let line = raw_line.trim();
+            if line.starts_with('[') {
+                branch = parse_branch_section(line);
+                continue;
+            }
+            let Some(branch) = branch.as_ref() else {
+                continue;
+            };
+            if line.is_empty() || line.starts_with(['#', ';']) {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            let description = if key.eq_ignore_ascii_case("description") {
+                true
+            } else if key.eq_ignore_ascii_case("issue") {
+                false
+            } else {
+                continue;
+            };
+            if !seen.insert((branch.clone(), description)) {
+                continue;
+            }
+            let value = parse_config_value(value.trim());
+            let first = value.lines().next().unwrap_or_default().trim_end();
+            let value = (!first.is_empty()).then(|| first.to_owned());
+            let note = notes.entry(branch.clone()).or_default();
+            if description {
+                note.description = value;
+            } else {
+                note.issue = value;
+            }
+        }
+        notes.retain(|_, note| note.description.is_some() || note.issue.is_some());
+        notes
     }
 
     fn parse_branch_section(line: &str) -> Option<String> {
@@ -530,6 +626,60 @@ pub mod git {
             assert_eq!(repository.head_oid().as_deref(), Some(SECOND));
         }
 
+        /// Whatever runs in a repository writes its files, so a pipe at the
+        /// config's name answers at once as unreadable instead of holding
+        /// the reader until something writes into it, and an outsized
+        /// config is refused rather than read whole.
+        #[cfg(unix)]
+        #[test]
+        fn a_config_that_is_a_pipe_or_outsized_is_refused_at_once() {
+            let (_temp, repository) = repository("ref: refs/heads/main");
+            let config = repository.common_dir.join("config");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&config)
+                .status()
+                .unwrap();
+            assert!(made.success());
+            assert!(repository.branch_notes().is_err());
+
+            fs::remove_file(&config).unwrap();
+            fs::write(&config, vec![b'#'; CONFIG_LIMIT as usize + 1]).unwrap();
+            assert!(repository.branch_notes().is_err());
+            fs::write(&config, "[branch \"main\"]\n\tdescription = kept\n").unwrap();
+            assert_eq!(
+                repository.branch_notes().unwrap()["main"]
+                    .description
+                    .as_deref(),
+                Some("kept")
+            );
+        }
+
+        /// A linked branch ref and config are followed, as Git follows them.
+        #[cfg(unix)]
+        #[test]
+        fn a_linked_ref_and_config_are_read_through_the_link() {
+            let (temp, repository) = repository("ref: refs/heads/main");
+            let elsewhere = temp.path().join("dotfiles");
+            fs::create_dir_all(&elsewhere).unwrap();
+            for (name, text) in [
+                ("refs/heads/main", FIRST),
+                ("config", "[branch \"main\"]\n\tdescription = linked\n"),
+            ] {
+                let target = elsewhere.join(name.replace('/', "-"));
+                fs::write(&target, text).unwrap();
+                let at = repository.common_dir.join(name);
+                fs::remove_file(&at).ok();
+                std::os::unix::fs::symlink(&target, &at).unwrap();
+            }
+            assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
+            assert_eq!(
+                repository.branch_notes().unwrap()["main"]
+                    .description
+                    .as_deref(),
+                Some("linked")
+            );
+        }
+
         #[test]
         fn a_detached_head_is_its_own_commit() {
             let (_temp, repository) = repository(FIRST);
@@ -596,6 +746,35 @@ pub mod git {
                 parse_branch_value(config, "topic", "issue").as_deref(),
                 Some("owner/repository#42")
             );
+        }
+
+        /// One pass over the config reads every branch as the one-branch
+        /// readers do: the first value of each key wins, an empty first
+        /// value is no value, and another section's keys are not a branch's.
+        #[test]
+        fn branch_notes_read_every_branch_as_the_one_branch_readers_do() {
+            let config = concat!(
+                "[core]\n\tdescription = not a branch\n",
+                "[branch \"topic\"]\n\tissue = \"owner/repository#42\"\n\tdescription = purpose\n",
+                "[branch \"empty\"]\n\tdescription =\n\tdescription = later\n",
+                "[branch \"topic\"]\n\tdescription = second\n",
+                "[branch \"plain\"]\n\tmerge = refs/heads/plain\n",
+            );
+            let notes = parse_branch_notes(config);
+            for branch in ["topic", "empty", "plain"] {
+                let note = notes.get(branch).cloned().unwrap_or_default();
+                assert_eq!(
+                    note.description,
+                    parse_branch_description(config, branch),
+                    "{branch}"
+                );
+                assert_eq!(
+                    note.issue,
+                    parse_branch_value(config, branch, "issue"),
+                    "{branch}"
+                );
+            }
+            assert_eq!(notes.keys().collect::<Vec<_>>(), ["topic"]);
         }
     }
 }

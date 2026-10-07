@@ -60,13 +60,13 @@ pub(super) fn restart(path: &str) -> Runtime {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
-            kit_dir: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )
 }
 

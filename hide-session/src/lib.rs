@@ -33,6 +33,7 @@ pub mod label_transcript;
 pub mod links;
 mod opencode;
 pub mod search;
+pub mod search_read;
 pub mod session_activity;
 mod sightings;
 
