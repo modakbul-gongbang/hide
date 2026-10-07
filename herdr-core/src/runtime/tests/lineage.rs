@@ -2412,13 +2412,22 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
         "a machine whose kit has not answered cannot start Codex yet"
     );
     runtime.ingest_kit_report(crate::node::TEST_NODE, &report(Some(true)));
-    assert_eq!(runtime.codex_daemon(crate::node::TEST_NODE), CodexDaemon::Present);
+    assert_eq!(
+        runtime.codex_daemon(crate::node::TEST_NODE),
+        CodexDaemon::Present
+    );
 
     runtime.ingest_kit_report(crate::node::TEST_NODE, &report(Some(false)));
-    assert_eq!(runtime.codex_daemon(crate::node::TEST_NODE), CodexDaemon::Unsupported);
+    assert_eq!(
+        runtime.codex_daemon(crate::node::TEST_NODE),
+        CodexDaemon::Unsupported
+    );
 
     runtime.ingest_kit_report(crate::node::TEST_NODE, &report(None));
-    assert_eq!(runtime.codex_daemon(crate::node::TEST_NODE), CodexDaemon::Unknown);
+    assert_eq!(
+        runtime.codex_daemon(crate::node::TEST_NODE),
+        CodexDaemon::Unknown
+    );
 
     // The retired switch is not an event any more.
     let retired = serde_json::to_vec(&serde_json::json!({

@@ -82,8 +82,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     for (const id of PARTS) await expect(page.locator(`[data-kit-part="${nodeOf(run.env)}:${id}:installed"]`)).toBeVisible();
     await screenshot(page, "this-mac-kit-installed");
     await page.keyboard.press("Escape");
-    await expect(page.locator('[data-device-details-dialog="local"]')).toHaveCount(0);
-    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
+    await expect(page.locator(`[data-device-details-dialog="${nodeOf(run.env)}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-kit-reinstall="${nodeOf(run.env)}"]`)).toHaveCount(0);
     await page.locator('[data-settings-tab="agents"]').click();
     await expect(page.locator('[data-settings-tab="agents"]')).toHaveAttribute("data-state", "active");
     await screenshot(page, "this-mac-hooks");

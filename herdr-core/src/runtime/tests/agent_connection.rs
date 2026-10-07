@@ -526,13 +526,16 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
         Some(PaneConnectionReason::CodexSharedServer)
     );
 
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
     assert_eq!(
         runtime.local_kit_pending,
         Some(hide_kit::Scope::codex_daemon_off())
     );
-    assert!(!disable(&mut runtime, "local"), "the same intent runs once");
+    assert!(
+        !disable(&mut runtime, crate::node::TEST_NODE),
+        "the same intent runs once"
+    );
 
     // A read that lands first says nothing about the request.
     runtime.ingest_kit_report(crate::node::TEST_NODE, &report_with(true, None));
@@ -562,7 +565,7 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
 
     // Trying again is a new attempt; a success turns the pane's reason into
     // the one a session started before the hook has.
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
     runtime.ingest_kit_report(
         crate::node::TEST_NODE,
@@ -577,7 +580,7 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
         Some(PaneConnectionReason::StartedBeforeHide)
     );
     assert!(
-        !disable(&mut runtime, "local"),
+        !disable(&mut runtime, crate::node::TEST_NODE),
         "already off: nothing to turn off"
     );
 }
@@ -737,7 +740,7 @@ fn an_unreadable_daemon_answer_is_no_answer_and_is_logged_once() {
 fn a_machine_with_no_kit_or_no_such_device_refuses_the_request_with_an_error() {
     let mut runtime = runtime();
     runtime.set_local_kit_unavailable("standalone daemon");
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(
         runtime
             .snapshot()

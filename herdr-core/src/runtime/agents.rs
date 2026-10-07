@@ -1132,7 +1132,7 @@ impl Runtime {
         };
         let codex_daemon_on = self
             .kit_states
-            .get(crate::workspace::LOCAL_DEVICE_ID)
+            .get(self.node.as_str())
             .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
@@ -1541,7 +1541,7 @@ impl Runtime {
     pub fn ai_request(&self) -> crate::ai::AiRequest {
         let settings = self.ai_settings.clone().unwrap_or_default();
         let selecting = if self.ai_settings.is_some() && settings.enabled && !settings.chosen {
-            self.kit_state(crate::workspace::LOCAL_DEVICE_ID)
+            self.kit_state(self.node.as_str())
                 .agents
                 .iter()
                 .filter(|row| {
@@ -1557,7 +1557,7 @@ impl Runtime {
         } else {
             std::collections::BTreeSet::new()
         };
-        let kit = self.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+        let kit = self.kit_state(self.node.as_str());
         // The kit's own answer to "is this agent's program on this Mac"; none
         // until it has read, so no agent is called missing from no reading.
         let cli_found = (!kit.agents.is_empty()).then(|| {
@@ -1658,7 +1658,7 @@ impl Runtime {
             return false;
         }
         let on: Vec<String> = self
-            .kit_state(crate::workspace::LOCAL_DEVICE_ID)
+            .kit_state(self.node.as_str())
             .agents
             .iter()
             .filter(|row| row.enabled)

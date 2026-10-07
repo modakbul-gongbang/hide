@@ -39,13 +39,13 @@ test("a device row is one line with Test and a menu, Add device is one button, a
     await expect(sheet.locator("[data-device-add-open]")).toBeVisible();
 
     // B55: This Mac's menu has Connection details and nothing that removes it or revokes a helper.
-    const local = sheet.locator('[data-device-row="local"]');
-    await expect(local.locator('[data-device-subtitle="local"]')).toBeVisible();
-    await local.locator('[data-device-menu="local"]').click();
-    const localMenu = page.locator('[data-device-menu-content="local"]');
+    const local = sheet.locator(`[data-device-row="${daemon.node}"]`);
+    await expect(local.locator(`[data-device-subtitle="${daemon.node}"]`)).toBeVisible();
+    await local.locator(`[data-device-menu="${daemon.node}"]`).click();
+    const localMenu = page.locator(`[data-device-menu-content="${daemon.node}"]`);
     await expect(localMenu.getByRole("menuitem")).toHaveText(["Connection details…"]);
-    await localMenu.locator('[data-device-details="local"]').click();
-    const details = page.locator('[data-device-details-dialog="local"]');
+    await localMenu.locator(`[data-device-details="${daemon.node}"]`).click();
+    const details = page.locator(`[data-device-details-dialog="${daemon.node}"]`);
     await expect(details).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(details).toHaveCount(0);

@@ -494,7 +494,7 @@ fn ready_read(ids: &[&str]) -> crate::model::BackgroundAiSnapshot {
 /// Switches the named agents on in this Mac's kit snapshot, as the first-run
 /// choice or Settings › Agents leaves them.
 fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
-    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    let mut kit = runtime.kit_state(crate::node::TEST_NODE);
     kit.agents = hide_kit::agents::ADAPTERS
         .iter()
         .map(|adapter| {
@@ -519,7 +519,7 @@ fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
             }
         })
         .collect();
-    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    runtime.set_kit_state(crate::node::TEST_NODE, kit);
 }
 
 /// The Hide AI tab's state travels on the ordinary snapshot, and nothing on
