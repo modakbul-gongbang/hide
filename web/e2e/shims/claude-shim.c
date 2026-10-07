@@ -101,6 +101,17 @@ static int models(void) {
        "{\"value\":\"sonnet\",\"resolvedModel\":\"claude-sonnet-5-5\"}]}}}");
   return 0;
 }
+// Specs copy this shim as `codex`. Herdr 0.9.2 reads no idle Codex screen as
+// idle, and `agent start --kind codex` succeeds only once the screen shows
+// Codex's startup composer, so the copy draws that line.
+static int run_as_codex(const char *argv0) {
+  const char *base = argv0;
+  for (const char *at = argv0; *at; at++) {
+    if (*at == '/' || *at == '\\') base = at + 1;
+  }
+  return strncmp(base, "codex", 5) == 0;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
@@ -117,6 +128,10 @@ int main(int argc, char **argv) {
 #endif
   int log = log_path ? open(log_path, flags, 0644) : -1;
   raw_terminal();
+  if (run_as_codex(argv[0])) {
+    static const char composer[] = "\xe2\x80\xba Ask Codex to do anything\r\n";
+    if (terminal_write(composer, sizeof composer - 1) != (fixture_count_t)(sizeof composer - 1)) return 1;
+  }
 #ifdef _WIN32
   // Herdr's encoded PowerShell launch has no visible agent name.
   // Announce from the initialized interactive process before reading input.
