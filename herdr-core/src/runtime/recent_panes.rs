@@ -43,7 +43,7 @@ impl Runtime {
     /// Whether a tab the shell can draw holds `pane_id`: this machine's
     /// checkouts, or a connected device's, whose pane ids are already scoped
     /// to the device.
-    fn pane_listed(&self, pane_id: &str) -> bool {
+    pub(super) fn pane_listed(&self, pane_id: &str) -> bool {
         let holds = |workspaces: &[WorkspaceSnapshot]| {
             workspaces
                 .iter()

@@ -214,7 +214,12 @@ pub struct InboxItem {
     pub stop: Option<StopReason>,
 }
 
-pub fn build(factories: &[&Factory], tasks: &[&Task], now: UnixMs) -> FactorySummary {
+pub fn build(
+    factories: &[&Factory],
+    tasks: &[&Task],
+    now: UnixMs,
+    utc_offset_ms: i64,
+) -> FactorySummary {
     let mut summary = FactorySummary::default();
     for factory in factories {
         let mine: BTreeMap<String, Task> = tasks
@@ -223,7 +228,7 @@ pub fn build(factories: &[&Factory], tasks: &[&Task], now: UnixMs) -> FactorySum
             .map(|task| (task.id.clone(), (*task).clone()))
             .collect();
         let items = inbox_items(factory, &mine, now);
-        let view = factory_view(factory, &mine, items.len() as u32, now);
+        let view = factory_view(factory, &mine, items.len() as u32, now, utc_offset_ms);
         summary.my_turn += view.my_turn;
         summary.inbox.extend(items);
         summary.factories.push(view);
@@ -236,13 +241,20 @@ pub fn build(factories: &[&Factory], tasks: &[&Task], now: UnixMs) -> FactorySum
     summary
 }
 
+/// The day a time falls on where the machine is, not in UTC: Seoul's day
+/// starts at 15:00 UTC, so a Task done at 08:00 there is done today.
+fn local_day(at: UnixMs, utc_offset_ms: i64) -> i64 {
+    (at as i64 + utc_offset_ms).div_euclid(DAY_MS as i64)
+}
+
 fn factory_view(
     factory: &Factory,
     tasks: &BTreeMap<String, Task>,
     my_turn: u32,
     now: UnixMs,
+    utc_offset_ms: i64,
 ) -> FactoryView {
-    let today = now / DAY_MS;
+    let today = local_day(now, utc_offset_ms);
     let mut flow = Flow::default();
     let mut columns: BTreeMap<Column, Vec<(&Task, CardView)>> = BTreeMap::new();
     let mut cancelled = Vec::new();
@@ -252,7 +264,11 @@ fn factory_view(
             Some(Column::Drafting) => flow.drafting += 1,
             Some(Column::Waiting) => flow.waiting += 1,
             Some(Column::Running) => flow.running += 1,
-            Some(Column::Done) if task.done_at.is_some_and(|at| at / DAY_MS == today) => {
+            Some(Column::Done)
+                if task
+                    .done_at
+                    .is_some_and(|at| local_day(at, utc_offset_ms) == today) =>
+            {
                 flow.done_today += 1;
             }
             Some(Column::Done) => {}
@@ -817,6 +833,21 @@ mod tests {
             indexes,
             (0..all.len()).collect::<Vec<_>>(),
             "ALL lists every variant once, in order"
+        );
+    }
+
+    #[test]
+    fn a_task_done_before_nine_in_seoul_is_done_today_there() {
+        const HOUR: i64 = 3_600_000;
+        // 2026-10-07 05:00 UTC is 14:00 in Seoul; 2026-10-06 23:30 UTC is 08:30 there.
+        let now = 1_791_349_200_000;
+        let done = now - 5 * HOUR as u64 - 30 * 60_000;
+        assert_eq!(local_day(done, 9 * HOUR), local_day(now, 9 * HOUR));
+        assert_ne!(local_day(done, 0), local_day(now, 0), "a different UTC day");
+        // Seoul's day ends at 15:00 UTC.
+        assert_ne!(
+            local_day(now + 10 * HOUR as u64, 9 * HOUR),
+            local_day(now, 9 * HOUR)
         );
     }
 

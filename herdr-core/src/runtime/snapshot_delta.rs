@@ -33,6 +33,13 @@ pub(super) struct DeltaState {
     last_link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
     link_panel_revision: u64,
     last_link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
+    /// The Factory sections are stamped by edit number: the summary can hold
+    /// thousands of cards, so a read compares two numbers, never the values.
+    factory_revision: u64,
+    factory_edit: u64,
+    factory_task_revision: u64,
+    /// `None` until a page was ever opened; `Some(0)` once it closed.
+    factory_task_edit: Option<u64>,
     /// Reference-counted so a delta can carry the section out of the lock
     /// without copying it. The runtime never mutates one in place: a changed
     /// section becomes a new `Arc`, which leaves any payload already handed
@@ -140,6 +147,23 @@ impl Runtime {
             self.delta.link_panel_revision = self.delta.revision;
             self.delta.last_link_panel = Some(Arc::new(panel.clone()));
         }
+        if let Some(factory) = &self.snapshot.factory
+            && factory.edit_number() != self.delta.factory_edit
+        {
+            self.delta.revision += 1;
+            self.delta.factory_revision = self.delta.revision;
+            self.delta.factory_edit = factory.edit_number();
+        }
+        let task_edit = match &self.snapshot.factory_task {
+            Some(task) => Some(task.edit_number()),
+            // A page that closed stays announced as closed.
+            None => self.delta.factory_task_edit.map(|_| 0),
+        };
+        if task_edit != self.delta.factory_task_edit {
+            self.delta.revision += 1;
+            self.delta.factory_task_revision = self.delta.revision;
+            self.delta.factory_task_edit = task_edit;
+        }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
         let have_revision = if have_revision > self.delta.revision {
@@ -224,6 +248,17 @@ impl Runtime {
                 .as_ref()
                 .filter(|_| self.delta.link_panel_revision > have_revision)
                 .map(Arc::clone),
+            // Cloning a section clones the summary's `Arc` and at most the
+            // capped answers, never the cards.
+            factory: self
+                .snapshot
+                .factory
+                .as_deref()
+                .filter(|_| self.delta.factory_revision > have_revision)
+                .cloned(),
+            factory_task: (self.delta.factory_task_edit.is_some()
+                && self.delta.factory_task_revision > have_revision)
+                .then(|| self.snapshot.factory_task.as_deref().cloned()),
             find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,
