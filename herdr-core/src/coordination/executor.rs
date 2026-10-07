@@ -36,7 +36,7 @@ fn mutate(
                 context: authority.context.clone(),
             },
             actor: actor.clone(),
-            mutation,
+            mutation: Box::new(mutation),
         },
         STORE_TIMEOUT,
     )
