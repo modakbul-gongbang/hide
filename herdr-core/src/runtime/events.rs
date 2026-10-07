@@ -609,16 +609,11 @@ pub(super) struct UiStateUpdatePayload {
     #[serde(default)]
     pub(super) collapsed_checkout_ids: Option<Vec<String>>,
     pub(super) selected_path: Option<String>,
-    pub(super) selected_pane_id: Option<String>,
     #[serde(default)]
     pub(super) shortcut_bindings: std::collections::BTreeMap<String, String>,
     /// Absent keeps the web shell's chords; only that shell sends them.
     #[serde(default)]
     pub(super) browser_shortcut_bindings: Option<std::collections::BTreeMap<String, String>>,
-    #[serde(default)]
-    pub(super) focused_device_id: Option<Option<String>>,
-    #[serde(default)]
-    pub(super) focused_checkout_id: Option<Option<String>>,
     #[serde(default)]
     pub(super) workspace_registrations: Option<Vec<crate::model::WorkspaceRegistration>>,
     #[serde(default)]
@@ -3502,7 +3497,12 @@ impl Runtime {
                     project_base_branches: current.project_base_branches,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     selected_path: payload.selected_path,
-                    selected_pane_id: payload.selected_pane_id,
+                    // The keyboard's pane, checkout and device are the
+                    // core's: it moves them on the event that asks for the
+                    // move and tells Herdr. A whole-state save carries the
+                    // shell's last copy of them, which a newer choice can
+                    // already have overtaken, so it moves none of them.
+                    selected_pane_id: current.selected_pane_id,
                     shortcut_bindings: if bindings_fit(&payload.shortcut_bindings) {
                         payload.shortcut_bindings
                     } else {
@@ -3529,12 +3529,8 @@ impl Runtime {
                     pet_visible: self.snapshot.ui_state.pet_visible,
                     pet_origin: self.snapshot.ui_state.pet_origin,
                     pet_shortcut: self.snapshot.ui_state.pet_shortcut.clone(),
-                    focused_device_id: payload
-                        .focused_device_id
-                        .unwrap_or(current.focused_device_id),
-                    focused_checkout_id: payload
-                        .focused_checkout_id
-                        .unwrap_or(current.focused_checkout_id),
+                    focused_device_id: current.focused_device_id,
+                    focused_checkout_id: current.focused_checkout_id,
                     workspace_registrations: payload
                         .workspace_registrations
                         .unwrap_or(current.workspace_registrations),
@@ -3599,16 +3595,7 @@ impl Runtime {
                 if self.snapshot.ui_state == previous_ui_state {
                     return true;
                 }
-                self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
-                self.snapshot.navigator.focused_device_id =
-                    self.snapshot.ui_state.focused_device_id.clone();
-                self.snapshot.navigator.focused_checkout_id =
-                    self.snapshot.ui_state.focused_checkout_id.clone();
-                // UI-state writes can carry a focus anchor after a checkout
-                // event. Reconcile the whole navigator identity in this frame.
-                self.resync_navigator_focus();
                 self.refresh_inactive_groups();
-                self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(
                     &mut self.snapshot.navigator.workspaces,
                     &self.snapshot.ui_state.collapsed_workspace_ids,

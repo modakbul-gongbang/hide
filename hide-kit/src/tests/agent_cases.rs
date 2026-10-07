@@ -808,7 +808,7 @@ fn only_claude_code_and_codex_do_everything_and_the_five_others_are_partial() {
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters, Memory and subagent counts are the five-event hook, which the
+    // Letters, Memory and subagent counts are the six-event hook, which the
     // hook crate has a runtime for; an agent claiming them without one would
     // be a popover that says more than the kit installs.
     let with_runtime: Vec<&str> = ADAPTERS

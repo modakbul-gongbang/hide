@@ -1363,7 +1363,7 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
         Deadline,
     }
     use Step::*;
-    let cases: [(&str, &[Step]); 10] = [
+    let cases: [(&str, &[Step]); 11] = [
         (
             "in order",
             &[
@@ -1436,6 +1436,16 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
                 Click("t2"),
                 Answer("t2"),
                 Herdr(&["t1"]),
+                Herdr(&["t2"]),
+            ],
+        ),
+        (
+            "a burst's second request for the same tab moves nothing and settles on its answer",
+            &[
+                Click("t2"),
+                Click("t2"),
+                Answer("t2"),
+                Answer("t2"),
                 Herdr(&["t2"]),
             ],
         ),
@@ -1545,7 +1555,8 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
 /// or come before a new replica after a reconnect. Then the tabs newly
 /// active since the last session stand in for them, and the gap is
 /// recorded; consuming only the moves kept would leave the dropped
-/// requests waiting out the deadline.
+/// requests waiting out the deadline. With no request waiting there is
+/// nothing to stand in for, and a reconnect records no gap.
 #[test]
 fn view_authority_dropped_moves_fall_back_to_the_tabs_newly_active() {
     let checkout_path = "/private/tmp/hide-view-authority-moves-gap";
@@ -1604,6 +1615,60 @@ fn view_authority_dropped_moves_fall_back_to_the_tabs_newly_active() {
     runtime.ingest_session(Ok(herdr.after(&["w-order:t4"], herdr_on("w-order:t4"))));
     assert_eq!(on_screen(&runtime).as_deref(), Some("w-order:t4"));
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+
+    let mut herdr = herdr.reconnected();
+    let ((), records) = crate::diagnostics::capture(|| {
+        runtime.ingest_session(Ok(herdr.after(&[], herdr_on("w-order:t4"))));
+    });
+    assert_eq!(gaps(&records), 0, "{records:?}");
+}
+
+/// A snapshot read outside the event stream (a close's or a creation's
+/// fresh projection, the editor's status answer) has no place in Herdr's
+/// order and carries no moves: one that already shows the tab Hide asked
+/// for answers nothing, and the stream's next session, carrying the move,
+/// does.
+#[test]
+fn view_authority_a_snapshot_read_outside_the_stream_answers_no_request() {
+    let checkout_path = "/private/tmp/hide-view-authority-raw-snapshot";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2"];
+    let herdr_on = |tab: &str| tab_order_payload(checkout_path, &tabs, &tabs, tab);
+    let mut herdr = HerdrMoves::new();
+    runtime.ingest_session(Ok(herdr.after(&[], herdr_on("w-order:t1"))));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    runtime.complete_lane_tab(
+        RemoteControlAction::FocusTab {
+            tab_id: "w-order:t2".to_owned(),
+        },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        }),
+        3,
+    );
+    assert_eq!(sent_tab_moves(&runtime), ["w-order:t2"]);
+
+    let read_outside = herdr_on("w-order:t2");
+    assert!(read_outside.tab_moves.is_none());
+    runtime.ingest_session(Ok(read_outside));
+    assert_eq!(
+        sent_tab_moves(&runtime),
+        ["w-order:t2"],
+        "a snapshot outside the stream answers nothing"
+    );
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+
+    runtime.ingest_session(Ok(herdr.after(&["w-order:t2"], herdr_on("w-order:t2"))));
+    assert!(sent_tab_moves(&runtime).is_empty());
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
 }
 
 /// The tab wait a pane focus arms always ends: Herdr refusing the focus
@@ -3470,45 +3535,15 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         ..TerminalPaneSnapshot::default()
     }];
 
+    // A pane id an operation returned (a created tab or worktree) holds the
+    // keyboard before the session shows the pane's layout.
     let selected_pane = "w3V:p1";
-    let select_pane = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ui_state_update",
-        "payload": {
-            "expanded_paths": [],
-            "selected_path": null,
-            "selected_pane_id": selected_pane,
-            "focused_checkout_id": checkout_id,
-            "shortcut_bindings": {},
-            "accent_hex": "#B9FF66",
-            "font_size": 13
-        }
-    }))
-    .expect("selected pane state event");
-    assert!(runtime.dispatch_json(&select_pane));
+    runtime.select_terminal_pane(Some(selected_pane.to_owned()));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some(selected_pane)
     );
-    assert_eq!(
-        runtime.snapshot().focused.pane_id.as_deref(),
-        Some(selected_pane)
-    );
     assert!(runtime.snapshot().active_pane_layout().is_none());
-    assert!(runtime.snapshot().terminal.panes.is_empty());
-    assert_eq!(
-        runtime.snapshot().ui_state.focused_checkout_id.as_deref(),
-        Some(checkout_id.as_str())
-    );
-    assert_eq!(
-        runtime
-            .snapshot()
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("pane.projection_unavailable")
-    );
 
     let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],

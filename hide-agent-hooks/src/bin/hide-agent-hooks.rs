@@ -26,6 +26,12 @@ use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
 use hide_platform::process::{OwnedChild, OwnerWatch};
 
 const PROMPT_BUDGET: Duration = Duration::from_millis(1_850);
+/// How long the spawn guard waits for the daemon's answer, inside the entry's
+/// own eight second timeout. It is spent only for a call that starts an agent
+/// through Herdr, so an ordinary shell call never waits on it.
+const GUARD_BUDGET: Duration = Duration::from_millis(2_500);
+/// How long the spawn guard waits for the tool call's payload.
+const GUARD_PAYLOAD_BUDGET: Duration = Duration::from_millis(500);
 const INTAKE_BUDGET: Duration = Duration::from_millis(1_650);
 /// How long a prompt hook waits for the runtime's payload to learn whether
 /// the prompt was Hide's bell. A producer that never closes stdin costs this
@@ -39,11 +45,17 @@ fn main() -> ExitCode {
     let started = Instant::now();
     // Guarded launches acknowledge ownership before parsing, filesystem work
     // or runtime stdin. Keep this guard until all output and intake finish.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
     let owner_watch = match OwnerWatch::from_launch() {
         Ok(watch) => watch,
+        // Exit 2 from a `PreToolUse` hook refuses the tool call. The outer hook
+        // is what an agent runs, and it must never end that way; the inner one
+        // is only ever started by it.
+        Err(_) if arguments.first().map(String::as_str) == Some("hook") => {
+            return ExitCode::SUCCESS;
+        }
         Err(_) => return ExitCode::from(2),
     };
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("hook") => {
             // An agent beyond Claude Code and Codex has no counters, Memory
@@ -75,9 +87,14 @@ fn main() -> ExitCode {
             {
                 return ExitCode::SUCCESS;
             }
-            if argument_value("--event", &arguments).as_deref()
-                == Some(HookEvent::UserPromptSubmit.name())
-            {
+            let event = argument_value("--event", &arguments);
+            if event.as_deref() == Some(HookEvent::PreToolUse.name()) {
+                // A guard that fails answers like one with nothing to say:
+                // the call runs (PRD herdr-spawn-guard D-04). A panic is one
+                // such failure, and it must not end the hook with a code the
+                // agent reads as a refusal.
+                let _ = std::panic::catch_unwind(|| run_spawn_guard(&arguments, started));
+            } else if event.as_deref() == Some(HookEvent::UserPromptSubmit.name()) {
                 run_prompt_hook(&arguments, started + PROMPT_BUDGET);
             } else {
                 run_hook(&arguments, started);
@@ -111,7 +128,7 @@ fn main() -> ExitCode {
 
 fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
-     --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop> \
+     --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop|PreToolUse> \
      [--memory-injection] [--source <install marker>]\n       \
      hide-agent-hooks hook --runtime <gemini-cli|cursor> \
      --event SessionStart [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
@@ -133,6 +150,72 @@ fn run_guidance_hook(agent: GuidanceAgent, arguments: &[String]) {
     } else {
         output
     };
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
+}
+
+/// The spawn guard (`hide_agent_hooks::spawn_guard`): refuses a shell call that
+/// starts an agent through Herdr and says how to start it through Hide. It
+/// prints something only to refuse, and every other path (not a launch, not in
+/// a registered checkout, the daemon unreachable, any failure of its own) prints
+/// nothing and lets the call run.
+fn run_spawn_guard(arguments: &[String], started: Instant) {
+    use hide_agent_hooks::spawn_guard::{self as guard, Registration};
+
+    let Some(runtime) =
+        argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value))
+    else {
+        return;
+    };
+    // Another agent that runs Claude Code's hooks (Grok, OpenCode, Cursor) has
+    // its own pre-tool contract, which Hide has not verified.
+    if hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name)).is_some() {
+        return;
+    }
+    // Outside a Herdr pane there is nothing to redirect.
+    let Some(pane) = std::env::var("HERDR_PANE_ID")
+        .ok()
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+    else {
+        return;
+    };
+    // Every shell call comes through here: this one search decides the rest.
+    if !guard::may_hold_launch(&payload) {
+        return;
+    }
+    let Some(call) = guard::read_call(&payload, truncated) else {
+        return;
+    };
+    let Some(launch) = guard::find_launch(&call.command, &|name| std::env::var(name).ok()) else {
+        return;
+    };
+    let Some(home) = home_directory() else { return };
+    let Some(program) = workspace_context::cli_program() else {
+        return;
+    };
+    match guard::registration(&program, Instant::now() + GUARD_BUDGET) {
+        Registration::Registered => {}
+        Registration::NotRegistered => return,
+        Registration::Unreachable(cause) => {
+            guard::unreachable(&home, runtime.id(), cause);
+            return;
+        }
+    }
+    let cwd = call
+        .cwd
+        .clone()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let (repo, branch) = guard::checkout_facts(&cwd);
+    let command = guard::spawn_command(&launch, repo.as_deref(), branch.as_deref());
+    let output = guard::deny_output(&guard::refusal_reason(&command));
+    // The refusal is logged before it is printed, and the refusal stands even
+    // when the log cannot be written.
+    guard::record_refusal(&home, runtime.id(), &pane, &launch);
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
 }

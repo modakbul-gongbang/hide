@@ -17,7 +17,7 @@ vi.hoisted(() => {
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
 const LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "gemini-cli": "Gemini CLI", grok: "Grok", opencode: "OpenCode", pi: "Pi", cursor: "Cursor" };
-const FEATURES: KitFeatureId[] = ["skill", "guidance", "letters", "memory", "subagents", "herdr_integration", "sleep", "fork", "start", "titles"];
+const FEATURES: KitFeatureId[] = ["skill", "guidance", "letters", "bell", "memory", "subagents", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"];
 
 const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   id,

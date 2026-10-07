@@ -19,7 +19,6 @@ import {
   kitPartNeedsReinstall,
   kitPartText as kitPartTextIn,
   kitProblems,
-  redact,
   shownIn,
   sleepAfterLabel,
   SLEEP_AFTER_CHOICES,
@@ -28,6 +27,7 @@ import {
   usableFontSize,
   unstoredDeviceDrafts,
 } from "./settings";
+import { redact } from "./redact";
 import type { Device, DeviceHost, KitComponent, RemoteStatus } from "./snapshot";
 
 // The English strings are what the sheet shipped with; the rules read the same under them.

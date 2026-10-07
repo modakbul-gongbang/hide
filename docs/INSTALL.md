@@ -206,7 +206,7 @@ Every launch of the installed app installs Hide's kit on this Mac without asking
 The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills until the operator answers the first-run agent choice (UI_BEHAVIOR.md, Settings > Agents); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
-- Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there;
+- Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there, among them a `PreToolUse` entry on the shell tool that refuses a direct `herdr agent start` and points to `hide agent spawn` ([agent-hooks.md](agent-hooks.md#the-spawn-guard));
 - Codex's trust for those Codex entries: Codex asks for a review of every new or changed hook, so Hide takes installing it as your agreement to its own hooks and has Codex record them as trusted (through `codex app-server`, never by editing `~/.codex/config.toml`), only for an entry whose command is exactly the one Hide wrote; another tool's hook still opens Codex's review screen (Herdr's own integration entry, which the kit installs in the same pass, is one, so a first Codex start can list that one hook while Hide's are already trusted), and switching Hide's hook off in Codex's hook list keeps it off ([agent-hooks.md](agent-hooks.md#codex-trusts-hides-own-hooks));
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
 - for each of the seven supported agents that is on and installed (Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor), Herdr's own integration, installed with the bundled Herdr (`herdr integration install <agent>`) so Herdr learns the agent's session; one the operator installed before is left as it is, and Hide removes only what it installed;
@@ -253,7 +253,7 @@ Everything Hide owns on a machine is under `~/.hide`:
 | --- | --- |
 | `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`) and the link record (`links.sqlite3`), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
-| `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report |
+| `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
 | `~/.hide/host-helper` | On a device: Hide's helper builds |
 
 Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.

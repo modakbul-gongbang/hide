@@ -1241,6 +1241,9 @@ fn reinstall_is_not_offered_for_the_hook_part_of_an_agent_that_is_off() {
 
 /// The latest intent wins (engineering rule 11): a switch pressed while an
 /// earlier press is still queued replaces it, and the same press twice is one.
+/// The device's worker is held in a read while the switches are pressed, so
+/// what they queue waits behind it; a free worker took the queue before the
+/// test read it (issue 689).
 #[test]
 fn the_latest_agent_switch_wins_over_one_still_queued() {
     use hide_kit::Availability::Available;
@@ -1258,6 +1261,13 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
         .unwrap()
         .queue_device_kit(DEVICE, KitJob::Status);
     settle(&shared);
+    let (release, gate) = std::sync::mpsc::channel();
+    *helper.gate.lock().unwrap() = Some(gate);
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    wait_for("the held read to start", || helper.calls().len() == 2);
 
     let press = |enabled| {
         dispatch(
@@ -1268,13 +1278,7 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
     };
     // The device reports Gemini off, so a lone "off" would be met; with "on"
     // queued first it is not, and the later "off" replaces the queued "on".
-    {
-        let mut runtime = shared.lock().unwrap();
-        runtime.device_kit_pending.insert(
-            DEVICE.to_owned(),
-            KitJob::Apply(hide_kit::Scope::agents(["gemini-cli"], [])),
-        );
-    }
+    press(true);
     press(true);
     press(false);
     {
@@ -1285,6 +1289,8 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
         assert!(scope.agent_off.contains("gemini-cli"), "{scope:?}");
         assert!(!scope.agent_on.contains("gemini-cli"), "{scope:?}");
     }
+    release.send(()).unwrap();
+    settle(&shared);
 }
 
 /// A first pass that could not run (the retirement preflight refused, the

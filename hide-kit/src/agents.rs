@@ -2,7 +2,7 @@
 //! it puts where each one reads it (issue #517).
 //!
 //! One data row per agent declares the programs it is found by, where its
-//! skills live, whether it has hooks, the oldest version the hook needs and
+//! skills live, whether it has hooks and
 //! the official page every one of those answers comes from. The content an
 //! agent reads is the same for all of them and is read from the `hide` binary
 //! at run time (`hide browser help`), so a new agent is a row here and a
@@ -106,7 +106,7 @@ fn skill_file_in(root: &Path) -> PathBuf {
 /// What Hide writes into an agent's hook configuration, if anything.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookSupport {
-    /// Claude Code and Codex: the five-event hook that is also one kit part.
+    /// Claude Code and Codex: the six-event hook that is also one kit part.
     Part(ComponentId),
     /// The SessionStart guidance hook for an agent with documented command
     /// hooks (`hide_agent_hooks::guidance`).
@@ -151,6 +151,11 @@ pub struct AgentAdapter {
     /// Whether the agent is on without the operator choosing, as Claude Code
     /// and Codex have been since their hooks became part of the kit.
     pub default_on: bool,
+    /// Whether the core rings the doorbell for this agent: only kinds whose
+    /// permission and selection menus were observed to read `blocked` in
+    /// Herdr are targets (`docs/delivery.md`, Safe intake). The core's own list
+    /// decides it; `runtime::tests::agent_features` holds this to that list.
+    pub bell: bool,
     /// Whether Hide reads this agent's own session files, which sleep, fork,
     /// starting it from Hide's screen and conversation-based titles all need.
     /// Only Claude Code and Codex have such a reader (PRD settings-cleanup
@@ -178,6 +183,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".claude"],
         }),
         default_on: true,
+        bell: true,
         session_reader: true,
         doc_url: "https://code.claude.com/docs/en/skills",
     },
@@ -193,6 +199,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".codex"],
         }),
         default_on: true,
+        bell: true,
         session_reader: true,
         doc_url: "https://learn.chatgpt.com/docs/build-skills",
     },
@@ -205,6 +212,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookSupport::Guidance(GuidanceAgent::Gemini),
         herdr: None,
         default_on: false,
+        bell: false,
         session_reader: false,
         doc_url: "https://geminicli.com/docs/cli/skills/",
     },
@@ -220,6 +228,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".grok"],
         }),
         default_on: false,
+        bell: false,
         session_reader: false,
         doc_url: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
     },
@@ -235,6 +244,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".config", "opencode"],
         }),
         default_on: false,
+        bell: false,
         session_reader: false,
         doc_url: "https://opencode.ai/docs/skills/",
     },
@@ -250,6 +260,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".pi", "agent"],
         }),
         default_on: false,
+        bell: false,
         session_reader: false,
         doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
     },
@@ -265,6 +276,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".cursor"],
         }),
         default_on: false,
+        bell: false,
         session_reader: false,
         doc_url: "https://cursor.com/docs/context/skills",
     },
@@ -309,10 +321,18 @@ pub enum Feature {
     Guidance,
     /// Letters taken in when the operator submits a prompt.
     Letters,
+    /// The doorbell: Hide types its one-line bell into an idle pane so the
+    /// pending letters are read without the operator typing (PRD
+    /// agent-neutral-doorbell). The core's bell target list decides it.
+    Bell,
     /// Project Memory put into the session.
     Memory,
     /// The count of subagents the session spawned.
     Subagents,
+    /// Refusing a shell call that starts an agent through Herdr directly and
+    /// answering with the `hide agent spawn` command that keeps the lineage
+    /// (PRD herdr-spawn-guard). The hook's `PreToolUse` entry carries it.
+    SpawnGuard,
     /// Herdr's own integration, which gives the session identity and an exact
     /// status. Without it the status is judged from the screen alone (B15).
     HerdrIntegration,
@@ -326,12 +346,14 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Feature; 10] = [
+    pub const ALL: [Feature; 12] = [
         Self::Skill,
         Self::Guidance,
         Self::Letters,
+        Self::Bell,
         Self::Memory,
         Self::Subagents,
+        Self::SpawnGuard,
         Self::HerdrIntegration,
         Self::Sleep,
         Self::Fork,
@@ -350,9 +372,12 @@ impl AgentAdapter {
         match feature {
             Feature::Skill => true,
             Feature::Guidance => !matches!(self.hook, HookSupport::None),
-            Feature::Letters | Feature::Memory | Feature::Subagents => {
+            // The six-event hook is the one that carries `PreToolUse`, so an agent
+            // has the guard exactly when it has that hook.
+            Feature::Letters | Feature::Memory | Feature::Subagents | Feature::SpawnGuard => {
                 matches!(self.hook, HookSupport::Part(_))
             }
+            Feature::Bell => self.bell,
             Feature::HerdrIntegration => self.herdr.is_some(),
             Feature::Sleep | Feature::Fork | Feature::Start | Feature::Titles => {
                 self.session_reader
