@@ -703,7 +703,10 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
         Some(PaneConnectionReason::CodexSharedServer),
         "a later read that still cannot tell keeps the retry"
     );
-    assert!(disable(&mut runtime, crate::node::TEST_NODE), "the retry is accepted");
+    assert!(
+        disable(&mut runtime, crate::node::TEST_NODE),
+        "the retry is accepted"
+    );
 
     runtime.ingest_kit_report(local, &read(Some(false), None));
     assert_eq!(
