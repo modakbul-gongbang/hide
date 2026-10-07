@@ -1878,6 +1878,11 @@ export function createActions(send: DispatchFn) {
      */
     openFactory(place?: Partial<FactoryPlace>) {
       const state = ui();
+      // Behind Settings or a dialog the Factory waits, as the Overview does. A
+      // panel's Escape layer does not hold it: the palette has closed itself
+      // before it asks, and the page replaces the panel.
+      if (state.overlay !== "none" && (state.overlay !== "search" || state.searchOver !== "none")) return;
+      if (state.workspaceDialog || state.pendingClose || state.pendingTrash) return;
       if (state.overlay === "search") state.closeOverlay();
       const current = state.screen?.kind === "factory" ? state.screen.place : FACTORY_ENTRY;
       state.setScreen({ kind: "factory", place: { ...(place ? { ...FACTORY_ENTRY, factory: current.factory } : current), ...place } });

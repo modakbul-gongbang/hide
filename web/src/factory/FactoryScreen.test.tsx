@@ -177,3 +177,63 @@ it("shows where a project check failed and the engine's next action, a logged-ou
   expect(container.querySelector("[data-factory-create-stage]")!.textContent).toBe(english["factory.create.failedStage"].replace("{{stage}}", english["factory.create.stage.probe"]));
   expect(container.querySelector("[data-factory-create-next]")!.textContent).toContain("gh auth login");
 });
+
+function sentVerbs(events: Parameters<DispatchFn>[0][]): string[] {
+  return events.flatMap((event) => {
+    const sent = event as unknown as { kind: string; payload: { command: { verb: string } } };
+    return sent.kind === "factory_action" ? [sent.payload.command.verb] : [];
+  });
+}
+
+function press(target: Element, init: KeyboardEventInit) {
+  target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+}
+
+it("sends the picked answer on Enter, but leaves Enter on 자세히 to open the Task and Enter mid-composition alone (B9)", async () => {
+  const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+  const details = container.querySelector<HTMLButtonElement>("[data-factory-details]")!;
+  await act(async () => press(details, { key: "Enter" }));
+  expect(sentVerbs(events)).toEqual([]);
+  const choice = container.querySelector("[data-factory-choice='1']")!;
+  await act(async () => press(choice, { key: "Enter", isComposing: true }));
+  expect(sentVerbs(events)).toEqual([]);
+  await act(async () => press(choice, { key: "Enter" }));
+  expect(sentVerbs(events)).toEqual(["merge"]);
+});
+
+it("sends a setting once though Enter and leaving the field both commit, and shows the saved value again when the engine refuses it (B22)", async () => {
+  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings" });
+  await answerConfig(summary, events);
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "0");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => press(field, { key: "Enter" }));
+  await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  const writes = events.filter((event) => (event as unknown as { payload: { command: { set?: unknown[] } } }).payload?.command?.set?.length);
+  expect(writes).toHaveLength(1);
+  const write = writes[0] as unknown as { payload: { request_id: string } };
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: write.payload.request_id, answer: { ok: false, reason: "config_invalid", next_action: "Check the value" } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!.value).toBe(String(CONFIG.new_task_limit));
+});
+
+it("treats a Factory whose cards are all archived as empty, not as a filter that matches nothing (B15)", async () => {
+  const archived = factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done", archived: true, folded: true })] }] });
+  const { container } = await mount({ my_turn: 0, factories: [archived], inbox: [] }, { tab: "board" });
+  expect(container.querySelector("[data-factory-board-empty='intake']")).not.toBeNull();
+});
+
+it("waits behind Settings or a close confirmation instead of swapping the screen under it (B2)", () => {
+  const actions = createActions(() => true);
+  useUiStore.setState({ screen: { kind: "main" }, overlay: "settings", pendingClose: null });
+  actions.openFactory();
+  expect(useUiStore.getState().screen?.kind).toBe("main");
+  useUiStore.setState({ overlay: "none", pendingClose: { paneId: "p1" } as never });
+  actions.openFactory();
+  expect(useUiStore.getState().screen?.kind).toBe("main");
+  useUiStore.setState({ pendingClose: null });
+  actions.openFactory();
+  expect(useUiStore.getState().screen?.kind).toBe("factory");
+});

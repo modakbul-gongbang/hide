@@ -1116,7 +1116,7 @@ An action the engine has not answered within 20 seconds reads as unanswered, say
 ### The Factory place
 
 The sidebar has a Factory row of its own beside Home, and its badge is the number of items in 내 차례, with no badge at zero.
-The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen; the screen is kept out of Recent Panels.
+The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind Settings or a confirmation, as the Overview waits; the screen is kept out of Recent Panels.
 With no open Factory the screen offers only '+ Factory 만들기'.
 Under the Factory row, once a Factory exists, is the secretary row: an ordinary agent tab in the core device's Home with the Factory's guide in its first prompt, which reads the board with `hide factory status` each time it answers, so closing the tab loses nothing.
 There is one secretary; the row and '비서에게 묻기' go to it, and when there is none they start one with the Factory's default runtime.
@@ -1138,7 +1138,7 @@ Before the core's first summary arrives the screen draws its frame and no empty 
 The top item opens expanded with the engine's suggestion chosen and the send button focused, so ⏎ once answers.
 The send button names the answer, the line beside it the result the engine gave for its own pick (the suggestion, or a notice's first choice), the line under it the default action, the time cue at the item's right as on every item, and '자세히 →' opens the Task page.
 The other items are one line each: the id (the Task id before Ready, the issue number after), the title, the project and a time cue, with a question that blocks progress reading 'N일째 기다림' at the top.
-↑ and ↓ move between items and open the one reached, a digit picks another choice, and ⏎ sends.
+↑ and ↓ move between items and open the one reached, a digit picks another choice, and ⏎ sends; ⏎ on '자세히' opens the Task instead, and ⏎ that finishes a Hangul syllable sends nothing.
 While an answer is sent its button shows sending; when the engine takes it the item leaves and the next one opens.
 An empty 내 차례 shows one line that nothing is waiting, and a Factory with no Task shows the two ways to add one: ask the agent you are talking to, or put the `factory` label on a GitHub issue.
 There is no button that adds a Task.
@@ -1153,7 +1153,7 @@ A done Task the person has not seen has the unread dot; done Tasks older than th
 A cancelled Task leaves the board and is found under the '취소됨' filter, which offers 되살리기 for seven days; cancelling asks nothing and leaves '취소됨 · 되살리기' in its place.
 The graph tab draws each Factory's dependencies in the Issues view's Dependencies layout with every arrow a longer path implies left out (A→B→C draws no A→C); the engine's data keeps every edge.
 Only cards that need the person are emphasised, done cards are dimmed, waiting cards say what they wait for, unrelated Tasks sit below, folded completions leave the drawing, and a node opens its Task page.
-A filter that leaves the board or graph empty offers to clear it.
+A filter that leaves the board or graph empty offers to clear it; a Factory whose cards are all archived is empty, not filtered.
 
 ### The Task page
 
@@ -1171,7 +1171,7 @@ The sheet first picks what the engine lists first, the required checks before th
 The merge mode starts on auto; with no verification auto cannot be picked and says why in its place, and the Factory is made manual.
 A project with a GitHub remote shows, above the create button, the account, the repository and every GitHub read and write the engine will make; a project without one has no GitHub step.
 Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed project check shows the step that failed and the engine's next action as the engine wrote it (`gh auth login` for a logged-out `gh`), and a project that already has a Factory opens it.
-The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision.
+The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision, and a value the engine refuses goes back to the saved one.
 'Factory 닫기' can be pressed only while the 실행 중 column is empty, a paused, verifying or merge-waiting Task included, because the engine refuses to close the Factory until then.
 
 ## Recent navigation

@@ -24,7 +24,8 @@ export function FactoryBoard({ factories, place, actions }: { factories: Factory
   const columns = boardColumns(factories, place.column);
   const many = factories.length > 1;
   const cards = columns.reduce((sum, column) => sum + column.groups.reduce((count, group) => count + group.cards.length + group.folded.length, 0), 0);
-  const all = factories.reduce((sum, view) => sum + view.columns.reduce((count, column) => count + column.cards.length, 0), 0);
+  // Archived cards have left the board, so a Factory holding only those is as empty as a new one.
+  const all = factories.reduce((sum, view) => sum + view.columns.reduce((count, column) => count + column.cards.filter((card) => !card.archived).length, 0), 0);
   const set = (patch: Partial<FactoryPlace>) => useUiStore.getState().setFactoryPlace(patch);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-sm px-lg pb-lg" data-factory-board={place.cancelled ? "cancelled" : "board"}>

@@ -185,6 +185,9 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Enter") {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+      // A focused button other than a choice (자세히, 보내기) keeps its own Enter.
+      if (event.target instanceof HTMLButtonElement && event.target.getAttribute("role") !== "radio") return;
       event.preventDefault();
       send();
       return;

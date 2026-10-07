@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "../actions";
 import { Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
@@ -138,8 +138,10 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
   useEffect(() => {
     if (read.state.phase === "taken") setAnswer(read.state.answer as unknown as ConfigAnswer);
   }, [read.state]);
+  const [refusals, setRefusals] = useState(0);
   useEffect(() => {
     if (write.state.phase === "taken") setAnswer(write.state.answer as unknown as ConfigAnswer);
+    if (write.state.phase === "refused") setRefusals((count) => count + 1);
   }, [write.state]);
   if (answer === null) {
     return read.state.phase === "refused" ? <Refusal state={read.state} /> : <div className="h-(--size-control-lg) rounded-md bg-muted" aria-busy="true" aria-label={t("factory.loading")} data-factory-settings-loading="true" />;
@@ -147,7 +149,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
   const config = answer.config;
   const set = (key: string, value: string) => write.send({ verb: "config", project: factory.project, set: [[key, value]] });
   const send = (command: FactoryCommand) => write.send(command);
-  const numbers = (rows: NumberSetting[]) => rows.map((row) => <NumberRow key={row.key} label={t(row.label)} value={row.read(answer)} onCommit={(value) => set(row.key, String(value))} data={row.key} />);
+  const numbers = (rows: NumberSetting[]) => rows.map((row) => <NumberRow key={row.key} reset={refusals} label={t(row.label)} value={row.read(answer)} onCommit={(value) => set(row.key, String(value))} data={row.key} />);
   const verify = config.verification.kind === "commands" ? config.verification.commands.join(" &&& ") : "";
   // The engine refuses to close while its Running column holds a Task, in any of that column's states.
   const running = factory.columns.some((column) => column.column === "running" && column.cards.length > 0);
@@ -161,7 +163,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
           <Choice value={config.default_runtime} options={[["claude", "Claude Code"], ["codex", "Codex"]]} onChange={(value) => set("default_runtime", value)} data="default_runtime" />
         </Row>
         <Row label={t("factory.settings.harness")} detail={<Note>{t("factory.settings.harnessDetail")}</Note>}>
-          <TextField value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
+          <TextField reset={refusals} value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
         </Row>
       </Group>
       <Group title={t("factory.settings.verification")} data-factory-settings-group="verification">
@@ -172,11 +174,11 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
         </Row>
         {config.verification.kind === "ci" ? (
           <Row label={t("factory.settings.ciChecks")}>
-            <TextField value={config.verification.checks.join(", ")} onCommit={(value) => set("ci", value)} data="ci" />
+            <TextField reset={refusals} value={config.verification.checks.join(", ")} onCommit={(value) => set("ci", value)} data="ci" />
           </Row>
         ) : (
           <Row label={t("factory.settings.verifyCommands")} detail={<Note>{t("factory.settings.verifyCommandsDetail")}</Note>}>
-            <TextField value={verify} onCommit={(value) => set("verify", value)} data="verify" />
+            <TextField reset={refusals} value={verify} onCommit={(value) => set("verify", value)} data="verify" />
           </Row>
         )}
         {numbers(VERIFY)}
@@ -189,10 +191,10 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
           <Choice value={config.merge_method} options={[["merge", t("factory.settings.method.merge")], ["squash", t("factory.settings.method.squash")], ["rebase", t("factory.settings.method.rebase")]]} onChange={(value) => set("merge_method", value)} data="merge_method" />
         </Row>
         <Row label={t("factory.settings.quickCheck")}>
-          <TextField value={config.quick_check ?? ""} onCommit={(value) => set("quick_check", value)} data="quick_check" />
+          <TextField reset={refusals} value={config.quick_check ?? ""} onCommit={(value) => set("quick_check", value)} data="quick_check" />
         </Row>
         <Row label={t("factory.settings.riskPaths")} detail={<Note>{t("factory.settings.riskPathsDetail")}</Note>}>
-          <TextField value={config.risk_paths.join(", ")} onCommit={(value) => set("risk_paths", value)} data="risk_paths" />
+          <TextField reset={refusals} value={config.risk_paths.join(", ")} onCommit={(value) => set("risk_paths", value)} data="risk_paths" />
         </Row>
       </Group>
       <Group title={t("factory.settings.thresholds")} data-factory-settings-group="thresholds">
@@ -233,7 +235,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
         </Row>
         {(["claude", "codex"] as const).map((runtime) => (
           <Row key={runtime} label={t("factory.settings.workerArgs", { runtime: runtime === "claude" ? "Claude Code" : "Codex" })}>
-            <TextField value={(config.worker_args[runtime] ?? []).join(" ")} onCommit={(value) => set("worker_args", `${runtime}=${value}`)} data={`worker_args:${runtime}`} />
+            <TextField reset={refusals} value={(config.worker_args[runtime] ?? []).join(" ")} onCommit={(value) => set("worker_args", `${runtime}=${value}`)} data={`worker_args:${runtime}`} />
           </Row>
         ))}
         <Row label={t("factory.settings.close")} detail={<Note>{running ? t("factory.settings.closeRunning") : t("factory.settings.closeDetail")}</Note>}>
@@ -247,19 +249,27 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
 }
 
 /** A number the engine takes in a unit; it is sent when the field is left or Enter is pressed, and only when it changed. */
-function NumberRow({ label, value, onCommit, data }: { label: string; value: number; onCommit: (value: number) => void; data: string }) {
+function NumberRow({ label, value, onCommit, data, reset }: { label: string; value: number; onCommit: (value: number) => void; data: string; reset: number }) {
   return (
     <Row label={label}>
-      <TextField value={String(value)} numeric onCommit={(text) => { const next = Number(text); if (Number.isInteger(next) && next >= 0) onCommit(next); }} data={data} />
+      <TextField reset={reset} value={String(value)} numeric onCommit={(text) => { const next = Number(text); if (Number.isInteger(next) && next >= 0) onCommit(next); }} data={data} />
     </Row>
   );
 }
 
-function TextField({ value, onCommit, placeholder, numeric = false, data }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; data: string }) {
+/** `reset` changes when the engine refuses a write, which leaves the config as it was, so the draft shows it again. */
+function TextField({ value, onCommit, placeholder, numeric = false, data, reset }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; data: string; reset: number }) {
   const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+  // The draft last sent, so the blur after Enter does not send it again.
+  const sent = useRef<string | null>(null);
+  useEffect(() => {
+    setDraft(value);
+    sent.current = null;
+  }, [value, reset]);
   const commit = () => {
-    if (draft !== value) onCommit(draft.trim());
+    if (draft === value || draft === sent.current) return;
+    sent.current = draft;
+    onCommit(draft.trim());
   };
   return (
     <Input
@@ -272,6 +282,7 @@ function TextField({ value, onCommit, placeholder, numeric = false, data }: { va
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
       onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Enter") commit();
         if (event.key === "Escape") setDraft(value);
       }}
