@@ -446,13 +446,7 @@ pub fn handle_with_progress(
                 .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
         ),
         Call::PathFacts { paths } => to_value(crate::catalog::path_facts(&paths)?),
-        Call::RealPaths { paths } => {
-            let paths = paths
-                .iter()
-                .map(|path| absolute(path))
-                .collect::<HostResult<Vec<_>>>()?;
-            to_value(crate::cleanup::real_paths(&paths))
-        }
+        Call::RealPaths { paths } => to_value(crate::cleanup::real_paths(&paths)),
         Call::Repository { path } => to_value(crate::cleanup::repository(&absolute(&path)?)),
         Call::JudgeFolders {
             root,
