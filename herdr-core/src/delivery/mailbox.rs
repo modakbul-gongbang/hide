@@ -212,7 +212,8 @@ pub fn apply(
                 .ok_or("letter_unavailable")?;
             let mut ended = None;
             if matches!(command, Command::Ack { .. }) {
-                if matches!(letter.state, State::Pending | State::Delivered) {
+                // An older build's acknowledgement may still await intake.
+                if letter.awaiting_intake() || letter.state == State::Delivered {
                     letter.state = State::Acknowledged;
                     // Only the recipient's own pane and session may
                     // acknowledge, so the acknowledgement is its receipt
@@ -1238,6 +1239,149 @@ mod tests {
         letter.state = State::Acknowledged;
         letter.hook_confirmed = Some(false);
         letter.finished_at_unix_ms = None;
+    }
+
+    #[test]
+    fn reacknowledging_a_legacy_report_records_durable_intake_and_preserves_a_rearmed_watch() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ledger.json");
+        let mut ledger = Ledger::default();
+        let child = actor("child");
+        let parent = actor("parent");
+        let other = actor("other");
+        super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        let unrelated = super::super::watch::start(&mut ledger, &other, &child, 1).unwrap();
+        let report = send(
+            &mut ledger,
+            &child,
+            &parent,
+            "legacy-report",
+            "done",
+            "report",
+            None,
+            2,
+        )
+        .unwrap();
+        acknowledged_without_receipt(&mut ledger, 0);
+        for index in 1..OPEN_LIMIT {
+            send(
+                &mut ledger,
+                &child,
+                &other,
+                &format!("pending-{index}"),
+                "body",
+                "report",
+                None,
+                2,
+            )
+            .unwrap();
+        }
+        super::super::ledger::save(&path, &ledger).unwrap();
+        let mut restored = super::super::ledger::load(&path).unwrap();
+        let now = 2 + super::super::DELIVERY_EXPIRY_MS - 1;
+        assert_eq!(pull(&restored, &parent).unwrap().ids, [report.id.clone()]);
+        assert_eq!(
+            send(
+                &mut restored,
+                &child,
+                &other,
+                "overflow",
+                "body",
+                "report",
+                None,
+                now,
+            )
+            .unwrap_err(),
+            "capacity"
+        );
+        let ack = Command::Ack {
+            id: report.id.clone(),
+        };
+        let acknowledged = apply(&mut restored, &parent, None, &ack, now).unwrap();
+        assert_eq!(acknowledged["state"], "acknowledged");
+        assert_eq!(acknowledged["hook_confirmed"], true);
+        super::super::ledger::save(&path, &restored).unwrap();
+        let mut restored = super::super::ledger::load(&path).unwrap();
+        let shown = apply(
+            &mut restored,
+            &parent,
+            None,
+            &Command::Show { id: report.id },
+            now,
+        )
+        .unwrap();
+        assert_eq!(shown["hook_confirmed"], true);
+        assert!(pull(&restored, &parent).unwrap().ids.is_empty());
+        assert_eq!(restored.watches.len(), 1);
+        assert_eq!(restored.watches[0].id, unrelated.id);
+        send(
+            &mut restored,
+            &child,
+            &other,
+            "overflow",
+            "body",
+            "report",
+            None,
+            now,
+        )
+        .unwrap();
+        let rearmed = super::super::watch::start(&mut restored, &parent, &child, now).unwrap();
+        super::super::ledger::save(&path, &restored).unwrap();
+        let mut restored = super::super::ledger::load(&path).unwrap();
+        let before = restored.clone();
+        apply(&mut restored, &parent, None, &ack, now + 1).unwrap();
+        super::super::ledger::save(&path, &restored).unwrap();
+        let restored = super::super::ledger::load(&path).unwrap();
+        assert_eq!(restored, before);
+        assert!(restored.watches.iter().any(|watch| watch.id == rearmed.id));
+        assert!(pull(&restored, &parent).unwrap().ids.is_empty());
+    }
+
+    #[test]
+    fn acknowledging_a_report_after_cancellation_or_expiry_does_not_record_intake() {
+        for state in [
+            State::Cancelled,
+            State::Undelivered,
+            State::Expired,
+            State::Acknowledged,
+        ] {
+            let mut ledger = Ledger::default();
+            let child = actor("child");
+            let parent = actor("parent");
+            super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+            let report = send(
+                &mut ledger,
+                &child,
+                &parent,
+                "report",
+                "done",
+                "report",
+                None,
+                2,
+            )
+            .unwrap();
+            acknowledged_without_receipt(&mut ledger, 0);
+            let deadline = 2 + super::super::DELIVERY_EXPIRY_MS;
+            if state == State::Acknowledged {
+                assert!(ledger.expire(deadline));
+            } else {
+                ledger.letters[0].state = state;
+                ledger.letters[0].finished_at_unix_ms = Some(deadline);
+            }
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            let before = restored.clone();
+            apply(
+                &mut restored,
+                &parent,
+                None,
+                &Command::Ack { id: report.id },
+                deadline,
+            )
+            .unwrap();
+            assert_eq!(restored, before, "{state:?}");
+            assert!(pull(&restored, &parent).unwrap().ids.is_empty(), "{state:?}");
+            assert_eq!(restored.watches.len(), 1, "{state:?}");
+        }
     }
 
     #[test]
