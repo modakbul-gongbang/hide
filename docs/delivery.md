@@ -45,7 +45,7 @@ A tool that runs these commands from a program (sasu, a Factory engine) checks t
 `hide contract --json` answers that contract:
 
 - `format`: the document's own format, now 1.
-- `commands`: each command's words, its positional `arguments` with their value types, `repeats_at_most` for a last argument that repeats, its `options` (each with `name`, `value` type or `null` for a switch, `required`, and the options it `requires`), what `rest` passes through after `--`, and the names of the `answers` it can return.
+- `commands`: each command's words, its positional `arguments` with their value types, `repeats_at_most` for a last argument that repeats, its `options` (each with `name`, `value` type or `null` for a switch, `required`, and the options it `requires`), what `rest` passes through after `--`, the names of the `answers` it can return, and, where the contract declares them, the `refusals` its own rule answers with; those are not every failure, since every command can also fail for the daemon, the pane or the ledger.
 - `value_types`: what each value type admits (`text`, `key`, `body`, `approval`, `unsigned`, `one_of` with its `values`).
 - `envelopes`: for each topic, where the printed line carries `ok`, the `answer` and the failure `code`; a failure also exits non-zero.
 - `answers`: the JSON Schema of each answer, and `digest`, the `sha256:` of the document without it, its keys sorted and written compactly.
@@ -185,9 +185,9 @@ A watch observed by a Factory warns after that Factory's stall window (`stall_mi
 
 `hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.
 `register` records the participant on the caller's own machine, which the pane capability names: `--machine` may be left out, and when given it must name that same machine or the call is refused with `machine_identity_conflict`, so a caller in a connected device's pane registers as that device.
-`hide agent show here` answers the caller's own registration, read only, with no renderer: the one live record whose actor is the caller's attested pane, device and session, the rule `--parent here` uses (`coordination::here`).
+`hide agent show here` answers the caller's own registration, read only, with no renderer: the one live record whose actor is the caller's attested pane, device and session, the same match as `--parent here` (`coordination::live_self`), refused when two match (`coordination::here`).
 Only a pane-bound credential can ask; a checkout-bound one would name its pane by the caller's `HERDR_PANE_ID` hint alone and is refused `pane_capability_required`, and a pane-bound one whose hint names another pane is refused `caller_identity_conflict`, as every delivery command is.
-A caller with no such record is refused `participant_ended` when its record ended, `participant_session_changed` when its pane's live record belongs to an earlier session (the session moved on, as after a compaction), `ambiguous_participant` when two live records match, and `participant_unavailable` otherwise; a remote participant on a pane of the same name is never the local caller.
+A caller with no such record is refused `participant_ended` when its record ended, `participant_session_changed` when its pane's live record belongs to another session (the pane's agent session changed), `ambiguous_participant` when two live records match, and `participant_unavailable` otherwise; a remote participant on a pane of the same name is never the local caller.
 `hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
 It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
 A completed spawn stores a durable receipt for its parent and intent, so retries return the same child and preserve ended registrations and closed watches.

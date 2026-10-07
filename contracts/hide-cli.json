@@ -1099,7 +1099,6 @@
                     "value": null
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1117,7 +1116,6 @@
                     "value": null
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1142,7 +1140,6 @@
                     "value": null
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1162,6 +1159,7 @@
             ],
             "refusals": [
                 "pane_capability_required",
+                "caller_identity_conflict",
                 "participant_unavailable",
                 "participant_ended",
                 "participant_session_changed",
@@ -1199,7 +1197,6 @@
                     "value": null
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1279,7 +1276,6 @@
                     "value": null
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
         },
@@ -1327,7 +1323,6 @@
                     }
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1362,7 +1357,6 @@
                     }
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1380,7 +1374,6 @@
             ],
             "command": "request ack",
             "options": [],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1398,7 +1391,6 @@
             ],
             "command": "request cancel",
             "options": [],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1416,7 +1408,6 @@
             ],
             "command": "request show",
             "options": [],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1427,7 +1418,6 @@
             "arguments": [],
             "command": "inbox",
             "options": [],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1453,7 +1443,6 @@
                     }
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1471,7 +1460,6 @@
             ],
             "command": "inbox --confirm",
             "options": [],
-            "refusals": [],
             "repeats_at_most": 5,
             "rest": null
         },
@@ -1506,7 +1494,6 @@
                     }
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1559,7 +1546,6 @@
                     }
                 }
             ],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1577,7 +1563,6 @@
             ],
             "command": "watch stop",
             "options": [],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         },
@@ -1588,12 +1573,11 @@
             "arguments": [],
             "command": "watch list",
             "options": [],
-            "refusals": [],
             "repeats_at_most": null,
             "rest": null
         }
     ],
-    "digest": "sha256:d91c9acdab09020a7fa2017bfb410d9d858bba74c92ac03017942de34c1cc150",
+    "digest": "sha256:a2112e93ac5b1105848e32a2aebacde4228f965900c8c4f98c7999cf4b29cce0",
     "envelopes": {
         "agent": {
             "answer": "value",

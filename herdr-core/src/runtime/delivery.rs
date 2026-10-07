@@ -980,9 +980,10 @@ pub(crate) mod tests {
     }
 
     /// `hide agent show here` answers who the caller is, so only a
-    /// pane-bound credential can ask it: a checkout-bound one would name its
+    /// pane-bound credential can ask: a checkout-bound one would name its
     /// pane by the caller's hint alone, and a pane-bound one cannot borrow
-    /// another pane by hint.
+    /// another pane by hint. What it answers is the caller's own record and
+    /// never another pane's, with no renderer connected.
     #[test]
     fn only_the_attested_pane_asks_who_it_is() {
         let root = tempfile::tempdir().unwrap();
@@ -993,31 +994,70 @@ pub(crate) mod tests {
             path.clone(),
         )
         .unwrap();
-        let mut guard = runtime.lock().unwrap();
-        guard.install_delivery_client(client);
+        runtime.lock().unwrap().install_delivery_client(client);
         let context = authority(&target.actor).context;
         let show = |id: &str| Command::Agents {
             command: crate::coordination::Command::Show { id: id.into() },
         };
         let checkout =
             crate::workspace_control::checkout_caller_id(&"a".repeat(32), "/checkouts/fixture");
-        let mut refusal = |caller: &str, hint: Option<&str>, id: &str| {
-            guard
-                .prepare_delivery("local", caller, &context, hint, show(id))
-                .err()
+        let ask = |caller: &str, hint: Option<&str>, id: &str| {
+            let prepared = runtime.lock().unwrap().prepare_delivery(
+                "local",
+                caller,
+                &context,
+                hint,
+                show(id),
+            )?;
+            prepared.run(Duration::from_secs(5))
         };
         assert_eq!(
-            refusal(&checkout, Some("sender"), "here").as_deref(),
+            ask(&checkout, Some("recipient"), "here").err().as_deref(),
             Some("pane_capability_required")
         );
-        // A checkout-bound credential still shows a named agent.
-        assert_eq!(refusal(&checkout, Some("sender"), "agent-1"), None);
         assert_eq!(
-            refusal("recipient", Some("sender"), "here").as_deref(),
+            ask("sender", Some("recipient"), "here").err().as_deref(),
             Some("caller_identity_conflict")
         );
-        assert_eq!(refusal("recipient", None, "here"), None);
-        drop(guard);
+        assert_eq!(
+            ask("recipient", None, "here").err().as_deref(),
+            Some("participant_unavailable")
+        );
+        {
+            let mut guard = runtime.lock().unwrap();
+            let actor = guard.delivery_observations["recipient"].actor.clone();
+            let mut ledger = (*guard.delivery_state().unwrap()).clone();
+            ledger.agents.push(crate::coordination::AgentRecord {
+                id: "agent-7".into(),
+                name: "recipient".into(),
+                machine: "local".into(),
+                host_scope: "fixture-scope".into(),
+                native_machine: "fixture-machine".into(),
+                session: "recipient-session".into(),
+                instance: "terminal-recipient".into(),
+                pane: "recipient".into(),
+                parent: None,
+                project: None,
+                actor,
+                ended: false,
+            });
+            guard.delivery_ledger = Ok(Arc::new(ledger));
+        }
+        let own = ask("recipient", Some("recipient"), "here").unwrap();
+        assert_eq!(
+            (&own["id"], &own["pane"]),
+            (&json!("agent-7"), &json!("recipient"))
+        );
+        // Another pane of the same checkout is not that participant.
+        assert_eq!(
+            ask("sender", None, "here").err().as_deref(),
+            Some("participant_unavailable")
+        );
+        // A checkout-bound credential still shows a named agent.
+        assert_eq!(
+            ask(&checkout, Some("sender"), "agent-7").unwrap()["id"],
+            "agent-7"
+        );
         drop(worker);
     }
 

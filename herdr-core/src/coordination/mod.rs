@@ -131,20 +131,29 @@ pub fn resolve_actor<'a>(ledger: &'a Ledger, key: &str) -> Option<&'a Actor> {
 /// The id `hide agent show` and `--parent` take for the caller itself.
 pub const HERE: &str = "here";
 
-/// The caller's own registration: the one live record whose actor is the
-/// caller's attested pane, device and session, the rule `--parent here`
-/// uses. It never registers. A caller with no such record learns which of
-/// the ways it has none: its record ended, its pane's live record belongs to
-/// another session (the pane's session moved on, as after a handoff), or
-/// there is none.
-pub(crate) fn here<'a>(
+/// The caller's live registrations: the records not ended whose actor is
+/// the caller's attested pane, device and session. `--parent here` takes
+/// the first; `here` refuses more than one.
+pub(crate) fn live_self<'a>(
     ledger: &'a Ledger,
-    caller: &Actor,
-) -> Result<&'a AgentRecord, &'static str> {
-    let mut live = ledger
+    caller: &'a Actor,
+) -> impl Iterator<Item = &'a AgentRecord> {
+    ledger
         .agents
         .iter()
-        .filter(|record| !record.ended && record.actor.same_identity(caller));
+        .filter(move |record| !record.ended && record.actor.same_identity(caller))
+}
+
+/// The caller's own registration, by the same match as `--parent here`,
+/// refusing two. It never registers. A caller with no such record learns
+/// which of the ways it has none: its record ended, its pane's live record
+/// belongs to another session (the pane's agent session changed), or there
+/// is none.
+pub(crate) fn here<'a>(
+    ledger: &'a Ledger,
+    caller: &'a Actor,
+) -> Result<&'a AgentRecord, &'static str> {
+    let mut live = live_self(ledger, caller);
     match (live.next(), live.next()) {
         (Some(record), None) => return Ok(record),
         (Some(_), Some(_)) => return Err("ambiguous_participant"),

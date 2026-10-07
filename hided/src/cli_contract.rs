@@ -77,8 +77,9 @@ pub struct Spec {
     pub rest: Option<&'static str>,
     /// The answer schemas (`answers`) the command can return.
     pub answers: &'static [&'static str],
-    /// The failure codes the command's own rule answers with, beside those
-    /// every command of its topic can (the daemon, the pane, the ledger).
+    /// The failure codes the contract declares for the command's own rule,
+    /// beside those every command of its topic can answer (the daemon, the
+    /// pane, the ledger). Not exhaustive; written only where declared.
     pub refusals: &'static [&'static str],
 }
 
@@ -182,6 +183,7 @@ pub const COMMANDS: &[Spec] = &[
         answers: &["agent"],
         refusals: &[
             "pane_capability_required",
+            "caller_identity_conflict",
             "participant_unavailable",
             "participant_ended",
             "participant_session_changed",
@@ -326,7 +328,7 @@ fn value_json(value: Input) -> Value {
 }
 
 fn command_json(spec: &Spec) -> Value {
-    json!({
+    let mut command = json!({
         "command": spec.words.join(" "),
         "arguments": spec.arguments.iter().map(|argument| json!({
             "name": argument.name,
@@ -341,8 +343,11 @@ fn command_json(spec: &Spec) -> Value {
         })).collect::<Vec<_>>(),
         "rest": spec.rest,
         "answers": spec.answers,
-        "refusals": spec.refusals,
-    })
+    });
+    if !spec.refusals.is_empty() {
+        command["refusals"] = json!(spec.refusals);
+    }
+    command
 }
 
 /// The contract without its digest.
