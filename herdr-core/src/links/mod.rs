@@ -46,7 +46,7 @@ pub fn files_present(own: &dyn NodeLink, asked: &[String]) -> Result<BTreeSet<St
         .collect())
 }
 
-/// The code a failed link call is logged with.
+/// A failed link call as a diagnostic code, prefixed by who was asked.
 pub(crate) fn link_code(error: &LinkError, who: &str) -> String {
     match error {
         LinkError::NotConnected(_) => format!("{who}_not_connected"),

@@ -889,8 +889,6 @@ fn finish_device(store: &LinkStore, device: &str, entry: &mut DeviceQueue) {
     }
 }
 
-/// A failed link call as a diagnostic code, prefixed by who was asked.
-
 fn log_device(device: &str, what: &str, code: &str) {
     crate::diagnostic!(serde_json::json!({
         "component": "links", "kind": "device.read_failed", "device_id": device,

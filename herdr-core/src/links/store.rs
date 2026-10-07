@@ -139,12 +139,16 @@ fn sidecars(path: &Path) -> [PathBuf; 2] {
 /// Which of the asked paths the store's own node still holds.
 pub type FilesPresent<'a> = dyn FnMut(&[String]) -> Result<BTreeSet<String>, String> + 'a;
 
+/// Which of the asked paths this machine's node still holds, asked without
+/// changing anything.
+pub type FilesHeld<'a> = dyn Fn(&[String]) -> Result<BTreeSet<String>, String> + 'a;
+
 /// This machine's device id and how to ask its node which session files it
 /// still holds, for the reads that show a session's file state.
 #[derive(Clone, Copy)]
 pub struct LocalFiles<'a> {
     pub device: &'a str,
-    pub present: &'a dyn Fn(&[String]) -> Result<BTreeSet<String>, String>,
+    pub present: &'a FilesHeld<'a>,
 }
 
 impl LinkStore {
