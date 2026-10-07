@@ -581,7 +581,7 @@ pub fn attest_checkout(
     let path = hide_platform::path::to_wire(&canonical).map_err(|_| "caller_unavailable")?;
     let caller_id = checkout_caller_id(nonce, &path);
     let context = core
-        .workspace_query("local", &caller_id, Query::Info)
+        .workspace_query(core.node().as_str(), &caller_id, Query::Info)
         .map_err(|refusal| refusal.reason)?
         .context;
     Ok(Attestation {
@@ -693,7 +693,7 @@ fn inspect_pane(
         .ok_or("pane_unavailable")?
         .to_owned();
     let context = core
-        .workspace_query("local", pane_id, Query::Info)
+        .workspace_query(core.node().as_str(), pane_id, Query::Info)
         .map_err(|_| "pane_not_connected")?;
     Ok(Attestation {
         pane_id: pane_id.to_owned(),
@@ -1135,7 +1135,7 @@ mod tests {
         CoreHandle::spawn(herdr_core::CoreOptions {
             schema_version: crate::state_file::SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: herdr_core::node::NodeId::parse("test-node").unwrap(),
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: directory.join("core-state.json").display().to_string(),

@@ -772,10 +772,10 @@ async fn client_loop(
                         // checkout roots; a device's folder names a path there,
                         // which only that device's catalog roots can vouch for.
                         let admitted = match (field("path"), field("device_id")) {
-                            (Some(path), Some(herdr_core::workspace::LOCAL_DEVICE_ID) | None) => {
-                                state.boundary.resolve_target(path).is_ok()
+                            (Some(path), Some(device)) if !state.boundary.names_this_node(Some(device)) => {
+                                state.boundary.is_under_device_root(device, path)
                             }
-                            (Some(path), Some(device)) => state.boundary.is_under_device_root(device, path),
+                            (Some(path), _) => state.boundary.resolve_target(path).is_ok(),
                             (None, _) => false,
                         };
                         if !admitted {
@@ -815,7 +815,7 @@ async fn client_loop(
                     Some(Ok(Message::Text(text))) => {
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
-                                if let Some(device) = event_device(&event) {
+                                if let Some(device) = event_device(&state.boundary, &event) {
                                     let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
                                     // Sent here rather than through `device_bytes`,
                                     // which this loop drains and could be full.
@@ -1378,13 +1378,12 @@ const DEVICE_FILE_EVENTS: [&str; 10] = [
     "path_trash",
 ];
 
-/// The SSH device a file event names, or `None` for this machine.
-fn event_device(event: &Value) -> Option<String> {
-    event
-        .pointer("/payload/device_id")
-        .and_then(Value::as_str)
-        .filter(|device| !device.is_empty() && *device != herdr_core::workspace::LOCAL_DEVICE_ID)
-        .map(str::to_owned)
+/// The SSH device a file event names, or `None` for this machine. Any id
+/// other than this node's, the legacy `local` included, is a device's and is
+/// never read through this machine's boundary.
+fn event_device(boundary: &Boundary, event: &Value) -> Option<String> {
+    let device = event.pointer("/payload/device_id").and_then(Value::as_str);
+    (!boundary.names_this_node(device)).then(|| device.unwrap_or_default().to_owned())
 }
 
 fn handle_client_text(
@@ -1473,7 +1472,7 @@ fn handle_client_text(
         _ => {}
     }
     let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-    if DEVICE_FILE_EVENTS.contains(&kind) && event_device(&event).is_some() {
+    if DEVICE_FILE_EVENTS.contains(&kind) && event_device(&state.boundary, &event).is_some() {
         if kind == "file_list" {
             return Ok(ClientAction::DeviceListing(event));
         }
@@ -2040,7 +2039,7 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
 fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     let root = payload_str(event, "root");
     let query = payload_str(event, "query");
-    if let Some(device) = event_device(event) {
+    if let Some(device) = event_device(&state.boundary, event) {
         return vec![Message::Text(
             device_file_index(state, &device, &root, &query)
                 .to_string()
@@ -2063,7 +2062,7 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     let root_path = hide_platform::path::to_wire_lossy(&known);
     let walk_root = known.clone();
     let answer = state.index.query(
-        herdr_core::workspace::LOCAL_DEVICE_ID,
+        state.boundary.node().as_str(),
         &root_path,
         &query,
         move || {
@@ -2075,7 +2074,7 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     );
     vec![Message::Text(
         index_result(
-            herdr_core::workspace::LOCAL_DEVICE_ID,
+            state.boundary.node().as_str(),
             &root_path,
             &query,
             answer,
@@ -2761,11 +2760,11 @@ fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     if !crate::file_url::is_file_url(&raw) {
         return None;
     }
-    if event
-        .pointer("/payload/workspace/device_id")
-        .and_then(Value::as_str)
-        .is_some_and(|device| device != "local")
-    {
+    if !boundary.names_this_node(
+        event
+            .pointer("/payload/workspace/device_id")
+            .and_then(Value::as_str),
+    ) {
         // The core and the consented device host own this remote path. This
         // Mac's checkout boundary cannot resolve a path on that device.
         return None;
@@ -3520,6 +3519,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_this_nodes_id_or_none_reads_through_this_machines_boundary() {
+        let home = tempfile::tempdir().unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        let event = |device: Value| json!({"kind": "file_open", "payload": {"device_id": device}});
+        assert_eq!(event_device(&boundary, &event(Value::Null)), None);
+        assert_eq!(event_device(&boundary, &event(json!(""))), None);
+        assert_eq!(
+            event_device(&boundary, &event(json!(boundary.node().as_str()))),
+            None
+        );
+        // The id this machine had before node ids is a device's now, and a
+        // device path never resolves through this machine's checkouts.
+        assert_eq!(
+            event_device(&boundary, &event(json!("local"))).as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            event_device(&boundary, &event(json!("mini"))).as_deref(),
+            Some("mini")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_browser_file_report_keeps_its_load_through_a_registered_root_alias() {
@@ -3551,7 +3573,7 @@ mod tests {
             "#loaded",
         );
         let mut report = json!({"schema_version": 2, "kind": "browser_state", "payload": {
-            "workspace": {"device_id": "local", "path": checkout},
+            "workspace": {"device_id": boundary.node().as_str(), "path": checkout},
             "display_id": "d1", "url": native_url, "title": "Manual file",
             "load": 7, "loading": false, "failure": null, "present": true,
         }});

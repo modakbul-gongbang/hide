@@ -471,3 +471,34 @@ fn later_prefix_rewrite_with_append_survives_restart_during_validation() {
         append_offset
     );
 }
+#[test]
+fn rekeying_onto_a_project_indexed_since_keeps_the_newer_rows_and_drops_the_old_ones() {
+    let tmp = tempdir().unwrap();
+    let path = tmp.path().join("s.jsonl");
+    fs::write(&path, event("user", "대화검색 이전 키")).unwrap();
+    let mut index = SearchIndex::open(&tmp.path().join("index.db")).unwrap();
+    // Setting the days clears a project's index, so they come first. The same
+    // session is then indexed under the old id and, since, under the new one.
+    index.set_days("project-old", 90).unwrap();
+    index.set_days("project-new", 30).unwrap();
+    index_all(&mut index, &path, "project-old", "session-a");
+    index_all(&mut index, &path, "project-new", "session-a");
+
+    let (moved, dropped) = index
+        .rekey_projects(&[("project-old".to_owned(), "project-new".to_owned())])
+        .unwrap();
+    assert_eq!(moved, 0, "every old row collides with a newer one");
+    assert!(dropped >= 3, "policy, file and message rows: {dropped}");
+    assert!(
+        index
+            .search("project-old", "대화", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    assert_eq!(
+        index.search("project-new", "대화", 0).unwrap().hits.len(),
+        1
+    );
+    assert_eq!(index.days("project-new").unwrap(), 30);
+}

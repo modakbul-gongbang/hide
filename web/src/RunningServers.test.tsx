@@ -52,6 +52,7 @@ function catalog(current: Checkout, remote: Checkout): SnapshotRest {
       // A remote Project may have the same IDs and paths. It must not satisfy
       // the local endpoint check, even when it is listed first and focused.
       workspaces: [project("mini", [remote]), project("local", [current])],
+      devices: [{ id: "local", kind: "local" }, { id: "mini", kind: "remote" }] as never,
       focused_device_id: "mini", focused_checkout_id: remote.id,
     },
     workspace_view: { ...view, device_id: "mini", path: "/projects/other" },

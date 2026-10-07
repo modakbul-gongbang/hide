@@ -176,7 +176,7 @@ test("a ~/hide that is not Hide's is left alone, and the reason shows under the 
     await page.keyboard.type("Start an agent");
     await page.locator('[data-palette-row="command:start-agent"]').click();
     const panel = page.locator("[data-start-panel]");
-    await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", "home:local");
+    await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", `home:${daemon.node}`);
     await panel.locator("[data-start-text]").fill("홈에서 할 일");
     await panel.locator("[data-start-submit]").click();
     await expect(panel.locator("[data-start-failure]")).toContainText("~/hide", { timeout: 20_000 });

@@ -15,10 +15,10 @@ pub struct CoreOptions {
     /// (a test daemon) names it so nothing reaches the operator's.
     #[serde(default)]
     pub home: Option<String>,
-    /// The stable operating-system machine identity, read by the host before
-    /// the core is placed behind its runtime mutex.
-    #[serde(default)]
-    pub machine_id: Option<String>,
+    /// The machine this core runs on (`node::NodeId`), read by the host
+    /// before the core is placed behind its runtime mutex. Every key naming
+    /// this machine, in the snapshot and in stored state, is this id.
+    pub node_id: crate::node::NodeId,
     pub herdr_socket_path: Option<String>,
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
@@ -3187,7 +3187,8 @@ pub struct WorkspaceRegistration {
     pub id: String,
     pub label: String,
     pub path: String,
-    #[serde(default = "default_local_device_id")]
+    /// The node id for this machine. Stores written before node ids are
+    /// converted once at launch (`node_migration`), so none is missing.
     pub device_id: String,
     /// Absent in a store written before projects could be pinned, which
     /// loads as unpinned without a warning (D-07). Removing the registration
@@ -3246,10 +3247,6 @@ pub struct HostIdentity {
     pub hostname: String,
     pub port: u16,
     pub host_key_sha256: String,
-}
-
-pub(crate) fn default_local_device_id() -> String {
-    "local".to_owned()
 }
 
 pub(crate) fn default_accent_hex() -> String {
@@ -4341,7 +4338,7 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![crate::workspace::local_device()],
+                devices: vec![crate::workspace::local_device(&options.node_id)],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),

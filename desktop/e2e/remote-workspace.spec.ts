@@ -19,7 +19,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { claudeSettings, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
-import { endChild, HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
+import { endChild, HIDE_CLI, hostLog, isolate, launch, nodeOf, test, type Isolated } from "./fixture";
 
 const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
 
@@ -159,7 +159,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     ] as const) {
       const result = await commandFromPane(local, run, null, [...args], label);
       expect(result.status, JSON.stringify(result.answer)).toBe(0);
-      expect(result.answer).toMatchObject({ ok: true, result: { context: { device_id: "local" } } });
+      expect(result.answer).toMatchObject({ ok: true, result: { context: { device_id: nodeOf(run.env) } } });
     }
     for (const runtime of ["claude-code", "codex"] as const) {
       const localContext = await hookFromPane(local, run.env.HIDE_STATE_DIR!, null, runtime, `local-${runtime}-hook`);
@@ -500,18 +500,18 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     });
     const localBrowser = await commandFromPane(local, run, null, ["browser", "open", `http://localhost:${remotePort}/remote.html`], "local-dev-cookie");
     expect(localBrowser.status).toBe(0);
-    await page.evaluate(async ({ port, token }) => {
+    await page.evaluate(async ({ port, token, node }) => {
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
         const timer = setTimeout(() => reject(new Error("local focus timed out")), 10_000);
         ws.onerror = () => { clearTimeout(timer); reject(new Error("local focus socket failed")); };
         ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
         ws.onmessage = () => {
-          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "local" } }));
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: node } }));
           clearTimeout(timer); ws.close(); resolve();
         };
       });
-    }, state);
+    }, { ...state, node: nodeOf(run.env) });
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
     expect((await commandFromPane(local, run, null, ["view", "select", (localBrowser.answer.result as { view_id: string }).view_id], "local-dev-select")).status).toBe(0);
     await showViews(page);
@@ -658,18 +658,18 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
         return contents && urls.includes(contents.getURL()) ? [contents.id] : [];
       }) ?? [], [previewUrl, routed]);
     expect(closingNativeIds).toHaveLength(2);
-    await page.evaluate(async ({ port, token }) => {
+    await page.evaluate(async ({ port, token, node }) => {
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
         const timer = setTimeout(() => reject(new Error("local focus timed out")), 10_000);
         ws.onerror = () => { clearTimeout(timer); reject(new Error("local focus socket failed")); };
         ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
         ws.onmessage = () => {
-          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "local" } }));
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: node } }));
           clearTimeout(timer); ws.close(); resolve();
         };
       });
-    }, state);
+    }, { ...state, node: nodeOf(run.env) });
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
     if (process.env.HIDE_E2E_SSH_PID && process.env.HIDE_E2E_SSH_CONFIG) {
       const sshPid = Number(process.env.HIDE_E2E_SSH_PID);
@@ -787,18 +787,18 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     expect(new URL(mappedRoute).hostname).toBe("127.0.0.1");
     expect(new URL(mappedRoute).port).not.toBe(String(remotePort));
     expect((await commandFromPane(remote, run, bridge, ["view", "close", (mapped.answer.result as { view_id: string }).view_id], "remote-mapped-close")).status).toBe(0);
-    await page.evaluate(async ({ port, token }) => {
+    await page.evaluate(async ({ port, token, node }) => {
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
         const timer = setTimeout(() => reject(new Error("local focus timed out")), 10_000);
         ws.onerror = () => { clearTimeout(timer); reject(new Error("local focus socket failed")); };
         ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
         ws.onmessage = () => {
-          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "local" } }));
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: node } }));
           clearTimeout(timer); ws.close(); resolve();
         };
       });
-    }, state);
+    }, { ...state, node: nodeOf(run.env) });
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
     const revealed = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`, "--reveal"], "remote-reveal");
     expect(revealed.status, JSON.stringify(revealed.answer)).toBe(0);

@@ -9,8 +9,6 @@ use std::collections::HashMap;
 use serde::Serialize;
 use serde_json::Value;
 
-pub const LOCAL_DEVICE: &str = herdr_core::workspace::LOCAL_DEVICE_ID;
-
 /// The groups in the order the phone draws them.
 pub const GROUP_ORDER: [&str; 4] = ["needs_you", "done", "working", "seen"];
 
@@ -279,8 +277,9 @@ fn rows(
     }
 }
 
-/// The phone projection of a merged `rest` section.
-pub fn project(rest: &Value) -> Projection {
+/// The phone projection of a merged `rest` section; `node` is the core's own
+/// machine, whose agents the navigator lists.
+pub fn project(rest: &Value, node: &str) -> Projection {
     let mut agents = Vec::new();
     let local = rest
         .pointer("/navigator/agents")
@@ -288,7 +287,7 @@ pub fn project(rest: &Value) -> Projection {
         .map(Vec::as_slice)
         .unwrap_or_default();
     let local_places = places(rest.pointer("/navigator/workspaces"));
-    rows(local, LOCAL_DEVICE, None, &local_places, &mut agents);
+    rows(local, node, None, &local_places, &mut agents);
     let devices = rest
         .pointer("/navigator/devices")
         .and_then(Value::as_array)
@@ -419,7 +418,7 @@ mod tests {
 
     #[test]
     fn groups_come_in_the_sidebar_order_with_devices_included() {
-        let projection = project(&rest());
+        let projection = project(&rest(), "local");
         let order: Vec<_> = projection
             .groups
             .iter()
@@ -458,14 +457,14 @@ mod tests {
             "reply": {"text": "secret reply words", "cut": false, "at_unix_ms": 2},
             "later_by": null, "pull_requests": [],
         });
-        let projection = project(&rest);
+        let projection = project(&rest, "local");
         let sent = serde_json::to_string(&projection.groups).unwrap();
         assert!(!sent.contains("secret"), "{sent}");
     }
 
     #[test]
     fn rows_carry_place_line_and_lineage_root() {
-        let projection = project(&rest());
+        let projection = project(&rest(), "local");
         let asking = &projection.groups[0].agents[0];
         assert_eq!(
             asking.place.as_deref(),
@@ -493,19 +492,23 @@ mod tests {
     #[test]
     fn the_interface_language_is_read_as_stored_and_a_change_makes_the_projection_differ() {
         let mut rest = rest();
-        assert_eq!(project(&rest).interface_language, None, "absent");
+        assert_eq!(project(&rest, "local").interface_language, None, "absent");
         rest["ui_state"] = json!({"interface_language": null});
-        let unset = project(&rest);
+        let unset = project(&rest, "local");
         assert_eq!(unset.interface_language, None, "null");
         rest["ui_state"] = json!({"interface_language": 7});
-        assert_eq!(project(&rest).interface_language, None, "not a string");
+        assert_eq!(
+            project(&rest, "local").interface_language,
+            None,
+            "not a string"
+        );
         rest["ui_state"] = json!({"interface_language": "ko"});
-        let korean = project(&rest);
+        let korean = project(&rest, "local");
         assert_eq!(korean.interface_language.as_deref(), Some("ko"));
         assert_ne!(korean, unset, "the watch channel must republish");
         rest["ui_state"] = json!({"interface_language": "zh-CN"});
         assert_eq!(
-            project(&rest).interface_language.as_deref(),
+            project(&rest, "local").interface_language.as_deref(),
             Some("zh-CN"),
             "the string is not validated here"
         );
@@ -526,6 +529,6 @@ mod tests {
             false
         ));
         assert_eq!(kept["status"], json!({"remote": []}));
-        assert_eq!(project(&kept).groups[0].group, "done");
+        assert_eq!(project(&kept, "local").groups[0].group, "done");
     }
 }

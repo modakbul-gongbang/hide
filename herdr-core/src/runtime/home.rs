@@ -60,7 +60,7 @@ impl Runtime {
         prompt: Option<String>,
         request_id: Option<String>,
     ) -> bool {
-        let local = device == workspace::LOCAL_DEVICE_ID;
+        let local = device == self.node.as_str();
         if !local
             && !self
                 .snapshot
@@ -221,7 +221,7 @@ impl Runtime {
 
     /// The navigator row of `device`'s Home, once the catalog carries it.
     fn home_workspace(&self, device: &str) -> Option<&WorkspaceSnapshot> {
-        let workspaces = if device == workspace::LOCAL_DEVICE_ID {
+        let workspaces = if device == self.node.as_str() {
             self.snapshot.navigator.workspaces.as_slice()
         } else {
             self.snapshot
@@ -240,7 +240,7 @@ impl Runtime {
     /// `home`. A registration already at that path becomes Home rather than a
     /// second row.
     fn register_home(&mut self, device: &str, home: &str) {
-        let local = device == workspace::LOCAL_DEVICE_ID;
+        let local = device == self.node.as_str();
         let registrations = &mut self.snapshot.ui_state.workspace_registrations;
         let existing = registrations
             .iter_mut()
@@ -259,7 +259,7 @@ impl Runtime {
                     !(registration.device_id == device && registration.home)
                 });
                 let registration = if local {
-                    match workspace::registration(home, HOME_LABEL, workspace::LOCAL_DEVICE_ID) {
+                    match workspace::registration(home, HOME_LABEL, self.node.as_str()) {
                         Ok(registration) => registration,
                         Err(message) => {
                             self.log_home_sync_failure(device, "home.register_failed", &message);

@@ -23,7 +23,7 @@ export type RemoteContext = {
  */
 export function remoteContext(rest: SnapshotRest | null): RemoteContext | null {
   const id = rest?.navigator?.focused_device_id;
-  if (!id || id === "local") return null;
+  if (!id) return null;
   const device = rest?.navigator?.devices?.find((row) => row.id === id && row.kind === "remote");
   if (!device) return null;
   const status = rest?.status?.remote?.find((row) => row.target_id === id) ?? null;

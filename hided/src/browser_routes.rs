@@ -147,7 +147,7 @@ impl BrowserRoutes {
         .map_err(|_| "core_unavailable")?
         .map_err(|_| "core_unavailable")?
         .ok_or("view_unavailable")?;
-        if key.device == "local" {
+        if self.core.node() == &key.device {
             return Ok(Resolved {
                 url: source.url.clone(),
                 source_url: source.url,

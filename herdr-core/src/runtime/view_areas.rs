@@ -1955,7 +1955,7 @@ impl Runtime {
     /// one History and Settings show, and its displays still wait, so they
     /// open once the device is fixed.
     pub(super) fn view_root_wait(&self, key: &WorkspaceKey) -> Option<String> {
-        if key.0 != workspace::LOCAL_DEVICE_ID {
+        if key.0 != self.node.as_str() {
             let label = self
                 .snapshot
                 .ui_state

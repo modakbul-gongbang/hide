@@ -26,7 +26,7 @@ import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
 import { availableEntries, currentEntry, expectPane, expectSurface, observeEntries, observePane, observeProject, paneItem, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { projectsOf, remoteContext, remoteView } from "./remote";
 import { hostChord, hostRegistry, isNumberedCommand, releaseModifier, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
-import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
+import { editorFor, focusedCheckout, localDeviceId, type AgentRow, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { workspaceViewOf } from "./workspace";
@@ -111,7 +111,7 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
   if (family === "tabs") {
     const checkout = stripCheckout(state.rest);
     const view = workspaceViewOf(state.rest);
-    const layout = !remoteContext(state.rest) && view?.device_id === "local" && view.path === checkout?.path ? view.agent_layout : null;
+    const layout = !remoteContext(state.rest) && view?.device_id === localDeviceId(state.rest) && view.path === checkout?.path ? view.agent_layout : null;
     return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
   return numberedAgents(agentListOrder(state)).get(number) ?? null;

@@ -86,7 +86,7 @@ fn the_worker_is_handed_each_pull_request_with_its_issue_links_and_sources() {
     let project = &projects[0];
     assert_eq!(
         project.key,
-        hide_project::project_id(workspace::LOCAL_DEVICE_ID, Path::new("/repo"))
+        hide_project::project_id(crate::node::TEST_NODE, Path::new("/repo"))
     );
     assert_eq!(project.repository.as_deref(), Some("acme/project"));
     assert_eq!(project.repository_id.as_deref(), Some("R_kgDO"));
@@ -282,7 +282,7 @@ fn an_answer_for_a_superseded_read_is_dropped_and_a_failure_keeps_the_lines() {
         agent: "claude".into(),
         id: "s1".into(),
         ids: vec!["s1".into()],
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         role: SessionRole::Worked,
         pr: 7,
         request: None,

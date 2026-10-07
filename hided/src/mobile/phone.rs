@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 
 use super::conversation::{self, Tail, Transcript};
 use super::pane::{self, Input, PaneError};
-use super::projection::{self as agents, AgentKey, Projection};
+use super::projection::{AgentKey, Projection};
 use super::store::{Notifications, PushSubscription};
 use super::{InputState, Mobile, PhoneMeta, Reservation};
 
@@ -231,14 +231,14 @@ async fn conversation_step(
     transcript: Option<Transcript>,
 ) -> (Option<Transcript>, Option<Value>) {
     // An SSH device's transcript is on that device.
-    if key.device_id != agents::LOCAL_DEVICE {
+    if key.device_id != mobile.node().as_str() {
         return (None, None);
     }
     let reader = Arc::clone(mobile);
     let pane_id = key.herdr_pane_id().to_owned();
     let (transcript, page) = tokio::task::spawn_blocking(move || {
         let source = reader
-            .herdr_api(agents::LOCAL_DEVICE)
+            .herdr_api(reader.node().as_str())
             .and_then(|connector| conversation::source(&connector, &pane_id));
         let source = match source {
             Ok(Some(source)) => source,

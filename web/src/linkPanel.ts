@@ -51,20 +51,18 @@ export function foldLines<T>(lines: readonly T[], unfolded: boolean): { shown: r
 /** Why a button is off, as its message; null when it works. */
 export type Blocked = { key: "links.why.worktree" | "links.why.opencode" | "links.why.file" } | { key: "links.why.deviceOffline" | "links.why.deviceView"; device: string } | null;
 
-export const LOCAL_DEVICE = "local";
-
 /** A device's name for its chip and its tooltips, or its id when the snapshot no longer lists it. */
 export function deviceLabel(devices: readonly Device[] | undefined, id: string): string {
   return devices?.find((device) => device.id === id)?.label ?? id;
 }
 
-function connected(devices: readonly Device[] | undefined, id: string): boolean {
-  return id === LOCAL_DEVICE || devices?.find((device) => device.id === id)?.state === "ready";
+function connected(devices: readonly Device[] | undefined, id: string, node: string): boolean {
+  return id === node || devices?.find((device) => device.id === id)?.state === "ready";
 }
 
-/** `View conversation` (B11, B15, B21): another device's conversation and a gone file cannot be opened. */
-export function viewBlock(line: LinkedSession, devices: readonly Device[] | undefined): Blocked {
-  if (line.device_id !== LOCAL_DEVICE) return { key: "links.why.deviceView", device: deviceLabel(devices, line.device_id) };
+/** `View conversation` (B11, B15, B21): another device's conversation and a gone file cannot be opened; `node` is the core's own. */
+export function viewBlock(line: LinkedSession, devices: readonly Device[] | undefined, node: string): Blocked {
+  if (line.device_id !== node) return { key: "links.why.deviceView", device: deviceLabel(devices, line.device_id) };
   if (line.file === "missing") return { key: "links.why.file" };
   return null;
 }
@@ -75,10 +73,10 @@ export function resumable(agent: string): agent is "claude" | "codex" {
 }
 
 /** `Resume` (B12-B15, B20-B22): the agent, the file, the device and the worktree, in that order. */
-export function resumeBlock(line: LinkedSession, checkout: Checkout | null, devices: readonly Device[] | undefined): Blocked {
+export function resumeBlock(line: LinkedSession, checkout: Checkout | null, devices: readonly Device[] | undefined, node: string): Blocked {
   if (!resumable(line.agent)) return { key: "links.why.opencode" };
   if (line.file === "missing") return { key: "links.why.file" };
-  if (!connected(devices, line.device_id)) return { key: "links.why.deviceOffline", device: deviceLabel(devices, line.device_id) };
+  if (!connected(devices, line.device_id, node)) return { key: "links.why.deviceOffline", device: deviceLabel(devices, line.device_id) };
   if (!checkout) return { key: "links.why.worktree" };
   return null;
 }
@@ -92,8 +90,8 @@ function within(path: string, root: string): boolean {
  * holds the folder it worked in, the deepest one, else the one on the pull
  * request's branch; a checkout whose folder is gone is no place.
  */
-export function resumeCheckout(line: LinkedSession, workspaces: readonly Workspace[], branch: string | null): Checkout | null {
-  const here = workspaces.filter((workspace) => (workspace.device_id ?? LOCAL_DEVICE) === line.device_id).flatMap((workspace) => workspace.checkouts).filter((checkout) => checkout.exists);
+export function resumeCheckout(line: LinkedSession, workspaces: readonly Workspace[], branch: string | null, node: string): Checkout | null {
+  const here = workspaces.filter((workspace) => (workspace.device_id ?? node) === line.device_id).flatMap((workspace) => workspace.checkouts).filter((checkout) => checkout.exists);
   const cwd = line.cwd;
   const holding = cwd ? here.filter((checkout) => within(cwd, checkout.path)).sort((a, b) => b.path.length - a.path.length)[0] : undefined;
   if (holding) return holding;

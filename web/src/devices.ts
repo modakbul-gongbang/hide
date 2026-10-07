@@ -7,17 +7,14 @@
 
 import type { TFunction } from "i18next";
 import { groupCounts } from "./navigation";
-import type { AgentRow, Device, SnapshotRest, Workspace } from "./snapshot";
+import { localDeviceId, type AgentRow, type Device, type SnapshotRest, type Workspace } from "./snapshot";
 
 /** The rail is shown unless the operator hid it; the choice is the core's `ui_state.device_rail_visible`. */
 export function railShown(rest: SnapshotRest | null): boolean {
   return rest?.ui_state?.device_rail_visible ?? true;
 }
 
-/** This machine's device id: the row of kind `local`, `local` before the snapshot names it. */
-export function localDeviceId(rest: SnapshotRest | null): string {
-  return rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.id ?? "local";
-}
+export { localDeviceId } from "./snapshot";
 
 /** The device in front: the one the core focuses, this machine by default. */
 export function frontDeviceId(rest: SnapshotRest | null): string {
@@ -103,7 +100,7 @@ export function homeOf(rest: SnapshotRest | null, deviceId: string): Workspace |
 
 /** The name on the sidebar's top line and the smaller word after it: the device in front. */
 export function frontTitle(devices: readonly Device[] | undefined, frontId: string | null | undefined, t: TFunction<"translation">): { name: string; note: string | null } {
-  const device = devices?.find((row) => row.id === (frontId ?? "local"));
+  const device = frontId ? devices?.find((row) => row.id === frontId) : devices?.find((row) => row.kind !== "remote");
   return { name: device?.label ?? t("common.thisMac"), note: device?.kind === "remote" ? t("devices.remote") : null };
 }
 

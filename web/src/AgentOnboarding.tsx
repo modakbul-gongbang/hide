@@ -19,7 +19,7 @@ import { useAgentsDemand } from "./settings/useAgentsDemand";
  */
 export function AgentOnboardingGate({ actions }: { actions: Actions }) {
   const pending = useShellStore((s) => s.rest?.ui_state?.agent_onboarding === "pending");
-  const agents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.id === "local")?.kit?.agents);
+  const agents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit?.agents);
   return pending && agents && agents.length > 0 ? <AgentOnboarding actions={actions} agents={agents} /> : null;
 }
 

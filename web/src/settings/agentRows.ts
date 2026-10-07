@@ -93,7 +93,6 @@ export type AgentMachine = {
 
 export function agentMachines(devices: readonly Device[], remote?: readonly RemoteStatus[]): AgentMachine[] {
   return devices
-    .filter((device) => device.kind === "remote" || device.id === "local")
     .map((device) => {
       const agents = supportedAgents(device.kit?.agents);
       // A device that is not ready answers nothing, so its last list is not a fact to act on (B11).

@@ -18,7 +18,7 @@ import type { TFunction } from "i18next";
 import { Note, Status } from "./components/settings-rows";
 import { AgentField, Field, submitOnCommandEnter, TextArea } from "./IssueDialogs";
 import { delegatePrompt } from "./prDelegate";
-import type { PrFeedback, PrLink, PullRequest, Task, Workspace } from "./snapshot";
+import { localDeviceId, type PrFeedback, type PrLink, type PullRequest, type Task, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { taskFor } from "./workspaceManage";
@@ -247,6 +247,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
   const started = taskFor(
     operation,
     request ? (request.newWorktree ? { kind: "worktree_create", afterId: request.afterId, repositoryRoot: workspace.path, branch } : { kind: "agent_start", afterId: request.afterId, repositoryRoot: workspace.path }) : null,
+    localDeviceId(useShellStore.getState().rest),
   );
   const refused = useErrorSince(request?.at ?? null, ["pr_delegate.", "worktree.create", "task_operation.", "agent_start.", "overview.unknown_checkout"]);
   const working = request !== null && refused === null && (started === null || started.phase === "working");

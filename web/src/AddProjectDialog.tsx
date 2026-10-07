@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, Sele
 import { RegistrationStatus, useRegistration } from "./registration";
 import type { MessageKey } from "./i18n/catalogs";
 import { useInterfaceTranslation } from "./i18n/client";
-import type { WorkspaceRegistration } from "./snapshot";
+import { localDeviceId, type WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -48,6 +48,7 @@ function AddProject({ actions }: { actions: Actions }) {
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id);
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations ?? NO_REGISTRATIONS);
+  const node = useShellStore((s) => localDeviceId(s.rest));
   const hosts = addProjectHosts(devices, t);
   const [chosen, setChosen] = useState(() => initialHost(hosts, focused));
   const host = hosts.find((row) => row.id === chosen) ?? hosts[0]!;
@@ -97,7 +98,7 @@ function AddProject({ actions }: { actions: Actions }) {
         data-add-project={host.id}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
-          (host.id === "local" ? browseRef.current : fieldRef.current)?.focus();
+          (host.id === node ? browseRef.current : fieldRef.current)?.focus();
         }}
       >
         {view === "create" ? (
@@ -150,7 +151,7 @@ function AddProject({ actions }: { actions: Actions }) {
                   </SelectContent>
                 </Select>
               </div>
-              {host.id === "local" ? (
+              {host.id === node ? (
                 <button
                   ref={browseRef}
                   type="button"
@@ -195,7 +196,7 @@ function AddProject({ actions }: { actions: Actions }) {
                 </div>
               )}
               <RegistrationStatus registration={registration} />
-              {host.id === "local" ? (
+              {host.id === node ? (
                 <div className="flex flex-col gap-xs" data-add-project-other-ways="true">
                   <span className="text-caption text-muted-foreground">{t("addProject.otherWays")}</span>
                   {OTHER_WAYS.map((way) => (

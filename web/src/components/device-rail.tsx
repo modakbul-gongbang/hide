@@ -36,7 +36,7 @@ export function DeviceRail({ actions }: { actions: Actions }) {
     const list = devices ?? [];
     const local = list.find((device) => device.kind !== "remote");
     return [
-      { id: local?.id ?? "local", label: local?.label ?? t("common.thisMac"), icon: "local" },
+      { id: local?.id ?? "", label: local?.label ?? t("common.thisMac"), icon: "local" },
       ...list.filter((device) => device.kind === "remote").map((device): Tile => ({ id: device.id, label: device.label, icon: "remote" })),
     ];
   }, [devices, t]);

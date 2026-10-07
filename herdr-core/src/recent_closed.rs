@@ -138,10 +138,10 @@ impl ClosedItem {
     }
 
     /// The device whose surface can reopen this item. Hide records a pane or
-    /// tab close only on this machine's Herdr.
-    pub fn device_id(&self) -> &str {
+    /// tab close only on this machine's Herdr, the core's `node`.
+    pub fn device_id<'a>(&'a self, node: &'a str) -> &'a str {
         match self {
-            Self::Pane { .. } | Self::Tab { .. } => crate::workspace::LOCAL_DEVICE_ID,
+            Self::Pane { .. } | Self::Tab { .. } => node,
             Self::File { device_id, .. } => device_id,
         }
     }

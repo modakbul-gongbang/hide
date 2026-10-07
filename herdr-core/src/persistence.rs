@@ -866,7 +866,7 @@ mod tests {
         );
 
         let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null,
-            "workspace_registrations":[{"id":"workspace:alpha","label":"Alpha","path":"/repo/alpha"}]}"#;
+            "workspace_registrations":[{"id":"workspace:alpha","label":"Alpha","path":"/repo/alpha","device_id":"test-node"}]}"#;
         let (older_state, _sizes, older_disposition) = decode(older);
         assert_eq!(older_disposition, LoadDisposition::Loaded);
         assert_eq!(older_state.workspace_registrations.len(), 1);

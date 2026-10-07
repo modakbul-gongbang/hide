@@ -20,7 +20,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import type { IssueSettings, Task, Workspace } from "./snapshot";
+import { localDeviceId, type IssueSettings, type Task, type Workspace } from "./snapshot";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -234,7 +234,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const asked = useRef(false);
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);
   const operation = useShellStore((s) => s.rest?.task_operation);
-  const created = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, deviceId: workspace.device_id, repositoryRoot: workspace.path, branch: request.branch } : null);
+  const created = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, deviceId: workspace.device_id, repositoryRoot: workspace.path, branch: request.branch } : null, localDeviceId(useShellStore.getState().rest));
   const refused = useErrorSince(request?.at ?? null, ["worktree.create", "task_operation.", "agent_start."]);
   const working = request !== null && refused === null && (created === null || created.phase === "working");
 

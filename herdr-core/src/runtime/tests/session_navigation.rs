@@ -670,7 +670,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
             id: project_a.to_owned(),
             label: "Alpha".to_owned(),
             path: path_a.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         },
@@ -679,7 +679,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
             id: project_b.to_owned(),
             label: "Beta".to_owned(),
             path: path_b.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         },
@@ -3376,7 +3376,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
         id: "workspace:registered".to_owned(),
         label: "registered".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];
@@ -3500,7 +3500,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         id: workspace_id.clone(),
         label: "Selected".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -3622,7 +3622,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
         id: workspace_id.clone(),
         label: "Missing pane".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -4178,7 +4178,7 @@ fn a_checkout_chosen_with_its_device_moves_both_or_neither() {
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
         runtime.snapshot.navigator.focused_device_id.as_deref(),
-        Some(workspace::LOCAL_DEVICE_ID)
+        Some(crate::node::TEST_NODE)
     );
 }
 

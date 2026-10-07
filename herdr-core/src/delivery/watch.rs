@@ -563,7 +563,7 @@ mod tests {
     #[test]
     fn a_factory_observer_warns_after_thirty_quiet_minutes_not_twenty() {
         let mut ledger = Ledger::default();
-        let factory = Actor::factory("f-1");
+        let factory = Actor::factory("f-1", crate::node::TEST_NODE);
         let watch = start(&mut ledger, &factory, &actor("worker"), 10).unwrap();
         tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
         assert!(ledger.letters.is_empty());
@@ -576,7 +576,13 @@ mod tests {
     #[test]
     fn a_factory_s_stall_setting_replaces_the_thirty_minute_window() {
         let mut ledger = Ledger::default();
-        let watch = start(&mut ledger, &Actor::factory("f-1"), &actor("worker"), 10).unwrap();
+        let watch = start(
+            &mut ledger,
+            &Actor::factory("f-1", crate::node::TEST_NODE),
+            &actor("worker"),
+            10,
+        )
+        .unwrap();
         let within = |id: &str| Reading {
             inactivity_ms: Some(45 * 60_000),
             ..reading(id, 10)

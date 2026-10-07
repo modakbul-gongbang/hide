@@ -941,7 +941,8 @@ fn publish_replica(
     {
         match &context.target {
             SessionSyncTarget::Local { socket_path } => {
-                guard.observe_delivery("local", &payload, socket_path.to_str())
+                let node = guard.node().clone();
+                guard.observe_delivery(node.as_str(), &payload, socket_path.to_str())
             }
             SessionSyncTarget::Remote { target_id, .. } => {
                 guard.observe_delivery(target_id, &payload, None)
@@ -990,9 +991,10 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees, unconfirmed_created_purposes, created_tab_clamps) =
+    let (node, registrations, worktrees, unconfirmed_created_purposes, created_tab_clamps) =
         match runtime.lock() {
             Ok(guard) => (
+                guard.node().clone(),
                 guard.snapshot().ui_state.workspace_registrations.clone(),
                 guard.worktree_catalog(),
                 guard.unconfirmed_created_purpose_values(),
@@ -1032,7 +1034,7 @@ fn publish_replica(
             && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
-        let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
+        let workspaces = workspace::build_catalog(&node, &registrations, &spaces, &worktrees);
         let roots = workspace::root_index(&spaces);
         *catalog_cache = Some(CatalogCache {
             registrations: registrations.clone(),
@@ -1660,6 +1662,7 @@ mod worktree_observer_tests {
             let path = hide_platform::path::to_wire_lossy(&root);
             let options: CoreOptions = serde_json::from_value(json!({
                 "schema_version": crate::model::SCHEMA_VERSION,
+                "node_id": "test-node",
                 "app_state_path": ""
             }))
             .expect("workerless core options");
@@ -1702,7 +1705,12 @@ mod worktree_observer_tests {
             let spaces = Runtime::session_spaces(&payload);
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
-                workspaces: workspace::build_catalog(&[], &spaces, &catalog),
+                workspaces: workspace::build_catalog(
+                    &crate::node::test_node(),
+                    &[],
+                    &spaces,
+                    &catalog,
+                ),
                 roots: workspace::root_index(&spaces),
             };
             runtime.ingest_session_with_catalog(Ok(payload), Some(precomputed));
@@ -1931,6 +1939,7 @@ mod focus_readback_order_tests {
     fn runtime_with(first: &SessionReplica) -> Arc<Mutex<Runtime>> {
         let options: CoreOptions = serde_json::from_value(json!({
             "schema_version": crate::model::SCHEMA_VERSION,
+            "node_id": "test-node",
             "app_state_path": ""
         }))
         .expect("workerless core options");

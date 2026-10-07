@@ -16,10 +16,10 @@ describe("reveal_external (issue 324)", () => {
 
   it("is absent in a browser tab, disabled with the reason on another device, and blocked by a known reason here", () => {
     const host = { label: revealLabel("darwin") };
-    expect(revealExternalEntry(null, "local", translate)).toEqual([]);
-    expect(revealExternalEntry(host, "local", translate)).toEqual([{ id: "reveal_external", label: "Reveal in Finder", unavailable: null }]);
-    expect(revealExternalEntry(host, "studio", translate, "The file was deleted.")[0]?.unavailable).toBe(REVEAL_HERE_ONLY);
-    expect(revealExternalEntry(host, "local", translate, "The file was deleted.", true)).toEqual([
+    expect(revealExternalEntry(null, "local", "local", translate)).toEqual([]);
+    expect(revealExternalEntry(host, "local", "local", translate)).toEqual([{ id: "reveal_external", label: "Reveal in Finder", unavailable: null }]);
+    expect(revealExternalEntry(host, "studio", "local", translate, "The file was deleted.")[0]?.unavailable).toBe(REVEAL_HERE_ONLY);
+    expect(revealExternalEntry(host, "local", "local", translate, "The file was deleted.", true)).toEqual([
       { id: "reveal_external", label: "Reveal in Finder", unavailable: "The file was deleted.", separated: true },
     ]);
   });
@@ -28,7 +28,7 @@ describe("reveal_external (issue 324)", () => {
 describe("the Explorer's context menu", () => {
   /** Each item as the menu draws it: a separator line before it, then its label. */
   const drawn = (items: { label: string; separated?: boolean }[]) => items.flatMap((item) => [...(item.separated ? ["─"] : []), item.label]);
-  const base = { html: false, besideReason: null, reveal: { label: revealLabel("darwin") }, device: "local" };
+  const base = { html: false, besideReason: null, reveal: { label: revealLabel("darwin") }, device: "local", node: "local" };
   const file = { path: "/Users/example/repo/a.html" };
   const folder = { path: "/Users/example/repo/src" };
 

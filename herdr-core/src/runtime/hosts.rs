@@ -550,7 +550,7 @@ impl Runtime {
         &mut self,
         device_id: &str,
     ) -> Result<Arc<dyn HostChannel>, String> {
-        if device_id == crate::workspace::LOCAL_DEVICE_ID {
+        if device_id == self.node.as_str() {
             return Ok(Arc::clone(&self.local_host));
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {

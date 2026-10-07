@@ -28,7 +28,7 @@ describe("native browser load generations", () => {
       const loadURL = vi.fn().mockResolvedValue(undefined);
       const page = {
         key: "manual", workspace, id: "manual", applied: 1,
-        partition: browserPartition(workspace, requested), route: null,
+        partition: browserPartition(workspace, requested, null), route: null,
         state: { url: requested, loading: true, failure: null }, report: null,
         view: { webContents: { loadURL } },
       };
