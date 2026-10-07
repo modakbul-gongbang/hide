@@ -2194,6 +2194,12 @@ pub struct TerminalPaneSnapshot {
     /// from the wire while false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub scroll_held_elsewhere: bool,
+    /// The pane's tab is drawn ahead of Herdr (a split, close, zoom or resize
+    /// Herdr has not confirmed), so its PTY keeps its size: the core sends no
+    /// resize for it and the shell keeps its terminal grid until Herdr
+    /// confirms (PRD instant-pane-topology D-08). Absent while false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub grid_held: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

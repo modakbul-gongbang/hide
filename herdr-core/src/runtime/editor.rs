@@ -1185,10 +1185,13 @@ impl Runtime {
             .close_operations
             .values()
             .any(|operation| operation.scope_id == scope_id || operation.target_id == target_id)
-            || self
-                .pane_operations
-                .values()
-                .any(|operation| operation.scope_id == scope_id)
+            || self.pane_operations.values().any(|operation| {
+                operation.scope_id == scope_id
+                    && matches!(
+                        operation.phase.as_str(),
+                        "transmitting" | "awaiting_topology"
+                    )
+            })
         {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
@@ -1299,6 +1302,16 @@ impl Runtime {
             },
         );
         self.close_capture_order.push_back(request.key.clone());
+        // A pane closing beside others is drawn gone at once (D-07).
+        self.request_republish();
+        if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
+            self.begin_op_timing(
+                &super::op_timing::pane_close_op_id(&request.key),
+                "pane.close",
+                Some(&request.context.tab_id),
+                &[pane_id],
+            );
+        }
         // A reopen waiting for an earlier close meant that item, not this one.
         if let Some(key) = self.reopen_after_close.take() {
             crate::diagnostic!(serde_json::json!({
@@ -1543,6 +1556,14 @@ impl Runtime {
         request: &live::CloseCaptureRequest,
         result: Result<live::CloseCaptureOutcome, String>,
     ) -> (bool, Vec<live::CloseEffectRequest>) {
+        self.with_close_geometry(|runtime| runtime.apply_close_capture_result(request, result))
+    }
+
+    fn apply_close_capture_result(
+        &mut self,
+        request: &live::CloseCaptureRequest,
+        result: Result<live::CloseCaptureOutcome, String>,
+    ) -> (bool, Vec<live::CloseEffectRequest>) {
         self.ensure_pending_close_from_request(request);
         let Some(operation) = self.close_operations.get(&request.key).cloned() else {
             return (false, Vec::new());
@@ -1612,6 +1633,14 @@ impl Runtime {
     }
 
     pub(crate) fn ingest_close_effect_result(
+        &mut self,
+        request: &live::CloseEffectRequest,
+        result: Result<(), hide_herdr_client::ApiError>,
+    ) -> bool {
+        self.with_close_geometry(|runtime| runtime.apply_close_effect_result(request, result))
+    }
+
+    fn apply_close_effect_result(
         &mut self,
         request: &live::CloseEffectRequest,
         result: Result<(), hide_herdr_client::ApiError>,
@@ -2048,6 +2077,17 @@ impl Runtime {
     }
 
     pub(crate) fn ingest_close_status_results(
+        &mut self,
+        connection_generation: u64,
+        requests: &[live::CloseStatusCheckRequest],
+        result: Result<SessionSnapshotPayload, SessionFetchError>,
+    ) -> bool {
+        self.with_close_geometry(|runtime| {
+            runtime.apply_close_status_results(connection_generation, requests, result)
+        })
+    }
+
+    fn apply_close_status_results(
         &mut self,
         connection_generation: u64,
         requests: &[live::CloseStatusCheckRequest],
@@ -2723,7 +2763,17 @@ impl Runtime {
     /// `close_pane` on this machine, and the same step a tree close takes for
     /// a local pane: a pane that is the last of its project keeps the project
     /// registered through the close exactly as an ordinary close does.
-    pub(super) fn close_local_pane(&mut self, pane_id: String, confirmed: bool) -> bool {
+    ///
+    /// The operator's own close (`may_queue`) of one pane among several waits
+    /// in its tab's line while an operation there is still with Herdr
+    /// (PRD instant-pane-topology D-10); a tree close and the line's own turn
+    /// start at once.
+    pub(super) fn close_local_pane(
+        &mut self,
+        pane_id: String,
+        confirmed: bool,
+        may_queue: bool,
+    ) -> bool {
         let status_unknown = self
             .snapshot
             .navigator
@@ -2781,6 +2831,22 @@ impl Runtime {
             );
             return true;
         };
+        // A close waiting its turn is drawn gone at once, so the keyboard
+        // leaves the pane now, as it does when the close starts.
+        if may_queue && self.queue_pane_close(&pane_id, confirmed) {
+            let queued = self.pane_operations.values().any(|operation| {
+                operation.phase == "queued"
+                    && matches!(
+                        &operation.request,
+                        super::operations::GeometryRequest::Close { pane_id: closing, .. }
+                            if *closing == pane_id
+                    )
+            });
+            if queued {
+                self.move_from_closing_target(&live::CloseCaptureTarget::Pane { pane_id }, &tab);
+            }
+            return true;
+        }
         self.retain_project_before_last_pane_closes(&pane_id);
         self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
         self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)

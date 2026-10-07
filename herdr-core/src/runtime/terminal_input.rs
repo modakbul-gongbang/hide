@@ -254,10 +254,23 @@ impl InputRequests {
         true
     }
 
-    /// Follows the panes the session lays out: a request's pane counts as
-    /// laid out once a layout carries it, and a request whose laid-out pane
-    /// no longer is, or is closing, is discarded so its keys cannot reach a
-    /// pane that later reuses the id. Returns whether a request changed.
+    /// Marks a request's pane laid out once Herdr's own layout carries it.
+    /// Only Herdr's layout counts: a pane Hide draws ahead may expire
+    /// before Herdr lays it out, and its keys must still reach it then.
+    pub(super) fn mark_laid_out(&mut self, in_herdr_layout: impl Fn(&str) -> bool) {
+        for request in &mut self.requests {
+            if let InputRequestState::Ready(pane_id) = &request.state
+                && !request.laid_out
+                && in_herdr_layout(pane_id)
+            {
+                request.laid_out = true;
+            }
+        }
+    }
+
+    /// Discards a request whose pane is closing, or was laid out and no
+    /// longer is, so its keys cannot reach a pane that later reuses the id.
+    /// Returns whether a request changed.
     pub(super) fn follow_panes(
         &mut self,
         live: impl Fn(&str) -> bool,
@@ -268,15 +281,21 @@ impl InputRequests {
             let InputRequestState::Ready(pane_id) = &request.state else {
                 continue;
             };
-            let gone = closing(pane_id) || (request.laid_out && !live(pane_id));
-            if gone {
+            if closing(pane_id) || (request.laid_out && !live(pane_id)) {
                 discard(request, "pane_gone");
                 changed = true;
-            } else if live(pane_id) {
-                request.laid_out = true;
             }
         }
         changed
+    }
+
+    /// Whether a creation's answer named `pane_id` and Herdr's layout has not
+    /// carried it yet: its held keys wait for it rather than counting it gone.
+    pub(super) fn awaits_layout(&self, pane_id: &str) -> bool {
+        self.requests.iter().any(|request| {
+            !request.laid_out
+                && matches!(&request.state, InputRequestState::Ready(pane) if pane == pane_id)
+        })
     }
 
     /// Whether a creation's answer named `pane_id`: Herdr made it for keys
@@ -554,7 +573,14 @@ mod tests {
         // Answered before any layout carries the pane: still routed.
         assert!(!requests.follow_panes(|_| false, |_| false));
         assert_eq!(requests.route("r1", b"a").0, KeyRoute::Pane("w1:p2".into()));
+        // Drawn by Hide alone, then gone when the drawing expires: Herdr has
+        // not laid it out, so its keys still wait for it.
+        requests.mark_laid_out(|_| false);
+        assert!(!requests.follow_panes(|pane| pane == "w1:p2", |_| false));
+        assert!(!requests.follow_panes(|_| false, |_| false));
+        assert_eq!(requests.route("r1", b"a").0, KeyRoute::Pane("w1:p2".into()));
 
+        requests.mark_laid_out(|pane| pane == "w1:p2");
         assert!(!requests.follow_panes(|pane| pane == "w1:p2", |_| false));
         assert!(requests.follow_panes(|_| false, |_| false));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));

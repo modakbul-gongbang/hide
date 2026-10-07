@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
@@ -35,6 +36,9 @@ const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 const RECONCILE_GRACE: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ASYNC_OPERATION_TICK_INTERVAL: Duration = Duration::from_millis(250);
+/// Herdr events kept between two publishes for the operation stage records;
+/// a burst longer than this keeps its newest events.
+const ARRIVAL_BUFFER_LIMIT: usize = 256;
 /// How many `workspace.get` reads a workspace waiting for its replacement
 /// active tab gets, one per event that leaves it waiting and one per
 /// operation tick, before the replica is declared stale and rebuilt from a

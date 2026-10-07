@@ -199,6 +199,7 @@ impl Runtime {
                 transport_exit_category: None,
                 transport_retry_decision: idle_lifecycle.retry_decision.to_owned(),
                 scroll_held_elsewhere: false,
+                grid_held: false,
             };
             if *pane != idle {
                 *pane = idle;
@@ -254,6 +255,12 @@ impl Runtime {
         self.terminal_foreign_frame_sizes
             .retain(|pane_id, _| keep(pane_id));
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
+        // A pane Herdr named for typed keys is not gone before its layout
+        // first carries it (D-11, B9).
+        let requests = &self.input_requests;
+        self.pane_input_hold
+            .retain(|pane_id| keep(pane_id) || requests.awaits_layout(pane_id));
+        self.held_resizes.retain(|pane_id| keep(pane_id));
         self.wheel_before_attach.retain(|pane_id, _| keep(pane_id));
         self.viewport_scrolls.retain(|pane_id, _| keep(pane_id));
         self.panes_scroll_held.retain(|pane_id| keep(pane_id));
@@ -338,6 +345,7 @@ impl Runtime {
             transport_exit_category: lifecycle.exit_category,
             transport_retry_decision: lifecycle.retry_decision.to_owned(),
             scroll_held_elsewhere: self.panes_scroll_held.contains(pane_id),
+            grid_held: self.grid_held_panes.contains(pane_id),
         }
     }
     pub(super) fn sync_transport_projection(&mut self, pane_id: &str) {
@@ -362,6 +370,7 @@ impl Runtime {
             pane.transport_exit_category = lifecycle.exit_category;
             pane.transport_retry_decision = lifecycle.retry_decision.to_owned();
             pane.scroll_held_elsewhere = self.panes_scroll_held.contains(pane_id);
+            pane.grid_held = self.grid_held_panes.contains(pane_id);
         }
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
@@ -942,7 +951,25 @@ impl Runtime {
                 }));
                 true
             }
+            (
+                PaneControlAction::Resize { pane_id, .. }
+                | PaneControlAction::ToggleZoom { pane_id },
+                Ok(PaneControlOutcome::Unchanged),
+            ) => {
+                self.push_diagnostic(
+                    "pane.unchanged",
+                    format!("Herdr changed nothing for pane {pane_id} in {elapsed_ms} ms"),
+                );
+                true
+            }
             (PaneControlAction::Project { .. }, Ok(PaneControlOutcome::Acknowledged { .. }))
+            | (
+                PaneControlAction::Project { .. }
+                | PaneControlAction::Focus { .. }
+                | PaneControlAction::Split { .. }
+                | PaneControlAction::Close { .. },
+                Ok(PaneControlOutcome::Unchanged),
+            )
             | (
                 PaneControlAction::Focus { .. }
                 | PaneControlAction::Split { .. }
@@ -1852,10 +1879,9 @@ impl Runtime {
         }
         #[cfg(test)]
         if self.suppress_terminal_session_workers {
-            self.terminal_sessions.insert(
-                pane_id.to_owned(),
-                TerminalSession::test_stub(pane_id, generation, mode),
-            );
+            let session = TerminalSession::test_stub(pane_id, generation, mode);
+            self.write_held_input(pane_id, &session);
+            self.terminal_sessions.insert(pane_id.to_owned(), session);
             if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
                 lifecycle.state = match mode {
                     TerminalSessionMode::Control => "controlling",
@@ -1997,6 +2023,7 @@ impl Runtime {
                 {
                     self.set_error("terminal.resize_after_attach_failed", message, true);
                 }
+                self.write_held_input(pane_id, &session);
                 self.terminal_sessions.insert(pane_id.to_owned(), session);
                 let reader_result = self
                     .terminal_sessions

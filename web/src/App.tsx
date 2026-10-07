@@ -28,7 +28,7 @@ import { useShellStore } from "./store";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { applyEditorTheme } from "./editor/theme";
-import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
+import { applyGridHolds, applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { primaryValue, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/weekly-usage";
@@ -101,7 +101,11 @@ export function App() {
       if (state.rest === previous.rest) return;
       // A terminal lives as long as the core streams its pane; released or
       // vanished panes lose theirs here, never on a tab switch (D-05).
-      if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) retainTerminals();
+      if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) {
+        retainTerminals();
+        applyGridHolds(state.rest?.terminal?.panes);
+      }
+      if (state.rest?.terminal?.input_requests !== previous.rest?.terminal?.input_requests) observeInputRequests(state.rest?.terminal?.input_requests);
       const fresh = freshError(state, previous);
       const waiting = state.rest?.workspace_view?.agent_layout?.waiting ?? 0;
       const previouslyWaiting = previous.rest?.workspace_view?.agent_layout?.waiting ?? 0;

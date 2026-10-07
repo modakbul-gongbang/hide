@@ -83,6 +83,7 @@ impl Runtime {
         // A front Workspace moved by Herdr or by a device's own focus, not by
         // an event, is followed here, before anything is stamped.
         self.sync_workspace_view();
+        self.note_snapshot_sent();
         if !self
             .delta
             .last_rest

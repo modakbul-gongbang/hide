@@ -2276,6 +2276,19 @@ impl Runtime {
         if let Ok(payload) = &fetched {
             self.herdr_active_tab_ids = HerdrTabView::from_payload(payload).active_tab_ids();
         }
+        // What Hide draws ahead of Herdr is laid over the session only now,
+        // after every confirmation above has read Herdr's own layout, so
+        // every reader below sees one layout and nothing Hide drew confirms
+        // an operation (PRD instant-pane-topology D-07).
+        if let Ok(payload) = fetched.as_mut() {
+            self.input_requests.mark_laid_out(|pane_id| {
+                payload
+                    .layouts
+                    .iter()
+                    .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
+            });
+            self.overlay_drawn_ahead(payload);
+        }
         let previously_projected_pane = self
             .snapshot
             .terminal
@@ -3183,7 +3196,11 @@ impl Runtime {
     /// `layout_updated` for one tab arrives as a payload in which only that
     /// tab's entry differs; comparing the projected vector is what keeps the
     /// other tabs' entries and the revision they ride untouched.
-    pub(super) fn store_pane_layouts(&mut self, mut layouts: Vec<PaneLayoutSnapshot>) -> bool {
+    pub(super) fn store_pane_layouts(&mut self, layouts: Vec<PaneLayoutSnapshot>) -> bool {
+        let mut layouts = layouts
+            .into_iter()
+            .map(|layout| self.draw_closes(layout))
+            .collect::<Vec<_>>();
         // Sorted by tab id, because Herdr's own order for the layouts array
         // carries no meaning - the tab list is what orders tabs - and a
         // reshuffle of it would otherwise restamp the revisioned section and
@@ -3213,6 +3230,7 @@ impl Runtime {
         session_confirms_pending_pane: bool,
         focus_check: SessionFocusCheck,
     ) -> bool {
+        let layout = self.draw_closes(layout);
         let pane_ids = layout
             .pane_ids()
             .into_iter()
@@ -3528,6 +3546,12 @@ impl Runtime {
         }
         self.next_task_operation_id = self.next_task_operation_id.wrapping_add(1).max(1);
         let id = self.next_task_operation_id;
+        self.begin_op_timing(
+            &super::op_timing::task_create_op_id(id),
+            "tab.create",
+            None,
+            &[],
+        );
         self.snapshot.task_operation = Some(crate::model::TaskOperationSnapshot {
             id,
             // A device task names its device after this returns.
@@ -3580,6 +3604,23 @@ impl Runtime {
                         Some(device) => self.record_created_device_tab(device, tab_id, &path),
                     }
                 }
+                // Only this machine's Herdr reports the events the record
+                // times.
+                let timing_id = super::op_timing::task_create_op_id(id);
+                match (device.as_deref(), created_tab_id.as_deref()) {
+                    (None, Some(tab_id)) => {
+                        self.op_timings.stamp(
+                            &timing_id,
+                            super::op_timing::Stage::HerdrAck,
+                            std::time::Instant::now(),
+                        );
+                        self.op_timings
+                            .learn(&timing_id, Some(tab_id), Some(pane_id.as_str()));
+                        self.op_timings.await_frame(&timing_id, &pane_id, false);
+                    }
+                    (Some(_), _) => self.op_timings.finish(&timing_id, "device"),
+                    (None, None) => self.op_timings.finish(&timing_id, "no_tab"),
+                }
                 // A tab made in a checkout this machine's Herdr already holds
                 // is drawn from this answer (D-04, D-05); a new worktree's
                 // workspace is Herdr's to report first.
@@ -3587,13 +3628,23 @@ impl Runtime {
                     && let Some(tab_id) = created_tab_id.as_deref()
                     && let Some(workspace_id) = self.owner_workspace_of_path(&path)
                 {
+                    // The tab is named as the agent start names it.
+                    let label = self
+                        .snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| &workspace.checkouts)
+                        .find(|checkout| checkout.path == path)
+                        .map(|checkout| checkout.next_tab_label.clone())
+                        .unwrap_or_default();
                     self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
                         workspace_id,
                         tab_id: tab_id.to_owned(),
                         pane_id: pane_id.clone(),
                         cwd: path.clone(),
-                        label: String::new(),
-                        timing_id: None,
+                        label,
+                        timing_id: Some(timing_id.clone()),
                         recorded_at_unix_ms: unix_milliseconds(),
                     });
                 }
@@ -3688,6 +3739,8 @@ impl Runtime {
             }
             Err(message) => {
                 self.discard_input_request(&super::terminal_input::InputOrigin::Task(id), "failed");
+                self.op_timings
+                    .finish(&super::op_timing::task_create_op_id(id), "failed");
                 let operation = self
                     .snapshot
                     .task_operation
@@ -4334,6 +4387,8 @@ impl Runtime {
             live::TaskAgentOutcome::Failed(message) => ("failed", Some(message)),
             live::TaskAgentOutcome::Unknown(message) => ("unknown", Some(message)),
         };
+        let started_pane = (phase == "started" && operation.device_id.is_none())
+            .then(|| operation.pane_id.clone());
         crate::diagnostic!(serde_json::json!({
             "component": "task_operation",
             "kind": format!("agent.{phase}"),
@@ -5444,7 +5499,11 @@ impl Runtime {
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
             });
-        self.created_tab_republish_requested |= misplaced;
+        // The session placed the tab under another checkout before this
+        // acknowledgment, so it is read again now to move it.
+        if misplaced {
+            self.request_republish();
+        }
     }
 
     /// Notes which created tabs report a cwd inside their checkout, read off
@@ -5686,7 +5745,25 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn take_created_tab_republish(&mut self) -> bool {
-        std::mem::take(&mut self.created_tab_republish_requested)
+    pub(crate) fn set_republish_waker(&mut self, waker: session_sync::RepublishWaker) {
+        self.republish_waker = Some(waker);
+    }
+
+    /// Asks the local coordinator to read the session again now: the core
+    /// drew a created tab or a predicted pane geometry ahead of Herdr, or
+    /// took one back, and the overlay rides the next ingest.
+    pub(super) fn request_republish(&mut self) {
+        #[cfg(test)]
+        {
+            self.republish_requested = true;
+        }
+        if let Some(waker) = &self.republish_waker {
+            waker.wake();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_republish_request(&mut self) -> bool {
+        std::mem::take(&mut self.republish_requested)
     }
 }

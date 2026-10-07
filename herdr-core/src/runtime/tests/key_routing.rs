@@ -302,6 +302,70 @@ fn keys_typed_before_a_new_tab_answers_reach_its_pane() {
     assert!(typed(&runtime, ORIGIN).is_empty());
 }
 
+/// B9: keys held for a new tab's pane survive a session update that does
+/// not carry the pane yet, as when Herdr's layout comes after Hide's
+/// drawing of the tab has expired, and reach it once it is laid out.
+#[test]
+fn keys_for_a_new_tab_survive_an_update_before_herdr_lays_out_its_pane() {
+    let herdr = fake_herdr("key-routing-tab-late");
+    let mut runtime = runtime_on(&herdr);
+    let workspace_id = runtime.snapshot().navigator.workspaces[0].id.clone();
+    let checkout_id = runtime.snapshot().navigator.focused_checkout_id.clone();
+    for checkout in runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+    {
+        checkout.owner_workspace_id = Some("w-order".to_owned());
+    }
+    runtime.dispatch_json(&event(
+        "create_tab",
+        serde_json::json!({"workspace_id": workspace_id, "checkout_id": checkout_id,
+                           "label": "2", "request_id": "r-late"}),
+    ));
+    runtime.dispatch_json(&key_for_request("r-late", b"git "));
+    let Some(super::terminal_input::InputOrigin::TabCreate(admission_id)) =
+        runtime.input_requests.origin_of("r-late")
+    else {
+        panic!("the creation opened its key request");
+    };
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    runtime.complete_lane_tab(
+        RemoteControlAction::CreateTab {
+            workspace_id: "w-order".to_owned(),
+            cwd: CHECKOUT.to_owned(),
+            label: "2".to_owned(),
+            area_id: None,
+            admission_id: Some(admission_id),
+        },
+        Ok(live::RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some("w-order:t9".to_owned()),
+            created_pane_id: Some("w-order:t9:p".to_owned()),
+        }),
+        7,
+    );
+    runtime.dispatch_json(&key_for_request("r-late", b"log"));
+    // The drawing has expired and Herdr's next update does not list the tab.
+    runtime.provisional_tabs.clear();
+    runtime.ingest_session(Ok(tab_order_payload(
+        CHECKOUT,
+        &["w-order:t1"],
+        &["w-order:t1"],
+        "w-order:t1",
+    )));
+    runtime.ingest_session(Ok(tab_order_payload(
+        CHECKOUT,
+        &["w-order:t1", "w-order:t9"],
+        &["w-order:t1", "w-order:t9"],
+        "w-order:t9",
+    )));
+    open_session(&mut runtime, "w-order:t9:p");
+    assert_eq!(typed(&runtime, "w-order:t9:p"), b"git log");
+    assert!(typed(&runtime, ORIGIN).is_empty());
+}
+
 /// The session with the split's new pane laid out beside the origin pane,
 /// or without it once it is gone.
 fn session_with_split_pane(laid_out: bool) -> SessionSnapshotPayload {

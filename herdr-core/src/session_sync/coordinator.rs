@@ -10,12 +10,23 @@ pub(crate) fn spawn(
 ) -> Result<SessionSyncHandle, String> {
     let (sender, receiver) = channel();
     let worker_sender = sender.clone();
+    let republish_pending = Arc::new(AtomicBool::new(false));
+    let worker_republish = Arc::clone(&republish_pending);
     let worker = thread::Builder::new()
         .name("herdr-core-session-sync".to_owned())
-        .spawn(move || run_coordinator(context, usage_paths, receiver, worker_sender))
+        .spawn(move || {
+            run_coordinator(
+                context,
+                usage_paths,
+                receiver,
+                worker_sender,
+                worker_republish,
+            )
+        })
         .map_err(|error| format!("session sync worker could not be started: {error}"))?;
     Ok(SessionSyncHandle {
         sender,
+        republish_pending,
         worker: Some(worker),
     })
 }
@@ -25,6 +36,7 @@ fn run_coordinator(
     usage_paths: Option<crate::usage::UsagePaths>,
     receiver: Receiver<CoordinatorMessage>,
     sender: Sender<CoordinatorMessage>,
+    republish_pending: Arc<AtomicBool>,
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut process_reader = super::process_info::ProcessReader::new(&context);
@@ -313,15 +325,10 @@ fn run_coordinator(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
                 .unwrap_or(0);
-            let mut republish_created_tab = false;
             if let Some(runtime) = context.runtime.upgrade() {
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         let changed = guard.tick_async_operations(now_unix_ms);
-                        // Hide creates tabs only on this machine's Herdr, so
-                        // only its replica can place one again.
-                        republish_created_tab =
-                            context.is_local() && guard.take_created_tab_republish();
                         // Agent sleep is this machine's alone (PRD agent-sleep).
                         changed | (context.is_local() && guard.tick_agent_sleep(now_unix_ms))
                     }
@@ -331,20 +338,6 @@ fn run_coordinator(
                 if changed {
                     context.notifier.notify();
                 }
-            }
-            if republish_created_tab
-                && subscription.is_some()
-                && let Some(current) = replica.as_mut()
-                && !publish_replica(
-                    &context,
-                    current,
-                    &mut catalog_cache,
-                    &mut purpose_mirror,
-                    &mut labels,
-                )
-            {
-                stop_subscription(&mut subscription);
-                return;
             }
             if labels.as_mut().is_some_and(|worker| {
                 take_label_switch(&context, worker) | worker.tick(Instant::now())
@@ -957,7 +950,7 @@ fn settle_active_tab_reads(
             "target": context.log_target(),
             "workspace_id": workspace_id,
             "tab_id": active_tab_id,
-            "attempt": attempt,
+            "attempt": attempts.get(&workspace_id).copied().unwrap_or(0),
             "settled": settled_now,
         }));
         if settled_now {
@@ -2148,7 +2141,14 @@ mod focus_readback_order_tests {
         let context = context_for(&runtime, &herdr);
 
         let publish = thread::spawn(move || {
-            publish_replica(&context, &mut closed, &mut None, &mut None, &mut None)
+            publish_replica(
+                &context,
+                &mut closed,
+                &mut None,
+                &mut None,
+                &mut None,
+                &mut Vec::new(),
+            )
         });
         asked
             .recv_timeout(Duration::from_secs(30))
@@ -2190,7 +2190,12 @@ mod focus_readback_order_tests {
         let context = context_for(&runtime, &herdr);
 
         assert!(publish_replica(
-            &context, &mut moved, &mut None, &mut None, &mut None
+            &context,
+            &mut moved,
+            &mut None,
+            &mut None,
+            &mut None,
+            &mut Vec::new()
         ));
         asked
             .recv_timeout(Duration::from_secs(5))
