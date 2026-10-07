@@ -145,11 +145,9 @@ impl TurnTracker {
         // did waits when it ran in plan mode; in any other mode the records
         // are not the ones this rule was written for, so it is not known.
         match (turn.end, turn.mode) {
-            (Some(End::Aborted), _) => Some(Waiting::Nothing),
-            (Some(End::Completed), _) if turn.answered => Some(Waiting::Nothing),
-            (_, Mode::Other) | (Some(End::Completed), Mode::Unseen) if !turn.plan => {
-                Some(Waiting::Nothing)
-            }
+            (Some(_), _) if turn.answered => Some(Waiting::Nothing),
+            (Some(End::Aborted), Mode::Plan | Mode::Other) => Some(Waiting::Nothing),
+            (_, Mode::Other) | (Some(_), Mode::Unseen) if !turn.plan => Some(Waiting::Nothing),
             (Some(End::Completed), Mode::Plan) => Some(if turn.plan {
                 Waiting::PlanApproval
             } else {
@@ -160,7 +158,9 @@ impl TurnTracker {
     }
 
     /// The turn a mark names: the last one when the ids agree or the mark
-    /// names none, otherwise a turn whose start was not read.
+    /// names none, otherwise a turn whose start was not read. That turn keeps
+    /// a plan the last one left unanswered, so a record naming another turn
+    /// never clears a wait it did not start a turn after.
     fn current(&mut self, id: &Option<String>) -> &mut Turn {
         let same = match (&self.last, id) {
             (Some(turn), Some(id)) => turn.id.as_ref().is_none_or(|known| known == id),
@@ -168,10 +168,14 @@ impl TurnTracker {
             (None, _) => false,
         };
         if !same {
+            let pending = self
+                .last
+                .as_ref()
+                .is_some_and(|turn| turn.plan && !turn.answered);
             self.last = Some(Turn {
                 id: id.clone(),
                 mode: Mode::Unseen,
-                plan: false,
+                plan: pending,
                 end: None,
                 answered: false,
             });
@@ -272,5 +276,21 @@ mod tests {
         // A person's messages with no turn record read at all.
         assert_eq!(folded(&[TurnMark::Human]).waiting(), None);
         assert_eq!(folded(&[]).waiting(), Some(Waiting::Nothing));
+        // A record naming another turn, with no start read, after a wait.
+        for stray in [
+            TurnMark::Completed { turn: id("t2") },
+            TurnMark::Aborted { turn: id("t2") },
+        ] {
+            let mut tracker = folded(&[
+                TurnMark::Started {
+                    turn: id("t1"),
+                    mode: TurnMode::Plan,
+                },
+                TurnMark::Plan { turn: id("t1") },
+                TurnMark::Completed { turn: id("t1") },
+            ]);
+            tracker.fold(100, &stray);
+            assert_eq!(tracker.waiting(), None, "{stray:?}");
+        }
     }
 }
