@@ -13,6 +13,7 @@ use hide_ai::{
     ModelCatalog, NoopLogSink, ProviderId, RouterConfig,
 };
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
+use hide_session::turns::Waiting;
 use serde_json::{Value, json};
 
 use super::NodeTranscripts;
@@ -1377,5 +1378,299 @@ fn a_devices_worker_keeps_no_sightings() {
     assert!(
         worker.take_sighted().is_empty(),
         "a device's pull requests are not read on this Mac"
+    );
+}
+
+/// A Codex rollout under the harness home whose last turn ran in plan mode,
+/// proposed a plan and finished (PRD codex-plan-approval-hold D-03), and the
+/// agent Herdr lists for it.
+fn codex_plan_session(harness: &Harness, status: &str, seq: u64) -> (PathBuf, ObservedAgent) {
+    let id = "0199a000-0000-7000-8000-0000000000b2";
+    let folder = harness.home.path().join(".codex/sessions/2026/10/07");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join(format!("rollout-2026-10-07T01-00-00-{id}.jsonl"));
+    let records = [
+        json!({"timestamp":"2026-10-07T01:00:00.000Z","type":"session_meta",
+            "payload":{"id":id,"cwd":"/work/app","cli_version":"0.160.1"}}),
+        codex_event(
+            "task_started",
+            "turn-1",
+            json!({"collaboration_mode_kind":"plan"}),
+        ),
+        json!({"timestamp":"2026-10-07T01:00:01.000Z","type":"response_item",
+            "payload":{"type":"message","role":"user",
+                "content":[{"type":"input_text","text":"계획을 세워줘"}]}}),
+        codex_event(
+            "item_completed",
+            "turn-1",
+            json!({"item":{"type":"Plan","id":"i1","text":"1. 고친다"}}),
+        ),
+        codex_event(
+            "task_complete",
+            "turn-1",
+            json!({"last_agent_message":null}),
+        ),
+    ];
+    let lines: String = records.iter().map(|record| format!("{record}\n")).collect();
+    std::fs::write(&path, lines).unwrap();
+    let agent = ObservedAgent {
+        agent: Some("codex".to_owned()),
+        ..agent(&path, status, seq)
+    };
+    (path, agent)
+}
+
+fn codex_event(kind: &str, turn: &str, extra: Value) -> Value {
+    let mut payload = json!({"type": kind, "turn_id": turn});
+    payload
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    json!({"timestamp":"2026-10-07T01:00:02.000Z","type":"event_msg","payload":payload})
+}
+
+/// What the overlay says the agent waits for, and whether its row carries
+/// the approval wait (`None` when no read of its session is laid at all),
+/// for the agent as Herdr lists it now.
+fn waits(worker: &LabelWorker, agent: &ObservedAgent) -> (Option<Waiting>, Option<bool>) {
+    let (kind, value) = agent.reference.clone().unwrap();
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id": agent.pane_id, "agent": agent.agent, "agent_status": agent.status,
+        "state_change_seq": agent.state_change_seq,
+        "agent_session": {"kind": kind, "value": value},
+    }]}))
+    .unwrap();
+    let overlay = worker.overlay();
+    let waiting = overlay.waiting(&payload.agents[0]);
+    overlay.apply(&mut payload);
+    let row = payload
+        .agents
+        .remove(0)
+        .facts
+        .map(|facts| facts.awaiting_operator);
+    (waiting, row)
+}
+
+/// D-02, D-06: the wait is read without any AI, and it holds for the Herdr
+/// state it was read under only; a newer state is not known until read.
+#[test]
+fn a_codex_plan_wait_is_known_only_for_the_state_it_was_read_under() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (path, done) = codex_plan_session(&harness, "done", 5);
+    observe(&mut worker, &done);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        waits(&worker, &done),
+        (Some(Waiting::PlanApproval), Some(true))
+    );
+    assert_eq!(harness.backend.calls(), 0, "no analysis was asked");
+
+    // Herdr moves on before the read of the new state lands.
+    let working = ObservedAgent {
+        status: Some("working".to_owned()),
+        state_change_seq: 6,
+        ..done.clone()
+    };
+    assert_eq!(waits(&worker, &working), (None, Some(false)));
+
+    // Approving starts the next turn; read for that state, nothing waits.
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    writeln!(
+        file,
+        "{}",
+        codex_event(
+            "task_started",
+            "turn-2",
+            json!({"collaboration_mode_kind":"default"})
+        )
+    )
+    .unwrap();
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        waits(&worker, &working),
+        (Some(Waiting::Nothing), Some(false))
+    );
+}
+
+/// B5: a default-mode turn whose end Codex has not written yet, when Herdr
+/// already reads done, waits for nothing; only a plan-mode turn could wait.
+#[test]
+fn a_default_turn_not_yet_ended_in_the_file_waits_for_nothing() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (path, _) = codex_plan_session(&harness, "done", 5);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    writeln!(
+        file,
+        "{}",
+        codex_event(
+            "task_started",
+            "turn-2",
+            json!({"collaboration_mode_kind":"default"})
+        )
+    )
+    .unwrap();
+    let done = ObservedAgent {
+        agent: Some("codex".to_owned()),
+        ..agent(&path, "done", 6)
+    };
+    observe(&mut worker, &done);
+    settle(&mut worker, &woken);
+    assert_eq!(waits(&worker, &done), (Some(Waiting::Nothing), Some(false)));
+}
+
+/// B8: a restarted daemon shows the wait it read for the same state without
+/// reading the session again; a record from before turns were read is read
+/// once, and does not claim a wait it could not read.
+#[test]
+fn a_restart_keeps_the_plan_wait_and_reads_a_record_without_one_once() {
+    let harness = Harness::new();
+    let (_, done) = codex_plan_session(&harness, "done", 5);
+    {
+        let store = harness.store();
+        let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+        worker.set_summaries(false, Instant::now());
+        observe(&mut worker, &done);
+        settle(&mut worker, &woken);
+        store.flush();
+    }
+    let store = harness.store();
+    let (mut worker, woken, source) = harness.worker(Arc::clone(&store));
+    worker.set_summaries(false, Instant::now());
+    observe(&mut worker, &done);
+    assert_eq!(
+        waits(&worker, &done),
+        (Some(Waiting::PlanApproval), Some(true))
+    );
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 0);
+    drop(worker);
+    store.flush();
+
+    // The same record as an older daemon wrote it, with no turn read.
+    let store = harness.store();
+    let mut records = store.target(LOCAL_TARGET);
+    let record = records.get_mut(&done.pane_id).unwrap();
+    record.turns = None;
+    record.turns_seq = None;
+    store.save_target(LOCAL_TARGET, &records);
+    store.flush();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    observe(&mut worker, &done);
+    assert_eq!(waits(&worker, &done), (None, Some(false)));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    // That read resumes at the person's message, after the turn's start, so
+    // the turn's mode is not read: the wait stays not known (the bell holds)
+    // until Herdr's next state is read.
+    assert_eq!(waits(&worker, &done), (None, Some(false)));
+}
+
+/// A device helper that predates turn reads: its answer has no `turns`.
+struct HelperWithoutTurns(PathBuf);
+
+impl crate::node_access::NodeLink for HelperWithoutTurns {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        match call {
+            hide_node_link::protocol::Call::LabelTranscript { request } => {
+                hide_host::serve::label_transcript(&self.0, &request)
+                    .map(|mut answer| {
+                        answer.as_object_mut().unwrap().remove("turns");
+                        crate::node_access::LinkAnswer::Parsed(answer)
+                    })
+                    .map_err(crate::node_access::LinkError::Refused)
+            }
+            call => hide_node::Local::of_process().call(call, timeout),
+        }
+    }
+
+    fn in_process(&self) -> bool {
+        true
+    }
+}
+
+/// D-09, B9 and B6: a device's Codex pane is read through its helper the
+/// same way, and a helper that does not report turns leaves the wait not
+/// known rather than "nothing".
+#[test]
+fn a_device_codex_plan_wait_comes_through_its_helper_and_an_older_helper_is_not_known() {
+    let harness = Harness::new();
+    let (_, done) = codex_plan_session(&harness, "done", 5);
+    {
+        let helper: Arc<dyn crate::node_access::NodeLink> =
+            Arc::new(HelperAt(harness.home.path().to_path_buf()));
+        let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
+        worker.set_summaries(false, Instant::now());
+        observe(&mut worker, &done);
+        settle(&mut worker, &woken);
+        assert_eq!(
+            waits(&worker, &done),
+            (Some(Waiting::PlanApproval), Some(true))
+        );
+    }
+
+    // The generator lock is free again, so this worker reads.
+    let older: Arc<dyn crate::node_access::NodeLink> =
+        Arc::new(HelperWithoutTurns(harness.home.path().to_path_buf()));
+    let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&older))));
+    worker.set_summaries(false, Instant::now());
+    // Herdr's next state, so this worker reads whatever the first one saved.
+    let next = ObservedAgent {
+        state_change_seq: 6,
+        ..done.clone()
+    };
+    observe(&mut worker, &next);
+    settle(&mut worker, &woken);
+    // The read landed and proved the session; only the wait is not known.
+    assert_eq!(waits(&worker, &next), (None, Some(false)));
+}
+
+/// B6: a Codex session whose file is not there yet is not known to wait for
+/// nothing; once the file is written, the next state reads it.
+#[test]
+fn a_codex_session_not_found_is_not_known_until_a_later_state_reads_it() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let by_id = |seq: u64| ObservedAgent {
+        pane_id: "w1:p1".to_owned(),
+        agent: Some("codex".to_owned()),
+        status: Some("idle".to_owned()),
+        reference: Some((
+            "id".to_owned(),
+            "0199a000-0000-7000-8000-0000000000b2".to_owned(),
+        )),
+        cwd: None,
+        state_change_seq: seq,
+    };
+    observe(&mut worker, &by_id(2));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    assert_eq!(waits(&worker, &by_id(2)), (None, None));
+
+    codex_plan_session(&harness, "idle", 3);
+    observe(&mut worker, &by_id(3));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        waits(&worker, &by_id(3)),
+        (Some(Waiting::PlanApproval), Some(true))
     );
 }

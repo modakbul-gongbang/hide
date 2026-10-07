@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use hide_session::ConversationCheckpoint;
+use hide_session::turns::{TurnTracker, Waiting};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -80,6 +81,15 @@ pub(crate) struct PaneRecord {
     pub(crate) anchor: Option<ConversationCheckpoint>,
     #[serde(default)]
     pub(crate) incarnation: Option<String>,
+    /// The turn the last read ended in, which the next read continues, for
+    /// an agent whose session read reports its turns (`hide_session::turns`).
+    #[serde(default)]
+    pub(crate) turns: Option<TurnTracker>,
+    /// Herdr's `state_change_seq` the last complete read was asked under.
+    /// What `turns` says the agent waits for is known for that state only
+    /// (PRD codex-plan-approval-hold D-06); `None` while a read is partial.
+    #[serde(default)]
+    pub(crate) turns_seq: Option<u64>,
     /// Herdr's per-pane state counter and when the core saw it move, which
     /// is the pane's elapsed time and recency whichever session it runs.
     #[serde(default)]
@@ -162,6 +172,15 @@ impl PaneRecord {
         self.checkpoint = None;
         self.anchor = None;
         self.incarnation = None;
+        self.turns = None;
+        self.turns_seq = None;
+    }
+
+    /// What the last complete read says the agent waits for, with the Herdr
+    /// state it was read under; the wait is `None` when the records read do
+    /// not settle it.
+    pub(crate) fn turn_read(&self) -> Option<(u64, Option<Waiting>)> {
+        Some((self.turns_seq?, self.turns.as_ref()?.waiting()))
     }
 }
 

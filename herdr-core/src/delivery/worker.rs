@@ -972,6 +972,7 @@ mod tests {
                 cwd: None,
             }),
             host_scope: Some("fixture".into()),
+            turn: crate::delivery::doorbell::Turn::Unread,
         };
         for expected in [100, 200] {
             let work = [&first, &second]
@@ -1011,7 +1012,7 @@ mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":1,"lineage_session":native,"agent_session":reference},
         ]})).unwrap();
-        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
     }
 
     #[test]
@@ -1103,7 +1104,7 @@ mod tests {
             } else {
                 let empty: SessionSnapshotPayload =
                     serde_json::from_value(json!({"agents":[]})).unwrap();
-                guard.observe_delivery(crate::node::TEST_NODE, &empty, None);
+                guard.observe_delivery(crate::node::TEST_NODE, &empty, None, None);
             }
             let work = guard.delivery_watch_work();
             drop(guard);
@@ -1212,7 +1213,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery(crate::node::TEST_NODE, &changed, None);
+                .observe_delivery(crate::node::TEST_NODE, &changed, None, None);
             let (worker, client) = Worker::spawn(
                 Arc::downgrade(&runtime),
                 ChangeNotifier::noop(),
@@ -1256,7 +1257,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery(crate::node::TEST_NODE, &present, None);
+                .observe_delivery(crate::node::TEST_NODE, &present, None, None);
             let first = client
                 .submit(
                     Effect::Command {
@@ -1273,7 +1274,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery(crate::node::TEST_NODE, &absent, None);
+                .observe_delivery(crate::node::TEST_NODE, &absent, None, None);
             let replay = client
                 .submit(
                     Effect::Command {

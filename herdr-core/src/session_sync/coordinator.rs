@@ -1173,8 +1173,17 @@ fn publish_replica(
 ) -> bool {
     let awaiting = replica.panes_awaiting_cwd();
     let mut payload = replica.project();
-    // Observe native state before label overlays add UI timestamps. This is
-    // bounded memory work; no delivery I/O or notifier is started here.
+    let overlay = labels.as_mut().map(|worker| {
+        exchange_pull_requests(context, worker);
+        take_label_switch(context, worker);
+        observe_labels(worker, replica);
+        worker.overlay()
+    });
+    // Observe native state from the payload before the overlay is laid on
+    // it (the remote path below), so no label adds UI timestamps to what
+    // delivery sees; the overlay is only consulted for what each session
+    // read says the agent waits for. This is bounded memory work; no
+    // delivery I/O or notifier is started here.
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
@@ -1184,7 +1193,8 @@ fn publish_replica(
         // reads as the folder of a confirmed pane beside it, or as the
         // checkout a tab Hide created was asked for, decided under the lock
         // that reads those tabs. Only a pane with neither holds the publish
-        // until the read, which publishes then; nothing is observed for it.
+        // until the read, which publishes then; delivery and arrivals observe
+        // nothing for it (the label worker above has already seen it).
         if !awaiting.is_empty() {
             let clamped_tabs = if context.is_local() {
                 guard
@@ -1205,19 +1215,18 @@ fn publish_replica(
         match &context.target {
             SessionSyncTarget::Local { socket_path } => {
                 let node = guard.node().clone();
-                guard.observe_delivery(node.as_str(), &payload, socket_path.to_str())
+                guard.observe_delivery(
+                    node.as_str(),
+                    &payload,
+                    socket_path.to_str(),
+                    overlay.as_ref(),
+                )
             }
             SessionSyncTarget::Remote { target_id, .. } => {
-                guard.observe_delivery(target_id, &payload, None)
+                guard.observe_delivery(target_id, &payload, None, overlay.as_ref())
             }
         }
     }
-    let overlay = labels.as_mut().map(|worker| {
-        exchange_pull_requests(context, worker);
-        take_label_switch(context, worker);
-        observe_labels(worker, replica);
-        worker.overlay()
-    });
     if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
         if let Some(overlay) = &overlay {
             overlay.apply(&mut payload);
