@@ -27,12 +27,79 @@ const FACTORY_TIMEOUT: Duration = Duration::from_secs(110);
 const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
-pub struct OneShotReference(pub PathBuf);
+struct OneShotReference(PathBuf);
 
 impl Drop for OneShotReference {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
         let _ = fs::remove_file(self.0.with_extension("claimed"));
+    }
+}
+
+/// The credential one command runs with: the reference `HIDE_CAP_REF` names,
+/// or a one-shot reference the command bootstrapped and removes when it ends.
+///
+/// A named reference outlives nothing it was issued for: when it has expired
+/// or the daemon revoked it, the command bootstraps a one-shot credential
+/// exactly as a bare `hide` does, once, so the fallback passes the same
+/// caller attestation and carries no authority a bare command would not get.
+pub struct Credential<'a> {
+    env: &'a Env,
+    path: PathBuf,
+    /// The reference came from `HIDE_CAP_REF` and has not been replaced.
+    named: bool,
+    _one_shot: Option<OneShotReference>,
+}
+
+impl<'a> Credential<'a> {
+    pub fn acquire(env: &'a Env) -> Result<Self, String> {
+        match std::env::var(crate::env::HIDE_CAP_REF) {
+            Ok(value) if !value.is_empty() => Ok(Self::named(env, PathBuf::from(value))),
+            Ok(_) => Err("invalid_reference".to_owned()),
+            Err(_) => Self::one_shot(env),
+        }
+    }
+
+    /// The credential a `HIDE_CAP_REF` naming `path` gives.
+    pub fn named(env: &'a Env, path: PathBuf) -> Self {
+        Self {
+            env,
+            path,
+            named: true,
+            _one_shot: None,
+        }
+    }
+
+    fn one_shot(env: &'a Env) -> Result<Self, String> {
+        let path = bootstrap(env, true)?;
+        Ok(Self {
+            env,
+            path: path.clone(),
+            named: false,
+            _one_shot: Some(OneShotReference(path)),
+        })
+    }
+
+    /// Replaces a named reference the daemon no longer holds with a bare
+    /// one-shot bootstrap. False when `reason` is not an expired reference
+    /// or the credential was already bootstrapped, so a request retries once.
+    fn renew(&mut self, reason: &str) -> Result<bool, String> {
+        if !self.named || reason != "credential_expired" {
+            return Ok(false);
+        }
+        *self = Self::one_shot(self.env)?;
+        Ok(true)
+    }
+
+    /// Runs one request, and again with a bare bootstrap when the named
+    /// reference has expired. Every `credential_expired` a request returns
+    /// is decided before the daemon runs the command, or follows a read, so
+    /// the second run never repeats an applied action.
+    fn run<T>(&mut self, mut request: impl FnMut(&Path) -> Result<T, String>) -> Result<T, String> {
+        match request(&self.path) {
+            Err(reason) if self.renew(&reason)? => request(&self.path),
+            outcome => outcome,
+        }
     }
 }
 
@@ -201,12 +268,15 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     Ok(reference)
 }
 
-pub fn request(path: &Path, query: &str) -> Result<Value, String> {
-    request_query(path, query, None)
+pub fn request(credential: &mut Credential, query: &str) -> Result<Value, String> {
+    credential.run(|path| request_query(path, query, None))
 }
 
-pub fn browser_connect(path: &Path, display_id: Option<&str>) -> Result<Value, String> {
-    request_query(path, "browser_connect", display_id)
+pub fn browser_connect(
+    credential: &mut Credential,
+    display_id: Option<&str>,
+) -> Result<Value, String> {
+    credential.run(|path| request_query(path, "browser_connect", display_id))
 }
 
 fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<Value, String> {
@@ -223,58 +293,64 @@ fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<V
 
 /// `hide links`: a read, answered without a shell.
 pub fn request_links(
-    path: &Path,
+    credential: &mut Credential,
     query: &herdr_core::links::query::LinksQuery,
 ) -> Result<Value, String> {
-    let reference = read_reference(path)?;
-    let request_id = fresh_request_id()?;
-    run_exchange(
-        path,
-        &reference,
-        json!({"type":"links","request_id":request_id,"query":query}),
-        &request_id,
-        false,
-    )
+    credential.run(|path| {
+        let reference = read_reference(path)?;
+        let request_id = fresh_request_id()?;
+        run_exchange(
+            path,
+            &reference,
+            json!({"type":"links","request_id":request_id,"query":query}),
+            &request_id,
+            false,
+        )
+    })
 }
 
 /// Losing the final capability claim cannot turn durable success into retry.
 pub fn request_delivery(
-    path: &Path,
+    credential: &mut Credential,
     command: herdr_core::delivery::Command,
     hint: Option<&str>,
 ) -> Result<Value, String> {
-    let reference = read_reference(path)?;
-    let request_id = fresh_request_id()?;
-    run_exchange(
-        path,
-        &reference,
-        json!({
-            "type":"delivery", "request_id":request_id, "command":command, "caller_pane":hint
-        }),
-        &request_id,
-        true,
-    )
+    credential.run(|path| {
+        let reference = read_reference(path)?;
+        let request_id = fresh_request_id()?;
+        run_exchange(
+            path,
+            &reference,
+            json!({
+                "type":"delivery", "request_id":request_id, "command":&command, "caller_pane":hint
+            }),
+            &request_id,
+            true,
+        )
+    })
 }
 
 /// A `hide factory` command. `add` may wait for its intake review, so the
 /// answer has longer than a Workspace request to arrive.
 pub fn request_factory(
-    path: &Path,
+    credential: &mut Credential,
     command: &hide_factory::Command,
     hint: Option<&str>,
 ) -> Result<Value, String> {
-    let reference = read_reference(path)?;
-    let request_id = fresh_request_id()?;
-    run_exchange_within(
-        path,
-        &reference,
-        json!({
-            "type":"factory", "request_id":request_id, "command":command, "caller_pane":hint
-        }),
-        &request_id,
-        true,
-        FACTORY_TIMEOUT,
-    )
+    credential.run(|path| {
+        let reference = read_reference(path)?;
+        let request_id = fresh_request_id()?;
+        run_exchange_within(
+            path,
+            &reference,
+            json!({
+                "type":"factory", "request_id":request_id, "command":command, "caller_pane":hint
+            }),
+            &request_id,
+            true,
+            FACTORY_TIMEOUT,
+        )
+    })
 }
 
 /// The relay socket for one `hide browser` page command: the same scoped
@@ -283,6 +359,18 @@ pub fn request_factory(
 /// reason and next action.
 /// The relay socket, and whether the display is its area's selected View.
 pub(crate) async fn browser_relay(
+    credential: &mut Credential<'_>,
+    display_id: &str,
+) -> Result<(WorkspaceSocket, bool), (String, Option<String>)> {
+    match relay_once(&credential.path, display_id).await {
+        Err((reason, _)) if credential.renew(&reason).map_err(|reason| (reason, None))? => {
+            relay_once(&credential.path, display_id).await
+        }
+        outcome => outcome,
+    }
+}
+
+async fn relay_once(
     path: &Path,
     display_id: &str,
 ) -> Result<(WorkspaceSocket, bool), (String, Option<String>)> {
@@ -310,18 +398,24 @@ pub(crate) async fn browser_relay(
     Ok((socket, answer["result"]["selected"] == true))
 }
 
-pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<Value, String> {
-    let reference = read_reference(path)?;
+pub fn request_action(
+    credential: &mut Credential,
+    action: Action,
+    request_id: &str,
+) -> Result<Value, String> {
     if !valid_request_id(request_id) {
         return Err("invalid_request_id".to_owned());
     }
-    run_exchange(
-        path,
-        &reference,
-        json!({"type":"workspace_action","request_id":request_id,"command":action}),
-        request_id,
-        true,
-    )
+    credential.run(|path| {
+        let reference = read_reference(path)?;
+        run_exchange(
+            path,
+            &reference,
+            json!({"type":"workspace_action","request_id":request_id,"command":&action}),
+            request_id,
+            true,
+        )
+    })
 }
 
 pub fn valid_request_id(id: &str) -> bool {
@@ -429,7 +523,18 @@ async fn exchange_response(
             if value["type"] != "workspace_result" || value["request_id"] != request_id {
                 return Err("invalid_response".to_owned());
             }
+            // The daemon checks the credential before it runs the command.
+            if value["ok"] == false && value["reason"] == "credential_expired" {
+                return Err("credential_expired".to_owned());
+            }
             Ok((value, socket))
+        }
+        // A token the daemon does not hold: it expired, was revoked, or was
+        // issued by a daemon that has since stopped.
+        Some(Ok(Message::Close(Some(frame))))
+            if u16::from(frame.code) == crate::server::CloseReason::InvalidToken.code() =>
+        {
+            Err("credential_expired".to_owned())
         }
         Some(Ok(Message::Close(_))) => Err("credential_rejected".to_owned()),
         _ => Err("hide_unavailable".to_owned()),

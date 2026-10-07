@@ -120,6 +120,49 @@ async fn the_pane_bootstrap_answers_a_caller_on_the_local_stream() {
     drop(dir);
 }
 
+/// A command whose `HIDE_CAP_REF` names a reference the daemon no longer
+/// holds answers what a bare `hide` answers, because it runs on a bare
+/// bootstrap: the daemon removed the file of a reference that expired, and
+/// never issued the token of one a stopped daemon left behind. This process
+/// sits in no checkout the daemon can reach, so the bare answer is a
+/// refusal, which also shows the fallback lets in nobody a bare command
+/// would not.
+#[tokio::test]
+async fn a_command_whose_reference_is_gone_answers_as_a_bare_command() {
+    let (dir, mut env) = test_env(true);
+    let running = hided::start_daemon(env.clone())
+        .await
+        .expect("start daemon");
+    env.pane_id = None;
+    let expired = dir.path().join("expired.json");
+    let stale = dir.path().join("stale.json");
+    let mut file = hide_platform::fs::private::create_new_file(&stale).unwrap();
+    std::io::Write::write_all(
+        &mut file,
+        json!({"token": "ab".repeat(32), "port": running.port, "origin_port": running.port})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    drop(file);
+    let (bare, answers) = tokio::task::spawn_blocking(move || {
+        let bare = hided::workspace_cli::bootstrap(&env, true).unwrap_err();
+        let answers = [expired, stale].map(|path| {
+            let mut credential = hided::workspace_cli::Credential::named(&env, path);
+            hided::workspace_cli::request(&mut credential, "info")
+        });
+        (bare, answers)
+    })
+    .await
+    .unwrap();
+    assert_ne!(bare, "credential_expired");
+    for answer in answers {
+        assert_eq!(answer.unwrap_err(), bare);
+    }
+    running.stop();
+    drop(dir);
+}
+
 #[tokio::test]
 async fn invalid_token_is_refused() {
     let (_dir, running) = start().await;

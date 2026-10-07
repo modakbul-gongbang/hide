@@ -596,14 +596,12 @@ pub enum Output {
 
 async fn execute(env: &Env, command: Command) -> Result<Output, Failure> {
     let display = display_of(&command).to_owned();
-    let (reference, ephemeral) = crate::cli::workspace_reference(env).map_err(|reason| {
+    let mut credential = crate::workspace_cli::Credential::acquire(env).map_err(|reason| {
         let mut failure = Failure::new(&reason, None);
         failure.next_action = Some(crate::cli::bootstrap_next_action(&reason).to_owned());
         failure
     })?;
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let (socket, selected) = crate::workspace_cli::browser_relay(&reference, &display)
+    let (socket, selected) = crate::workspace_cli::browser_relay(&mut credential, &display)
         .await
         .map_err(|(reason, next_action)| Failure {
             reason,
