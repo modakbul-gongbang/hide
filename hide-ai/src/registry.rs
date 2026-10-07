@@ -1,7 +1,7 @@
 //! The agents Hide AI can name, and how each one's backend is built.
 //!
 //! A provider is one row here: its stable id, the name a person reads, the
-//! kit adapter it is the same agent as, whether its sign-in can be checked
+//! agent id the logos and the kit key it by, whether its sign-in can be checked
 //! without a request, and the model it is asked for when nobody chose one.
 //! Where its CLI is found is not kept here: that is `hide_platform::programs`,
 //! the one search the install kit uses too. Nothing else in the
@@ -120,7 +120,8 @@ pub struct ProviderDescriptor {
     pub label: &'static str,
     /// The id of the same agent in the install kit's adapter table, which is
     /// how the shell joins "this agent is on and installed" to "Hide AI can
-    /// use it".
+    /// use it". `gemini-cli` is the one exception: the kit no longer lists
+    /// Gemini CLI, so for it the id only names its logo.
     pub agent: &'static str,
     /// Whether the CLI can say it is signed in without making a request. An
     /// agent that cannot (Gemini CLI) is `ready` only because its program was
