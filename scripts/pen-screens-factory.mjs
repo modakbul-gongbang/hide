@@ -20,48 +20,80 @@ const OK = '$--success';
 // -- the example data -----------------------------------------------------------------
 // The words are the shipped Korean catalog's (web/src/i18n/resources/factory.ts).
 
+const CRIT = '$--destructive';
+// A card's own width picks its size (PRD factory-board-cards D-12, B4): small below
+// 240, wide from 420, normal between; the board's lanes and the graph's nodes both
+// follow it.
+const SMALL_BELOW = 240;
+const WIDE_FROM = 420;
+
+// `resting` is not an engine state: it is a waiting Task that has run before and
+// went back to waiting on a usage limit, which the board shows as 쉬는 중 (D-09).
 const STATE_WORD = {
-  drafting: '정리 중', waiting: '대기', running: '실행 중', blocked: '막힘', verifying: '검증 중', merge_waiting: '머지 대기',
+  drafting: '정리 중', waiting: '대기', resting: '쉬는 중', running: '실행 중', blocked: '막힘', verifying: '검증 중', merge_waiting: '머지 대기',
   stopped: '멈춤', outside: '밖에서 진행 중', done: '완료', landed: '머지됨',
 };
 const STATE_GLYPH = {
-  drafting: 'circle', waiting: 'circle', running: 'circle-dot', verifying: 'circle-dot', outside: 'circle-dot', blocked: 'circle-help',
+  drafting: 'circle-dashed', waiting: 'circle', resting: 'circle-pause', running: 'circle-dot', verifying: 'loader-circle', outside: 'circle-dot', blocked: 'circle-help',
   stopped: 'circle-pause', merge_waiting: 'git-merge', done: 'circle-check', landed: 'circle-check',
 };
 const TONE = {
-  drafting: MUT, waiting: MUT, running: WORK, verifying: WORK, outside: WORK, blocked: WARN, stopped: WARN, merge_waiting: WARN, done: OK, landed: OK,
+  drafting: MUT, waiting: MUT, resting: MUT, running: WORK, verifying: WORK, outside: MUT, blocked: WARN, stopped: CRIT, merge_waiting: WARN, done: OK, landed: OK,
 };
 
-// Task cards in the engine's board order: the person's cards first, then by priority and age.
+// Every Task in one example data set. `lane` is the board lane (D-06, D-07) and,
+// in 멈춤, `wait` is whose move it is; `stage` is the current cell of the four-cell
+// bar (0 대기, 1 작업, 2 검증, 3 머지, 4 all done, B14); `mark` is the worker pane's
+// status mark and word from the shipped agent catalog; `ai` is that pane's label line.
 const TASKS = {
-  t7: {id: 'T-7', project: 'herdr-ide', title: '알림 설정 화면 정리', state: 'drafting', column: 'drafting'},
-  t431: {id: '#431', project: 'herdr-ide', title: '문서 깨진 링크 정리', state: 'waiting', column: 'waiting'},
-  t421: {id: '#421', project: 'herdr-ide', title: 'Task 상세 화면', state: 'waiting', column: 'waiting', lock: '#420'},
-  t422: {id: '#422', project: 'herdr-ide', title: '보드에서 Task 상세 패널 열기', state: 'waiting', column: 'waiting', lock: '#421'},
-  t420: {id: '#420', project: 'herdr-ide', title: 'Task 상세 API 응답 형식', state: 'blocked', column: 'running', turn: true, since: '3일'},
-  t405: {id: '#405', project: 'herdr-ide', title: 'hide-ai 호출 상한 조정', state: 'merge_waiting', column: 'running', turn: true},
-  t417: {id: '#417', project: 'herdr-ide', title: '디스크 정리 표 다시 그리기', state: 'stopped', column: 'running', turn: true},
-  t398: {id: '#398', project: 'herdr-ide', title: 'Sessions 검색 속도 개선', state: 'verifying', column: 'running'},
-  t430: {id: '#430', project: 'herdr-ide', title: 'flaky: pane-focus 테스트', state: 'outside', column: 'running', external: true},
-  t412: {id: '#412', project: 'herdr-ide', title: 'Issues 보드에 정렬 추가', state: 'running', column: 'running'},
-  t415: {id: '#415', project: 'herdr-ide', title: '보드 정렬 상태 기억', state: 'running', column: 'running'},
-  t409: {id: '#409', project: 'herdr-ide', title: 'Task 목록 정렬 키 문서화', state: 'landed', column: 'done', age: '5시간', today: true},
-  t410: {id: '#410', project: 'herdr-ide', title: '정렬 API: tasks.rs에 updated_at', state: 'done', column: 'done', age: '2시간', today: true, unread: true},
-  s91: {id: '#91', project: 'sasu', title: 'implement 단계 로그 정리', state: 'waiting', column: 'waiting'},
-  s88: {id: '#88', project: 'sasu', title: 'gate 결과 요약 보기', state: 'running', column: 'running'},
-  s86: {id: '#86', project: 'sasu', title: 'verify 리포트 한 줄 요약', state: 'done', column: 'done', age: '50분', today: true},
+  t7: {id: 'T-7', project: 'herdr-ide', title: '알림 설정 화면 정리', state: 'drafting', lane: 'before', stage: 0, age: '5분', summary: '알림 켜고 끄기를 설정 한 화면에 모은다'},
+  t431: {id: '#431', project: 'herdr-ide', title: '문서 깨진 링크 정리', state: 'waiting', lane: 'before', stage: 0, age: '1시간', summary: 'docs 안의 깨진 상대 링크 23개를 고친다'},
+  t421: {id: '#421', project: 'herdr-ide', title: 'Task 상세 화면', state: 'waiting', lane: 'before', stage: 0, age: '3일', summary: 'Task 상세 응답을 받아 오른쪽 패널에 그린다',
+    problem: {glyph: 'lock', text: '#420 기다림', tone: MUT}},
+  t422: {id: '#422', project: 'herdr-ide', title: '보드에서 Task 상세 패널 열기', state: 'waiting', lane: 'before', stage: 0, age: '3일', summary: '보드 카드를 누르면 상세 패널이 열린다',
+    problem: {glyph: 'lock', text: '#421 기다림', tone: MUT}},
+  t412: {id: '#412', project: 'herdr-ide', title: 'Issues 보드에 정렬 추가', state: 'running', lane: 'moving', stage: 1, pr: '563', agent: 'claude', age: '12분',
+    summary: '최근 수정순 · 번호순 · 만든 순으로 보드 카드를 정렬한다', problem: {glyph: 'triangle-alert', text: '검증 실패 1/3', tone: WARN},
+    mark: ['●', '작업 중', WORK], ai: 'web-e2e 정렬 fixture를 고치고 다시 검증하는 중'},
+  t415: {id: '#415', project: 'herdr-ide', title: '보드 정렬 상태 기억', state: 'running', lane: 'moving', stage: 1, agent: 'codex', kids: [2, 1], age: '8분',
+    summary: '고른 정렬을 ui_state에 남겨 다시 열어도 그대로 둔다', mark: ['○', '하위 대기', WORK], ai: '저장은 끝, 하위 둘이 복원과 테스트를 쓰는 중'},
+  t398: {id: '#398', project: 'herdr-ide', title: 'Sessions 검색 속도 개선', state: 'verifying', lane: 'moving', stage: 2, pr: '559', agent: 'claude', age: '4분',
+    summary: '세션 검색을 색인으로 바꿔 1초 안에 답한다', mark: ['○', '대기', MUT], ai: '색인을 붙이고 CI 결과를 기다리는 중'},
+  t420: {id: '#420', project: 'herdr-ide', title: 'Task 상세 API 응답 형식', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '3일',
+    summary: 'Task 상세를 웹에 보낼 응답 모양을 정한다',
+    ask: {question: 'Task 상세를 새 REST 엔드포인트로 낼까요, 기존 WS snapshot에 합칠까요?', choices: ['WS snapshot에 합치기', 'REST 엔드포인트']},
+    mark: ['?', '질문', WARN], ai: '두 방식의 snapshot 크기를 재고 답을 기다림'},
+  t405: {id: '#405', project: 'herdr-ide', title: 'hide-ai 호출 상한 조정', state: 'merge_waiting', lane: 'stuck', wait: 'me', stage: 3, pr: '561', agent: 'claude', age: '1시간',
+    summary: 'hide-ai가 분당 부르는 횟수 상한을 설정으로 뺀다', problem: {glyph: 'lock', text: 'manual 머지', tone: WARN}, action: ['머지', 'PR 보기'],
+    mark: ['○', '대기', MUT], ai: '상한 설정과 테스트를 올리고 머지를 기다림'},
+  t417: {id: '#417', project: 'herdr-ide', title: '디스크 정리 표 다시 그리기', state: 'stopped', lane: 'stuck', wait: 'me', stage: 2, pr: '560', agent: 'claude', age: '40분',
+    summary: '디스크 정리 표를 크기순으로 다시 그린다', problem: {glyph: 'circle-alert', text: '검증 3회 실패', tone: CRIT}, action: ['다시 시작', '기록 보기'],
+    mark: ['○', '대기', MUT], ai: 'web-e2e 세 번째 실패 뒤 멈춤'},
+  t426: {id: '#426', project: 'herdr-ide', title: '단축키 도움말 시트', state: 'resting', lane: 'stuck', wait: 'other', stage: 1, age: '50분',
+    summary: '⌘/로 여는 단축키 목록 시트를 만든다', problem: {glyph: 'circle-pause', text: '쉬는 중 · 14:00 재개', tone: MUT}},
+  t430: {id: '#430', project: 'herdr-ide', title: 'flaky: pane-focus 테스트', state: 'outside', lane: 'stuck', wait: 'other', stage: 3, age: '2시간',
+    summary: 'pane-focus e2e가 가끔 실패하는 원인을 찾는다', problem: {glyph: 'git-pull-request', text: '#566이 이 이슈를 닫는 중', tone: MUT}},
+  t409: {id: '#409', project: 'herdr-ide', title: 'Task 목록 정렬 키 문서화', state: 'done', lane: 'done', stage: 4, pr: '557', merged: true, age: '5시간', today: true,
+    summary: '정렬 키 세 개를 docs/factory.md에 적는다'},
+  t410: {id: '#410', project: 'herdr-ide', title: '정렬 API: tasks.rs에 updated_at', state: 'done', lane: 'done', stage: 4, pr: '558', merged: true, age: '2시간', today: true,
+    summary: 'tasks.rs가 updated_at으로 정렬할 수 있게 한다'},
+  s91: {id: '#91', project: 'sasu', title: 'implement 단계 로그 정리', state: 'waiting', lane: 'before', stage: 0, age: '2시간', summary: 'implement 로그를 단계별로 묶는다'},
+  s88: {id: '#88', project: 'sasu', title: 'gate 결과 요약 보기', state: 'running', lane: 'moving', stage: 1, agent: 'codex', age: '20분', summary: 'gate 결과를 한 줄씩 요약해 보인다',
+    mark: ['●', '작업 중', WORK], ai: 'gate마다 한 줄 요약을 만드는 중'},
+  s86: {id: '#86', project: 'sasu', title: 'verify 리포트 한 줄 요약', state: 'done', lane: 'done', stage: 4, pr: '84', merged: true, age: '50분', today: true, summary: 'verify 리포트 맨 위에 한 줄 요약을 둔다'},
 };
-const COLUMNS = [['drafting', '정리 중'], ['waiting', '대기'], ['running', '실행 중'], ['done', '완료']];
-// The board's order inside a column, per Factory (engine order, copied not recomputed).
+// The board's lanes by movement (D-06) with their width weights (D-08: 시작 전 and
+// 완료 narrow), shown for the herdr-ide filter in the engine's order inside a lane.
+const LANES = [['before', '시작 전', 0.8], ['moving', '진행 중', 1.2], ['stuck', '멈춤', 1.4], ['done', '완료', 0.7]];
 const BOARD = {
-  drafting: [['herdr-ide', ['t7']]],
-  waiting: [['herdr-ide', ['t431', 't421', 't422']], ['sasu', ['s91']]],
-  running: [['herdr-ide', ['t420', 't405', 't417', 't398', 't430', 't412', 't415']], ['sasu', ['s88']]],
-  done: [['herdr-ide', ['t409', 't410']], ['sasu', ['s86']]],
+  before: ['t7', 't431', 't421', 't422'],
+  moving: ['t412', 't415', 't398'],
+  stuck: [['me', '나를 기다림', ['t420', 't405', 't417']], ['other', '다른 걸 기다림', ['t426', 't430']]],
+  done: ['t410', 't409'],
 };
 const FOLDED_DONE = 2;
-const flowCount = column => BOARD[column].flatMap(([, keys]) => keys).length;
-const doneToday = Object.values(TASKS).filter(task => task.today).length;
+const laneCount = lane => (lane === 'stuck' ? BOARD.stuck.reduce((sum, [, , keys]) => sum + keys.length, 0) : BOARD[lane].length);
+const allCount = lane => Object.values(TASKS).filter(task => task.lane === lane && (lane !== 'done' || task.today)).length;
 
 const INBOX = [
   {group: '답할 것', items: [
@@ -82,14 +114,16 @@ const INBOX_COUNT = INBOX.reduce((sum, group) => sum + group.items.length, 0);
 // The graph: layers by what each Task waits on; 420 -> 422 is implied by 420 -> 421 -> 422 and is not drawn.
 const GRAPH_LAYERS = [['t420', 't410'], ['t421', 't412', 't415'], ['t422']];
 const GRAPH_EDGES = [['t420', 't421'], ['t421', 't422'], ['t410', 't412'], ['t410', 't415'], ['t412', 't422']];
-const GRAPH_UNRELATED = ['t7', 't431', 't405', 't417', 't398', 't430', 't409'];
+const GRAPH_UNRELATED = ['t7', 't431', 't405', 't417', 't398', 't426', 't430', 't409'];
 const GRAPH_SASU = ['s91', 's88', 's86'];
 
 export function factoryRows(tokens, {themedXref, screenButton, screenSelect, screenIconButton, screenDialogSurface, screenRadioItem}, s) {
   const HAIR = num(tokens, '--size-hairline');
   const DISABLED = num(tokens, '--opacity-disabled');
+  const DIMMED = num(tokens, '--opacity-dimmed');
   const W = 1440;
   const H = 900;
+  const BOARD_H = 1000;
   const CHROME = 28;
   const RAIL = num(tokens, '--size-rail');
   const SIDE = num(tokens, '--size-sidebar-ideal');
@@ -173,7 +207,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
 
   // -- the header: title, project filter, create and ask, the flow bar and the tabs ----------
   function flowBar(id, width, {counts, read = '3분 전'}) {
-    const cells = [['정리 중', counts.drafting], ['대기', counts.waiting], ['실행 중', counts.running], ['완료 오늘', counts.done]];
+    const cells = [['시작 전', counts.before], ['진행 중', counts.moving], ['멈춤', counts.stuck], ['완료 오늘', counts.done]];
     return frame(id, 'Flow bar', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width, padding: '$--spacing-xxs', fill: '$--muted', cornerRadius: '$--radius-md'}, [
       ...cells.map(([label, count], i) => row(`${id}-${i}`, [text(`${id}-${i}-l`, label, {size: '$--text-body', fill: SUB}), text(`${id}-${i}-n`, String(count), {size: '$--text-body', weight: '600'})], {width: 'fill_container', height: 28, padding: [0, '$--spacing-md']})),
       ...(read ? [row(`${id}-read`, [cap(`${id}-rt`, `GitHub 읽음 ${read}`)], {height: 28, padding: [0, '$--spacing-md']})] : []),
@@ -187,11 +221,11 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         ...(i === 0 && count ? [cap(`${id}-${i}-n`, String(count), WARN, {mono: true})] : []),
       ])));
   }
-  function header(id, {active, counts, count = INBOX_COUNT, read}) {
+  function header(id, {active, counts, count = INBOX_COUNT, read, scope = '모든 프로젝트'}) {
     const inner = MAIN - 2 * GUTTER;
     return frame(id, 'Header', {layout: 'vertical', gap: '$--spacing-md', width: MAIN, padding: ['$--spacing-lg', GUTTER, '$--spacing-sm', GUTTER]}, [
       row(`${id}-tr`, [
-        text(`${id}-t`, 'Factory', {size: '$--text-headline', weight: '600'}), screenSelect(`${id}-scope`, {content: '모든 프로젝트', width: 148}), spacer(`${id}-s`),
+        text(`${id}-t`, 'Factory', {size: '$--text-headline', weight: '600'}), screenSelect(`${id}-scope`, {content: scope, width: 148}), spacer(`${id}-s`),
         screenButton(`${id}-new`, 'Factory 만들기', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'plus'}),
         screenButton(`${id}-ask`, '비서에게 묻기', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'message-square'}),
       ], {width: 'fill_container'}),
@@ -199,7 +233,8 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       factoryTabs(`${id}-tabs`, active, count),
     ]);
   }
-  const FLOW = {drafting: flowCount('drafting'), waiting: flowCount('waiting'), running: flowCount('running'), done: doneToday};
+  const FLOW = {before: allCount('before'), moving: allCount('moving'), stuck: allCount('stuck'), done: allCount('done')};
+  const BOARD_FLOW = {before: laneCount('before'), moving: laneCount('moving'), stuck: laneCount('stuck'), done: laneCount('done')};
 
   // -- 내 차례 ----------------------------------------------------------------------------------
   const cue = (id, item) => text(id, item.cue, {size: '$--text-caption', fill: item.cueFill ?? MUT, width: 84, align: 'right'});
@@ -267,54 +302,154 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   }
 
   // -- Task cards (board and graph) ------------------------------------------------------------
-  function stateMark(id, task) {
-    return row(`${id}-st`, [icon(`${id}-sg`, STATE_GLYPH[task.state], {size: 12, fill: task.turn ? WARN : TONE[task.state]}), cap(`${id}-sw`, STATE_WORD[task.state], task.turn ? WARN : TONE[task.state])], {gap: '$--spacing-xxs'});
+  // One card at three sizes (D-10, D-12, B4-B8): color only on the state icon, the
+  // problem line and the left band of a card waiting on the person; bold only on the
+  // title and the question; everything else small and gray.
+  const STRIPE = 3;
+  const PAD_X = num(tokens, '--spacing-md');
+  const BAR_CELL = 12;
+  const BAR_GAP = 2;
+  const BAR_W = 4 * BAR_CELL + 3 * BAR_GAP;
+  const sizeOf = width => (width < SMALL_BELOW ? 'small' : width >= WIDE_FROM ? 'wide' : 'normal');
+  const logo = (id, agent) => frame(id, `${agent} logo`, {width: 14, height: 14, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${agent}.png`, mode: 'fit'}}, []);
+  // The sidebar's descendant badge (DescendantBadge, Badge secondary in mono): working and done children.
+  const kidsBadge = (id, [working, done]) => frame(id, '하위 에이전트', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: 16, padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-sm', fill: '$--secondary'}, [
+    cap(`${id}-w`, `●${working}`, WORK, {mono: true}), cap(`${id}-d`, `✓${done}`, OK, {mono: true}),
+  ]);
+  // The four-cell stage bar 대기 · 작업 · 검증 · 머지 (B14): cells before the current one in
+  // the done color, the current one in the working color, hatched when the card is in 멈춤.
+  function stageBar(id, task) {
+    const cell = (cid, name, fill) => frame(cid, name, {width: BAR_CELL, height: 3, cornerRadius: 1.5, fill}, []);
+    const hatched = cid => frame(cid, '지금 칸, 멈춤', {width: BAR_CELL, height: 3, layout: 'horizontal', gap: 2}, [0, 1, 2, 3].map(i => frame(`${cid}-${i}`, 'Hatch', {width: 1.5, height: 3, fill: WORK}, [])));
+    return frame(id, '단계 막대', {width: BAR_W, height: 3, layout: 'horizontal', gap: BAR_GAP}, [0, 1, 2, 3].map(i => {
+      const cid = `${id}-${i}`;
+      if (i < task.stage) return cell(cid, '끝난 칸', OK);
+      if (i > task.stage) return cell(cid, '남은 칸', '$--border');
+      return task.lane === 'stuck' ? hatched(cid) : cell(cid, '지금 칸', WORK);
+    }));
   }
-  function taskCard(id, key, width, {showProject = false, dim = false} = {}) {
+  function dashedRule(id, width) {
+    const dashes = [];
+    for (let x = 0; x < width; x += 6) dashes.push(`M ${x} 0.5 L ${Math.min(x + 3, width)} 0.5`);
+    return {type: 'path', id, name: 'Dashed rule', width, height: 1, viewBox: [0, 0, width, 1], geometry: dashes.join(' '), stroke: '$--border', strokeWidth: HAIR};
+  }
+  const controlSm = num(tokens, '--size-control-sm');
+  function taskCard(id, key, width, {height} = {}) {
     const task = TASKS[key];
-    return frame(id, task.title, {layout: 'vertical', gap: '$--spacing-xxs', width, padding: ['$--spacing-sm', '$--spacing-md'], cornerRadius: '$--radius-md', fill: '$--card',
-      stroke: task.turn ? WARN : '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', ...(dim ? {opacity: DISABLED} : {})}, [
-      row(`${id}-a`, [
-        cap(`${id}-id`, task.id, MUT, {mono: true}), ...(showProject ? [cap(`${id}-p`, task.project)] : []), spacer(`${id}-as`),
-        ...(task.unread ? [dot(`${id}-u`, WORK, num(tokens, '--size-tab-status-dot'))] : []),
-      ], {gap: '$--spacing-xs', width: 'fill_container'}),
-      text(`${id}-t`, fitText(task.title, width - 2 * 12, 12), {size: '$--text-body'}),
-      row(`${id}-b`, [
-        stateMark(id, task),
-        ...(task.lock ? [row(`${id}-lk`, [icon(`${id}-lg`, 'lock', {size: 12, fill: MUT}), cap(`${id}-lt`, task.lock)], {gap: '$--spacing-xxs'})] : []),
-        ...(task.external ? [cap(`${id}-ex`, '외부 대기')] : []),
-        ...(task.age ? [cap(`${id}-ag`, task.age)] : []),
-      ], {gap: '$--spacing-xs'}),
+    const size = sizeOf(width);
+    const small = size === 'small';
+    const wide = size === 'wide';
+    const turn = task.wait === 'me';
+    const inner = width - 2 * PAD_X - (turn ? STRIPE : 0);
+    const glyphW = 14 + 6;
+    const top = row(`${id}-a`, [
+      cap(`${id}-id`, task.id, MUT, {mono: true}),
+      ...(task.pr ? [row(`${id}-pr`, [icon(`${id}-prg`, task.merged ? 'git-merge' : 'git-pull-request', {size: 12, fill: MUT}), cap(`${id}-prn`, task.pr, MUT, {mono: true})], {gap: '$--spacing-xxs'})] : []),
+      spacer(`${id}-as`),
+      ...(task.agent ? [logo(`${id}-lg`, task.agent)] : []),
+      ...(task.kids && !small ? [kidsBadge(`${id}-kb`, task.kids)] : []),
+      ...(!small ? [cap(`${id}-ag`, task.age)] : []),
+    ], {gap: '$--spacing-xs', width: 'fill_container', height: 16});
+    const titleW = small ? inner - glyphW : inner - glyphW - BAR_W - 8;
+    const title = row(`${id}-tt`, [
+      frame(`${id}-sgw`, STATE_WORD[task.state], {width: 14, height: 18, layout: 'horizontal', alignItems: 'center'}, [icon(`${id}-sg`, STATE_GLYPH[task.state], {size: 14, fill: TONE[task.state]})]),
+      small
+        ? text(`${id}-t`, fitText(task.title, 2 * titleW - 16, 13), {size: '$--text-subhead', weight: '600', width: titleW})
+        : text(`${id}-t`, fitText(task.title, titleW, 13), {size: '$--text-subhead', weight: '600'}),
+      ...(!small ? [spacer(`${id}-ts`), stageBar(`${id}-bar`, task)] : []),
+    ], {gap: 6, width: 'fill_container', alignItems: small ? 'start' : 'center'});
+    const children = [col(`${id}-head`, [top, title], {gap: '$--spacing-xxs', width: 'fill_container'})];
+    if (!small) {
+      children.push(wide
+        ? text(`${id}-sm`, fitText(task.summary, 2 * inner - 16, 12), {size: '$--text-body', fill: SUB, width: inner})
+        : text(`${id}-sm`, fitText(task.summary, inner, 12), {size: '$--text-body', fill: SUB}));
+      if (task.problem) {
+        children.push(row(`${id}-pb`, [icon(`${id}-pbg`, task.problem.glyph, {size: 12, fill: task.problem.tone}), cap(`${id}-pbt`, task.problem.text, task.problem.tone, {weight: '500'})], {gap: '$--spacing-xs'}));
+      }
+      if (task.ask) {
+        const [suggested, ...others] = task.ask.choices;
+        children.push(frame(`${id}-ask`, '질문', {layout: 'vertical', gap: '$--spacing-sm', width: 'fill_container', padding: ['$--spacing-sm', 10], cornerRadius: '$--radius-sm', fill: '$--secondary'}, [
+          text(`${id}-q`, fitText(task.ask.question, 2 * (inner - 20) - 16, 12), {size: '$--text-body', weight: '600', width: inner - 20}),
+          row(`${id}-qa`, [
+            screenButton(`${id}-qa0`, suggested, {height: controlSm}),
+            ...(wide ? others.map((choice, i) => screenButton(`${id}-qa${i + 1}`, choice, {variant: 'outline', height: controlSm})) : []),
+            screenButton(`${id}-qo`, '다른 답', {variant: 'ghost', height: controlSm}),
+          ], {gap: '$--spacing-xs'}),
+        ]));
+      }
+      if (task.action) {
+        const [primary, secondary] = task.action;
+        children.push(row(`${id}-act`, [
+          screenButton(`${id}-act0`, primary, {height: controlSm}),
+          ...(wide ? [screenButton(`${id}-act1`, secondary, {variant: 'outline', height: controlSm})] : []),
+        ], {gap: '$--spacing-xs'}));
+      }
+    }
+    if (wide) {
+      children.push(row(`${id}-st`, [
+        cap(`${id}-sw`, STATE_WORD[task.state], SUB, {weight: '500'}),
+        ...(task.mark ? [row(`${id}-mk`, [text(`${id}-mg`, task.mark[0], {size: '$--text-caption', fill: task.mark[2], mono: true}), cap(`${id}-mw`, task.mark[1])], {gap: '$--spacing-xxs'})] : []),
+      ], {gap: '$--spacing-md'}));
+      if (task.ai && task.agent) {
+        children.push(dashedRule(`${id}-dr`, inner));
+        children.push(row(`${id}-ai`, [icon(`${id}-aig`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-ait`, fitText(task.ai, inner - 18, 11), SUB)], {gap: '$--spacing-xs'}));
+      }
+    }
+    const done = task.state === 'done' || task.state === 'landed';
+    return frame(id, task.title, {layout: 'horizontal', width, ...(height ? {height} : {}), cornerRadius: '$--radius-md', fill: '$--card', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', clip: true, ...(done ? {opacity: DIMMED} : {})}, [
+      ...(turn ? [frame(`${id}-band`, '나를 기다림', {width: STRIPE, height: 'fill_container', fill: task.state === 'stopped' ? CRIT : WARN}, [])] : []),
+      col(`${id}-body`, children, {gap: '$--spacing-sm', width: 'fill_container', padding: ['$--spacing-sm', PAD_X]}),
     ]);
   }
 
   // -- 보드 ---------------------------------------------------------------------------------------
+  const LANE_GAP = num(tokens, '--spacing-md');
+  function laneWidths() {
+    const avail = MAIN - 2 * GUTTER - (LANES.length - 1) * LANE_GAP;
+    const total = LANES.reduce((sum, [, , weight]) => sum + weight, 0);
+    return LANES.map(([, , weight]) => Math.floor((avail * weight) / total));
+  }
+  const groupHead = (id, label) => row(id, [cap(`${id}-t`, label, MUT, {weight: '500'}), rule(`${id}-r`)], {width: 'fill_container', gap: '$--spacing-sm'});
   function boardBody(id) {
-    const colW = Math.floor((MAIN - 2 * GUTTER - 3 * 12) / 4);
-    const many = true;
+    const widths = laneWidths();
     return frame(id, '보드', {layout: 'vertical', gap: '$--spacing-sm', width: MAIN, height: 'fill_container', padding: [0, GUTTER, '$--spacing-lg', GUTTER], clip: true}, [
-      row(`${id}-bar`, [spacer(`${id}-bs`), screenButton(`${id}-cancelled`, '취소됨', {variant: 'ghost', height: num(tokens, '--size-control-sm')})], {width: 'fill_container'}),
-      row(`${id}-cols`, COLUMNS.map(([column, label], ci) => {
-        const groups = BOARD[column];
-        const total = groups.reduce((sum, [, keys]) => sum + keys.length, 0);
-        return col(`${id}-c${ci}`, [
-          cap(`${id}-c${ci}-h`, `${label} ${total}`, SUB, {weight: '500'}),
-          ...groups.flatMap(([project, keys], gi) => [
-            ...(many ? [cap(`${id}-c${ci}-g${gi}`, project)] : []),
-            ...keys.map(key => taskCard(`${id}-c${ci}-${key}`, key, colW)),
-            ...(column === 'done' && gi === 0 ? [row(`${id}-c${ci}-fold`, [icon(`${id}-c${ci}-fi`, 'chevron-right', {size: 12, fill: MUT}), cap(`${id}-c${ci}-ft`, `3일 지난 완료 ${FOLDED_DONE}개`)], {gap: '$--spacing-xxs'})] : []),
-          ]),
-        ], {width: colW, gap: '$--spacing-sm'});
-      }), {gap: '$--spacing-md', alignItems: 'start', width: 'fill_container'}),
+      row(`${id}-bar`, [spacer(`${id}-bs`), screenButton(`${id}-cancelled`, '취소됨', {variant: 'ghost', height: controlSm})], {width: 'fill_container'}),
+      row(`${id}-cols`, LANES.map(([lane, label], li) => {
+        const width = widths[li];
+        const cards = keys => keys.map(key => taskCard(`${id}-c${li}-${key}`, key, width));
+        const body = lane === 'stuck'
+          ? BOARD.stuck.flatMap(([wait, name, keys]) => [groupHead(`${id}-c${li}-${wait}`, `${name} ${keys.length}`), ...cards(keys)])
+          : [
+            ...cards(BOARD[lane]),
+            ...(lane === 'done' ? [row(`${id}-c${li}-fold`, [icon(`${id}-c${li}-fi`, 'chevron-right', {size: 12, fill: MUT}), cap(`${id}-c${li}-ft`, `3일 지난 완료 ${FOLDED_DONE}개`)], {gap: '$--spacing-xxs'})] : []),
+          ];
+        return col(`${id}-c${li}`, [cap(`${id}-c${li}-h`, `${label} ${laneCount(lane)}`, SUB, {weight: '500'}), ...body], {width, gap: '$--spacing-sm'});
+      }), {gap: LANE_GAP, alignItems: 'start', width: 'fill_container'}),
     ]);
   }
   function boardMain(id) {
-    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 1, counts: FLOW}), boardBody(`${id}-board`)]);
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 1, counts: BOARD_FLOW, scope: 'herdr-ide'}), boardBody(`${id}-board`)]);
+  }
+
+  // -- 같은 카드, 세 크기 ------------------------------------------------------------------------------
+  // Every kind of card at the three sizes side by side, the reference the web card is built from.
+  const SIZE_COLUMNS = [['작게 · 240px 미만', 210], ['보통', 300], ['넓게 · 420px 이상', 470]];
+  const SIZE_ROWS = [['t420', '답 필요'], ['t405', '머지 대기'], ['t417', '멈춤'], ['t412', '실행 중 · 검증 실패'], ['t415', '하위 에이전트가 있는 작업자'], ['t398', '검증 중'], ['t426', '쉬는 중 · 한도'], ['t430', '밖에서 진행'], ['t421', '시작 전 · 선행 기다림'], ['t410', '완료']];
+  function sizesBody(id) {
+    const LABEL_W = 132;
+    return frame(id, '같은 카드, 세 크기', {layout: 'vertical', gap: '$--spacing-lg', padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+      row(`${id}-h`, [frame(`${id}-h-pad`, 'Pad', {width: LABEL_W, height: 1}, []), ...SIZE_COLUMNS.map(([label, width], ci) => cap(`${id}-h${ci}`, label, SUB, {weight: '500', width}))], {gap: '$--spacing-xl'}),
+      ...SIZE_ROWS.map(([key, label], ri) => row(`${id}-r${ri}`, [
+        cap(`${id}-r${ri}-l`, label, SUB, {width: LABEL_W}),
+        ...SIZE_COLUMNS.map(([, width], ci) => taskCard(`${id}-r${ri}-${ci}`, key, width)),
+      ], {gap: '$--spacing-xl', alignItems: 'start'})),
+    ]);
   }
 
   // -- 그래프 ------------------------------------------------------------------------------------
-  const NODE_W = 248;
-  const NODE_H = 66;
+  // A graph node is a small card (B4), held at one height so the arrows meet its middle.
+  const NODE_W = 216;
+  const NODE_H = 62;
   function arrow(id, sx, sy, tx, ty) {
     const pad = 4;
     const mid = sx + (tx - sx) / 2;
@@ -337,11 +472,11 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     const position = {};
     GRAPH_LAYERS.forEach((layer, li) => layer.forEach((key, ri) => { position[key] = [x0 + li * (NODE_W + colGap), y0 + ri * (NODE_H + rowGap)]; }));
     const edges = GRAPH_EDGES.flatMap(([from, to], i) => arrow(`${id}-e${i}`, position[from][0] + NODE_W, position[from][1] + NODE_H / 2, position[to][0], position[to][1] + NODE_H / 2));
-    const nodes = Object.entries(position).map(([key, [x, y]]) => ({...taskCard(`${id}-n-${key}`, key, NODE_W, {showProject: true, dim: TASKS[key].state === 'done' || TASKS[key].state === 'landed'}), x, y}));
+    const nodes = Object.entries(position).map(([key, [x, y]]) => ({...taskCard(`${id}-n-${key}`, key, NODE_W, {height: NODE_H}), x, y}));
     const layered = y0 + 3 * (NODE_H + rowGap) - rowGap;
     const perRow = 4;
     const gap = Math.floor((MAIN - 2 * x0 - perRow * NODE_W) / (perRow - 1));
-    const unrelated = (idp, keys, y) => keys.map((key, i) => ({...taskCard(`${idp}-${key}`, key, NODE_W, {showProject: true, dim: TASKS[key].state === 'done' || TASKS[key].state === 'landed'}), x: x0 + (i % perRow) * (NODE_W + gap), y: y + Math.floor(i / perRow) * (NODE_H + rowGap)}));
+    const unrelated = (idp, keys, y) => keys.map((key, i) => ({...taskCard(`${idp}-${key}`, key, NODE_W, {height: NODE_H}), x: x0 + (i % perRow) * (NODE_W + gap), y: y + Math.floor(i / perRow) * (NODE_H + rowGap)}));
     const unrelatedY = layered + 44;
     const sasuY = unrelatedY + 2 * (NODE_H + rowGap) + 18;
     return frame(id, '그래프', {layout: 'none', width: MAIN, height: 'fill_container', clip: true}, [
@@ -492,7 +627,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ]);
   }
   function noTaskMain(id) {
-    const empty = {drafting: 0, waiting: 0, running: 0, done: 0};
+    const empty = {before: 0, moving: 0, stuck: 0, done: 0};
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [
       header(`${id}-hd`, {active: 0, counts: empty, count: 0, read: null}),
       frame(`${id}-intake`, 'Intake', {width: MAIN, padding: ['$--spacing-md', GUTTER], layout: 'horizontal'}, [
@@ -503,7 +638,8 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
 
   const id = name => `fx-${name}-${s}`;
   const turn = windowFrame(id('turn'), '내 차례', turnMain(id('turn')));
-  const board = windowFrame(id('board'), '보드', boardMain(id('board')));
+  const board = windowFrame(id('board'), '보드', boardMain(id('board')), {height: BOARD_H});
+  const sizes = sizesBody(id('sizes'));
   const graph = windowFrame(id('graph'), '그래프', graphMain(id('graph')));
   const task = windowFrame(id('task'), 'Task 페이지', taskMain(id('task')));
   const none = windowFrame(id('none'), 'Factory 없음', noFactoryMain(id('none')), {height: 360, count: 0, secretary: false});
@@ -513,8 +649,11 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     col(id('frames'), [
       row(id('r1'), [
         captioned(id('turn'), '내 차례: 맨 위 항목이 펼쳐져 제안이 골라져 있고, ⏎ 한 번으로 보낸다', turn),
-        captioned(id('board'), '보드: 사람 차례 카드는 경고 테두리로 열 맨 위에, 3일 지난 완료는 접는다', board),
+        captioned(id('board'), '보드: 움직임으로 네 열, 멈춤은 나를 기다림과 다른 걸 기다림으로 나누고, 시작 전과 완료는 좁아 카드가 작게 그려진다', board),
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r1s'), [
+        captioned(id('sizes'), '같은 카드, 세 크기: 좁을수록 덜 중요한 것부터 빠진다. 색은 상태 아이콘, 문제 줄, 왼쪽 띠에만', sizes),
+      ], {alignItems: 'start'}),
       row(id('r2'), [
         captioned(id('graph'), '그래프: 층으로 놓고 중복 화살표(#420 → #422)는 그리지 않는다', graph),
         captioned(id('task'), 'Task 페이지: 사슬, 왼쪽 카드 필드, 오른쪽 진행과 결정 기록', task),
