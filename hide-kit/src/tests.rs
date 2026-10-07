@@ -1059,7 +1059,9 @@ fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
             "        cat \"$HOME/daemon-answer\" 2>/dev/null || echo '{\"status\":\"running\"}' ;;\n",
             "      stop)\n",
             "        if [ -e \"$HOME/daemon-stop-fails\" ]; then echo 'Error: permission denied' >&2; exit 1; fi\n",
-            "        [ -e \"$HOME/daemon-comes-back\" ] || rm -f \"$HOME/daemon-running\" ;;\n",
+            "        [ -e \"$HOME/daemon-running\" ] || { echo '{\"status\":\"notRunning\"}'; exit 0; }\n",
+            "        [ -e \"$HOME/daemon-comes-back\" ] || rm -f \"$HOME/daemon-running\"\n",
+            "        echo '{\"status\":\"stopped\"}' ;;\n",
             "      *) exit 2 ;;\n",
             "    esac ;;\n",
             "  *) exit 2 ;;\n",
@@ -1222,25 +1224,25 @@ fn the_operators_request_also_stops_the_running_daemon_once() {
         "{:?}",
         again.codex_daemon_off
     );
-    assert_eq!(
-        fixture.daemon_stops(),
-        1,
-        "a daemon that is down is not stopped again"
+    assert!(
+        !fixture.daemon_running(),
+        "a daemon that is down stays down"
     );
 
-    // No daemon running: autostart goes off and nothing is stopped.
+    // No daemon running: autostart goes off, and `daemon stop`, asked once,
+    // answers notRunning, so nothing is stopped.
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     let report = apply(&fixture.target, &Scope::codex_daemon_off());
     assert!(
         matches!(
             &report.codex_daemon_off,
-            Some(CodexDaemonOff::Done { no_daemon: Some(_) })
+            Some(CodexDaemonOff::Done { no_daemon: Some(note) }) if note.ends_with("answered notRunning")
         ),
         "{:?}",
         report.codex_daemon_off
     );
-    assert_eq!(fixture.daemon_stops(), 0);
+    assert_eq!(fixture.daemon_stops(), 1);
 }
 
 /// B7, B8: a stop that fails, or a daemon that answers again afterwards, is
@@ -1346,9 +1348,9 @@ fn the_report_says_whether_a_daemon_still_answers() {
 }
 
 /// A daemon Hide cannot ask while its control socket is still there is
-/// unknown, never down: the read says nothing about it and logs why, and a
-/// turn-off whose stop does not settle it answers stop_failed with autostart
-/// off, never done.
+/// unknown, never down, to the read that decides the pane's reason; the
+/// turn-off decides by `daemon stop`'s typed answer instead, here notRunning
+/// (a crashed daemon's stale socket), so nothing is stopped and it is done.
 #[test]
 fn a_daemon_that_cannot_be_asked_while_its_socket_is_there_is_never_read_as_down() {
     let mut fixture = Fixture::new();
@@ -1370,11 +1372,14 @@ fn a_daemon_that_cannot_be_asked_while_its_socket_is_there_is_never_read_as_down
     );
 
     let report = apply(&fixture.target, &Scope::codex_daemon_off());
-    let Some(CodexDaemonOff::Failed { reason, detail }) = report.codex_daemon_off else {
-        panic!("not stop_failed: {:?}", report.codex_daemon_off);
+    let Some(CodexDaemonOff::Done {
+        no_daemon: Some(note),
+    }) = report.codex_daemon_off
+    else {
+        panic!("not done: {:?}", report.codex_daemon_off);
     };
-    assert_eq!(reason, CodexDaemonOffFailure::StopFailed);
-    assert!(detail.contains("exited with code 1"), "{detail}");
+    assert!(note.contains("control socket"), "{note}");
+    assert!(note.ends_with("answered notRunning"), "{note}");
     assert_eq!(fixture.daemon_setting(), "false");
     assert_eq!(fixture.daemon_stops(), 1);
 }

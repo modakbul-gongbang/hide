@@ -137,8 +137,9 @@ enum Answer {
     Running,
     /// It failed or answered another status, and the control socket is gone.
     Down(String),
-    /// It failed while the control socket is still there: a daemon that
-    /// cannot be asked, or a stale socket a crashed daemon left behind.
+    /// It failed while the control socket is still there (a daemon that
+    /// cannot be asked, or a stale socket a crashed daemon left behind), or
+    /// it answered something Hide cannot read.
     Unsure(String),
 }
 
@@ -176,10 +177,10 @@ fn daemon_answer(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Answer,
             "codex app-server daemon version answered status {}",
             excerpt(status)
         ))),
-        None => Err(format!(
+        None => Ok(Answer::Unsure(format!(
             "codex app-server daemon version printed an answer Hide cannot read: {}",
             excerpt(&finished.stdout)
-        )),
+        ))),
     }
 }
 
@@ -202,21 +203,21 @@ pub enum Stopped {
 
 /// Stops the shared daemon, which disconnects every Codex attached to it;
 /// a Codex started with `--no-daemon` is not attached and keeps running.
-/// It is asked first, so a daemon that is already down is not stopped again,
-/// and asked again after, so a daemon that answers then (another app or a
-/// `daemon bootstrap` manager started it again) is a failure, not a stop.
-/// A daemon that cannot be asked while its socket is still there is stopped
-/// anyway: `daemon stop` knows the daemon by its process and answers
-/// `"status":"notRunning"` for one that is gone, such as a crashed daemon
-/// whose stale socket would otherwise keep every retry failing. That answer
-/// is trusted only here, after the version check could not tell, and only
-/// as Codex 0.160's observed behaviour (measured for a SIGKILLed daemon); a
-/// daemon that answered running is always asked again after the stop.
+/// Inside the operator's confirmed turn-off nothing is decided from the
+/// control socket, whose place is only Codex 0.160's observed layout: unless
+/// `daemon version` reads running, `codex app-server daemon stop` is asked,
+/// which knows the daemon by its process, and its typed `status` decides:
+/// `notRunning` means nothing was running (also a crashed daemon whose stale
+/// socket remains, measured on 0.160), `stopped` is checked again, and any
+/// other answer is a failure. A daemon that read running is always asked
+/// again after the stop, so one that answers then (another app or a `daemon
+/// bootstrap` manager started it again) is a failure, not a stop; a second
+/// request over a daemon that is down asks `daemon stop` again, which is a
+/// no-op that answers `notRunning` (engineering rule 11).
 pub fn stop(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Stopped, String> {
-    let unsure = match daemon_answer(codex, home, stop)? {
-        Answer::Down(answer) => return Ok(Stopped::AlreadyStopped { answer }),
+    let not_running = match daemon_answer(codex, home, stop)? {
         Answer::Running => None,
-        Answer::Unsure(why) => Some(why),
+        Answer::Down(why) | Answer::Unsure(why) => Some(why),
     };
     let finished = run(
         codex,
@@ -228,12 +229,21 @@ pub fn stop(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Stopped, Str
     if !finished.succeeded() {
         return Err(failed(codex, "app-server daemon stop", &finished));
     }
-    if let Some(why) = unsure
-        && daemon_status(&finished.stdout).as_deref() == Some("notRunning")
-    {
-        return Ok(Stopped::AlreadyStopped {
-            answer: format!("{why}; codex app-server daemon stop answered notRunning"),
-        });
+    match daemon_status(&finished.stdout).as_deref() {
+        Some("notRunning") => {
+            if let Some(why) = not_running {
+                return Ok(Stopped::AlreadyStopped {
+                    answer: format!("{why}; codex app-server daemon stop answered notRunning"),
+                });
+            }
+        }
+        Some("stopped") => {}
+        _ => {
+            return Err(format!(
+                "codex app-server daemon stop printed an answer Hide cannot read: {}",
+                excerpt(&finished.stdout)
+            ));
+        }
     }
     if daemon_running(codex, home, stop)? {
         return Err(
@@ -521,6 +531,7 @@ mod tests {
                 "    printf 'Error: failed to connect\\n\\nCaused by:\\n    No such file or directory\\n' >&2; exit 1 ;;\n",
                 "  'app-server daemon stop')\n",
                 "    if [ -e \"$HOME/stop-fails\" ]; then echo 'Error: permission denied' >&2; exit 1; fi\n",
+                "    if [ -e \"$HOME/stop-mute\" ]; then exit 0; fi\n",
                 "    if [ ! -e \"$HOME/running\" ] || [ -e \"$HOME/stop-says-not-running\" ]; then echo '{\"status\":\"notRunning\"}'; exit 0; fi\n",
                 "    [ -e \"$HOME/comes-back\" ] || rm -f \"$HOME/running\"\n",
                 "    [ -e \"$HOME/keeps-socket\" ] || rm -f \"$HOME/.codex/app-server-control/app-server-control.sock\"\n",
@@ -563,24 +574,50 @@ mod tests {
             ]
         );
 
-        // The same apply again finds nothing to stop and stops nothing, and
-        // says what the version command answered, exit code included.
+        // The same apply again stops nothing: `daemon stop` is a no-op that
+        // answers notRunning, and the log keeps what the version check said,
+        // exit code included.
         let Ok(Stopped::AlreadyStopped { answer }) = stop(&codex, home.path(), &quitting) else {
             panic!("a second stop found a daemon");
         };
         assert!(
-            answer.ends_with(
-                "app-server daemon version exited with code 1: Error: failed to connect"
-            ),
+            answer
+                .contains("app-server daemon version exited with code 1: Error: failed to connect")
+                && answer.ends_with("daemon stop answered notRunning"),
             "{answer}"
         );
+        assert!(!home.path().join("running").exists());
+    }
+
+    /// The confirmed stop never decides from the control socket: a daemon
+    /// whose socket lives elsewhere (another Codex version or platform, a
+    /// relocated CODEX_HOME) and whose version check fails is still stopped.
+    #[cfg(unix)]
+    #[test]
+    fn a_daemon_whose_socket_is_elsewhere_is_still_stopped() {
+        let quitting = AtomicBool::new(false);
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
         assert_eq!(
-            calls(home.path())
-                .iter()
-                .filter(|call| call.ends_with("daemon stop"))
-                .count(),
-            1
+            daemon_running(&codex, home.path(), &quitting),
+            Ok(false),
+            "the pane's read keeps the socket rule"
         );
+
+        assert_eq!(stop(&codex, home.path(), &quitting), Ok(Stopped::Stopped));
+        assert!(
+            !home.path().join("running").exists(),
+            "the daemon was stopped"
+        );
+
+        // A `daemon stop` answer Hide cannot read is a failure, never done.
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        std::fs::write(home.path().join("stop-mute"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("cannot read"), "{failure}");
     }
 
     /// A failed `daemon version` is no daemon only once the control socket is
@@ -604,14 +641,15 @@ mod tests {
             socket
         };
 
-        // No socket: down, and nothing is stopped.
+        // No socket: down to a read; the stop asks `daemon stop`, which
+        // answers notRunning, and nothing is stopped.
         let (home, codex) = fake_daemon();
         assert_eq!(daemon_running(&codex, home.path(), &quitting), Ok(false));
         assert!(matches!(
             stop(&codex, home.path(), &quitting),
             Ok(Stopped::AlreadyStopped { .. })
         ));
-        assert_eq!(stops(home.path()), 0);
+        assert_eq!(stops(home.path()), 1);
 
         // A stale socket a crashed daemon left: unknown to a read; the stop
         // asks `daemon stop`, which answers notRunning.
@@ -682,16 +720,13 @@ mod tests {
         let failure = stop(&codex, home.path(), &quitting).unwrap_err();
         assert!(failure.contains("still answers"), "{failure}");
 
-        // An answer Hide cannot read stops nothing and is not a daemon that is down.
+        // A version answer Hide cannot read is not a daemon that is down: a
+        // read reports it as unknown, and the stop asks `daemon stop`.
         let (home, codex) = fake_daemon();
         std::fs::write(home.path().join("running"), "").unwrap();
         std::fs::write(home.path().join("answer"), "daemon v2 ready\n").unwrap();
-        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
-        assert!(failure.contains("cannot read"), "{failure}");
-        assert!(
-            !calls(home.path())
-                .iter()
-                .any(|call| call.ends_with("daemon stop"))
-        );
+        let unknown = daemon_running(&codex, home.path(), &quitting).unwrap_err();
+        assert!(unknown.contains("cannot read"), "{unknown}");
+        assert_eq!(stop(&codex, home.path(), &quitting), Ok(Stopped::Stopped));
     }
 }

@@ -209,6 +209,19 @@ it("does not show the last request's answer as the next one's until the core mov
   await unmount();
 });
 
+it("says only that the machine could not be reached when the answer is unreachable, which may come after autostart went off", async () => {
+  const { unmount } = await mount(pane(not({ reason: "codex_shared_server" })));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-go]");
+  await act(async () => { useShellStore.setState(snapshot({ state: "failed", reason: "unreachable" }) as never); });
+  const line = document.querySelector("[data-codex-shared-server-outcome]");
+  expect(line?.getAttribute("data-codex-shared-server-outcome")).toBe("failed");
+  expect(line?.textContent).toBe("Couldn't reach that machine. Try again.");
+  expect(offLink()?.hasAttribute("disabled")).toBe(false);
+  await unmount();
+});
+
 it("does not open on an old answer: a finished turn-off nobody asked for in this popover is not shown", async () => {
   const { unmount } = await mount(pane(not({ reason: "codex_shared_server" })), snapshot({ state: "failed", reason: "timed_out" }));
   await open();
