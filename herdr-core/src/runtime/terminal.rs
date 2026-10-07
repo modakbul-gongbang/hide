@@ -1800,6 +1800,7 @@ impl Runtime {
         let generation = self.next_terminal_session_generation;
         self.terminal_session_generations
             .insert(pane_id.to_owned(), generation);
+        self.adopt_attachment_terminal(pane_id, generation);
         let _retired_session = self.terminal_sessions.remove(pane_id);
         self.terminal_session_lifecycles.insert(
             pane_id.to_owned(),
@@ -1855,6 +1856,7 @@ impl Runtime {
                 };
             }
             self.sync_transport_projection(pane_id);
+            self.reconcile_attachment_target();
             return;
         }
         let context = self.terminal_session_context(pane_id);
@@ -2068,6 +2070,8 @@ impl Runtime {
                     "retry_decision": self.terminal_retry_decision(pane_id, if mode == TerminalSessionMode::Observe { "manual" } else { "none" }),
                     "last_attempt_at_unix_ms": self.terminal_recovery.get(pane_id).and_then(|r| r.last_attempt_at_unix_ms),
                 }));
+                // A file dropped before this session attached is written now.
+                self.reconcile_attachment_target();
                 true
             }
             Err(message) => {

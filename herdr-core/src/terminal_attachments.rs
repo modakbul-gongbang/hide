@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) use hide_node_link::attachments::{MAX_FILES, MAX_PATH_BYTES};
+pub(crate) use hide_node_link::attachments::{COMMIT_GRACE, MAX_FILES, MAX_PATH_BYTES};
 pub(crate) const MAX_QUEUED_INPUT: usize = 64 * 1024;
 pub(crate) const MAX_STAGED_FILES: usize = 128;
 pub(crate) const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
