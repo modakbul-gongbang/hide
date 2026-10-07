@@ -127,9 +127,8 @@ class Selection(unittest.TestCase):
         result = plan("hide-platform/src/process.rs")
         self.assertTrue({"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
         self.assertNotIn("desktop-e2e", result["lanes"])
-        # hide-project depends on nothing in the workspace, so it is the one
-        # crate a platform change does not reach.
-        self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-project"])
+        # Every workspace crate depends on the platform layer, hide-project included.
+        self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
         self.assertFalse(result["full"])
 
     def test_a_leaf_crate_tests_its_reverse_dependencies_and_compiles_on_windows(self):
