@@ -4,7 +4,7 @@
 mod executor;
 pub(crate) mod lineage;
 
-use crate::delivery::answer::{AgentView, RegisterCheck};
+use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
 use crate::delivery::{Actor, ledger::Ledger, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -191,11 +191,15 @@ pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
         pane: record.pane.clone(),
         parent: record.parent.clone(),
         project: record.project.clone(),
-        runtime: if record.ended { "ended" } else { "running" },
-        connection: if record.ended {
-            "disconnected"
+        runtime: if record.ended {
+            Runtime::Ended
         } else {
-            "connected"
+            Runtime::Running
+        },
+        connection: if record.ended {
+            Connection::Disconnected
+        } else {
+            Connection::Connected
         },
         registered: !record.ended,
         watch: ledger
