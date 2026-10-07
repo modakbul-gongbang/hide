@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use hide_node::ssh::PaneEvents as _;
 use hide_node_link::device::{
     DeviceConnector, DeviceTransport, HOST_CONSENT_CONTRACT, HostConsent,
 };
@@ -133,6 +134,10 @@ fn run(command: &mut Command) {
 
 impl Device {
     fn start() -> Self {
+        Self::start_with_pane_events(None)
+    }
+
+    fn start_with_pane_events(pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>) -> Self {
         // Socket paths below this folder must fit a Unix socket address.
         let root = tempfile::Builder::new()
             .prefix("nc")
@@ -230,7 +235,7 @@ impl Device {
         );
         let events = Arc::new(Events::default());
         let slot: hide_node::ssh::PaneEventsSlot = Arc::default();
-        let _ = slot.set(Arc::clone(&events) as Arc<dyn hide_node::ssh::PaneEvents>);
+        let _ = slot.set(pane_events.unwrap_or_else(|| events.clone()));
         let transport = hide_node::ssh::Connector::new(Some(packages))
             .with_pane_events(slot)
             .transport(&local, "contract-node", ALIAS, None)
@@ -256,6 +261,175 @@ impl Device {
             state,
             events,
         }
+    }
+}
+
+/// Records only completed production callbacks, so a gate can hold their
+/// work without relying on when the executor or node happens to run it.
+struct ProductionEvents {
+    panes: hided::node_panes::Events,
+    proofs: std::sync::Mutex<usize>,
+    closed: std::sync::Mutex<usize>,
+    changed: std::sync::Condvar,
+}
+
+impl ProductionEvents {
+    fn wait(&self, counter: &std::sync::Mutex<usize>, expected: usize) {
+        let value = counter.lock().unwrap();
+        let (value, _) = self
+            .changed
+            .wait_timeout_while(value, TIMEOUT, |value| *value < expected)
+            .unwrap();
+        assert_eq!(*value, expected);
+    }
+}
+
+impl hide_node::ssh::PaneEvents for ProductionEvents {
+    fn event(&self, node: &str, link: &hide_node::ssh::RemoteHost, event: NodeEvent) {
+        let proof = matches!(&event, NodeEvent::PaneProof { .. });
+        self.panes.event(node, link, event);
+        if proof {
+            *self.proofs.lock().unwrap() += 1;
+            self.changed.notify_all();
+        }
+    }
+
+    fn closed(&self, node: &str, link: &hide_node::ssh::RemoteHost) {
+        self.panes.closed(node, link);
+        *self.closed.lock().unwrap() += 1;
+        self.changed.notify_all();
+    }
+}
+
+/// A failed assertion must release the executor before its runtime drops.
+struct ReleaseOnDrop(Option<std::sync::mpsc::Sender<()>>);
+
+impl ReleaseOnDrop {
+    fn release(&mut self) {
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(());
+        }
+    }
+}
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// The production overflow callback answers the actual node caller with
+/// bridge_busy, keeps its reader usable, and reaches normal close cleanup.
+#[test]
+fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let worker = runtime.spawn_blocking(move || {
+        started.send(()).unwrap();
+        let _ = held.recv();
+    });
+    let mut gate = ReleaseOnDrop(Some(release));
+    ready.recv_timeout(TIMEOUT).unwrap();
+    let events = Arc::new(ProductionEvents {
+        panes: hided::node_panes::Events(Arc::new(hided::node_panes::NodePanes::new(
+            runtime.handle().clone(),
+        ))),
+        proofs: std::sync::Mutex::new(0),
+        closed: std::sync::Mutex::new(0),
+        changed: std::sync::Condvar::new(),
+    });
+    let device = Device::start_with_pane_events(Some(events.clone()));
+    let consent = HostConsent {
+        contract: HOST_CONSENT_CONTRACT,
+        helper_root: "~/helper".to_owned(),
+        cli_dir: None,
+        granted_at_unix_ms: 1,
+        identity: None,
+    };
+    let mut links = vec![Arc::clone(&device.link)];
+    for _ in 0..2 {
+        links.push(
+            device
+                .transport
+                .establish(&consent, &[], Box::new(|_| {}))
+                .unwrap()
+                .host,
+        );
+    }
+    let herdr_socket = device.state.parent().unwrap().join("s.sock");
+    let sockets = links
+        .iter()
+        .map(|link| {
+            call_as::<hide_node_link::panes::PanesStarted>(
+                link.as_ref(),
+                Call::PanesStart {
+                    herdr_socket: herdr_socket.to_str().unwrap().to_owned(),
+                },
+                TIMEOUT,
+            )
+            .unwrap()
+            .socket
+        })
+        .collect::<Vec<_>>();
+    let request = |socket: &str, nonce: usize| {
+        let mut stream = UnixStream::connect(socket).unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        writeln!(
+            stream,
+            "{}",
+            json!({"pane_id": PROVED_PANE, "nonce": format!("{nonce:032x}")})
+        )
+        .unwrap();
+        BufReader::new(stream)
+    };
+    let mut waiting = Vec::new();
+    for socket in &sockets[..2] {
+        for nonce in 0..16 {
+            waiting.push(request(socket, nonce));
+        }
+    }
+    events.wait(&events.proofs, 32);
+    let mut overflow = request(&sockets[2], 32);
+    events.wait(&events.proofs, 33);
+    gate.release();
+    runtime.block_on(worker).unwrap();
+    let read = |reader: &mut BufReader<UnixStream>| {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str::<Value>(&line).unwrap()
+    };
+    assert_eq!(
+        read(&mut overflow),
+        json!({"ok": false, "reason": "bridge_busy"})
+    );
+    for reader in &mut waiting {
+        assert_eq!(
+            read(reader),
+            json!({"ok": false, "reason": "hide_unavailable"})
+        );
+    }
+    assert!(links[2].call(Call::Hello, TIMEOUT).is_ok());
+    assert_eq!(
+        read(&mut request(&sockets[2], 33)),
+        json!({"ok": false, "reason": "hide_unavailable"})
+    );
+    assert_eq!(device.ssh.accepted(), 1);
+    for link in &links {
+        link.close("contract");
+    }
+    events.wait(&events.closed, 3);
+    for socket in &sockets {
+        gone_within(Path::new(socket), TIMEOUT);
+        assert!(!Path::new(socket).exists());
     }
 }
 

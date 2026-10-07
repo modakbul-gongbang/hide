@@ -8,7 +8,6 @@
 //! Closing or losing the link revokes everything it vouched for at once.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -20,7 +19,7 @@ use hide_node_link::panes::{
 use hide_node_link::protocol::Call;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 use crate::pane_auth::{self, RemoteGrant};
 use crate::server::AppState;
@@ -31,6 +30,9 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Proofs worked on at once across every device; a node may hold at most
 /// sixteen callers, and a burst beyond this is refused rather than queued.
 const MAX_PROOFS: usize = 32;
+/// Refusals and stream-close replies, queued plus running, across every
+/// device. A link that exceeds this allowance is ended without waiting.
+const MAX_CONTROL_REPLIES: usize = 32;
 
 /// The daemon's half of every device link's pane traffic. Created empty with
 /// the core, so its links can deliver from the start, and given the server's
@@ -40,7 +42,8 @@ pub struct NodePanes {
     state: OnceLock<AppState>,
     runtime: tokio::runtime::Handle,
     streams: Mutex<HashMap<StreamKey, mpsc::Sender<Vec<u8>>>>,
-    proofs: AtomicUsize,
+    proofs: Arc<Semaphore>,
+    control_replies: Arc<Semaphore>,
 }
 
 /// One stream of one link: the same id on another link is another stream.
@@ -61,7 +64,8 @@ impl NodePanes {
             state: OnceLock::new(),
             runtime,
             streams: Mutex::new(HashMap::new()),
-            proofs: AtomicUsize::new(0),
+            proofs: Arc::new(Semaphore::new(MAX_PROOFS)),
+            control_replies: Arc::new(Semaphore::new(MAX_CONTROL_REPLIES)),
         }
     }
 
@@ -80,32 +84,50 @@ impl NodePanes {
         identity: PaneIdentity,
         one_shot: bool,
     ) {
-        if self.proofs.fetch_add(1, Ordering::AcqRel) >= MAX_PROOFS {
-            self.proofs.fetch_sub(1, Ordering::AcqRel);
+        let Ok(permit) = Arc::clone(&self.proofs).try_acquire_owned() else {
             record_refusal(node, Some(&pane_id), "bridge_busy", "core");
-            answer_proof(link, request, refused("bridge_busy"));
+            self.control_reply(
+                node,
+                link,
+                Call::PaneProofAnswer {
+                    request,
+                    answer: refused("bridge_busy"),
+                },
+            );
             return;
-        }
+        };
         let panes = Arc::clone(self);
         let node = node.to_owned();
         let link = link.clone();
-        let spawned = std::thread::Builder::new()
-            .name("hided-node-proof".to_owned())
-            .spawn(move || {
-                let named = pane_id.clone();
-                let answer = match panes.state.get() {
-                    Some(state) => issue(state, &node, &link, pane_id, &identity, one_shot),
-                    None => refused("hide_unavailable"),
-                };
-                if let ProofAnswer::Refused { reason } = &answer {
-                    record_refusal(&node, Some(&named), reason, "core");
-                }
-                answer_proof(&link, request, answer);
-                panes.proofs.fetch_sub(1, Ordering::AcqRel);
-            });
-        if spawned.is_err() {
-            self.proofs.fetch_sub(1, Ordering::AcqRel);
-        }
+        self.runtime.spawn_blocking(move || {
+            let _permit = permit;
+            let named = pane_id.clone();
+            let answer = match panes.state.get() {
+                Some(state) => issue(state, &node, &link, pane_id, &identity, one_shot),
+                None => refused("hide_unavailable"),
+            };
+            if let ProofAnswer::Refused { reason } = &answer {
+                record_refusal(&node, Some(&named), reason, "core");
+            }
+            send_reply(&node, &link, Call::PaneProofAnswer { request, answer });
+        });
+    }
+
+    /// Every callback response waits on the link off its reader, with a
+    /// permit retained while queued and running. Closing a saturated link
+    /// marks its credentials dead immediately and wakes normal reader cleanup.
+    fn control_reply(&self, node: &str, link: &RemoteHost, call: Call) {
+        let Ok(permit) = Arc::clone(&self.control_replies).try_acquire_owned() else {
+            record_refusal(node, None, "control_full", "core");
+            link.close("pane control replies full");
+            return;
+        };
+        let node = node.to_owned();
+        let link = link.clone();
+        self.runtime.spawn_blocking(move || {
+            let _permit = permit;
+            send_reply(&node, &link, call);
+        });
     }
 
     fn open_stream(&self, node: &str, link: &RemoteHost, stream: u64) {
@@ -116,7 +138,7 @@ impl NodePanes {
         };
         let Some(state) = self.state.get().cloned() else {
             record_refusal(node, None, "hide_unavailable", "core");
-            close_stream(link, stream);
+            self.control_reply(node, link, Call::StreamClose { stream });
             return;
         };
         let (sender, receiver) = mpsc::channel(MAX_PENDING_CHUNKS);
@@ -134,7 +156,7 @@ impl NodePanes {
                     "stream_reused"
                 };
                 record_refusal(node, None, reason, "core");
-                close_stream(link, stream);
+                self.control_reply(node, link, Call::StreamClose { stream });
                 return;
             }
             streams.insert(key.clone(), sender);
@@ -170,7 +192,7 @@ impl NodePanes {
                 "node": node,
                 "stream": stream,
             }));
-            close_stream(link, stream);
+            self.control_reply(node, link, Call::StreamClose { stream });
         }
     }
 
@@ -288,18 +310,11 @@ fn refused(reason: &str) -> ProofAnswer {
     }
 }
 
-fn answer_proof(link: &RemoteHost, request: u64, answer: ProofAnswer) {
-    let _ = link.call(Call::PaneProofAnswer { request, answer }, CALL_TIMEOUT);
-}
-
-fn close_stream(link: &RemoteHost, stream: u64) {
-    let link = link.clone();
-    // Called from the link's reader too, which must never wait on the link.
-    let _ = std::thread::Builder::new()
-        .name("hided-node-stream-close".to_owned())
-        .spawn(move || {
-            let _ = link.call(Call::StreamClose { stream }, CALL_TIMEOUT);
-        });
+fn send_reply(node: &str, link: &RemoteHost, call: Call) {
+    if link.call(call, CALL_TIMEOUT).is_err() {
+        record_refusal(node, None, "control_unanswered", "core");
+        link.close("pane control reply unanswered");
+    }
 }
 
 /// Serves one command's stream: its bytes go into an in-process connection
@@ -375,7 +390,9 @@ mod tests {
         let panes = Arc::new(NodePanes::new(runtime.handle().clone()));
         // Hold the admitted work at its limit without racing 32 kernel
         // attestations. The next event still enters the real reader callback.
-        panes.proofs.store(MAX_PROOFS, Ordering::Release);
+        let _held = Arc::clone(&panes.proofs)
+            .try_acquire_many_owned(u32::try_from(MAX_PROOFS).unwrap())
+            .unwrap();
         let link = RemoteHost::detached("mini");
         let reader_link = link.clone();
         let events = Events(Arc::clone(&panes));
