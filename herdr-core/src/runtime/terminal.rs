@@ -1170,6 +1170,8 @@ impl Runtime {
             self.sync_transport_projection(pane_id);
         }
         self.release_wheel_before_attach(pane_id);
+        self.op_timings
+            .note_frame(pane_id, std::time::Instant::now());
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
         self.snapshot
             .terminal

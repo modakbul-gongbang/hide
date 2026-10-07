@@ -1450,6 +1450,8 @@ impl Runtime {
     }
 
     pub(super) fn fail_close_operation(&mut self, key: &str, message: String) {
+        self.op_timings
+            .finish(&super::op_timing::pane_close_op_id(key), "failed");
         let Some(operation) = self.close_operations.get_mut(key) else {
             return;
         };
@@ -1678,6 +1680,18 @@ impl Runtime {
             result
         };
         let mut schedule_status_check = false;
+        let timing_id = super::op_timing::pane_close_op_id(&request.key);
+        match &result {
+            Ok(()) => self.op_timings.stamp(
+                &timing_id,
+                super::op_timing::Stage::HerdrAck,
+                std::time::Instant::now(),
+            ),
+            Err(hide_herdr_client::ApiError::Remote { .. }) => {
+                self.op_timings.finish(&timing_id, "refused")
+            }
+            Err(_) => self.op_timings.finish(&timing_id, "unknown"),
+        }
         match result {
             Ok(()) => {
                 if let Some(operation) = self.close_operations.get_mut(&request.key) {
@@ -1837,6 +1851,11 @@ impl Runtime {
         if matches!(operation.phase.as_str(), "completed" | "failed" | "refused") {
             return false;
         }
+        self.op_timings.stamp(
+            &super::op_timing::pane_close_op_id(key),
+            super::op_timing::Stage::Applied,
+            std::time::Instant::now(),
+        );
         if let Some(current) = self.close_operations.get_mut(key) {
             let had_restore = current.item.is_some();
             current.phase = "completed".to_owned();

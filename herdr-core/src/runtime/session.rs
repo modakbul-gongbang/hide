@@ -2246,6 +2246,12 @@ impl Runtime {
         let pane_topology_changed = fetched
             .as_ref()
             .is_ok_and(|payload| self.observe_pane_operations(payload));
+        if let Ok(payload) = &fetched {
+            self.op_timings.applied_tabs(
+                payload.layouts.iter().map(|layout| layout.tab_id.as_str()),
+                std::time::Instant::now(),
+            );
+        }
         // Only a focus that has left can be confirmed: a layout that arrives
         // before then is Herdr from before the request, and taking it as the
         // answer kept the focus from ever being sent (#629).

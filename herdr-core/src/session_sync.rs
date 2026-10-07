@@ -18,7 +18,7 @@ use crate::model::{
     CheckoutSnapshot, PaneSnapshot, RemotePaneLayoutFrame, RemotePaneLayoutSnapshot,
     RemoteSessionSnapshot, StripTabSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
 };
-use crate::runtime::Runtime;
+use crate::runtime::{HerdrArrival, Runtime};
 use crate::sidebar::{
     SessionAgentPayload, SessionLayoutPayload, SessionPanePayload, SessionSnapshotPayload,
     SessionTabPayload, SessionWorkspacePayload,

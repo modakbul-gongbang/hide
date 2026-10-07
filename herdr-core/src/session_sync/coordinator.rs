@@ -56,6 +56,9 @@ fn run_coordinator(
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
     let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
+    // Herdr events received since the last publish, for the stage records of
+    // Hide-started operations (PRD instant-pane-topology D-14).
+    let mut arrivals: Vec<HerdrArrival> = Vec::new();
     // The runtime's settled worktree removals the catalog was last rebuilt for.
     let mut published_removals = 0;
     let mut purpose_mirror = if context.is_local()
@@ -202,6 +205,7 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
+                            &mut arrivals,
                         )
                     {
                         stop_subscription(&mut subscription);
@@ -433,6 +437,7 @@ fn run_coordinator(
                             &mut catalog_cache,
                             &mut purpose_mirror,
                             &mut labels,
+                            &mut arrivals,
                         );
                     }
                     Ok(false) => {}
@@ -518,6 +523,7 @@ fn run_coordinator(
                         &mut catalog_cache,
                         &mut purpose_mirror,
                         &mut labels,
+                        &mut arrivals,
                     )
                 {
                     stop_subscription(&mut subscription);
@@ -799,6 +805,7 @@ fn run_coordinator(
                         &mut catalog_cache,
                         &mut purpose_mirror,
                         &mut labels,
+                        &mut arrivals,
                     )
                 {
                     stop_subscription(&mut subscription);

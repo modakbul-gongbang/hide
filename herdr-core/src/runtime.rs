@@ -55,6 +55,7 @@ use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use control_lane::ControlLane;
 pub(crate) use control_lane::LaneStart;
 use events::*;
+pub(crate) use op_timing::HerdrArrival;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
