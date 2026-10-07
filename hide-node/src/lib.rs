@@ -7,8 +7,9 @@
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use cap_std::fs::Dir;
 use hide_herdr_client::{ApiConnector, LocalSocketConnector};
@@ -27,11 +28,28 @@ pub mod opener;
 pub mod pane_proof;
 pub mod ssh;
 
+/// Plain calls this node works on at once. A call its caller stopped
+/// waiting for keeps its thread until the work's own bound ends it, so this
+/// caps those too; past it a call is refused as busy, nothing started
+/// (engineering rule 15).
+pub const MAX_IN_FLIGHT: usize = 64;
+
 /// The machine this process runs on, answered in place, for the account
 /// home it was given.
 #[derive(Clone, Debug)]
 pub struct Local {
     env: Env,
+    in_flight: Arc<AtomicUsize>,
+}
+
+/// One plain call's place among [`MAX_IN_FLIGHT`], given back however its
+/// work ends.
+struct Admitted(Arc<AtomicUsize>);
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl Local {
@@ -42,6 +60,7 @@ impl Local {
     pub fn new(home: Option<PathBuf>) -> Self {
         Self {
             env: Env::standalone(home),
+            in_flight: Arc::default(),
         }
     }
 
@@ -59,7 +78,10 @@ impl Local {
     pub fn of_process() -> Self {
         let mut env = Env::of_process();
         env.stop = Arc::default();
-        Self { env }
+        Self {
+            env,
+            in_flight: Arc::default(),
+        }
     }
 }
 
@@ -95,19 +117,51 @@ pub fn hold_roots(
 }
 
 impl NodeLink for Local {
-    fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
-        hide_host::serve::handle_in(call, &self.env)
-            .map(LinkAnswer::Parsed)
-            .map_err(LinkError::Refused)
+    /// Waits at most `timeout`, as a call to another machine does: the work
+    /// runs on a thread of its own, and a caller that stops waiting reads
+    /// the effect as unknown.
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        if self.in_flight.fetch_add(1, Ordering::AcqRel) >= MAX_IN_FLIGHT {
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
+            return Err(LinkError::Busy);
+        }
+        let admitted = Admitted(Arc::clone(&self.in_flight));
+        let env = self.env.clone();
+        let (answered, answer) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("hide-node-call".to_owned())
+            .spawn(move || {
+                let _admitted = admitted;
+                let _ = answered.send(hide_host::serve::handle_in(call, &env));
+            })
+            .map_err(|error| {
+                LinkError::NotConnected(format!("This machine's node could not start: {error}"))
+            })?;
+        match answer.recv_timeout(timeout) {
+            Ok(result) => result.map(LinkAnswer::Parsed).map_err(LinkError::Refused),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(LinkError::Unknown(format!(
+                "This machine's node did not answer within {} ms",
+                timeout.as_millis()
+            ))),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(LinkError::Unknown(
+                "This machine's node ended the work without an answer".to_owned(),
+            )),
+        }
     }
 
+    /// Runs in the caller's thread, which hears each report; once `timeout`
+    /// has passed, the next report is answered with false, which stops the
+    /// work.
     fn call_with_progress(
         &self,
         call: Call,
-        _timeout: Duration,
+        timeout: Duration,
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
-        hide_host::serve::handle_with_progress(call, &self.env, progress)
+        let deadline = Instant::now().checked_add(timeout);
+        let mut within =
+            |report| deadline.is_none_or(|end| Instant::now() < end) && progress(report);
+        hide_host::serve::handle_with_progress(call, &self.env, &mut within)
             .map(LinkAnswer::Parsed)
             .map_err(LinkError::Refused)
     }
@@ -126,6 +180,35 @@ impl NodeLink for Local {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A call waits at most its timeout, and past the cap of calls in
+    /// flight another is refused as busy, nothing started.
+    #[test]
+    fn a_call_waits_at_most_its_timeout_and_past_the_cap_is_busy() {
+        let node = Local::new(None);
+        node.in_flight.store(MAX_IN_FLIGHT, Ordering::Release);
+        assert!(matches!(
+            node.call(Call::Hello, Duration::from_secs(5)),
+            Err(LinkError::Busy)
+        ));
+        node.in_flight.store(0, Ordering::Release);
+        let slow = Call::Factory {
+            call: hide_node_link::factory::FactoryCall::Check {
+                cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+                text: if cfg!(windows) {
+                    "ping -n 3 127.0.0.1".to_owned()
+                } else {
+                    "sleep 2".to_owned()
+                },
+            },
+        };
+        let late = node.call(slow, Duration::from_millis(50));
+        assert!(
+            matches!(&late, Err(LinkError::Unknown(reason)) if reason.contains("did not answer")),
+            "{late:?}"
+        );
+        assert!(node.call(Call::Hello, Duration::from_secs(5)).is_ok());
+    }
 
     /// A daemon started with a private home must never answer from the
     /// operator's: the node reports and uses the home it was given.
