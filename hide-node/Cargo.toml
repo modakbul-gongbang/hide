@@ -16,5 +16,8 @@ hide-platform = { path = "../hide-platform" }
 serde_json = "=1.0.151"
 tokio = { version = "=1.53.1", features = ["process", "rt", "sync", "time", "macros"] }
 
+[dev-dependencies]
+tempfile = "=3.27.0"
+
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

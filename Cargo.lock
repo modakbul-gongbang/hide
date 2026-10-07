@@ -1313,6 +1313,7 @@ dependencies = [
  "hide-platform",
  "libc",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

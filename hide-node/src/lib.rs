@@ -45,11 +45,14 @@ impl Local {
         self
     }
 
-    /// This process's own account, as a device's helper answers.
+    /// This process's own account, as a device's helper answers. Its stop
+    /// is its own: closing it ends the work it started, never the work of
+    /// another node value in the same process, which a helper's process-wide
+    /// stop would.
     pub fn of_process() -> Self {
-        Self {
-            env: Env::of_process(),
-        }
+        let mut env = Env::of_process();
+        env.stop = Arc::default();
+        Self { env }
     }
 }
 
@@ -146,5 +149,41 @@ mod tests {
             matches!(&refused, Err(LinkError::Refused(error)) if error.message == "links_home_unavailable"),
             "{refused:?}"
         );
+    }
+
+    /// Closing one node value ends only its own work: a core dropped in the
+    /// same process must not end the Git watch another node value runs.
+    #[test]
+    fn closing_one_node_leaves_another_nodes_watch_running() {
+        use hide_node_link::worktrees::GitWatchReport;
+        let repository = tempfile::tempdir().unwrap();
+        let common = repository.path().canonicalize().unwrap();
+        std::fs::create_dir_all(common.join("refs/heads")).unwrap();
+        let closed = Local::of_process();
+        let running = Local::of_process();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut wrote = false;
+        let mut changed = false;
+        running
+            .call_with_progress(
+                Call::GitWatch {
+                    common_dirs: vec![common.to_string_lossy().into_owned()],
+                },
+                Duration::from_secs(30),
+                &mut |report| {
+                    if !wrote {
+                        closed.close("the other core went away");
+                        std::fs::write(common.join("refs/heads/main"), "0000\n").unwrap();
+                        wrote = true;
+                    }
+                    changed |= matches!(
+                        serde_json::from_value(report),
+                        Ok(GitWatchReport::Changed { .. })
+                    );
+                    !changed && std::time::Instant::now() < deadline
+                },
+            )
+            .unwrap();
+        assert!(changed, "the running node's watch ended with the other");
     }
 }
