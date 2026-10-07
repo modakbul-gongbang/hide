@@ -10,12 +10,24 @@ pub use hide_ai::UsageError;
 /// The weekly window, in the minutes Codex names its windows with.
 pub const WEEKLY_WINDOW_MINUTES: u64 = 10_080;
 
-/// The token and account `auth.json` holds. It never leaves the core's own
-/// node, which shares the core's process.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// The token and account `auth.json` holds. The core asks only its own node,
+/// which shares its process; a node across a link answers to the login that
+/// reached it (PRD D-13). `Debug` leaves the token out, so a logged value
+/// never carries it.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CodexCredentials {
     pub access_token: String,
     pub account_id: String,
+}
+
+impl std::fmt::Debug for CodexCredentials {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CodexCredentials")
+            .field("access_token", &"<redacted>")
+            .field("account_id", &self.account_id)
+            .finish()
+    }
 }
 
 /// Why no credentials were read.
@@ -59,4 +71,25 @@ pub struct CodexWeeklyUsage {
 pub enum UsageText {
     Text { text: String },
     Failed { error: UsageError },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_leaves_the_token_out() {
+        let credentials = CodexCredentials {
+            access_token: "secret-token".to_owned(),
+            account_id: "account".to_owned(),
+        };
+        let shown = format!(
+            "{credentials:?} {:?}",
+            CredentialsAnswer::Found {
+                credentials: credentials.clone()
+            }
+        );
+        assert!(!shown.contains("secret-token"), "{shown}");
+        assert!(shown.contains("account"));
+    }
 }
