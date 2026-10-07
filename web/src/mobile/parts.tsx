@@ -22,7 +22,7 @@ export function AgentHead({ agent, large }: { agent: PhoneAgent; large: boolean 
       <AgentMark kind={agent.agent_kind} />
       <span
         className={`min-w-0 truncate ${large ? "text-headline font-semibold" : "text-title font-medium"} ${
-          agent.group === "needs_you" || agent.group === "done" || large ? "text-foreground" : "text-subtle-foreground"
+          agent.emphasized || large ? "text-foreground" : "text-subtle-foreground"
         }`}
       >
         {agent.title}

@@ -114,8 +114,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const branch = branchShown ? branchChip(agent) : null;
   const folded = agent.lineage_collapsed !== false;
   const foldable = onToggleTree !== null && (agent.lineage_child_pane_ids?.length ?? 0) > 0;
-  const attention = agent.group === "needs_you" || agent.unread;
-  const titleTone = agent.delegated && !attention ? "text-subtle-foreground" : attention || agent.emphasized || selected ? "text-foreground" : "text-subtle-foreground";
+  const attention = agent.state.attention;
+  const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
   const Chevron = folded ? ChevronRightIcon : ChevronDownIcon;
   return (

@@ -165,7 +165,7 @@ function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, cachesOpen: bool
   else if (disk?.total_bytes != null) measure = layers ? "measured" : "unavailable";
   const isMain = worktree.is_main;
   const reviewed = cachesOpen && core !== null;
-  const agentWorking = (checkout.agent_summary?.working ?? 0) > 0;
+  const agentWorking = checkout.agent_scope.has_working;
   // The review's judgement wins once it has answered; before that only the
   // agent projection the sidebar already carries can say a checkout is busy.
   const inUse = reviewed ? (core.in_use ? inUseText(core.in_use, t) : null) : agentWorking ? t("cleanup.inUse.agent") : null;
@@ -382,7 +382,7 @@ export function reclaimable(workspace: Workspace): number {
   for (const checkout of workspace.checkouts) {
     const worktree = checkout.worktree;
     if (!worktree || worktree.is_main || stageOf(checkout) !== "done") continue;
-    if ((checkout.agent_summary?.working ?? 0) > 0) continue;
+    if (checkout.agent_scope.has_working) continue;
     const layers = worktree.disk?.layers;
     if (!layers) continue;
     bytes += layers.build_cache.bytes + layers.dependencies.bytes;

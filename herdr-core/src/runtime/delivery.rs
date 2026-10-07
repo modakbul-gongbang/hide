@@ -953,6 +953,7 @@ pub(crate) mod tests {
             })
             .collect();
         runtime.snapshot.navigator.workspaces = vec![crate::model::WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             tasks: Default::default(),
             pull_requests: Vec::new(),

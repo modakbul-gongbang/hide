@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import { createInterfaceI18n } from "./i18n/instance";
@@ -50,7 +51,7 @@ describe("the Sleep idle agents setting and the pane menu", () => {
 
   it("counts only this machine's sleeping agents", () => {
     const row = (pane_id: string, sleeping: boolean) =>
-      ({ pane_id, ...(sleeping ? { sleep: { state: "sleeping", since_unix_ms: 0 } } : {}) }) as AgentRow;
+      (legacyAgentRow({ pane_id, ...(sleeping ? { sleep: { state: "sleeping", since_unix_ms: 0 } } : {}) })) as AgentRow;
     expect(sleepingCount([row("w1:p1", true), row("w1:p2", false), row("remote:mini:pane:w1:p1", true)])).toBe(1);
   });
 

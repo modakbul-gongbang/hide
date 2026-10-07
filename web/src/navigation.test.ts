@@ -1,9 +1,12 @@
+import { allAgents } from "../test/legacyNavigation";
+import { agentSections, liveDescendantCounts } from "../test/legacyAgentScope";
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import { createInterfaceI18n } from "./i18n/instance";
-import { agentGroupTitle, agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
+import { agentGroupTitle, allProjectsCount, mainSections as drawMainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
-const project = (id: string, device: string, pinned = false) => ({
+const project = (id: string, device: string, pinned = false) => ({ agent_scope: emptyScope(),
   id,
   label: id,
   path: `/${id}`,
@@ -214,4 +217,21 @@ describe("an open from Main or an Overview", () => {
     expect(openingProgress(rest("c1", 5), opening)).toBeNull();
     expect(openingProgress(rest("c1", 9), opening)).toBe("Herdr refused");
   });
+});
+
+const mainSections: typeof drawMainSections = (rest, agents, device) => drawMainSections(rest ? legacyRest(rest, agents) : null, agents, device);
+
+
+it("keeps different duplicate rows in physical sections", async () => {
+  const { legacyAgentRow } = await import("../test/legacyAgentRow");
+  const { legacyPhysicalScope } = await import("../test/legacyAgentScope");
+  const { agentTree } = await import("./navigation");
+  const first = legacyAgentRow({ pane_id: "same", identity_label: "First working", group: "working", activity: "running" } as never);
+  const second = legacyAgentRow({ pane_id: "same", identity_label: "Second seen", group: "seen", activity: "stopped" } as never);
+  const agents = [first, second];
+  const listed = agents.map((agent) => ({ agent, device: null }));
+  const tree = agentTree(listed, legacyPhysicalScope(agents));
+  expect(tree.sections.map((s) => [s.group, ...s.rows.map((r) => r.agent.identity_label)])).toEqual([
+    ["working", "First working"], ["seen", "Second seen"],
+  ]);
 });

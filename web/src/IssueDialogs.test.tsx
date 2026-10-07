@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -15,7 +16,7 @@ vi.hoisted(() => {
 });
 
 const task = { key: "github:7", source: "github", id: "#7", url: null, title: "Fix the sidebar", open: true } as Task;
-const workspace = { id: "ws-1", path: "/repo", is_git: true, device_id: null, branches: ["main"], default_branch: "main", checkouts: [] } as unknown as Workspace;
+const workspace = { agent_scope: emptyScope(), id: "ws-1", path: "/repo", is_git: true, device_id: null, branches: ["main"], default_branch: "main", checkouts: [] } as unknown as Workspace;
 const claude = { id: "claude", label: "Claude Code", agent: "claude-code", state: "ready", headline: "", message: null, installed: true, selectable: true, retry_at_ms: null, model: "", models: [], models_fixed: false, cli_default: false, models_unavailable_reason: null };
 const ai = (over: Partial<BackgroundAi>): BackgroundAi => ({ enabled: true, provider: "claude", chosen: true, providers: [claude], fallback: [], refusal: null, unavailable_reason: null, ...over }) as BackgroundAi;
 

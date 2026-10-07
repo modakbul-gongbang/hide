@@ -9,7 +9,7 @@
 import type { BadgeCounts } from "./agentRow";
 import type { MessageKey } from "./i18n/catalogs";
 import { rowLine } from "./agentRow";
-import { cleanupOf, type AgentBucket, type Cleanup, type LensAgent } from "./overviewLens";
+import { type Cleanup, type LensAgent } from "./overviewLens";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, Tab, Task, Workspace } from "./snapshot";
 import { primaryCheckout } from "./workspaceManage";
@@ -63,11 +63,6 @@ export function graphFilterActive(filter: GraphFilter): boolean {
   return filter.chips.length > 0 || filter.query.trim() !== "" || filter.device !== null;
 }
 
-/** The chip a bucket belongs to (D-35). */
-function chipOfBucket(bucket: AgentBucket): StatusChip {
-  return bucket === "turn" ? "turn" : bucket === "resting" ? "resting" : "working";
-}
-
 /** A number with its hash sign and without it name one number, so a search is read without the sign. */
 function searchTerm(query: string): string {
   return query.trim().toLowerCase().replace(/^#/, "");
@@ -80,7 +75,7 @@ function numberOf(id: string | null | undefined): string | null {
 }
 
 export function matchesFilter(value: LensAgent, filter: GraphFilter): boolean {
-  if (filter.chips.length > 0 && !filter.chips.includes(chipOfBucket(value.bucket))) return false;
+  if (filter.chips.length > 0 && !filter.chips.includes(value.agent.state.graph_chip)) return false;
   if (filter.device !== null && (value.device ?? THIS_DEVICE) !== filter.device) return false;
   const term = searchTerm(filter.query);
   if (term === "") return true;
@@ -107,45 +102,30 @@ export function graphDevices(agents: readonly LensAgent[]): string[] {
 /** Where an agent stands for ordering and folding (B5): 0 the operator's attention, 1 working, 2 waiting on children, 3 resting. */
 export type Attention = 0 | 1 | 2 | 3;
 
-const REQUESTS = new Set(["question", "approval", "error"]);
-
 /** The agent holds a question, an approval or an error of its own, delegated or not (B17). */
 export function isAsking(agent: AgentRow): boolean {
-  return REQUESTS.has(agent.demand ?? "none");
+  return agent.state.asking;
 }
 
 /** A quiet agent whose descendants are still working or asking, so it is not done (docs/status-model.md). */
 export function waitsOnChildren(agent: AgentRow): boolean {
-  if (agent.waiting_on_descendants) return true;
-  const counts = agent.descendant_counts;
-  return counts !== undefined && counts.working + counts.question + counts.approval + counts.error > 0;
+  return agent.state.waits_on_children;
 }
 
 export function attentionOf(value: LensAgent): Attention {
-  const { agent, bucket } = value;
-  if (isAsking(agent) || bucket === "turn") return 0;
-  if (bucket === "working") return 1;
-  return waitsOnChildren(agent) ? 2 : 3;
+  return value.agent.state.graph_rank;
 }
 
 /** A line's colour follows the child it leads to (D-04, B9). */
 export type EdgeKind = "ask" | "flow" | "wait" | "rest";
 
 export function edgeKindOf(child: AgentRow): EdgeKind {
-  if (isAsking(child)) return "ask";
-  if (child.activity === "working") return "flow";
-  return waitsOnChildren(child) ? "wait" : "rest";
+  return child.state.edge;
 }
 
 /** The second line a row draws, a question in warning, only while the agent asks (D-27). */
 export function askingLine(agent: AgentRow): string | null {
   return isAsking(agent) ? (rowLine(agent)?.text ?? null) : null;
-}
-
-const MARK_STATE: Record<string, keyof BadgeCounts> = { "×": "error", "!": "approval", "?": "question", "●": "working", "✓": "done", "○": "idle" };
-
-function byAttentionThenActivity(a: LensAgent, b: LensAgent): number {
-  return attentionOf(a) - attentionOf(b) || (b.agent.last_activity ?? "").localeCompare(a.agent.last_activity ?? "");
 }
 
 function latest(values: readonly LensAgent[]): string {
@@ -169,6 +149,7 @@ export type CrossChip = {
   /** The agents at the other end, the most urgent first. */
   paneIds: string[];
   names: string[];
+  count: number;
   /** The box holding the first of them, the one a click selects. */
   box: string;
 };
@@ -298,17 +279,17 @@ export function buildGraph(projects: readonly BoardProject[], agents: readonly L
   const filtering = graphFilterActive(options.filter);
   const ofProject = new Map<Workspace, LensAgent[]>();
   for (const value of agents) push(ofProject, value.project, value);
-  const lineage = lineageOf(options.everyone);
+  const otherProjects = new Map(options.everyone.map((value) => [projectKey(value.project.id, value.project.device_id), value.project]));
   const sections = projects
-    .map((project) => projectGraph(project, ofProject.get(project.workspace) ?? [], options, filtering, lineage))
+    .map((project) => projectGraph(project, ofProject.get(project.workspace) ?? [], options, filtering, otherProjects))
     .filter((section): section is ProjectGraph => section !== null);
   if (options.scope === "all") sections.sort((a, b) => a.attention - b.attention || b.recency.localeCompare(a.recency));
   return { sections, empty: sections.length === 0 && !filtering, filterEmpty: sections.length === 0 && filtering };
 }
 
-function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean, lineage: Lineage): ProjectGraph | null {
+function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean, otherProjects: ReadonlyMap<string, Workspace>): ProjectGraph | null {
   const { geometry: g } = options;
-  const primaryId = primaryCheckout(workspace)?.id ?? null;
+  const state = workspace.agent_scope.graph;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
   const byPane = new Map(members.map((value) => [value.agent.pane_id, value]));
 
@@ -323,18 +304,19 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     }
   }
 
-  const byCheckout = new Map<string, LensAgent[]>();
-  for (const value of members) push(byCheckout, value.checkout.id, value);
-
   const candidates = new Map<string, Candidate>();
   const folded: Record<FoldKind, Candidate[]> = { empty: [], cleanup: [], resting: [] };
   const foldOf = new Map<string, FoldKind>();
   const drawn: Candidate[] = [];
   for (const checkout of workspace.checkouts) {
-    const primary = checkout.id === primaryId;
-    const cleanup = cleanupOf(workspace, checkout);
-    const own = (byCheckout.get(checkout.id) ?? []).slice().sort(byAttentionThenActivity);
-    const rank = own.length === 0 ? 4 : attentionOf(own[0]!);
+    const facts = state.checkouts[checkout.id];
+    if (!facts) throw new Error(`Missing graph checkout: ${checkout.id}`);
+    const { primary, cleanup, rank } = facts;
+    const own = facts.members.map((id) => {
+      const value = byPane.get(id);
+      if (!value) throw new Error(`Missing graph member: ${id}`);
+      return value;
+    });
     const candidate: Candidate = { checkout, primary, cleanup, members: kept ? own.filter((value) => kept.has(value.agent.pane_id)) : own, rank };
     candidates.set(checkout.id, candidate);
     if (filtering) {
@@ -342,7 +324,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
       if (candidate.members.length > 0) drawn.push(candidate);
       continue;
     }
-    const kind = foldKindOf(own, primary, cleanup, options.scope);
+    const kind = primary && options.scope === "project" ? null : facts.fold;
     if (kind === null) drawn.push(candidate);
     else {
       folded[kind].push(candidate);
@@ -363,7 +345,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
   // Rows, trays and each box's own height.
   const rowOf = new Map<string, GraphRow>();
   const infos: Info[] = drawn.map((entry) => {
-    const { rows, trays, inner } = rowsOf(entry, matched, g, lineage);
+    const { rows, trays, inner } = rowsOf(entry, matched, g, otherProjects);
     for (const row of rows) rowOf.set(row.paneId, row);
     const box: GraphBox = {
       id: entry.checkout.id,
@@ -378,26 +360,24 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
       x: 0,
       y: 0,
       height: 2 * g.boxBorder + g.headHeight + inner + g.boxPadBottom,
-      resting: rows.every((row) => row.attention === 3),
+      resting: entry.members[0]?.agent.state.graph_resting ?? true,
       dim: rows.length > 0 && rows.every((row) => row.dim),
     };
-    return { box, best: rows.length === 0 ? 4 : (Math.min(...rows.map((row) => row.attention)) as Attention), recent: latest(entry.members) };
+    return { box, best: entry.members[0]?.agent.state.graph_rank ?? 4, recent: latest(entry.members) };
   });
 
-  // A folded box's agents are counted on the nearest drawn ancestor, as the sidebar badges its folded descendants (B22).
+  // Fold toggles select a bounded core projection; the shell never adds marks.
   if (!filtering) {
-    for (const value of members) {
-      if (shownIds.has(value.checkout.id)) continue;
-      let ancestor = value.agent.lineage_parent_pane_id ? byPane.get(value.agent.lineage_parent_pane_id) : undefined;
-      const seen = new Set<string>();
-      while (ancestor && !rowOf.has(ancestor.agent.pane_id) && !seen.has(ancestor.agent.pane_id)) {
-        seen.add(ancestor.agent.pane_id);
-        ancestor = ancestor.agent.lineage_parent_pane_id ? byPane.get(ancestor.agent.lineage_parent_pane_id) : undefined;
-      }
-      const row = ancestor ? rowOf.get(ancestor.agent.pane_id) : undefined;
-      const state = MARK_STATE[value.agent.symbol];
-      if (!row || !state) continue;
-      row.tucked = { ...row.tucked, [state]: (row.tucked?.[state] ?? 0) + 1 };
+    const selector = (options.scope === "project" ? 8 : 0)
+      | (opened.has(foldId("empty", workspace.id)) ? 1 : 0)
+      | (opened.has(foldId("cleanup", workspace.id)) ? 2 : 0)
+      | (opened.has(foldId("resting", workspace.id)) ? 4 : 0);
+    const badges = state.tucked[state.variants[selector]!];
+    if (!badges) throw new Error("Missing graph fold projection");
+    for (const [id, counts] of Object.entries(badges)) {
+      const row = rowOf.get(id);
+      if (!row) throw new Error(`Missing graph badge row: ${id}`);
+      row.tucked = counts;
     }
   }
 
@@ -413,7 +393,6 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     height = Math.max(height, box.y + box.height);
   }
   if (boxes.length === 0 && foldList.length === 0) return null;
-  const everyone = members.map((value) => attentionOf(value));
   return {
     project: workspace,
     device,
@@ -425,73 +404,37 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     rows: rowOf,
     width: boxes.length === 0 ? 0 : width + g.pad,
     height: boxes.length === 0 ? 0 : height + g.pad,
-    attention: everyone.length === 0 ? 4 : (Math.min(...everyone) as Attention),
-    recency: latest(members),
+    attention: state.attention,
+    recency: state.recency,
   };
 }
 
-/** The fold a checkout's box goes into when no filter is set, or null when it is drawn (B21, B23, D-30). */
-function foldKindOf(own: readonly LensAgent[], primary: boolean, cleanup: Cleanup | null, scope: GraphOptions["scope"]): FoldKind | null {
-  if (primary && scope === "project") return null;
-  const resting = own.every((value) => attentionOf(value) === 3);
-  return cleanup && resting ? "cleanup" : own.length === 0 ? "empty" : resting ? "resting" : null;
-}
-
-/** The fold line that holds a checkout's box in a scope with no filter, by `foldId`, or null when the box is drawn. */
-export function foldHolding(workspace: Workspace, everyone: readonly LensAgent[], checkoutId: string, scope: GraphOptions["scope"]): string | null {
-  const checkout = workspace.checkouts.find((candidate) => candidate.id === checkoutId);
-  if (!checkout) return null;
-  const own = everyone.filter((value) => value.project.id === workspace.id && value.checkout.id === checkoutId);
-  const kind = foldKindOf(own, checkout.id === primaryCheckout(workspace)?.id, cleanupOf(workspace, checkout), scope);
+/** The fold line holding a box, selected from the core's cleanup/resting decision. */
+export function foldHolding(workspace: Workspace, checkoutId: string, scope: GraphOptions["scope"]): string | null {
+  if (!workspace.checkouts.some((checkout) => checkout.id === checkoutId)) return null;
+  const facts = workspace.agent_scope.graph.checkouts[checkoutId];
+  if (!facts) throw new Error(`Missing graph checkout: ${checkoutId}`);
+  const kind = facts.primary && scope === "project" ? null : facts.fold;
   return kind === null ? null : foldId(kind, workspace.id);
 }
 
-// --- across projects ----------------------------------------------------------
-
-/**
- * Every agent by pane id, and every parent's children. The core names a
- * device's pane `remote:<device>:pane:<id>` and resolves a parent on another
- * machine to that name, so one pane id names one agent across devices.
- */
-type Lineage = { byPane: Map<string, LensAgent>; children: Map<string, LensAgent[]> };
-
-function lineageOf(everyone: readonly LensAgent[]): Lineage {
-  const byPane = new Map<string, LensAgent>();
-  const children = new Map<string, LensAgent[]>();
-  for (const value of everyone) {
-    if (byPane.has(value.agent.pane_id)) continue;
-    byPane.set(value.agent.pane_id, value);
-    const parent = value.agent.lineage_parent_pane_id;
-    if (parent && parent !== value.agent.pane_id) push(children, parent, value);
-  }
-  return { byPane, children };
+function projectKey(id: string, deviceId: string): string {
+  return JSON.stringify([deviceId, id]);
 }
 
-/** The chips of one row: one per project its children work in, then one for a parent in another project (issue 718). */
-function crossChipsOf(value: LensAgent, lineage: Lineage): CrossChip[] {
-  const chip = (direction: CrossChip["direction"], others: LensAgent[]): CrossChip => {
-    const ordered = others.slice().sort(byAttentionThenActivity);
-    const first = ordered[0]!;
-    const sameDevice = value.project.device_id === first.project.device_id;
-    const theirs = first.device ?? THIS_DEVICE;
-    return { direction, project: first.project, device: sameDevice ? null : theirs, paneIds: ordered.map((other) => other.agent.pane_id), names: ordered.map((other) => other.agent.identity_label), box: first.checkout.id };
-  };
-  const chips: CrossChip[] = [];
-  const byProject = new Map<string, LensAgent[]>();
-  for (const other of lineage.children.get(value.agent.pane_id) ?? []) if (other.project.id !== value.project.id) push(byProject, other.project.id, other);
-  // Projects in the order of their most urgent agent, so a snapshot that only reorders the list keeps the chips in place.
-  const outs = [...byProject.values()].map((others) => chip("out", others));
-  const urgency = (out: CrossChip) => lineage.byPane.get(out.paneIds[0]!)!;
-  outs.sort((a, b) => byAttentionThenActivity(urgency(a), urgency(b)));
-  chips.push(...outs);
-  const parentId = value.agent.lineage_parent_pane_id;
-  const parent = parentId ? lineage.byPane.get(parentId) : undefined;
-  if (parent && parent.project.id !== value.project.id) chips.push(chip("in", [parent]));
-  return chips;
+/** Resolve navigation targets and translated device context without changing core membership or order. */
+function crossChipsOf(value: LensAgent, otherProjects: ReadonlyMap<string, Workspace>): CrossChip[] {
+  const chips = value.project.agent_scope.graph.cross[value.agent.pane_id];
+  if (!chips) throw new Error(`Missing graph cross-project row: ${value.agent.pane_id}`);
+  return chips.map((chip) => {
+    const project = otherProjects.get(projectKey(chip.project_id, chip.project_device_id));
+    if (!project) throw new Error(`Missing graph cross-project target: ${chip.project_id}`);
+    return { direction: chip.direction, project, device: chip.device === null ? null : chip.device.label ?? THIS_DEVICE, paneIds: chip.pane_ids, names: chip.names, box: chip.box_id, count: chip.count };
+  });
 }
 
 /** One box's rows: agents sharing a tab stand together on one tray and a delegation inside the box is indented under its parent (B6, B7). */
-function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphGeometry, lineage: Lineage): { rows: GraphRow[]; trays: GraphTray[]; inner: number } {
+function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphGeometry, otherProjects: ReadonlyMap<string, Workspace>): { rows: GraphRow[]; trays: GraphTray[]; inner: number } {
   const { checkout, members } = entry;
   const inBox = new Set(members.map((value) => value.agent.pane_id));
   const tabOf = new Map<string, Tab>();
@@ -547,7 +490,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
       parent: parentId,
       tucked: null,
       dim: matched ? !matched.has(value.agent.pane_id) : false,
-      cross: crossChipsOf(value, lineage),
+      cross: crossChipsOf(value, otherProjects),
     };
     rows.push(row);
     top += height;

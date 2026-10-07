@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 // The request view (PRD overview-request-view) as pure functions over the
 // snapshot: which rows it draws, in which group and order, the Requests tile,
 // and the words each row's lines say. The verb is the core's (D-07); this
@@ -27,7 +28,6 @@ export const VERB_LABEL: Record<RequestVerb, MessageKey> = {
   idle: "requests.verb.idle",
 };
 
-const VERB_ORDER: readonly RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 
 /** One row of the view: an agent with its verb, and the live descendants it speaks for (D-30). */
 export type RequestRow = {
@@ -39,40 +39,24 @@ export type RequestRow = {
 
 export type RequestGroup = { verb: RequestVerb; rows: RequestRow[] };
 
-/** A row the core has not laid a block on yet reads from its group: working while it works, else resting. */
-function verbOf(agent: AgentRow): RequestVerb {
-  return agent.request?.verb ?? (agent.group === "working" ? "working" : "idle");
-}
-
 /**
  * The rows the view draws: one per agent (D-01, D-46), except a delegated
  * child whose parent is in the same scope, which its parent's row speaks for
  * (D-30). A child whose parent is gone, or outside the scope, is a row of its
  * own. `all` is every agent of the scope's devices, for the descendants.
  */
-const NO_WORKERS: ReadonlySet<string> = new Set();
-
-/**
- * The rows of the request view, leaving out the panes that are Factory
- * workers (`factoryWorkers`), whose turn 내 차례 shows instead.
- */
-export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[], factoryWorkers: ReadonlySet<string> = NO_WORKERS): RequestRow[] {
-  const inScope = new Set(agents.map((value) => value.agent.pane_id));
+export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[], scope: AgentScope): RequestRow[] {
   const byPane = new Map(all.map((agent) => [agent.pane_id, agent]));
-  const rows: RequestRow[] = [];
-  for (const lens of agents) {
-    const { agent } = lens;
-    if (agent.delegated && agent.lineage_parent_pane_id && inScope.has(agent.lineage_parent_pane_id)) continue;
-    // A Factory worker's questions and stops are the Factory's 내 차례 (PRD software-factory-ui D-06, B13).
-    if (factoryWorkers.has(agent.pane_id)) continue;
-    // Deepest first from the core; the expanded row reads nearest first.
-    const children = (agent.close_descendant_pane_ids ?? [])
-      .map((pane) => byPane.get(pane))
-      .filter((child): child is AgentRow => child !== undefined)
-      .reverse();
-    rows.push({ lens, verb: verbOf(agent), children });
-  }
-  return rows;
+  return scope.requests.rows.map((row) => {
+    const lens = agents[row.member];
+    if (!lens) throw new Error("Request scope references a missing member");
+    const children = row.children.map((id) => {
+      const child = byPane.get(id);
+      if (!child) throw new Error(`Request scope references a missing descendant: ${id}`);
+      return child;
+    });
+    return { lens, verb: lens.agent.state.verb, children };
+  });
 }
 
 /**
@@ -80,20 +64,17 @@ export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow
  * puts the row that has waited longest first (D-40); the others put the most
  * recent activity first.
  */
-export function requestGroups(rows: readonly RequestRow[]): RequestGroup[] {
-  const since = (row: RequestRow) => row.lens.agent.request?.verb_since_unix_ms ?? Number.MAX_SAFE_INTEGER;
-  const activity = (row: RequestRow) => row.lens.agent.last_activity ?? "";
-  return VERB_ORDER.map((verb) => {
-    const members = rows.filter((row) => row.verb === verb);
-    members.sort(TODO_VERBS.includes(verb) ? (a, b) => since(a) - since(b) : (a, b) => activity(b).localeCompare(activity(a)));
-    return { verb, rows: members };
-  }).filter((group) => group.rows.length > 0);
+export function requestGroups(rows: readonly RequestRow[], scope: AgentScope): RequestGroup[] {
+  return scope.requests.groups.map((group) => ({ verb: group.verb, rows: group.rows.map((index) => {
+    const row = rows[index];
+    if (!row) throw new Error("Request group references a missing row");
+    return row;
+  }) }));
 }
 
 /** When a row's time counts from: the verb's start in a to-do group, else the last activity (D-40, B50). */
 export function rowSince(row: RequestRow): number | null {
-  if (TODO_VERBS.includes(row.verb)) return row.lens.agent.request?.verb_since_unix_ms ?? null;
-  return row.lens.agent.changed_at_unix_ms;
+  return row.lens.agent.state.request_since;
 }
 
 /**
@@ -101,11 +82,11 @@ export function rowSince(row: RequestRow): number | null {
  * number, the ones to answer as the yellow badge, and a bar of the to-do
  * verbs. Zero is drawn as zero; a device that has not answered has no count.
  */
-export function requestsTile(rows: readonly RequestRow[], availability: DeviceAvailability, t: TFunction<"translation">): Tile {
+export function requestsTile(scope: AgentScope, availability: DeviceAvailability, t: TFunction<"translation">): Tile {
   const known = availability.state === "ready";
-  const count = (verb: RequestVerb) => rows.filter((row) => row.verb === verb).length;
-  const todo = TODO_VERBS.reduce((sum, verb) => sum + count(verb), 0);
-  const answer = count("answer");
+  const count = (verb: RequestVerb) => scope.requests.counts[verb];
+  const todo = scope.requests.todo;
+  const answer = scope.requests.answer;
   return {
     id: "requests",
     label: t("requests.title"),
@@ -280,52 +261,42 @@ export function childrenSummary(row: RequestRow, t: TFunction<"translation">): {
   if (total === 0) return null;
   const counts = row.lens.agent.descendant_counts;
   const working = counts?.working ?? 0;
-  const asking = (counts?.question ?? 0) + (counts?.approval ?? 0);
+  const asking = row.lens.agent.state.descendant_asking;
   return { text: [t("requests.children", { count: total }), working > 0 ? t("requests.workingChildren", { count: working }) : null].filter(Boolean).join(" · "), asking };
 }
 
 // --- pull requests and issues (D-43, D-46, D-47) ---------------------------------
 
-/** The row's chip and how many other live pull requests its `+N` counts; the core put the chip first. */
-export function pullRequestChip(pulls: readonly AgentPullRequest[]): { chip: AgentPullRequest; more: number } | null {
-  const live = pulls.filter((pull) => pull.live);
-  const chip = live[0];
-  return chip ? { chip, more: live.length - 1 } : null;
+/** Work membership and current chips are the core's; this file resolves their labels. */
+function workOf(row: RequestRow, project: Workspace) {
+  const work = project.agent_scope.work[row.lens.agent.pane_id];
+  if (!work) throw new Error("Missing core request work for the selected row");
+  return work;
 }
 
-/**
- * The row's issues (D-46, D-47): those the chip's pull request closes, then
- * the checkout's own, then those the other pull requests close, each once
- * and only when the project's source has it, so the chip draws what the
- * Issues board draws.
- */
-export function rowIssues(row: RequestRow, project: Workspace): Task[] {
+export function pullRequestChip(row: RequestRow): { chip: AgentPullRequest; more: number } | null {
+  const work = workOf(row, row.lens.project);
+  if (work.pull === null) return null;
+  const chip = row.lens.agent.request?.pull_requests[work.pull];
+  if (!chip) throw new Error("Missing core request pull request");
+  return { chip, more: work.more };
+}
+
+function issuesOf(row: RequestRow, project: Workspace, keys: readonly string[]): Task[] {
   const tasks = new Map((project.tasks?.tasks ?? []).map((task) => [task.key, task]));
-  const pulls = row.lens.agent.request?.pull_requests ?? [];
-  const chip = pullRequestChip(pulls)?.chip;
-  const keys: string[] = [];
-  const closing = (pull: AgentPullRequest) => pull.closing_issues.map((reference) => `github:${reference.repository}#${reference.number}`);
-  if (chip) keys.push(...closing(chip));
-  if (row.lens.task) keys.push(row.lens.task.key);
-  for (const pull of pulls) if (pull !== chip) keys.push(...closing(pull));
-  const seen = new Set<string>();
-  const issues: Task[] = [];
-  for (const key of keys) {
-    if (seen.has(key)) continue;
-    seen.add(key);
+  return keys.map((key) => {
     const task = key === row.lens.task?.key ? row.lens.task : tasks.get(key);
-    if (task) issues.push(task);
-  }
-  return issues;
+    if (!task) throw new Error(`Missing core request issue: ${key}`);
+    return task;
+  });
 }
 
-/** Folded chips keep open issues and issues closed after this request (D-47, D-43).
- * A later edit to an already closed issue does not make it current work.
- * `rowIssues` keeps the complete history for the expanded row (B56).
- */
+export function rowIssues(row: RequestRow, project: Workspace): Task[] {
+  return issuesOf(row, project, workOf(row, project).issues);
+}
+
 export function rowIssueChips(row: RequestRow, project: Workspace): Task[] {
-  const requested = row.lens.agent.request?.request?.at_unix_ms ?? 0;
-  return rowIssues(row, project).filter((issue) => issue.open || (issue.closed_at_unix_ms != null && issue.closed_at_unix_ms > requested));
+  return issuesOf(row, project, workOf(row, project).issue_chips);
 }
 
 // --- open targets (D-39) -----------------------------------------------------------

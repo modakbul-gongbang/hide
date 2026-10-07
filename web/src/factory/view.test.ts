@@ -1,7 +1,8 @@
+import { workerPanes } from "../../test/legacyFactoryWorkers";
 import { describe, expect, it } from "vitest";
 import { transitiveReduction } from "../projectBoard";
 import type { CardView, FactoryView } from "./model";
-import { boardColumns, factoryGraph, splitAtCuts, taskChain, workerPanes } from "./view";
+import { boardColumns, factoryGraph, splitAtCuts, taskChain } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {

@@ -1,10 +1,9 @@
 import { useInterfaceTranslation } from "./i18n/client";
-import { useMemo } from "react";
 import { LayoutDashboardIcon } from "lucide-react";
 import type { Actions } from "./actions";
 import { catalogWorkspaces, frontCheckout } from "./snapshot";
-import { contextAgents } from "./remote";
-import { sidebarBody } from "./devices";
+import { deviceScope } from "./agentScope";
+import { frontDeviceId } from "./devices";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { MainScreen } from "./MainScreen";
@@ -16,15 +15,10 @@ import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { commandLabel } from "./shortcutLabels";
 import { projectEntryLens } from "./navigation";
-import { useFactoryWorkers } from "./factory/hooks";
 
 /** The same selected-device group that the Agents sidebar draws, less the Factory's workers, which 내 차례 counts (PRD software-factory-ui B13). */
 export function useOverviewCount() {
-  const rest = useShellStore((s) => s.rest);
-  const agents = useShellStore((s) => s.agents);
-  const workers = useFactoryWorkers();
-  return useMemo(() => rest && sidebarBody(rest, "agents") !== "disconnected"
-    ? contextAgents(rest, agents).filter((agent) => agent.group === "needs_you" && !workers.has(agent.pane_id)).length : 0, [rest, agents, workers]);
+  return useShellStore((s) => deviceScope(s.rest, frontDeviceId(s.rest))?.overview_needs_you ?? 0);
 }
 
 export function OverviewButton({ actions }: { actions: Actions }) {

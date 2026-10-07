@@ -27,6 +27,7 @@ use crate::node_access::{NodeLink, call_as};
 /// `kind` stays `local`, the role "the core's own machine", not a name.
 pub fn local_device(node: &NodeId) -> DeviceSnapshot {
     DeviceSnapshot {
+        agent_scope: Default::default(),
         id: node.to_string(),
         label: "This Mac".to_owned(),
         kind: "local".to_owned(),
@@ -62,6 +63,7 @@ pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<Devic
         if seen.insert(registration.id.clone()) {
             let remote = registration.ssh_alias.is_some();
             result.push(DeviceSnapshot {
+                agent_scope: Default::default(),
                 id: registration.id.clone(),
                 label: registration.label.clone(),
                 kind: if remote { "remote" } else { "local" }.to_owned(),
@@ -583,6 +585,7 @@ fn inspect_space(node: &NodeId, space: &SessionSpace, paths: &PathIndex) -> Vec<
                     .unwrap_or(&space.label)
                     .to_owned();
                 projects.push(WorkspaceSnapshot {
+                    agent_scope: Default::default(),
                     home_issues: Default::default(),
                     pull_requests: Vec::new(),
                     tasks: Default::default(),
@@ -883,6 +886,7 @@ fn inspect(
     };
 
     WorkspaceSnapshot {
+        agent_scope: Default::default(),
         home_issues: Default::default(),
         pull_requests: Vec::new(),
         tasks: Default::default(),
@@ -961,6 +965,7 @@ fn checkout(
         issue: None,
     });
     CheckoutSnapshot {
+        agent_scope: Default::default(),
         branch_issue: git.issue,
         head_oid: git.head_oid,
         // A checkout with no Herdr tabs yet: the first one the operator makes
@@ -1456,6 +1461,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -1518,6 +1524,7 @@ mod tests {
         ];
         let checkout = fs::canonicalize(&checkout).expect("the checkout's real path");
         let project = WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),

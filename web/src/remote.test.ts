@@ -1,3 +1,4 @@
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -40,7 +41,7 @@ function tab(id: string, paneIds: string[], working: string[] = []): Tab {
 }
 
 function session(overrides: Partial<RemoteSession> = {}): RemoteSession {
-  const workspace: Workspace = {
+  const workspace: Workspace = { agent_scope: emptyScope(),
     id: "remote:studio:workspace:w9",
     label: "app",
     path: "/home/remote/app",
@@ -50,7 +51,7 @@ function session(overrides: Partial<RemoteSession> = {}): RemoteSession {
     temporary: false,
     pinned: false,
     checkouts: [
-      {
+      { agent_scope: emptyScope(),
         id: "remote:studio:checkout:w9",
         workspace_id: "remote:studio:workspace:w9",
         label: "app",
@@ -93,7 +94,7 @@ function session(overrides: Partial<RemoteSession> = {}): RemoteSession {
   };
 }
 
-const STUDIO: Device = { id: "studio", label: "Studio Mac", kind: "remote", state: "ready", message: null, ssh_alias: "studio", agent_count: 0, test: null };
+const STUDIO: Device = { agent_scope: emptyScope(), id: "studio", label: "Studio Mac", kind: "remote", state: "ready", message: null, ssh_alias: "studio", agent_count: 0, test: null };
 
 function rest(focusedDevice: string, state = "connected"): SnapshotRest {
   return {
@@ -102,7 +103,7 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
       focused_checkout_id: "c-local",
       devices: [{ ...STUDIO, id: "local", label: "This Mac", kind: "local", state: "local", ssh_alias: null }, STUDIO],
       workspaces: [
-        {
+        { agent_scope: emptyScope(),
           id: "p-local",
           label: "local",
           path: "/Users/example/app",
@@ -112,7 +113,7 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
           pinned: false,
           inactive_checkouts: { expanded: false, checkout_ids: [] },
           checkouts: [
-            {
+            { agent_scope: emptyScope(),
               id: "c-local",
               workspace_id: "p-local",
               label: "app",
@@ -157,7 +158,7 @@ function deviceViews(views: boolean): WorkspaceView {
 function seed(value: SnapshotRest) {
   noteKeyboardOwner({ kind: "none" });
   useShellStore.setState({ rest: null, agents: [], focusedPaneId: null });
-  useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: value } });
+  useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: legacyRest(value, []) } });
 }
 
 function recorder() {
@@ -301,7 +302,7 @@ describe("commands with an SSH device selected", () => {
 });
 
 describe("deviceCatalogLine", () => {
-  const device: Device = { id: "studio", label: "Studio", kind: "remote", state: "ready", message: null, ssh_alias: "studio", herdr_socket_path: null, agent_count: 0 } as Device;
+  const device: Device = { agent_scope: emptyScope(), id: "studio", label: "Studio", kind: "remote", state: "ready", message: null, ssh_alias: "studio", herdr_socket_path: null, agent_count: 0 } as Device;
   const status = (state: string, session: RemoteSession | null, catalog?: RemoteStatus["catalog"]): RemoteStatus => ({
     target_id: "studio",
     state,

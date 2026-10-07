@@ -1,3 +1,5 @@
+import { emptyScope, legacyProject } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Agents graph (PRD agents-graph-view): columns, bands, rows, folds,
 // filters and the lines' routes. The expected answers are the PRD's
 // Behaviors read against small fixtures; a line that runs through a box is
@@ -25,7 +27,9 @@ import {
   type GraphGeometry,
   type ProjectGraph,
 } from "./agentGraph";
-import { scopeAgents, type LensAgent } from "./overviewLens";
+import { scopeAgents } from "../test/legacyAgentScope";
+import { legacyGraphCross } from "../test/legacyGraphCross";
+import type { LensAgent } from "./overviewLens";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
@@ -52,7 +56,7 @@ type CheckoutOptions = { primary?: boolean; tabs?: string[][]; merged?: boolean;
 function checkout(id: string, options: CheckoutOptions = {}): Checkout {
   const primary = options.primary ?? false;
   const tabs = options.tabs ?? [];
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: "project",
     label: id,
@@ -77,7 +81,7 @@ function checkout(id: string, options: CheckoutOptions = {}): Checkout {
 }
 
 function workspace(checkouts: Checkout[], id = "project", tasks: Task[] = []): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id,
     label: id,
     path: `/fixture/${id}`,
@@ -96,7 +100,7 @@ function workspace(checkouts: Checkout[], id = "project", tasks: Task[] = []): W
 let clock = 0;
 function agent(pane: string, extra: Partial<AgentRow> = {}): AgentRow {
   clock += 1;
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -111,7 +115,7 @@ function agent(pane: string, extra: Partial<AgentRow> = {}): AgentRow {
     activity: "stopped",
     last_activity: String(1000 + clock).padStart(13, "0"),
     ...extra,
-  };
+  });
 }
 
 const WORKING: Partial<AgentRow> = { group: "working", activity: "working", symbol: "●" };
@@ -123,11 +127,14 @@ function child(pane: string, parent: string, extra: Partial<AgentRow> = {}): Age
 }
 
 function one(project: Workspace, agents: AgentRow[]): BoardProject[] {
-  return [{ workspace: project, agents, device: null }];
+  return [{ workspace: legacyProject(project, agents), agents, device: null }];
 }
 
 function graph(projects: BoardProject[], options: Partial<{ scope: "project" | "all"; openFolds: string[]; selectedBox: string | null; filter: GraphFilter; everyone: LensAgent[] }> = {}): GraphBoard {
-  return buildGraph(projects, scopeAgents(projects), { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, everyone: scopeAgents(projects), ...options, geometry: GEOMETRY });
+  projects = projects.map((p) => ({ ...p, workspace: legacyProject(p.workspace, p.agents) }));
+  const everyone = options.everyone ?? scopeAgents(projects);
+  for (const { workspace } of projects) workspace.agent_scope.graph.cross = legacyGraphCross(workspace, everyone);
+  return buildGraph(projects, scopeAgents(projects), { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, ...options, everyone, geometry: GEOMETRY });
 }
 
 function only(board: GraphBoard): ProjectGraph {
@@ -390,6 +397,7 @@ describe("across projects (issue 718)", () => {
   it("puts one chip per other project on the parent's row, counting its agents there most urgent first, and one back on each child's row", () => {
     const board = graph(projects(), { scope: "all" });
     const lead = row(board, "lead");
+    expect(lead.cross.map((chip) => chip.count)).toEqual([2, 1]);
     expect(lead.cross.map((chip) => [chip.direction, chip.project.id, chip.names, chip.box, chip.device])).toEqual([
       ["out", "sasu", ["Build", "Spec"], "sasu-wt", null],
       ["out", "docs", ["Docs"], "docs-main", null],
@@ -451,10 +459,12 @@ describe("across projects (issue 718)", () => {
   });
 
   it("names the fold line that holds a box, so a chip can open it", () => {
-    const everyone = scopeAgents(projects());
-    expect(foldHolding(docs(), everyone, "docs-main", "all")).toBe(foldId("resting", "docs"));
-    expect(foldHolding(docs(), everyone, "docs-main", "project")).toBeNull();
-    expect(foldHolding(sasu(), everyone, "sasu-wt", "all")).toBeNull();
+    const values = agents();
+    const doc = legacyProject(docs(), values);
+    const build = legacyProject(sasu(), values);
+    expect(foldHolding(doc, "docs-main", "all")).toBe(foldId("resting", "docs"));
+    expect(foldHolding(doc, "docs-main", "project")).toBeNull();
+    expect(foldHolding(build, "sasu-wt", "all")).toBeNull();
   });
 });
 
