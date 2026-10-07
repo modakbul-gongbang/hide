@@ -3637,7 +3637,7 @@ fn periodic_watch_keeps_display_metadata_out_of_provider_input() {
 #[test]
 fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
     let mut h = Bench::new(false);
-    let f = h.factory(true);
+    h.factory(true);
     let added = h.add_card(CardInput {
         runtime: Some(Runtime::Claude),
         ..card("Limited", &[])
