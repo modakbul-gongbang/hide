@@ -83,38 +83,44 @@ pub(crate) struct CreatedTabClamp {
     /// The checkout as it was asked for, which a clamped pane reads as its cwd.
     pub(crate) path: String,
     rules: PathRules,
-    /// Each repository's worktree paths as `rules` read them. A folder in
-    /// another worktree below the checkout is that worktree's, so it is no
+    /// Each repository's worktree paths as the catalog lists them. A folder
+    /// in another worktree below the checkout is that worktree's, so it is no
     /// more the outer checkout's shell start folder than a sibling is.
     repositories: Arc<Vec<Vec<String>>>,
 }
 
 impl CreatedTabClamp {
-    /// Whether `cwd` is the checkout's own. The checkout and `cwd` are read
-    /// as `paths` gives them and compared by names, as are the nested
-    /// worktrees, so no comparison reads a folder.
+    /// Whether `cwd` is the checkout's own. The checkout, `cwd` and the
+    /// nested worktrees are all read through the same `paths`, the newest
+    /// the node answered, and compared by names, so no comparison reads a
+    /// folder and a worktree listed before the node knew it is not misread.
     pub(super) fn holds(&self, cwd: &str, paths: &workspace::PathIndex) -> bool {
-        let root = self.rules.read(&self.path, paths);
-        let cwd = self.rules.read(cwd, paths);
+        let read = |path: &str| self.rules.read(path, paths);
+        let root = read(&self.path);
+        let cwd = read(cwd);
         within_by_names(&cwd, &root)
-            && !nested_worktrees(&self.repositories, &root)
+            && !nested_worktrees(&self.repositories, &root, read)
                 .iter()
                 .any(|nested| within_by_names(&cwd, nested))
     }
 }
 
-/// The worktrees of the repository that lists `root`, strictly below it.
-/// `repositories` holds each repository's worktree paths as `PathRules` read
-/// them; a checkout no repository lists has none, so a worktree the catalog
-/// has not listed yet is not told apart from the checkout around it.
-fn nested_worktrees(repositories: &[Vec<String>], root: &str) -> Vec<String> {
+/// The worktrees of the repository that lists `root`, strictly below it, as
+/// `read` gives them; a checkout no repository lists has none, so a worktree
+/// the catalog has not listed yet is not told apart from the checkout around
+/// it.
+fn nested_worktrees(
+    repositories: &[Vec<String>],
+    root: &str,
+    read: impl Fn(&str) -> String,
+) -> Vec<String> {
     repositories
         .iter()
+        .map(|worktrees| worktrees.iter().map(|path| read(path)).collect::<Vec<_>>())
         .find(|worktrees| worktrees.iter().any(|path| path == root))
         .into_iter()
         .flatten()
         .filter(|path| path.as_str() != root && within_by_names(path, root))
-        .cloned()
         .collect()
 }
 
@@ -195,19 +201,38 @@ impl Runtime {
     }
 
     /// What the core's own node says of `wanted`, asked from inside the
-    /// runtime. Only a runtime the sync coordinator does not feed reads its
-    /// paths this way: a fixture, a test, and the registrations-only catalog
-    /// before Herdr first answers. A failed ask is logged and the paths are
-    /// read by their names.
-    pub(super) fn ask_paths(&self, wanted: BTreeSet<String>) -> workspace::PathIndex {
-        workspace::PathIndex::ask(self.own_node.as_ref(), wanted).unwrap_or_else(|error| {
-            crate::diagnostic!(serde_json::json!({
-                "component": "workspace_catalog",
-                "kind": "catalog.path_facts_failed",
-                "message": error,
-            }));
-            workspace::PathIndex::default()
-        })
+    /// runtime. Only a runtime the sync coordinator does not feed asks this
+    /// way: a fixture, a test, and the registrations-only catalog before
+    /// Herdr first answers. A failed ask is logged and the previous answer
+    /// stands, read by names where it is silent.
+    pub(super) fn ask_paths(&self, wanted: BTreeSet<String>) -> Arc<workspace::PathIndex> {
+        match workspace::PathIndex::ask(self.own_node.as_ref(), wanted) {
+            Ok(paths) => Arc::new(paths),
+            Err(error) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "workspace_catalog",
+                    "kind": "catalog.path_facts_failed",
+                    "message": error,
+                }));
+                Arc::clone(&self.catalog_paths)
+            }
+        }
+    }
+
+    /// The path facts the accepted catalog was built from.
+    pub(crate) fn catalog_paths(&self) -> Arc<workspace::PathIndex> {
+        Arc::clone(&self.catalog_paths)
+    }
+
+    /// The paths a session applied without a precomputed catalog reads: the
+    /// last the coordinator brought once it feeds this runtime, so nothing is
+    /// asked under the lock, else what the core's own node answers now.
+    fn paths_without_catalog(&self, payload: &SessionSnapshotPayload) -> Arc<workspace::PathIndex> {
+        if self.catalog_from_coordinator {
+            Arc::clone(&self.catalog_paths)
+        } else {
+            self.ask_paths(self.wanted_paths(payload))
+        }
     }
 
     /// Every directory the session's panes occupy, as Herdr reported it: what
@@ -319,15 +344,17 @@ impl Runtime {
             .filter_map(|tab| tab.id.clone())
             .collect::<HashSet<_>>();
         self.issue_tokens = crate::wire::issue_tokens(payload);
-        // The catalog and the root index shell out to git, so the sync
-        // coordinator builds them before taking the runtime lock. A
-        // precomputation whose registrations no longer match current state is
-        // stale; the last accepted catalog stands in for it and the next
-        // publish, a second away, brings a fresh one. It is not rebuilt here:
-        // one `git rev-parse` per tab under this lock stalled the main thread
-        // and every attach reader for a third of their time (2026-09-06,
-        // 18 agents, load 7 to 11). Only a runtime that has never accepted a
-        // catalog builds one inline, which is the fixture and test path.
+        // The catalog reads what the core's own node says of its paths, so
+        // the sync coordinator asks and builds it before taking the runtime
+        // lock. A precomputation whose registrations no longer match current
+        // state is stale; the last accepted catalog stands in for it and the
+        // next publish, a second away, brings a fresh one. Nothing is asked
+        // here once the coordinator feeds this runtime: one `git rev-parse`
+        // per tab under this lock stalled the main thread and every attach
+        // reader for a third of their time (2026-09-06, 18 agents, load 7 to
+        // 11). A session applied without a catalog is built from the last
+        // paths the coordinator brought; only a runtime it does not feed, the
+        // fixture and test path, asks its node inline.
         let (mut workspaces, paths) = match precomputed {
             Some(catalog)
                 if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
@@ -335,6 +362,7 @@ impl Runtime {
                 self.last_session_spaces = Self::session_spaces(payload, &catalog.paths);
                 self.last_accepted_catalog = Some(catalog.workspaces.clone());
                 self.catalog_paths = Arc::clone(&catalog.paths);
+                self.catalog_from_coordinator = true;
                 (catalog.workspaces, catalog.paths)
             }
             Some(_) if self.last_accepted_catalog.is_some() => {
@@ -351,8 +379,7 @@ impl Runtime {
                 )
             }
             _ => {
-                let paths = inline_paths
-                    .unwrap_or_else(|| Arc::new(self.ask_paths(self.wanted_paths(payload))));
+                let paths = inline_paths.unwrap_or_else(|| self.paths_without_catalog(payload));
                 self.last_session_spaces = Self::session_spaces(payload, &paths);
                 let workspaces = workspace::build_catalog(
                     &self.node,
@@ -2175,12 +2202,12 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
-            // A runtime the sync coordinator does not feed asks its own node
-            // here, before the clamps read the session's cwds.
+            // A session without a catalog reads its paths here, before the
+            // clamps read the session's cwds.
             let paths = match &precomputed {
                 Some(catalog) => Arc::clone(&catalog.paths),
                 None => {
-                    let paths = Arc::new(self.ask_paths(self.wanted_paths(payload)));
+                    let paths = self.paths_without_catalog(payload);
                     inline_paths = Some(Arc::clone(&paths));
                     paths
                 }
@@ -4775,12 +4802,12 @@ impl Runtime {
     /// `rebuild_device_rows`.
     #[cfg(test)]
     pub(super) fn rebuild_catalog(&mut self) {
-        let paths = Arc::new(self.ask_paths(workspace::PathIndex::wanted(
+        let paths = self.ask_paths(workspace::PathIndex::wanted(
             &self.node,
             &self.snapshot.ui_state.workspace_registrations,
             &self.last_session_spaces,
             &self.worktree_catalog,
-        )));
+        ));
         let mut workspaces = workspace::build_catalog(
             &self.node,
             &self.snapshot.ui_state.workspace_registrations,
@@ -5433,9 +5460,7 @@ impl Runtime {
                 project
                     .worktrees
                     .iter()
-                    .map(|worktree| {
-                        PathRules::Device.read(&worktree.path, &workspace::PathIndex::NONE)
-                    })
+                    .map(|worktree| worktree.path.clone())
                     .collect()
             })
             .collect();

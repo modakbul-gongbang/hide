@@ -402,9 +402,7 @@ impl Runtime {
                     project
                         .worktrees
                         .iter()
-                        .map(|worktree| {
-                            session::PathRules::Local.read(&worktree.path, &self.catalog_paths)
-                        })
+                        .map(|worktree| worktree.path.clone())
                         .collect()
                 })
                 .collect(),

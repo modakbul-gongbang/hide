@@ -1473,6 +1473,10 @@ pub struct Runtime {
     last_accepted_catalog: Option<Vec<WorkspaceSnapshot>>,
     /// The path facts the accepted catalog was built from.
     catalog_paths: Arc<workspace::PathIndex>,
+    /// Whether the sync coordinator has handed this runtime a catalog. From
+    /// then on the coordinator is what asks the node, off the lock, and a
+    /// session applied without a catalog reads the last paths it brought.
+    catalog_from_coordinator: bool,
     /// The strip order each local checkout has, as strip entry ids. It is
     /// memory only by decision: Herdr persists its own tab order and file tabs
     /// do not survive a restart, so there is nothing here worth writing to
@@ -1526,9 +1530,9 @@ pub struct Runtime {
     /// in the snapshot because the shell renders the checkout rows these
     /// produce, not the raw list.
     worktree_catalog: crate::model::WorktreeCatalogSnapshot,
-    /// Each repository's worktree paths as the file system names them, read
-    /// when the catalog arrives so a created tab's clamp compares by names
-    /// on every session (`session.rs`, `CreatedTabClamp`).
+    /// Each repository's worktree paths as the catalog lists them, which a
+    /// created tab's clamp reads through the newest path index on every
+    /// session (`session.rs`, `CreatedTabClamp`).
     local_worktree_paths: Arc<Vec<Vec<String>>>,
     /// Every open repository's pull requests, from the operator's own `gh`.
     github: crate::model::GithubSnapshot,
@@ -1987,6 +1991,7 @@ impl Runtime {
             home_links: HashMap::new(),
             last_accepted_catalog: None,
             catalog_paths,
+            catalog_from_coordinator: false,
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
             herdr_worktrees: BTreeMap::new(),

@@ -421,26 +421,36 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
     let node = std::sync::Arc::new(workspace::CountingNode::default());
     runtime.own_node = node.clone();
     let before = node.calls();
-    assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
-    let after = node.calls();
-
+    assert!(runtime.ingest_session_with_catalog(Ok(payload.clone()), Some(catalog)));
     assert_eq!(
-        after - before,
+        node.calls() - before,
         0,
         "the reconcile asked the node under the runtime lock"
     );
-    let placed: usize = runtime
-        .snapshot()
-        .navigator
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.checkouts.iter())
-        .map(|checkout| checkout.tabs.len())
-        .sum();
+    let placed = |runtime: &Runtime| -> usize {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .map(|checkout| checkout.tabs.len())
+            .sum()
+    };
     assert_eq!(
-        placed, 3,
+        placed(&runtime),
+        3,
         "every tab landed in a checkout without asking the node"
     );
+    // A session applied without a catalog, as a close's status read does,
+    // reads the paths the coordinator brought rather than asking again.
+    runtime.ingest_session(Ok(payload));
+    assert_eq!(
+        node.calls() - before,
+        0,
+        "a session without a catalog asked the node under the runtime lock"
+    );
+    assert_eq!(placed(&runtime), 3);
     assert!(
         !runtime
             .snapshot()

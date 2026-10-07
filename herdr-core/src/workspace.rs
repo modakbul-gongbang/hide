@@ -295,6 +295,18 @@ impl PathIndex {
         for (comparison, fact) in aliases.into_iter().chain(roots) {
             paths.entry(comparison).or_insert(fact);
         }
+        for (repository, error) in facts
+            .repositories
+            .iter()
+            .filter_map(|(repository, notes)| Some((repository, notes.as_ref().err()?)))
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "workspace_catalog",
+                "kind": "branch_notes.read_failed",
+                "repository": repository,
+                "message": error,
+            }));
+        }
         Self {
             paths,
             notes: facts.repositories,
@@ -356,19 +368,10 @@ impl PathIndex {
     }
 
     /// What the repository at `main_root` says of `branch`. A config that
-    /// could not be read is reported once per read and taken as no note.
+    /// could not be read was reported when the answer arrived and is taken as
+    /// no note.
     fn note(&self, main_root: &str, branch: &str) -> Option<&BranchNote> {
-        match self.notes.get(main_root)? {
-            Ok(notes) => notes.get(branch),
-            Err(error) => {
-                crate::diagnostic!(serde_json::json!({
-                    "component": "workspace_catalog",
-                    "kind": "branch_notes.read_failed",
-                    "message": error,
-                }));
-                None
-            }
-        }
+        self.notes.get(main_root)?.as_ref().ok()?.get(branch)
     }
 
     /// Every path a catalog of `registrations`, `spaces` and `worktrees`

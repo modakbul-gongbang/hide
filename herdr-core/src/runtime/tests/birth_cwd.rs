@@ -422,6 +422,33 @@ fn a_birth_cwd_inside_a_nested_linked_worktree_is_not_inside_the_outer_checkout(
     );
 }
 
+/// The same holds for a checkout registered through a link, whose worktrees
+/// are listed before the core's node has answered for the nested one: the
+/// clamp reads the listed worktrees through the newest answer, so the nested
+/// worktree is still told apart from the checkout around it.
+#[cfg(unix)]
+#[test]
+fn a_nested_worktree_under_a_linked_checkout_is_not_inside_the_outer_checkout() {
+    let (_seed, _checkout_id, directory) = strip_checkout("birth-nested-link");
+    let alias = directory.with_file_name("birth-nested-alias");
+    std::os::unix::fs::symlink(&directory, &alias).expect("a link to the checkout");
+    let checkout_path = alias.to_string_lossy().into_owned();
+    let (mut runtime, _checkout_id) = tab_order_runtime(&checkout_path);
+    list_nested_worktree(&mut runtime, &checkout_path);
+    let nested = directory
+        .join(".worktrees/topic")
+        .to_string_lossy()
+        .into_owned();
+    acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
+
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &nested)));
+    assert_eq!(
+        pane_cwd_of(&runtime, "w-order:t2:p").as_deref(),
+        Some(checkout_path.as_str()),
+        "the nested worktree's folder is a birth value for a tab created for the outer checkout"
+    );
+}
+
 /// Herdr answers a pane's cwd resolved and without a trailing separator, even
 /// when the folder was asked for through a link and a trailing `/` (pinned
 /// 0.9.1, `workspace.create` and `tab.create`). The comparison reads both

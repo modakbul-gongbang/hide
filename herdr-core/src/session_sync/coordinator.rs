@@ -1011,17 +1011,24 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (node, registrations, worktrees, unconfirmed_created_purposes, created_tab_clamps) =
-        match runtime.lock() {
-            Ok(guard) => (
-                guard.node().clone(),
-                guard.snapshot().ui_state.workspace_registrations.clone(),
-                guard.worktree_catalog(),
-                guard.unconfirmed_created_purpose_values(),
-                guard.created_tab_clamps(),
-            ),
-            Err(_) => return false,
-        };
+    let (
+        node,
+        registrations,
+        worktrees,
+        unconfirmed_created_purposes,
+        created_tab_clamps,
+        runtime_paths,
+    ) = match runtime.lock() {
+        Ok(guard) => (
+            guard.node().clone(),
+            guard.snapshot().ui_state.workspace_registrations.clone(),
+            guard.worktree_catalog(),
+            guard.unconfirmed_created_purpose_values(),
+            guard.created_tab_clamps(),
+            guard.catalog_paths(),
+        ),
+        Err(_) => return false,
+    };
     drop(runtime);
 
     // The node is asked about every path the catalog and the reconcile read,
@@ -1049,12 +1056,13 @@ fn publish_replica(
                     "target": context.log_target(),
                     "message": error,
                 }));
-                // The previous answer stands, read by names where it is
-                // silent, and the next publish asks again.
+                // The previous answer stands, the runtime's own before this
+                // coordinator has one, read by names where it is silent, and
+                // the next publish asks again.
                 let previous = catalog_cache
                     .as_ref()
                     .map(|cache| Arc::clone(&cache.paths))
-                    .unwrap_or_default();
+                    .unwrap_or(runtime_paths);
                 (previous, BTreeSet::new())
             }
         },
