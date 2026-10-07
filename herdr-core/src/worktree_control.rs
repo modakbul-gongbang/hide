@@ -1693,8 +1693,12 @@ impl PaneProcess {
     }
 }
 
-/// The shell and foreground processes Herdr reports for `pane_id`. A process
-/// that already ended is not listed: there is nothing to wait for.
+/// The processes of `pane_id`: the shell and foreground processes Herdr
+/// reports, and every process under the shell. Herdr reports no process
+/// between the two, and one can work in the same folder: on Windows a pane's
+/// `cmd.exe` runs the agent through `powershell.exe`, which outlived both
+/// reported processes in CI and held the worktree folder (issue 707). A
+/// process that already ended is not listed: there is nothing to wait for.
 fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<PaneProcess>, String> {
     let value = control_request(
         connector,
@@ -1702,11 +1706,18 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
         wire::pane_process_info_params(pane_id)?,
     )?;
     let group = wire::pane_process_group(value)?;
-    let mut pids: Vec<u32> = group
-        .shell_pid
+    // Pid 0 and 1 are the system's, never a pane's.
+    let shell = group.shell_pid.filter(|pid| *pid > 1);
+    let under_shell = match shell {
+        Some(shell) => hide_platform::process::descendants(shell).map_err(|error| {
+            format!("the processes under shell {shell} could not be read: {error}")
+        })?,
+        None => Vec::new(),
+    };
+    let mut pids: Vec<u32> = shell
         .into_iter()
         .chain(group.foreground_pids)
-        // Pid 0 and 1 are the system's, never a pane's.
+        .chain(under_shell)
         .filter(|pid| *pid > 1)
         .collect();
     pids.sort_unstable();
@@ -2658,6 +2669,60 @@ mod tests {
             "it paused once while the child ran and not again"
         );
         assert!(held.is_empty());
+    }
+
+    /// A shell with a child of its own that Herdr does not report, and that
+    /// child's pid. On Windows a pane's `cmd.exe` runs the agent through
+    /// `powershell.exe`, and Herdr reports only the shell and the agent.
+    #[cfg(unix)]
+    struct ShellWithChild {
+        shell: std::process::Child,
+        child: u32,
+    }
+    #[cfg(unix)]
+    impl ShellWithChild {
+        fn start() -> Self {
+            let mut shell = Command::new("sh")
+                .args(["-c", "sleep 30 & echo $!; wait"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(shell.stdout.take().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let child = line.trim().parse().unwrap();
+            Self { shell, child }
+        }
+        fn end_shell(&mut self) {
+            let _ = self.shell.kill();
+            let _ = self.shell.wait();
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for ShellWithChild {
+        fn drop(&mut self) {
+            self.end_shell();
+            let _ = hide_platform::process::kill_tree(self.child);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_the_shell_started_holds_the_wait_after_the_shell_has_ended() {
+        let mut tree = ShellWithChild::start();
+        // Herdr names the shell alone, as its foreground process too.
+        let server = server(vec![process_info("w1:p1", tree.shell.id())]);
+        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        tree.end_shell();
+        let error = wait_for_processes_to_end(&mut held, Instant::now(), |_| {
+            panic!("no time is left to wait")
+        })
+        .unwrap_err();
+        assert!(
+            error.contains(&format!("still running (pid {})", tree.child)),
+            "{error}"
+        );
     }
 
     #[cfg(unix)]

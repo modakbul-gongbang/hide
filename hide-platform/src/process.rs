@@ -920,8 +920,12 @@ pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
     })
 }
 
-/// Every process under `root`, parents before children.
-fn descendants(root: u32) -> io::Result<Vec<u32>> {
+/// Every process under `root`, parents before children, read from one look
+/// at the system's process table. A root that has ended, or has no
+/// children, has none. On Windows a child is only one that started after its
+/// parent, because the table keeps a parent's pid after the parent has exited
+/// and another process may hold that pid now.
+pub fn descendants(root: u32) -> io::Result<Vec<u32>> {
     let mut walk = sys::Walk::new()?;
     let mut found: Vec<u32> = Vec::new();
     let mut level = vec![root];
