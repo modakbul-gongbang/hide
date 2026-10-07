@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use hide_node_link::cleanup::PathState;
 use hide_node_link::document::Document;
 use hide_node_link::protocol::{Call, RevisionNow, RootRef};
 use hide_node_link::save::Saved;
 use hide_node_link::{ErrorCode, RootIdentity};
-use hide_platform::fs::identity;
 use hide_platform::path::{self, PathError, RelPath};
 
 use crate::model::EditorDocumentSnapshot;
@@ -123,44 +123,45 @@ pub fn relative_under(root: &str, absolute: &str) -> Result<RelPath, String> {
         .ok_or_else(|| "The file is not inside its checkout".to_owned())
 }
 
-/// `relative_under` for a file on this machine, which a shell may spell
-/// through a link to the checkout's folder (`/var` for `/private/var`) or
-/// in another case on a volume that ignores it: the folder holding the
-/// file is resolved, never the file itself, so a link inside the checkout
-/// is still opened as the link.
-fn local_relative(root: &str, absolute: &str) -> Result<RelPath, String> {
-    relative_under(root, absolute).or_else(|refused| {
-        let (Ok(root), Ok(absolute)) = (path::from_wire(root), path::from_wire(absolute)) else {
-            return Err(refused);
-        };
-        let resolved = absolute
-            .parent()
-            .and_then(|folder| identity::canonical(folder).ok())
-            .zip(absolute.file_name())
-            .map(|(folder, name)| folder.join(name))
-            .zip(identity::canonical(&root).ok());
-        match resolved {
-            Some((absolute, root)) => path::relative(&root, &absolute)
-                .ok()
-                .filter(|relative| !relative.is_root())
-                .ok_or(refused),
-            None => Err(refused),
-        }
-    })
-}
-
-/// The host's checkout-relative path rule, including macOS root aliases
-/// such as `/var` and `/private/var` for local reads.
+/// The host's checkout-relative path rule. A shell may spell a file through
+/// a link to the checkout's folder (`/var` for `/private/var`) or in another
+/// case on a volume that ignores it, so a path the names alone do not place
+/// is placed again with its folder and the root as the node resolves them:
+/// the folder holding the file is resolved, never the file itself, so a link
+/// inside the checkout is still opened as the link.
 pub fn relative_in_root(
     channel: &dyn NodeLink,
     root: &str,
     absolute: &str,
 ) -> Result<RelPath, String> {
-    if channel.in_process() {
-        local_relative(root, absolute)
-    } else {
-        relative_under(root, absolute)
-    }
+    relative_under(root, absolute).or_else(|refused| {
+        let Some((folder, name)) = absolute
+            .rsplit_once('/')
+            .filter(|(folder, name)| !folder.is_empty() && !name.is_empty())
+        else {
+            return Err(refused);
+        };
+        let resolved = call_as::<Vec<PathState>>(
+            channel,
+            Call::RealPaths {
+                paths: vec![folder.to_owned(), root.to_owned()],
+            },
+            REVISION_TIMEOUT,
+        );
+        match resolved.as_deref() {
+            Ok(
+                [
+                    PathState::Real { path: folder },
+                    PathState::Real { path: root },
+                ],
+            ) => {
+                let folder = path::to_wire_lossy(Path::new(folder));
+                let root = path::to_wire_lossy(Path::new(root));
+                relative_under(&root, &format!("{folder}/{name}")).map_err(|_| refused)
+            }
+            _ => Err(refused),
+        }
+    })
 }
 
 /// Opens the document at `absolute` in `root`, as a snapshot and the place
