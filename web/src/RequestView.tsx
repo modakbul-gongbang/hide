@@ -161,6 +161,7 @@ function sameViewInputs(before: RequestViewProps, after: RequestViewProps): bool
     const a = row.lens;
     const b = next.lens;
     if (row.verb !== next.verb || a.agent !== b.agent || a.task !== b.task || a.device !== b.device || a.checkout.branch !== b.checkout.branch || a.checkout.label !== b.checkout.label || row.children.length !== next.children.length || row.children.some((child, i) => child !== next.children[i])) return false;
+    if (a.project.agent_scope.work[a.agent.pane_id] !== b.project.agent_scope.work[b.agent.pane_id]) return false;
     if (a.project === b.project || projects.get(a.project) === b.project) return true;
     const p = a.project;
     const q = b.project;
@@ -215,7 +216,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
   const result = resultLine(row);
   const children = childrenSummary(row, t);
   const pulls = block?.pull_requests ?? [];
-  const shown = pullRequestChip(pulls);
+  const shown = pullRequestChip(row);
   const issues = rowIssueChips(row, project);
   const targets = useOpenTargets(agent, block?.reply?.text ?? "", pulls, device === null);
   const openPane = () => handlers.openAgent(agent.pane_id);

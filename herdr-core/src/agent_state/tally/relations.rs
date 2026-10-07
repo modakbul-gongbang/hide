@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Group {
+    pub issues: Vec<String>,
     pub project_id: String,
     pub checkout_id: String,
     pub rows: Vec<Row>,
@@ -117,7 +118,18 @@ pub(super) fn project(
             depth + 1,
             &mut rows,
         );
+        let mut keys = std::collections::HashSet::new();
+        let issues = checkout
+            .task_key
+            .iter()
+            .chain(&checkout.closes_task_keys)
+            .filter(|k| {
+                keys.insert((*k).clone()) && project.tasks.tasks.iter().any(|t| t.key == **k)
+            })
+            .cloned()
+            .collect();
         let mut groups = vec![Group {
+            issues,
             project_id: project.id.clone(),
             checkout_id: checkout.id.clone(),
             rows,
@@ -157,6 +169,7 @@ pub(super) fn project(
                 .collect();
             if !rows.is_empty() {
                 groups.push(Group {
+                    issues: Vec::new(),
                     project_id: other_project.id.clone(),
                     checkout_id: other_checkout.id.clone(),
                     rows,

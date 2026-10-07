@@ -27,7 +27,7 @@ impl GroupCounts {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct GroupRows {
     pub group: String,
-    pub pane_ids: Vec<String>,
+    pub rows: Vec<RowRef>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -40,6 +40,7 @@ pub struct Member {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TreeRow {
     pub pane_id: String,
+    pub occurrence: usize,
     pub depth: usize,
     pub descendants: usize,
 }
@@ -105,8 +106,8 @@ pub struct TurnCounts {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Raised {
     pub group: String,
-    pub shown: Vec<String>,
-    pub more: Vec<String>,
+    pub shown: Vec<RowRef>,
+    pub more: Vec<RowRef>,
 }
 
 /// A scope carries both physical totals and Overview membership. The latter
@@ -114,6 +115,7 @@ pub struct Raised {
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub work: BTreeMap<String, crate::agent_state::work::RowWork>,
     pub has_working: bool,
     pub relations: BTreeMap<String, Vec<super::relations::Group>>,
     pub listed: Vec<Listed>,
@@ -125,10 +127,10 @@ pub struct Scope {
     pub raised: Vec<Raised>,
     pub owners: BTreeMap<String, String>,
     pub badge_total: usize,
-    pub pane_ids: Vec<String>,
+    pub rows: Vec<RowRef>,
     pub total: usize,
     pub overview_total: usize,
-    pub roots: Vec<String>,
+    pub roots: Vec<RowRef>,
     pub groups: GroupCounts,
     pub group_rows: Vec<GroupRows>,
     pub descendants: BTreeMap<String, usize>,
@@ -241,6 +243,7 @@ pub(super) fn descendants<'a>(
 }
 
 fn sections(agents: &[&SidebarAgentSnapshot]) -> Vec<Section> {
+    let references = row_references(agents);
     let by_pane: HashMap<_, _> = agents
         .iter()
         .map(|row| (row.pane_id.as_str(), *row))
@@ -255,6 +258,7 @@ fn sections(agents: &[&SidebarAgentSnapshot]) -> Vec<Section> {
         agent: &SidebarAgentSnapshot,
         depth: usize,
         by_pane: &HashMap<&str, &SidebarAgentSnapshot>,
+        references: &HashMap<*const SidebarAgentSnapshot, RowRef>,
         seen: &mut HashSet<String>,
         rows: &mut Vec<TreeRow>,
     ) {
@@ -263,6 +267,7 @@ fn sections(agents: &[&SidebarAgentSnapshot]) -> Vec<Section> {
         }
         rows.push(TreeRow {
             pane_id: agent.pane_id.clone(),
+            occurrence: references[&(agent as *const _)].occurrence,
             depth,
             descendants: descendants(agent, by_pane).len(),
         });
@@ -271,7 +276,7 @@ fn sections(agents: &[&SidebarAgentSnapshot]) -> Vec<Section> {
         }
         for id in &agent.lineage_child_pane_ids {
             if let Some(child) = by_pane.get(id.as_str()) {
-                visit(child, depth + 1, by_pane, seen, rows);
+                visit(child, depth + 1, by_pane, references, seen, rows);
             }
         }
     }
@@ -289,7 +294,14 @@ fn sections(agents: &[&SidebarAgentSnapshot]) -> Vec<Section> {
             let mut count = 0;
             for root in roots {
                 count += 1 + descendants(root, &by_pane).len();
-                visit(root, 0, &by_pane, &mut HashSet::new(), &mut rows);
+                visit(
+                    root,
+                    0,
+                    &by_pane,
+                    &references,
+                    &mut HashSet::new(),
+                    &mut rows,
+                );
             }
             Some(Section {
                 group: group.to_owned(),
@@ -316,11 +328,12 @@ pub(super) fn scope(
         sections: sections(physical),
         ..Scope::default()
     };
+    let references = row_references(physical);
     for row in physical {
-        value.pane_ids.push(row.pane_id.clone());
+        value.rows.push(references[&(*row as *const _)].clone());
         value.groups.add(&row.group);
         if row.state.root {
-            value.roots.push(row.pane_id.clone());
+            value.roots.push(references[&(*row as *const _)].clone());
         }
     }
     let mut groups: Vec<&str> = GROUPS.into();
@@ -332,17 +345,17 @@ pub(super) fn scope(
     value.group_rows = groups
         .into_iter()
         .filter_map(|group| {
-            let pane_ids: Vec<_> = physical
+            let rows: Vec<_> = physical
                 .iter()
                 .filter(|row| row.group == group)
-                .map(|row| row.pane_id.clone())
+                .map(|row| references[&(*row as *const _)].clone())
                 .collect();
-            if pane_ids.is_empty() {
+            if rows.is_empty() {
                 None
             } else {
                 Some(GroupRows {
                     group: group.to_owned(),
-                    pane_ids,
+                    rows,
                 })
             }
         })
@@ -368,8 +381,13 @@ pub(super) fn scope(
             )
         })
         .collect();
+    let first_by_pane: HashMap<_, _> = all
+        .iter()
+        .rev()
+        .map(|row| (row.pane_id.as_str(), *row))
+        .collect();
     for (member, place) in members.iter().enumerate() {
-        let row = by_pane[place.pane_id.as_str()];
+        let row = first_by_pane[place.pane_id.as_str()];
         match row.state.bucket {
             "turn" => value.buckets.turn += 1,
             "working" => value.buckets.working += 1,
@@ -408,8 +426,9 @@ pub(super) fn scope(
         });
     }
     for verb in VERBS {
-        let row_of =
-            |index: usize| by_pane[members[value.requests.rows[index].member].pane_id.as_str()];
+        let row_of = |index: usize| {
+            first_by_pane[members[value.requests.rows[index].member].pane_id.as_str()]
+        };
         let mut indices: Vec<_> = (0..value.requests.rows.len())
             .filter(|&index| row_of(index).state.verb == verb)
             .collect();
@@ -465,6 +484,7 @@ struct GraphInput {
 
 #[derive(Clone, Debug, PartialEq)]
 struct CheckoutInput {
+    closes_task_keys: Vec<String>,
     id: String,
     summary: crate::model::CheckoutAgentSummary,
     tabs: Vec<(Option<String>, Vec<super::close::PaneInput>)>,
@@ -623,6 +643,7 @@ impl Cache {
                         .checkouts
                         .iter()
                         .map(|c| CheckoutInput {
+                            closes_task_keys: c.closes_task_keys.clone(),
                             id: c.id.clone(),
                             summary: c.agent_summary.clone(),
                             tabs: c
@@ -700,6 +721,30 @@ impl Cache {
                 let projected = projects
                     .get_mut(&(project.device_id.clone(), project.id.clone()))
                     .expect("project scope inserted");
+                let tasks: HashMap<_, _> = project
+                    .tasks
+                    .tasks
+                    .iter()
+                    .map(|t| (t.key.as_str(), t))
+                    .collect();
+                for member in &projected.members {
+                    let agent = device
+                        .agents
+                        .iter()
+                        .find(|a| a.pane_id == member.pane_id)
+                        .expect("scope member");
+                    let task = project
+                        .checkouts
+                        .iter()
+                        .find(|c| c.id == member.checkout_id)
+                        .and_then(|c| c.task_key.as_deref())
+                        .and_then(|key| tasks.get(key))
+                        .copied();
+                    projected.work.insert(
+                        member.pane_id.clone(),
+                        crate::agent_state::work::row_work(agent, task, &project.tasks.tasks),
+                    );
+                }
                 projected.prs =
                     crate::agent_state::work::board::project(project, &device.agents, &trees);
                 projected.graph =
@@ -787,13 +832,14 @@ impl Cache {
                     }
                 }
             }
+            let live_references = row_references(&live);
             let raised = [("needs_you", 5), ("done", 3)]
                 .into_iter()
                 .filter_map(|(group, cap)| {
                     let ids: Vec<_> = live
                         .iter()
                         .filter(|a| a.group == group && drawn.contains(a.pane_id.as_str()))
-                        .map(|a| a.pane_id.clone())
+                        .map(|a| live_references[&(*a as *const _)].clone())
                         .collect();
                     if ids.is_empty() {
                         None
@@ -961,4 +1007,30 @@ impl Cache {
         }
         changed
     }
+}
+
+/// A physical source occurrence. Pane identity alone cannot distinguish
+/// duplicate reported rows that intentionally remain on physical lists.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RowRef {
+    pub pane_id: String,
+    pub occurrence: usize,
+}
+
+pub(crate) fn row_references(
+    agents: &[&SidebarAgentSnapshot],
+) -> HashMap<*const SidebarAgentSnapshot, RowRef> {
+    let mut counts = HashMap::new();
+    agents
+        .iter()
+        .map(|agent| {
+            let count = counts.entry(agent.pane_id.as_str()).or_insert(0);
+            let value = RowRef {
+                pane_id: agent.pane_id.clone(),
+                occurrence: *count,
+            };
+            *count += 1;
+            (*agent as *const _, value)
+        })
+        .collect()
 }

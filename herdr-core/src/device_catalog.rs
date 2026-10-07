@@ -607,27 +607,7 @@ pub(crate) fn apply_registrations(
             cleanup: None,
         });
     }
-    let running = session
-        .agents
-        .iter()
-        .filter(|agent| crate::agent_state::is_running(agent))
-        .map(|agent| agent.pane_id.clone())
-        .collect::<BTreeSet<_>>();
-    for project in &mut session.workspaces {
-        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
-        for pane in project
-            .checkouts
-            .iter()
-            .flat_map(|checkout| &checkout.tabs)
-            .flat_map(|tab| &tab.panes)
-        {
-            removal.pane_count += 1;
-            if running.contains(&pane.id) {
-                removal.running_agent_count += 1;
-            }
-        }
-        project.removal = removal;
-    }
+    crate::agent_state::sync_workspace_removals(&mut session.workspaces, &session.agents, false);
     crate::project_context::sort_projects(&mut session.workspaces, &session.agents);
 }
 

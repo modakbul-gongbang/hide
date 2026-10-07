@@ -192,32 +192,7 @@ pub fn sync_checkout_agent_summaries(
     // (`device_catalog::apply_registrations`), because a remote tree arrives
     // freshly projected on every sync and a count written into it here
     // would read as a change on every tick.
-    let running = agents
-        .iter()
-        .filter(|agent| agent.activity == AgentActivity::Working.name())
-        .map(|agent| agent.pane_id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    for workspace in workspaces
-        .iter_mut()
-        .filter(|workspace| workspace.remote_target_id.is_none())
-    {
-        let panes = workspace
-            .checkouts
-            .iter()
-            .flat_map(|checkout| &checkout.tabs)
-            .flat_map(|tab| &tab.panes);
-        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
-        for pane in panes {
-            removal.pane_count += 1;
-            if running.contains(pane.id.as_str()) {
-                removal.running_agent_count += 1;
-            }
-        }
-        if workspace.removal != removal {
-            workspace.removal = removal;
-            changed = true;
-        }
-    }
+    changed |= sync_workspace_removals(workspaces, agents, true);
     changed |= sync_checkout_purposes(workspaces, agents);
     changed
 }
@@ -699,4 +674,64 @@ impl crate::model::DescendantCountsSnapshot {
 /// Existing inactive-checkout exception, independent of Git and focus policy.
 pub(crate) fn checkout_has_active_agents(summary: &crate::model::CheckoutAgentSummary) -> bool {
     summary.working > 0 || summary.needs_you > 0
+}
+
+/// Removal confirmation counts have the same activity rule on both devices.
+pub(crate) fn sync_workspace_removals(
+    workspaces: &mut [crate::model::WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+    local_only: bool,
+) -> bool {
+    let mut changed = false;
+    let running = agents
+        .iter()
+        .filter(|agent| agent.activity == AgentActivity::Working.name())
+        .map(|agent| agent.pane_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for workspace in workspaces
+        .iter_mut()
+        .filter(|workspace| !local_only || workspace.remote_target_id.is_none())
+    {
+        let panes = workspace
+            .checkouts
+            .iter()
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes);
+        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
+        for pane in panes {
+            removal.pane_count += 1;
+            if running.contains(pane.id.as_str()) {
+                removal.running_agent_count += 1;
+            }
+        }
+        if workspace.removal != removal {
+            workspace.removal = removal;
+            changed = true;
+        }
+    }
+    changed
+}
+
+pub(crate) fn device_catalog_count(
+    workspaces: &[crate::model::WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+    device: &str,
+) -> u32 {
+    agents
+        .iter()
+        .filter(|agent| {
+            workspaces
+                .iter()
+                .filter(|w| w.device_id == device)
+                .flat_map(|w| &w.checkouts)
+                .flat_map(|c| &c.tabs)
+                .flat_map(|t| &t.panes)
+                .any(|p| p.id == agent.pane_id)
+        })
+        .count() as u32
+}
+
+/// The rail retains the remote session's last row count while disconnected.
+pub(crate) fn remote_session_count(session: Option<&crate::model::RemoteSessionSnapshot>) -> u32 {
+    session.map_or(0, |s| s.agents.len()).min(u32::MAX as usize) as u32
 }

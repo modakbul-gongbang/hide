@@ -1,33 +1,38 @@
 import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest } from "./snapshot";
 
 /** Core-owned membership, status counts and display order for one scope. */
+export type AgentRef = { pane_id: string; occurrence: number };
+
+export type RowWork = { pull: number | null; more: number; issues: string[]; issue_chips: string[] };
+
 export type AgentScope = {
+  work: Record<string, RowWork>;
   has_working: boolean;
-  relations: Record<string, { project_id: string; checkout_id: string; rows: { pane_id: string; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
+  relations: Record<string, { issues: string[]; project_id: string; checkout_id: string; rows: { pane_id: string; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
   listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];
   places: Record<string, { project_id: string; checkout_id: string; kind: "home" | "folder" | "checkout" }>;
   places_live: boolean;
   graph: AgentGraphScope;
   closes: Record<string, CloseScope>;
-  raised: { group: "needs_you" | "done"; shown: string[]; more: string[] }[];
+  raised: { group: "needs_you" | "done"; shown: AgentRef[]; more: AgentRef[] }[];
   owners: Record<string, string>;
   badge_total: number;
   prs: {
     counts: Record<"turn" | "fixing" | "blocked" | "review" | "draft" | "look", number>;
-    rows: { number: number; checkout_id: string | null; agents: string[]; lineage: { pane_id: string; depth: number }[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
+    rows: { number: number; checkout_id: string | null; agents: AgentRef[]; lineage: { pane_id: string; depth: number }[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
     groups: { group: "turn" | "fixing" | "blocked" | "merged"; numbers: number[] }[];
     open: number;
   };
-  pane_ids: string[];
+  rows: AgentRef[];
   total: number;
   overview_total: number;
-  roots: string[];
+  roots: AgentRef[];
   groups: { needs_you: number; done: number; working: number; seen: number };
   marks: MarkCounts;
-  group_rows: { group: string; pane_ids: string[] }[];
+  group_rows: { group: string; rows: AgentRef[] }[];
   descendants: Record<string, number>;
   children: Record<string, string[]>;
-  sections: { group: string; rows: { pane_id: string; depth: number; descendants: number }[]; count: number }[];
+  sections: { group: string; rows: (AgentRef & { depth: number; descendants: number })[]; count: number }[];
   members: { pane_id: string; project_id: string; checkout_id: string }[];
   buckets: { turn: number; working: number; delegating: number; resting: number };
   turns: { question: number; approval: number; error: number; done: number };
@@ -59,6 +64,17 @@ export function scopeRows(ids: readonly string[], agents: readonly AgentRow[]): 
   return ids.map((id) => {
     const row = byPane.get(id);
     if (!row) throw new Error(`Agent scope references a missing row: ${id}`);
+    return row;
+  });
+}
+
+/** Resolve physical occurrences without changing their core-selected membership. */
+export function scopeOccurrences(refs: readonly AgentRef[], agents: readonly AgentRow[]): AgentRow[] {
+  const byPane = new Map<string, AgentRow[]>();
+  for (const row of agents) { const found = byPane.get(row.pane_id) ?? []; found.push(row); byPane.set(row.pane_id, found); }
+  return refs.map((ref) => {
+    const row = byPane.get(ref.pane_id)?.[ref.occurrence];
+    if (!row) throw new Error(`Missing agent occurrence: ${ref.pane_id}/${ref.occurrence}`);
     return row;
   });
 }

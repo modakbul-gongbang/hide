@@ -164,3 +164,70 @@ pub(crate) fn shown_pull_requests(
         .map(|(pull_request, _)| pull_request)
         .collect()
 }
+
+/// The request row's current chip and expanded issue history. Indices refer
+/// to its already ordered PRs; keys refer to the project's task source.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
+pub struct RowWork {
+    pub pull: Option<usize>,
+    pub more: usize,
+    pub issues: Vec<String>,
+    pub issue_chips: Vec<String>,
+}
+
+pub(crate) fn row_work(
+    row: &SidebarAgentSnapshot,
+    task: Option<&crate::tasks::TaskSnapshot>,
+    tasks: &[crate::tasks::TaskSnapshot],
+) -> RowWork {
+    let pulls = row.request.as_ref().map_or(&[][..], |r| &r.pull_requests);
+    let live: Vec<_> = pulls
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.live)
+        .map(|(i, _)| i)
+        .collect();
+    let mut value = RowWork {
+        pull: live.first().copied(),
+        more: live.len().saturating_sub(1),
+        ..Default::default()
+    };
+    let closing = |p: &AgentPullRequestSnapshot| {
+        p.closing_issues
+            .iter()
+            .map(|r| format!("github:{}#{}", r.repository, r.number))
+            .collect::<Vec<_>>()
+    };
+    let mut keys = value.pull.map(|i| closing(&pulls[i])).unwrap_or_default();
+    if let Some(task) = task {
+        keys.push(task.key.clone());
+    }
+    for (i, pull) in pulls.iter().enumerate() {
+        if Some(i) != value.pull {
+            keys.extend(closing(pull));
+        }
+    }
+    let by_key: HashMap<_, _> = tasks.iter().map(|t| (t.key.as_str(), t)).collect();
+    let requested = row
+        .request
+        .as_ref()
+        .and_then(|r| r.request.as_ref())
+        .map(|r| r.at_unix_ms)
+        .unwrap_or(0);
+    let mut seen = std::collections::HashSet::new();
+    for key in keys {
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let issue = task
+            .filter(|t| t.key == key)
+            .or_else(|| by_key.get(key.as_str()).copied());
+        if let Some(issue) = issue {
+            if issue.open || issue.closed_at_unix_ms.is_some_and(|at| at > requested) {
+                value.issue_chips.push(key.clone());
+            }
+            value.issues.push(key);
+        }
+    }
+    value
+}

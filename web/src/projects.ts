@@ -1,3 +1,4 @@
+import { scopeOccurrences, type AgentRef } from "./agentScope";
 import type { AgentScope } from "./agentScope";
 // The Projects list as the sidebar draws it: the raised Needs You and Done
 // agents, then pinned rows under their own header, then the activity rows
@@ -44,11 +45,9 @@ export function projectRows(
   openRaised: readonly string[] = [],
 ): ProjectRow[] {
   const rows: ProjectRow[] = [];
-  const index = new Map(listed.map((row) => [row.agent.pane_id, row]));
-  const drawn = (ids: string[]) => ids.map((id) => {
-    const row = index.get(id);
-    if (!row) throw new Error(`Raised section references a missing agent: ${id}`);
-    return { ...row, agent: { ...row.agent, lineage_collapsed: true } };
+  const drawn = (refs: AgentRef[]) => scopeOccurrences(refs, listed.map(r => r.agent)).map(agent => {
+    const row = listed.find(r => r.agent === agent)!;
+    return { ...row, agent: { ...agent, lineage_collapsed: true } };
   });
   for (const raised of scope?.raised ?? []) {
     rows.push({ kind: "raised", group: raised.group, agents: drawn(raised.shown), more: drawn(raised.more), expanded: openRaised.includes(raised.group) });

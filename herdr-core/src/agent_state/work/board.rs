@@ -32,7 +32,7 @@ pub struct Group {
 pub struct Row {
     pub number: u32,
     pub checkout_id: Option<String>,
-    pub agents: Vec<String>,
+    pub agents: Vec<crate::agent_state::tally::scope::RowRef>,
     pub lineage: Vec<TreeRow>,
     pub needs_look: bool,
     pub group: &'static str,
@@ -98,6 +98,7 @@ pub(crate) fn project(
         .map(|t| (t.key.as_str(), t))
         .collect();
     let mut result = Board::default();
+    let references = crate::agent_state::tally::scope::row_references(agents);
     for pr in &workspace.pull_requests {
         let checkout = workspace.checkouts.iter().find(|c| {
             c.pull_request.as_ref().is_some_and(|p| p.url == pr.url) && (c.is_worktree || c.exists)
@@ -182,7 +183,10 @@ pub(crate) fn project(
         result.rows.push(Row {
             number: pr.number,
             checkout_id: checkout.map(|c| c.id.clone()),
-            agents: here.iter().map(|a| a.pane_id.clone()).collect(),
+            agents: here
+                .iter()
+                .map(|a| references[&(*a as *const _)].clone())
+                .collect(),
             lineage: checkout
                 .map(|c| lineage(&trees[&c.id].rows, agents))
                 .unwrap_or_default(),

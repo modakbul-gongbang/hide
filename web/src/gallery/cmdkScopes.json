@@ -1,5 +1,6 @@
 {
   "overall": {
+    "work": {},
     "has_working": false,
     "relations": {},
     "listed": [
@@ -190,23 +191,41 @@
       "groups": [],
       "open": 0
     },
-    "pane_ids": [
-      "p-parent",
-      "p-child",
-      "p-dag"
+    "rows": [
+      {
+        "pane_id": "p-parent",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-child",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-dag",
+        "occurrence": 0
+      }
     ],
     "group_rows": [
       {
         "group": "done",
-        "pane_ids": [
-          "p-child"
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "occurrence": 0
+          }
         ]
       },
       {
         "group": "working",
-        "pane_ids": [
-          "p-parent",
-          "p-dag"
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "occurrence": 0
+          },
+          {
+            "pane_id": "p-dag",
+            "occurrence": 0
+          }
         ]
       }
     ],
@@ -294,9 +313,18 @@
     "total": 3,
     "overview_total": 0,
     "roots": [
-      "p-parent",
-      "p-child",
-      "p-dag"
+      {
+        "pane_id": "p-parent",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-child",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-dag",
+        "occurrence": 0
+      }
     ],
     "groups": {
       "needs_you": 0,
@@ -318,6 +346,7 @@
         "rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 0
           }
@@ -329,11 +358,13 @@
         "rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 1
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 0
           }
@@ -372,10 +403,12 @@
     }
   },
   "device": {
+    "work": {},
     "has_working": false,
     "relations": {
       "p-parent": [
         {
+          "issues": [],
           "project_id": "w1",
           "checkout_id": "c-main",
           "rows": [
@@ -388,6 +421,7 @@
           ]
         },
         {
+          "issues": [],
           "project_id": "w1",
           "checkout_id": "c-sand",
           "rows": [
@@ -402,6 +436,9 @@
       ],
       "p-child": [
         {
+          "issues": [
+            "github:acme/herdr-ide#273"
+          ],
           "project_id": "w1",
           "checkout_id": "c-sand",
           "rows": [
@@ -422,6 +459,7 @@
       ],
       "p-dag": [
         {
+          "issues": [],
           "project_id": "w1",
           "checkout_id": "c-main",
           "rows": [
@@ -507,7 +545,10 @@
       {
         "group": "done",
         "shown": [
-          "p-child"
+          {
+            "pane_id": "p-child",
+            "occurrence": 0
+          }
         ],
         "more": []
       }
@@ -531,23 +572,41 @@
       "groups": [],
       "open": 0
     },
-    "pane_ids": [
-      "p-parent",
-      "p-child",
-      "p-dag"
+    "rows": [
+      {
+        "pane_id": "p-parent",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-child",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-dag",
+        "occurrence": 0
+      }
     ],
     "group_rows": [
       {
         "group": "done",
-        "pane_ids": [
-          "p-child"
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "occurrence": 0
+          }
         ]
       },
       {
         "group": "working",
-        "pane_ids": [
-          "p-parent",
-          "p-dag"
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "occurrence": 0
+          },
+          {
+            "pane_id": "p-dag",
+            "occurrence": 0
+          }
         ]
       }
     ],
@@ -635,9 +694,18 @@
     "total": 3,
     "overview_total": 3,
     "roots": [
-      "p-parent",
-      "p-child",
-      "p-dag"
+      {
+        "pane_id": "p-parent",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-child",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-dag",
+        "occurrence": 0
+      }
     ],
     "groups": {
       "needs_you": 0,
@@ -659,6 +727,7 @@
         "rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 0
           }
@@ -670,11 +739,13 @@
         "rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 1
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 0
           }
@@ -756,6 +827,30 @@
     }
   },
   "project": {
+    "work": {
+      "p-parent": {
+        "pull": null,
+        "more": 0,
+        "issues": [],
+        "issue_chips": []
+      },
+      "p-child": {
+        "pull": null,
+        "more": 0,
+        "issues": [
+          "github:acme/herdr-ide#273"
+        ],
+        "issue_chips": [
+          "github:acme/herdr-ide#273"
+        ]
+      },
+      "p-dag": {
+        "pull": null,
+        "more": 0,
+        "issues": [],
+        "issue_chips": []
+      }
+    },
     "has_working": false,
     "relations": {},
     "listed": [],
@@ -843,7 +938,10 @@
           "number": 275,
           "checkout_id": "c-sand",
           "agents": [
-            "p-child"
+            {
+              "pane_id": "p-child",
+              "occurrence": 0
+            }
           ],
           "lineage": [
             {
@@ -890,23 +988,41 @@
       ],
       "open": 1
     },
-    "pane_ids": [
-      "p-parent",
-      "p-child",
-      "p-dag"
+    "rows": [
+      {
+        "pane_id": "p-parent",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-child",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-dag",
+        "occurrence": 0
+      }
     ],
     "group_rows": [
       {
         "group": "done",
-        "pane_ids": [
-          "p-child"
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "occurrence": 0
+          }
         ]
       },
       {
         "group": "working",
-        "pane_ids": [
-          "p-parent",
-          "p-dag"
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "occurrence": 0
+          },
+          {
+            "pane_id": "p-dag",
+            "occurrence": 0
+          }
         ]
       }
     ],
@@ -942,9 +1058,18 @@
     "total": 3,
     "overview_total": 3,
     "roots": [
-      "p-parent",
-      "p-child",
-      "p-dag"
+      {
+        "pane_id": "p-parent",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-child",
+        "occurrence": 0
+      },
+      {
+        "pane_id": "p-dag",
+        "occurrence": 0
+      }
     ],
     "groups": {
       "needs_you": 0,
@@ -966,6 +1091,7 @@
         "rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 0
           }
@@ -977,11 +1103,13 @@
         "rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 1
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0,
             "descendants": 0
           }
@@ -1064,6 +1192,7 @@
   },
   "checkouts": {
     "c-main": {
+      "work": {},
       "has_working": false,
       "relations": {},
       "listed": [],
@@ -1112,16 +1241,28 @@
         "groups": [],
         "open": 0
       },
-      "pane_ids": [
-        "p-parent",
-        "p-dag"
+      "rows": [
+        {
+          "pane_id": "p-parent",
+          "occurrence": 0
+        },
+        {
+          "pane_id": "p-dag",
+          "occurrence": 0
+        }
       ],
       "group_rows": [
         {
           "group": "working",
-          "pane_ids": [
-            "p-parent",
-            "p-dag"
+          "rows": [
+            {
+              "pane_id": "p-parent",
+              "occurrence": 0
+            },
+            {
+              "pane_id": "p-dag",
+              "occurrence": 0
+            }
           ]
         }
       ],
@@ -1203,8 +1344,14 @@
       "total": 2,
       "overview_total": 0,
       "roots": [
-        "p-parent",
-        "p-dag"
+        {
+          "pane_id": "p-parent",
+          "occurrence": 0
+        },
+        {
+          "pane_id": "p-dag",
+          "occurrence": 0
+        }
       ],
       "groups": {
         "needs_you": 0,
@@ -1226,11 +1373,13 @@
           "rows": [
             {
               "pane_id": "p-parent",
+              "occurrence": 0,
               "depth": 0,
               "descendants": 0
             },
             {
               "pane_id": "p-dag",
+              "occurrence": 0,
               "depth": 0,
               "descendants": 0
             }
@@ -1269,6 +1418,7 @@
       }
     },
     "c-sand": {
+      "work": {},
       "has_working": false,
       "relations": {},
       "listed": [],
@@ -1317,14 +1467,20 @@
         "groups": [],
         "open": 0
       },
-      "pane_ids": [
-        "p-child"
+      "rows": [
+        {
+          "pane_id": "p-child",
+          "occurrence": 0
+        }
       ],
       "group_rows": [
         {
           "group": "done",
-          "pane_ids": [
-            "p-child"
+          "rows": [
+            {
+              "pane_id": "p-child",
+              "occurrence": 0
+            }
           ]
         }
       ],
@@ -1378,7 +1534,10 @@
       "total": 1,
       "overview_total": 0,
       "roots": [
-        "p-child"
+        {
+          "pane_id": "p-child",
+          "occurrence": 0
+        }
       ],
       "groups": {
         "needs_you": 0,
@@ -1400,6 +1559,7 @@
           "rows": [
             {
               "pane_id": "p-child",
+              "occurrence": 0,
               "depth": 0,
               "descendants": 0
             }

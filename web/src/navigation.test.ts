@@ -220,3 +220,18 @@ describe("an open from Main or an Overview", () => {
 });
 
 const mainSections: typeof drawMainSections = (rest, agents, device) => drawMainSections(rest ? legacyRest(rest, agents) : null, agents, device);
+
+
+it("keeps different duplicate rows in physical sections", async () => {
+  const { legacyAgentRow } = await import("../test/legacyAgentRow");
+  const { legacyPhysicalScope } = await import("../test/legacyAgentScope");
+  const { agentTree } = await import("./navigation");
+  const first = legacyAgentRow({ pane_id: "same", identity_label: "First working", group: "working", activity: "running" } as never);
+  const second = legacyAgentRow({ pane_id: "same", identity_label: "Second seen", group: "seen", activity: "stopped" } as never);
+  const agents = [first, second];
+  const listed = agents.map((agent) => ({ agent, device: null }));
+  const tree = agentTree(listed, legacyPhysicalScope(agents));
+  expect(tree.sections.map((s) => [s.group, ...s.rows.map((r) => r.agent.identity_label)])).toEqual([
+    ["working", "First working"], ["seen", "Second seen"],
+  ]);
+});

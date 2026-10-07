@@ -157,7 +157,12 @@ fn close_consequences_keep_unknown_priority_and_outside_descendant_counts() {
 fn scopes_keep_first_overview_owner_last_badge_owner_and_restore_rebuilt_catalog_values() {
     let mut runtime = runtime();
     let mut rows = rows();
-    rows.push(rows[0].clone());
+    let mut duplicate = rows[0].clone();
+    duplicate.activity = "stopped".into();
+    duplicate.group = "idle".into();
+    duplicate.identity_label = "Later duplicate".into();
+    duplicate.state = crate::agent_state::turn::row_state(&duplicate);
+    rows.push(duplicate);
     runtime.snapshot.navigator.agents = rows;
     let first = checkout(
         "project",
@@ -187,7 +192,34 @@ fn scopes_keep_first_overview_owner_last_badge_owner_and_restore_rebuilt_catalog
         project.agent_scope.total, 2,
         "physical rows are not deduplicated"
     );
+    assert_eq!(
+        project
+            .agent_scope
+            .rows
+            .iter()
+            .map(|r| r.occurrence)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert_eq!(
+        project
+            .agent_scope
+            .sections
+            .iter()
+            .flat_map(|s| &s.rows)
+            .map(|r| r.occurrence)
+            .collect::<Vec<_>>(),
+        [0, 1],
+        "physical section rows keep their distinct source occurrence"
+    );
     assert_eq!(project.agent_scope.overview_total, 1);
+    assert_eq!(project.agent_scope.buckets.working, 1);
+    assert_eq!(project.agent_scope.buckets.resting, 0);
+    assert_eq!(
+        project.agent_scope.requests.counts[&crate::agent_state::RequestVerb::Working],
+        1
+    );
+    assert_eq!(project.agent_scope.graph.checkouts["first"].rank, 1);
     assert_eq!(project.agent_scope.members[0].checkout_id, "first");
     assert_eq!(project.agent_scope.places["root"].checkout_id, "first");
     assert_eq!(runtime.snapshot.navigator.agent_scope.listed.len(), 3);
@@ -438,7 +470,14 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
     runtime.snapshot.navigator.agents = agents;
     assert!(runtime.refresh_agent_scopes());
     let board = &runtime.snapshot.navigator.workspaces[0].agent_scope.prs;
-    assert_eq!(board.rows[0].agents, vec!["child", "root"]);
+    assert_eq!(
+        board.rows[0]
+            .agents
+            .iter()
+            .map(|r| r.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["child", "root"]
+    );
     assert_eq!(board.rows[0].group, "blocked");
     assert!(board.rows[0].needs_look);
     assert_eq!(board.rows[0].issue.as_ref().unwrap().label, "#7");
@@ -526,13 +565,140 @@ fn raised_sections_keep_five_questions_three_completions_and_first_number_owner(
         .find(|d| d.kind != "remote")
         .unwrap()
         .agent_scope;
-    assert_eq!(scope.raised[0].shown, vec!["p0", "p1", "p2", "p3", "p4"]);
-    assert_eq!(scope.raised[0].more, vec!["p5", "p6"]);
-    assert_eq!(scope.raised[1].shown, vec!["p7", "p8", "p9"]);
-    assert_eq!(scope.raised[1].more, vec!["p10", "p11"]);
+    assert_eq!(
+        scope.raised[0]
+            .shown
+            .iter()
+            .map(|r| r.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["p0", "p1", "p2", "p3", "p4"]
+    );
+    assert_eq!(
+        scope.raised[0]
+            .more
+            .iter()
+            .map(|r| r.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["p5", "p6"]
+    );
+    assert_eq!(
+        scope.raised[1]
+            .shown
+            .iter()
+            .map(|r| r.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["p7", "p8", "p9"]
+    );
+    assert_eq!(
+        scope.raised[1]
+            .more
+            .iter()
+            .map(|r| r.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["p10", "p11"]
+    );
     assert_eq!(scope.owners["p0"], "first");
     assert!(
         !scope.owners.contains_key("p12"),
         "an agent outside every drawn checkout is not raised or numbered in Projects"
+    );
+}
+
+#[test]
+fn request_work_keeps_current_chips_and_expanded_history_in_source_order() {
+    use crate::request_view::{
+        AgentPullRequestSnapshot, AgentRequestSnapshot, RequestLineSnapshot, RequestSender,
+    };
+    let mut runtime = runtime();
+    let mut agents = rows();
+    let issue = |n: u32, open, closed| crate::tasks::TaskSnapshot {
+        key: format!("github:acme/app#{n}"),
+        source: "github".into(),
+        id: Some(format!("#{n}")),
+        url: None,
+        title: format!("Issue {n}"),
+        open,
+        updated_at_unix_ms: Some(200),
+        created_at_unix_ms: None,
+        closed_at_unix_ms: closed,
+        blocked_by: vec![],
+        sub_issues: None,
+        labels: vec![],
+    };
+    let pull = |n, live, issues: &[u32]| AgentPullRequestSnapshot {
+        number: n,
+        title: format!("PR {n}"),
+        url: format!("https://github.com/acme/app/pull/{n}"),
+        badge: crate::model::PullRequestBadge::Open,
+        checks: PullRequestChecks::None,
+        head_branch: "feature".into(),
+        closing_issues: issues
+            .iter()
+            .map(|n| {
+                serde_json::from_value(serde_json::json!({"repository":"acme/app","number":n}))
+                    .unwrap()
+            })
+            .collect(),
+        live,
+        duty: false,
+        created: false,
+        settled_at_unix_ms: None,
+    };
+    agents[0].request = Some(AgentRequestSnapshot {
+        verb: crate::agent_state::RequestVerb::Review,
+        verb_since_unix_ms: 100,
+        line: None,
+        end: None,
+        request: Some(RequestLineSnapshot {
+            text: "Next work".into(),
+            cut: false,
+            images: 0,
+            at_unix_ms: 100,
+            sender: RequestSender::Operator,
+        }),
+        later_by: None,
+        reply: None,
+        pull_requests: vec![
+            pull(1, false, &[7]),
+            pull(2, true, &[8]),
+            pull(3, true, &[9, 10, 11, 99]),
+        ],
+    });
+    let mut main = checkout(
+        "project",
+        "main",
+        "/fixture",
+        Some(pane("root", "/fixture")),
+    );
+    main.task_key = Some("github:acme/app#7".into());
+    let mut project = workspace("project", "Project", "/fixture", vec![main]);
+    project.tasks.tasks = vec![
+        issue(7, false, Some(99)),
+        issue(8, false, Some(101)),
+        issue(9, true, None),
+        issue(10, false, None),
+        issue(11, false, Some(100)),
+    ];
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.snapshot.navigator.agents = agents;
+    assert!(runtime.refresh_agent_scopes());
+    let work = &runtime.snapshot.navigator.workspaces[0].agent_scope.work["root"];
+    assert_eq!((work.pull, work.more), (Some(1), 1));
+    assert_eq!(
+        work.issues,
+        [
+            "github:acme/app#8",
+            "github:acme/app#7",
+            "github:acme/app#9",
+            "github:acme/app#10",
+            "github:acme/app#11"
+        ]
+    );
+    assert_eq!(work.issue_chips, ["github:acme/app#8", "github:acme/app#9"]);
+    runtime.snapshot.navigator.workspaces[0].tasks.tasks[1].closed_at_unix_ms = Some(100);
+    assert!(runtime.refresh_agent_scopes());
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].agent_scope.work["root"].issue_chips,
+        ["github:acme/app#9"]
     );
 }

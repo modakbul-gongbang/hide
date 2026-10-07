@@ -256,13 +256,14 @@ Ownership is the fifth derived status axis and it is read off the lineage, never
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; instead it is a signal in every ancestor's read fingerprint, so the ancestor turns unread and its badge reports the count, while the ancestor's own group stays whatever its own axes say.
 The lineage is therefore built before the read axis is applied on every ingest, and there is no clock, timer or second store for it.
 The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifecycle, completion, ownership and read state, `turn.rs` derives groups, request verbs and runtime action gates, `work.rs` associates PRs and issues and assigns each duty, and `tally.rs` owns marks, representative ranks and scope counts.
-Its scope projection also carries list sections and checkout trees; the web resolves their pane IDs and applies locale-aware typography and alphabetical placement without choosing status priority, membership or counts.
+Its scope projection also carries list sections and checkout trees; the web resolves their pane IDs and physical occurrence indexes and applies locale-aware typography and alphabetical placement without choosing status priority, membership or counts.
 The `agent_scope` projection carries physical totals, Overview membership and request membership as separate values because their existing screen rules differ.
 Device scopes also carry connected row listings and pane places, and the PR projection carries the tile's turn breakdown, so the shell does not reconstruct ownership or sum attention groups.
 `agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
 Existing close targets also carry `tally/close.rs` consequences: confirmation priority, stop-work rows, and outside-descendant rows and counts.
 `tally/graph.rs` supplies graph attention, ordered membership, fold classes and tucked marks for the fixed sixteen fold/scope combinations, deduplicating equal maps.
-`tally/relations.rs` supplies command-palette lineage groups, and `tally/cleanup.rs` supplies checkout-use counts, preserving last-known disconnected descendants separately from live close targets.
+`work.rs` also publishes the request row’s selected PR and ordered issue keys, including folded-chip recency, while `tally.rs` owns local and remote device and removal totals.
+`tally/relations.rs` supplies command-palette lineage groups and their issue keys, and `tally/cleanup.rs` supplies checkout-use counts, preserving last-known disconnected descendants separately from live close targets.
 Text search and pixel geometry stay in the web; filters select from the core's priority order without deriving a new status.
 The cache includes pane close flags and labels so a pane-only change refreshes an open sheet; it adds no close action or runtime enforcement path.
 Catalog rebuilding restores cached scope fields before equality checks so an unchanged source does not create a publication merely by constructing new project objects.

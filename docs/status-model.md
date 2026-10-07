@@ -578,7 +578,7 @@ A rejected cleanup enqueue is retained for the next catalog synchronization.
 
 `agent_state/turn.rs::row_state` supplies each row’s attention, title emphasis, line mode, semantic tones, graph bucket and priority, search tone, close state and request timing.
 The shell maps semantic tones to its existing tokens and translates status words; a tab carries only the mark tone it needs.
-A waiting root intentionally has a working row mark and a subdued chip and search result.
+A waiting root intentionally keeps its hollow row glyph with a working tone, and a subdued chip and search result.
 `row_tests::read_question_keeps_its_request_line_and_hue_without_operator_attention` and `row_tests::waiting_root_keeps_distinct_row_chip_and_graph_decisions` pin these surface differences.
 
 `agent_state/tally.rs::phone` projects the phone’s groups, roots, places and safe row values from the published snapshot.
@@ -591,6 +591,7 @@ The projection and push regression tests remain in `hided/src/mobile/{projection
 
 `agent_state/tally/scope.rs` publishes `agent_scope` on the navigator, each device, each project and each checkout.
 Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
+Physical row references include an occurrence index so duplicate pane IDs keep their distinct labels and states; Overview and graph membership retain the first source occurrence.
 Requests exclude a delegated row only when its parent belongs to that scope, and publish their ordered groups and counts separately from physical and Overview totals.
 Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
 The scope cache compares owned agent rows, device connection facts and checkout membership and summaries; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
@@ -605,12 +606,16 @@ The cross-checkout counts, relative-root highlight and fold transitions are asse
 `agent_state/work/board.rs` owns the PR list's branch and maker association, issue chip source, ancestor rows, attention ordering, groups and open count.
 The maker remains listed after moving to other work, but only the branch's agents can make the PR read as fixing or needing review.
 `runtime::tests::agent_scopes::pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes` pins that distinction and GitHub-only invalidation.
+`agent_state/work.rs::row_work` supplies the selected PR, additional-PR count and ordered issue keys for expanded and folded request rows.
+It preserves live-PR-first selection, checkout-task precedence and issues closed after the request; issue facts and checkout task changes invalidate the scope cache.
+The agent palette receives its checkout and closing-issue keys from `tally/relations.rs`.
 The device scope also carries raised sections (five Needs You rows and three Done rows before overflow) and each numbered agent's first checkout owner.
 `runtime::tests::agent_scopes::raised_sections_keep_five_questions_three_completions_and_first_number_owner` pins those limits.
 
 `agent_state/tally/close.rs` publishes the existing pane, tab, checkout and project close targets' confirmation decision, stop-work rows and outside-descendant lists and counts.
 The first unknown target still takes priority over confirmation; a subtree sheet includes every target while counting only descendants outside it.
 The shell chooses the current target and translates the published states; runtime close enforcement is unchanged.
+A removal dialog whose target has left the catalog keeps its existing result without requesting live close consequences.
 `runtime::tests::agent_scopes::close_consequences_keep_unknown_priority_and_outside_descendant_counts` pins these rules and pane-only invalidation.
 
 `agent_state/tally/graph.rs` publishes graph membership, row priority, project attention, cleanup/resting folds and the marks tucked under visible ancestors.
@@ -618,6 +623,7 @@ The three fold toggles and project/all selection have sixteen combinations, with
 The renderer selects a combination, filters text and draws geometry; a filtered box reads the first remaining row in core priority order.
 `runtime::tests::agent_scopes::graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor` pins nested hidden marks and Git-only fold invalidation.
 
+`tally.rs` also owns local and remote device counts and project-removal running-agent totals.
 Device scopes publish the current listed rows by source index, preserving duplicate physical rows and local-first order, and the first checkout place for each pane.
 The overall scope concatenates connected listings; a disconnected device keeps its catalog places but marks them unavailable to the live sidebar.
 The PR board publishes its turn/fixing/blocked counts and the review/draft/finished-agent breakdown, including the existing precedence of a finished agent over draft status.

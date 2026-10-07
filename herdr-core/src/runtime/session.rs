@@ -734,20 +734,11 @@ impl Runtime {
         // project label is no longer Herdr's workspace label once a
         // registration covers the repository, so labels cannot be the key.
         for device in &mut self.snapshot.navigator.devices {
-            device.agent_count = projected_agents
-                .iter()
-                .filter(|agent| {
-                    self.snapshot
-                        .navigator
-                        .workspaces
-                        .iter()
-                        .filter(|workspace| workspace.device_id == device.id)
-                        .flat_map(|workspace| workspace.checkouts.iter())
-                        .flat_map(|checkout| checkout.tabs.iter())
-                        .flat_map(|tab| tab.panes.iter())
-                        .any(|pane| pane.id == agent.pane_id)
-                })
-                .count() as u32;
+            device.agent_count = crate::agent_state::device_catalog_count(
+                &self.snapshot.navigator.workspaces,
+                &projected_agents,
+                &device.id,
+            );
         }
         if self.snapshot.navigator.focused_device_id.is_none() {
             self.snapshot.navigator.focused_device_id = Some(self.node.as_str().to_owned());
@@ -1966,12 +1957,7 @@ impl Runtime {
             }
         }
 
-        let agent_count = status
-            .session
-            .as_ref()
-            .map(|session| session.agents.len())
-            .unwrap_or(0)
-            .min(u32::MAX as usize) as u32;
+        let agent_count = crate::agent_state::remote_session_count(status.session.as_ref());
         if let Some(device) = self
             .snapshot
             .navigator

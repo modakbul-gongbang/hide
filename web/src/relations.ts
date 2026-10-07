@@ -88,8 +88,12 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, t
       });
       const first = projected[0]!;
       const workspace = scope.allWorkspaces.find((p) => p.id === first.project_id)!;
-      const checkout = workspace.checkouts.find((c) => c.id === first.checkout_id)!;
-      return { issues: checkoutIssues(scope, workspace, checkout, front, t), groups };
+      const issues = first.issues.map((key) => {
+        const task = workspace.tasks?.tasks.find((task) => task.key === key);
+        if (!task) throw new Error(`Missing core relation issue: ${key}`);
+        return issueEntry(scope, workspace, task, front, t);
+      });
+      return { issues, groups };
     }
     return null;
   }

@@ -1,4 +1,4 @@
-import { scopeRows, type AgentScope } from "./agentScope";
+import { scopeOccurrences, scopeRows, type AgentScope } from "./agentScope";
 // All projects and Project Overview (PRD S6 D-02, B1-B3, B21): every registered
 // Project on every device, and one Project's Workspaces and agents, read from
 // the snapshot the core already publishes - the navigator for this machine,
@@ -65,7 +65,7 @@ export type DeviceSection = {
 
 /** The agents running in a Project, in the core's order. */
 export function projectAgents(workspace: Workspace, agents: AgentRow[]): AgentRow[] {
-  return scopeRows(workspace.agent_scope.pane_ids, agents);
+  return scopeOccurrences(workspace.agent_scope.rows, agents);
 }
 
 export function groupCounts(scope: AgentScope): GroupCounts { return scope.groups; }
@@ -79,7 +79,7 @@ export type AgentSection = { group: string; agents: AgentRow[] };
  * is still shown, under its own name, rather than dropping its rows.
  */
 export function agentSections(scope: AgentScope, agents: AgentRow[]): AgentSection[] {
-  return scope.group_rows.map((group) => ({ group: group.group, agents: scopeRows(group.pane_ids, agents) }));
+  return scope.group_rows.map((group) => ({ group: group.group, agents: scopeOccurrences(group.rows, agents) }));
 }
 
 /** An agent row and, for a row on an SSH device, the device's name. */
@@ -396,10 +396,12 @@ export type AgentTree = {
 };
 
 export function agentTree(listed: ListedAgent[], scope: AgentScope | null): AgentTree {
-  const index = new Map(listed.map((row) => [row.agent.pane_id, row]));
+  const index = new Map(listed.map((row) => [row.agent, row]));
+  const agents = listed.map((row) => row.agent);
   return {
-    sections: scope?.sections.map((section) => ({ ...section, rows: section.rows.map((row) => {
-      const listed = index.get(row.pane_id);
+    sections: scope?.sections.map((section) => ({ ...section, rows: scopeOccurrences(section.rows, agents).map((agent, i) => {
+      const row = section.rows[i]!;
+      const listed = index.get(agent);
       if (!listed) throw new Error(`Agent section references a missing row: ${row.pane_id}`);
       return { ...listed, depth: row.depth, descendants: row.descendants };
     }) })) ?? [],

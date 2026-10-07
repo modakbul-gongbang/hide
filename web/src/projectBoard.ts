@@ -1,4 +1,4 @@
-import { scopeRows, type AgentTreeScope, type AgentScope } from "./agentScope";
+import { scopeOccurrences, scopeRows, type AgentTreeScope, type AgentScope } from "./agentScope";
 // The Overview's Issues view (PRD task-agents-views, reworked issue-first
 // on 2026-09-28 and issues-only by PRD overview-lenses-issues) as pure
 // functions over the snapshot, for one Project or for All projects. Every
@@ -657,7 +657,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     if (!state) throw new Error(`Missing core PR row: ${pr.number}`);
     const checkout = state.checkout_id === null ? null : workspace.checkouts.find((c) => c.id === state.checkout_id);
     if (checkout === undefined) throw new Error(`Missing PR checkout: ${state.checkout_id}`);
-    const agentsHere = scopeRows(state.agents, agents);
+    const agentsHere = scopeOccurrences(state.agents, agents);
     const chip = prChip(pr);
     const merged = pr.badge === "merged";
     const checks = chip.checks;

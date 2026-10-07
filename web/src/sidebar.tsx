@@ -1,4 +1,4 @@
-import { deviceScope, scopeRows, type AgentScope } from "./agentScope";
+import { deviceScope, scopeOccurrences, type AgentScope } from "./agentScope";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
@@ -336,7 +336,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const agentScope = useShellStore((s) => deviceScope(s.rest, deviceId));
-  const roots = useMemo(() => home ? scopeRows(home.agent_scope.roots, agents) : NO_HOME_AGENTS, [home, agents]);
+  const roots = useMemo(() => home ? scopeOccurrences(home.agent_scope.roots, agents) : NO_HOME_AGENTS, [home, agents]);
   const presentations = useMemo(() => new Map(roots.map((agent) => [agent.pane_id, foldedLineage(agent, agents, agentScope!)])), [roots, agents, agentScope]);
   const menu = useAgentRowMenu(actions);
   const refusal = useUiStore((s) => (s.homeStart?.deviceId === deviceId ? s.homeStart.refusal : null));

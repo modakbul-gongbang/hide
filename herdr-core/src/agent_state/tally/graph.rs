@@ -43,7 +43,11 @@ pub(super) fn project(
     members: &[Member],
     agents: &[&SidebarAgentSnapshot],
 ) -> Graph {
-    let by_pane: HashMap<_, _> = agents.iter().map(|a| (a.pane_id.as_str(), *a)).collect();
+    let by_pane: HashMap<_, _> = agents
+        .iter()
+        .rev()
+        .map(|a| (a.pane_id.as_str(), *a))
+        .collect();
     let primary = project.checkouts.iter().find(|c| c.is_primary).or_else(|| {
         if project.is_git {
             None

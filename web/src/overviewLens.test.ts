@@ -109,6 +109,16 @@ describe("the tiles", () => {
     expect(tile.bar?.map((segment) => [segment.key, segment.count])).toEqual([["turn", 2], ["working", 1], ["delegating", 1], ["resting", 1]]);
   });
 
+  it("keeps the first source occurrence for Overview when duplicate panes disagree", () => {
+    const project = workspace([checkout("main", { panes: ["same"] })]);
+    const first = agent("same", "working", { identity_label: "First" });
+    const last = agent("same", "seen", { identity_label: "Last" });
+    const rows = scopeAgents(one(project, [first, last]));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.agent.identity_label).toBe("First");
+    expect(rows[0]!.bucket).toBe("working");
+  });
+
   it("draws zero as zero with no badge, nothing for a device that has not answered, and ⚠ with the reason for one that cannot (B6)", () => {
     expect(agentsTile([], { state: "ready" }, t)).toMatchObject({ value: 0, badge: null, bar: [{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }], failure: null });
     expect(agentsTile([], { state: "loading", text: "connecting" }, t)).toMatchObject({ value: null, badge: null, bar: null, failure: null });

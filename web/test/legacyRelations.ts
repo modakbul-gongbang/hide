@@ -234,7 +234,7 @@ export function legacyRelations(workspaces: Workspace[], agents: AgentRow[]) {
     if (result[agent.pane_id]) continue;
     const value = relationsOf(rest, { kind: "agent", paneId: agent.pane_id }, ((key: string) => key) as never, true);
     if (!value) continue;
-    result[agent.pane_id] = value.groups.map((g) => ({ project_id: g.head.workspaceId!, checkout_id: g.head.checkoutId!, rows: g.rows.filter((r) => r.kind === "agent").map((r) => ({ pane_id: r.paneId!, depth: r.depth ?? 0, tag: r.tag ?? null, caption_parent: r.subtitle?.startsWith("↑ ") ? byPane.get(r.paneId!)?.lineage_parent_pane_id ?? null : null })) }));
+    result[agent.pane_id] = value.groups.map((g, index) => ({ issues: index === 0 ? value.issues.map(i => i.taskKey!) : [], project_id: g.head.workspaceId!, checkout_id: g.head.checkoutId!, rows: g.rows.filter((r) => r.kind === "agent").map((r) => ({ pane_id: r.paneId!, depth: r.depth ?? 0, tag: r.tag ?? null, caption_parent: r.subtitle?.startsWith("↑ ") ? byPane.get(r.paneId!)?.lineage_parent_pane_id ?? null : null })) }));
   }
   return result;
 }

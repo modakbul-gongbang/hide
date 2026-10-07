@@ -51,7 +51,7 @@ export type LensAgent = {
 export function scopeAgents(projects: readonly BoardProject[]): LensAgent[] {
   const result: LensAgent[] = [];
   for (const { workspace, agents, device } of projects) {
-    const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
+    const byPane = new Map([...agents].reverse().map((agent) => [agent.pane_id, agent]));
     const checkouts = new Map(workspace.checkouts.map((checkout) => [checkout.id, checkout]));
     const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
     for (const member of workspace.agent_scope.members) {
