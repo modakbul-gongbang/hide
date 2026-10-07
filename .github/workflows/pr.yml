@@ -98,7 +98,11 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        # TEMP evidence run (do not merge): no lanes; temp-cwd-probe.yml runs the probe.
+        run: |
+          echo 'lanes=[]' >> "$GITHUB_OUTPUT"
+          echo 'full=false' >> "$GITHUB_OUTPUT"
+          echo 'rust-packages=[]' >> "$GITHUB_OUTPUT"
 
   policy:
     name: policy checks

@@ -1,0 +1,24 @@
+# TEMP evidence run for issue 699 (do not merge): what cwd Herdr 0.9.1 answers
+# for a pane right after `tab create`, on Linux, idle and under CPU load.
+name: temp cwd probe
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh > /dev/null
+      - name: Probe idle and loaded
+        run: |
+          bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64 | tail -1)
+          "$bin" --version
+          mkdir -p web
+          echo "== idle"
+          SERVER_CWD=$PWD/web zsh .github/temp/cwd-probe.zsh "$bin" 150 "$RUNNER_TEMP/idle.txt"
+          for i in $(seq "$(nproc)"); do (while :; do :; done) & done
+          echo "== loaded"
+          SERVER_CWD=$PWD/web zsh .github/temp/cwd-probe.zsh "$bin" 300 "$RUNNER_TEMP/loaded.txt"
+          kill $(jobs -p) 2>/dev/null || true
