@@ -14,6 +14,9 @@ use tokio::sync::Notify;
 
 const ROLE: &str = "HIDED_FAKE_OPENER_ROLE";
 const MARKER: &str = "HIDED_FAKE_OPENER_MARKER";
+/// Set for the one run that only makes the script known to the system.
+#[cfg(unix)]
+const FAKE_WARM: &str = "HIDED_FAKE_OPENER_WARM";
 
 /// A script in `dir` that runs [`fake_program`] in `role` with the file it is
 /// given as the marker: what an operator's `HIDE_OPEN_COMMAND` is to hided.
@@ -27,12 +30,25 @@ fn fake(dir: &Path, name: &str, role: &str) -> PathBuf {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\n{MARKER}=\"$1\" {ROLE}={role} exec '{}' {entry}\n",
+                "#!/bin/sh\n[ -n \"${FAKE_WARM}\" ] && exit 0\n{MARKER}=\"$1\" {ROLE}={role} exec '{}' {entry}\n",
                 exe.display()
             ),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // macOS assesses the first exec of a file it has not run before, which
+        // measured 175 ms for a two-line script on a quiet machine and grows
+        // with the machine's other work. A test that launches the script
+        // inside the supervisor's two-second acceptance window would then
+        // race that assessment, so it is paid here, outside any window.
+        let warmed = Command::new(&script)
+            .env(FAKE_WARM, "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(warmed.success(), "the fake helper's warm-up run failed");
         script
     };
     #[cfg(windows)]
