@@ -555,7 +555,7 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `source` | `github` or `local`. |
 | `verification` | `ci`, `verify` or `none`. |
 | `closed` | Whether the Factory is closed. |
-| `flow` | `drafting`, `waiting`, `running` and `done_today` counts. |
+| `flow` | `drafting`, `waiting`, `running` and `done_today` counts; `done_today` counts by the machine's local day, read through the clock port's UTC offset. |
 | `my_turn` | This Factory's inbox items. |
 | `columns` | The four board columns, each with its Task cards in order. |
 | `cancelled` | Cancelled Tasks, off the board. |

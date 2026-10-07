@@ -896,6 +896,25 @@ impl Clock for SystemClock {
     fn now(&self) -> UnixMs {
         now_ms()
     }
+
+    fn utc_offset_ms(&self) -> i64 {
+        match hide_platform::time::local_utc_offset_ms() {
+            Ok(offset) => offset,
+            Err(error) => {
+                // Counted in UTC until the system names its zone again; said once.
+                static SAID: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "factory",
+                        "kind": "clock.offset_unavailable",
+                        "error": error.to_string(),
+                    }));
+                }
+                0
+            }
+        }
+    }
 }
 
 /// Starts, messages, sleeps and wakes workers through coordination, the
