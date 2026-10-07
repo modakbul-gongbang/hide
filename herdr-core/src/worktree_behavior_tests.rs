@@ -596,6 +596,32 @@ fn changes_before_sentinel(
     }
 }
 
+/// Settles the repositories' own setup writes before a test measures: they
+/// can reach the watch after it started, and they are real changes of the
+/// projects the test then expects to stay quiet.
+fn settle_setup_writes(sentinel: &Repository, reader: &mut WorktreeReader) {
+    changes_before_sentinel(sentinel, reader, "settled");
+    reader.git_watch.pending.clear();
+}
+
+/// The first answer whose read ran `git status` in `path`. The sentinel's own
+/// late writes from settling may answer first, as a read of the sentinel
+/// alone.
+fn next_answer_reading(
+    reader: &mut WorktreeReader,
+    request: &WorktreeRequest,
+    path: &Path,
+    what: &str,
+) -> WorktreeAnswer {
+    let before = git_call_count(path, "status");
+    loop {
+        let answer = next_answer(reader, request, what);
+        if git_call_count(path, "status") != before {
+            return answer;
+        }
+    }
+}
+
 #[test]
 fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     let repo = Repository::new();
@@ -739,9 +765,10 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
 fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let changing = Repository::new();
     let quiet = Repository::new();
+    let sentinel = Repository::new();
     let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
     let request = WorktreeRequest {
-        projects: [&changing, &quiet]
+        projects: [&changing, &quiet, &sentinel]
             .into_iter()
             .map(|repo| WorktreeProjectRequest {
                 root_path: repo.0.clone(),
@@ -754,7 +781,8 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
         removals: 0,
     };
     let catalog = next_answer(&mut reader, &request, "initial catalog").catalog;
-    assert_eq!(catalog.projects.len(), 2);
+    assert_eq!(catalog.projects.len(), 3);
+    settle_setup_writes(&sentinel, &mut reader);
     // Status runs in the path git lists, which is the canonical one.
     let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
         PathBuf::from(&catalog.projects[index].worktrees[0].path)
@@ -764,13 +792,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let quiet_before = git_call_count(&quiet_path, "status");
     assert!(changing_before > 0 && quiet_before > 0);
     git(&changing.0, &["commit", "--allow-empty", "-m", "moved"]).unwrap();
-    assert_eq!(
-        next_answer(&mut reader, &request, "commit refresh")
-            .catalog
-            .projects
-            .len(),
-        2
-    );
+    next_answer_reading(&mut reader, &request, &changing_path, "commit refresh");
     assert_eq!(
         git_call_count(&changing_path, "status") - changing_before,
         1
@@ -784,6 +806,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
 fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
     let changing = Repository::new();
     let quiet = Repository::new();
+    let sentinel = Repository::new();
     git(
         &changing.0,
         &["remote", "add", "origin", "https://example.invalid/repo"],
@@ -801,7 +824,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
     .unwrap();
     let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
     let request = WorktreeRequest {
-        projects: [&changing, &quiet]
+        projects: [&changing, &quiet, &sentinel]
             .into_iter()
             .map(|repo| WorktreeProjectRequest {
                 root_path: repo.0.clone(),
@@ -814,6 +837,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         removals: 0,
     };
     let initial = next_answer(&mut reader, &request, "the first read").catalog;
+    settle_setup_writes(&sentinel, &mut reader);
     let main = PathBuf::from(&initial.projects[0].worktrees[0].path);
     let quiet_path = PathBuf::from(&initial.projects[1].worktrees[0].path);
     let before = git_call_count(&main, "status");
@@ -831,7 +855,8 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         &["update-ref", "refs/remotes/origin/main", "future"],
     )
     .unwrap();
-    let updated = next_answer(&mut reader, &request, "the Git watch refresh").catalog;
+    let updated =
+        next_answer_reading(&mut reader, &request, &main, "the Git watch refresh").catalog;
     assert_eq!(updated.projects[0].worktrees[0].behind_upstream, Some(1));
     assert_eq!(git_call_count(&main, "status") - before, 1);
     assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
