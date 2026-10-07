@@ -28,6 +28,8 @@ export type PhoneAgent = {
   line: { text: string; tone: "error" | "warning" | "news" } | null;
   status_code: AgentStatusCode;
   demand: string;
+  emphasized: boolean;
+  holds_notification: boolean;
 };
 
 export type GroupId = "needs_you" | "done" | "working" | "seen";
@@ -352,17 +354,11 @@ export function headerLine(t: TFunction<"translation">, macName: string, otherPh
 }
 
 /** Tags whose notifications the open app closes (D-21): agents no longer waiting or done. */
-/** The demands that raise a push for their root (hided/src/mobile/push.rs). */
-const HOLDING_DEMANDS: ReadonlySet<string> = new Set(["question", "approval", "error"]);
-
 export function staleTags(tags: readonly string[], groups: readonly AgentGroup[]): string[] {
   const live = new Set<string>();
   for (const group of groups) {
     for (const agent of group.agents) {
-      // A delegated child is only ever Working or Seen, yet its demand is
-      // what raised its root's notification (D-21): that keeps it too.
-      const holds = group.group === "needs_you" || group.group === "done" || HOLDING_DEMANDS.has(agent.demand);
-      if (holds) live.add(keyTag({ device_id: agent.device_id, pane_id: agent.root_pane_id }));
+      if (agent.holds_notification) live.add(keyTag({ device_id: agent.device_id, pane_id: agent.root_pane_id }));
     }
   }
   return tags.filter((tag) => !live.has(tag));

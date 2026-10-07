@@ -14,7 +14,7 @@
 //! transition of the same agent replaces it (same tag). Agents the desktop
 //! has since made Seen ride along as tags to close.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use base64::Engine;
@@ -23,8 +23,11 @@ use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
 use serde_json::{Value, json};
 
-use super::projection::{AgentKey, Projection};
+use super::projection::AgentKey;
 use super::store::{PushMode, PushSubscription};
+#[cfg(test)]
+use herdr_core::agent_state::push::VANISHED_TTL;
+pub use herdr_core::agent_state::push::{Notice, NoticeState, Transitions};
 
 const RECORD_SIZE: u32 = 4096;
 const TTL_SECS: u64 = 60 * 60;
@@ -287,193 +290,6 @@ pub fn send(
             status => SendOutcome::Failed(format!("the push service answered {status}")),
         },
         Err(error) => SendOutcome::Failed(error.to_string()),
-    }
-}
-
-/// What a root agent's notification says, or would say.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Effective {
-    NeedsYou,
-    Done,
-    Working,
-    Seen,
-    Other,
-}
-
-impl Effective {
-    /// The state a notification announces for this one, if any.
-    fn announced(self) -> Option<NoticeState> {
-        match self {
-            Self::NeedsYou => Some(NoticeState::NeedsYou),
-            Self::Done => Some(NoticeState::Done),
-            Self::Working | Self::Seen | Self::Other => None,
-        }
-    }
-
-    fn from_group(group: &str) -> Self {
-        match group {
-            "needs_you" => Self::NeedsYou,
-            "done" => Self::Done,
-            "working" => Self::Working,
-            "seen" => Self::Seen,
-            _ => Self::Other,
-        }
-    }
-}
-
-/// The states a notification announces; the wire value is also the key of
-/// the phone's translated word for it. The last two are the human delivery
-/// causes (`herdr_core::delivery::worker::HumanNoticeKind`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NoticeState {
-    NeedsYou,
-    Done,
-    ObserverUnconfirmed,
-    LetterUndelivered,
-}
-
-impl NoticeState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NeedsYou => "needs_you",
-            Self::Done => "done",
-            Self::ObserverUnconfirmed => "observer_unconfirmed",
-            Self::LetterUndelivered => "letter_undelivered",
-        }
-    }
-}
-
-/// One notification to send to every subscribed phone. It carries data only:
-/// the title and the place are the operator's own words, the state is a key
-/// the phone words in its own language.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Notice {
-    pub key: AgentKey,
-    pub title: String,
-    pub state: NoticeState,
-    /// The project (`project`, or the part of `project · branch` before the
-    /// branch separator); empty when the agent has no place.
-    pub place: String,
-}
-
-/// Each root agent's effective state: its own group, raised to Needs You
-/// when a descendant asks for something (delegated rows stay Working or
-/// Seen themselves, docs/status-model.md), plus what its notification says.
-fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
-    let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
-    for agent in projection.agents() {
-        if agent.root_pane_id == agent.pane_id {
-            let place = agent
-                .place
-                .as_deref()
-                .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
-                .unwrap_or_default();
-            let entry = roots.entry(agent.key()).or_insert((
-                Effective::Other,
-                String::new(),
-                String::new(),
-            ));
-            let raised = entry.0 == Effective::NeedsYou;
-            entry.0 = if raised {
-                Effective::NeedsYou
-            } else {
-                Effective::from_group(&agent.group)
-            };
-            entry.1 = agent.title.clone();
-            entry.2 = place;
-        }
-    }
-    for agent in projection.agents() {
-        if agent.root_pane_id != agent.pane_id
-            && matches!(agent.demand.as_str(), "question" | "approval" | "error")
-        {
-            let entry = roots.entry(agent.root_key()).or_insert((
-                Effective::Other,
-                String::new(),
-                String::new(),
-            ));
-            entry.0 = Effective::NeedsYou;
-        }
-    }
-    roots
-}
-
-/// Follows root agents across projections and says which entered Needs You
-/// or Done, and which the desktop made Seen. The first projection it sees
-/// only seeds it: nothing that was already waiting is announced.
-#[derive(Default)]
-pub struct Transitions {
-    last: Option<BTreeMap<AgentKey, Effective>>,
-    /// Agents that left the list, with their state and when: a device that
-    /// reconnects, or a list that was briefly empty, brings them back in the
-    /// state they had, which is no transition (and no second notice).
-    vanished: BTreeMap<AgentKey, (Effective, std::time::Instant)>,
-}
-
-/// How long a vanished agent's state is kept for its return.
-const VANISHED_TTL: Duration = Duration::from_secs(10 * 60);
-
-impl Transitions {
-    pub fn reset(&mut self) {
-        self.last = None;
-        self.vanished.clear();
-    }
-
-    pub fn observe(&mut self, projection: &Projection) -> (Vec<Notice>, BTreeSet<AgentKey>) {
-        self.observe_at(projection, std::time::Instant::now())
-    }
-
-    fn observe_at(
-        &mut self,
-        projection: &Projection,
-        at: std::time::Instant,
-    ) -> (Vec<Notice>, BTreeSet<AgentKey>) {
-        let now = effective(projection);
-        let states: BTreeMap<AgentKey, Effective> = now
-            .iter()
-            .map(|(key, (state, ..))| (key.clone(), *state))
-            .collect();
-        let Some(last) = self.last.replace(states) else {
-            return (Vec::new(), BTreeSet::new());
-        };
-        let mut notices = Vec::new();
-        let mut seen = BTreeSet::new();
-        for (key, (state, title, place)) in &now {
-            let before = last
-                .get(key)
-                .copied()
-                .or_else(|| self.vanished.remove(key).map(|(state, _)| state))
-                .unwrap_or(Effective::Other);
-            if before == *state {
-                continue;
-            }
-            if let Some(announced) = state.announced() {
-                notices.push(Notice {
-                    key: key.clone(),
-                    title: title.clone(),
-                    state: announced,
-                    place: place.clone(),
-                });
-            } else if *state == Effective::Seen
-                && matches!(before, Effective::NeedsYou | Effective::Done)
-            {
-                seen.insert(key.clone());
-            }
-        }
-        for (key, before) in &last {
-            if !now.contains_key(key) {
-                self.vanished.insert(key.clone(), (*before, at));
-            }
-        }
-        // An agent gone for good: its notification is closed on the next push.
-        self.vanished.retain(|key, (before, since)| {
-            let expired = at.duration_since(*since) >= VANISHED_TTL;
-            if expired && matches!(before, Effective::NeedsYou | Effective::Done) {
-                seen.insert(key.clone());
-            }
-            !expired
-        });
-        (notices, seen)
     }
 }
 

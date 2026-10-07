@@ -1,6 +1,8 @@
 #[cfg(test)]
 use crate::agent_state::sync_checkout_agent_summaries;
 #[cfg(test)]
+use crate::model::PaneReadRecord;
+#[cfg(test)]
 use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,7 +11,7 @@ use crate::agent_state::{axes::*, tally::child_representative_rank, turn::*};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{AgentStatusCode, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
+use crate::model::{AgentStatusCode, PaneLayoutDirection, SidebarAgentSnapshot};
 
 /// Event provenance belongs to the local replica, not the external wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -376,6 +378,7 @@ pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
 /// cannot describe the same agent differently (PRD B5, B10, B34).
 pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapshot {
     crate::model::AgentChipSnapshot {
+        tone: agent.state.chip_tone,
         pane_id: agent.pane_id.clone(),
         label: agent.identity_label.clone(),
         checkout_label: agent.checkout_label.clone(),
@@ -617,6 +620,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .or(native_title)
         .unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
+        state: Default::default(),
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))

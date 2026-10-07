@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -22,8 +23,8 @@ describe("fuzzy score", () => {
 const REST = {
   navigator: {
     agents: [
-      { id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false },
-      { id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", symbol: "○", group: "seen", status_code: "idle", detail: "Waiting for review", changed_at_unix_ms: null, emphasized: false, unread: false },
+      legacyAgentRow({ id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false }),
+      legacyAgentRow({ id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", symbol: "○", group: "seen", status_code: "idle", detail: "Waiting for review", changed_at_unix_ms: null, emphasized: false, unread: false }),
     ],
     workspaces: [
       {
@@ -104,7 +105,7 @@ const TWO_DEVICES = {
         target_id: "mini",
         state: "connected",
         session: {
-          agents: [{ id: "m1", pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false }],
+          agents: [legacyAgentRow({ id: "m1", pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false })],
           workspaces: [
             {
               id: "remote:mini:workspace:web",
@@ -118,7 +119,7 @@ const TWO_DEVICES = {
           ],
         },
       },
-      { target_id: "build-box", state: "not_connected", session: { agents: [{ id: "old", pane_id: "remote:build-box:pane:1", identity_label: "stale", group: "seen" }], workspaces: [] } },
+      { target_id: "build-box", state: "not_connected", session: { agents: [legacyAgentRow({ id: "old", pane_id: "remote:build-box:pane:1", identity_label: "stale", group: "seen" })], workspaces: [] } },
     ],
   },
 } as unknown as SnapshotRest;
@@ -152,7 +153,7 @@ describe("an agent by its pane's Herdr id", () => {
   // Ids as `herdr pane list` prints them; mini's pane is that device's own, scoped by the core.
   const withIds = (local: string[], mini: string) => {
     const rest = structuredClone(TWO_DEVICES);
-    rest.navigator!.agents = local.map((pane, index) => ({ ...REST.navigator!.agents![0]!, id: `a${index}`, pane_id: pane, identity_label: `Agent ${index}` }));
+    rest.navigator!.agents = local.map((pane, index) => (legacyAgentRow({ ...REST.navigator!.agents![0]!, id: `a${index}`, pane_id: pane, identity_label: `Agent ${index}` })));
     rest.status!.remote![0]!.session!.agents![0]!.pane_id = `remote:mini:pane:${mini}`;
     return searchEntries(rest, t);
   };

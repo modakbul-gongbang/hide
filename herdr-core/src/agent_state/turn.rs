@@ -2,6 +2,222 @@
 use super::axes::*;
 use super::tally::RowMark;
 
+/// Semantic tone; a shell chooses its existing color token and opacity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct Tone {
+    pub kind: &'static str,
+    pub read: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct TabState {
+    pub mark_tone: Tone,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RowLine {
+    pub text: String,
+    pub mode: &'static str,
+    pub tone: Tone,
+}
+
+/// The decisions formerly repeated by each row, search, graph and board.
+/// Surface differences are intentional: a waiting root has a working mark
+/// but its chip still follows its own axes, and every demand remains visible.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct RowState {
+    pub attention: bool,
+    pub needs_you: bool,
+    pub root: bool,
+    pub title_emphasized: bool,
+    pub selection_emphasizes_title: bool,
+    pub asking: bool,
+    pub working: bool,
+    pub waits_on_children: bool,
+    pub chip_tone: Tone,
+    pub mark_tone: Tone,
+    pub line: Option<RowLine>,
+    pub branch_badge: Option<String>,
+    pub bucket: &'static str,
+    pub attention_rank: u8,
+    pub graph_rank: u8,
+    pub edge: &'static str,
+    pub search_tone: &'static str,
+    pub subtree: &'static str,
+    pub link: &'static str,
+    pub verb: RequestVerb,
+    pub request_todo: bool,
+    pub request_since: Option<u64>,
+}
+
+pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
+    let demand = agent.demand.as_str();
+    let activity = agent.activity.as_str();
+    let group = agent.group.as_str();
+    let asking = matches!(demand, "error" | "question" | "approval");
+    let needs_you = group == "needs_you";
+    let attention = needs_you || agent.unread;
+    let chip_kind = match demand {
+        "error" => "error",
+        "question" | "approval" => "warning",
+        _ if activity == "working" => "working",
+        _ if activity == "stopped" && agent.emphasized => "success",
+        _ => "subtle",
+    };
+    let chip_tone = Tone {
+        kind: chip_kind,
+        read: asking && !agent.emphasized,
+    };
+    let mark_tone = if agent.waiting_on_descendants {
+        Tone {
+            kind: "working",
+            read: false,
+        }
+    } else {
+        chip_tone
+    };
+    let line = agent
+        .detail
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| {
+            let mode = if asking {
+                "request"
+            } else if agent.unread {
+                "news"
+            } else {
+                "quiet"
+            };
+            RowLine {
+                text: text.to_owned(),
+                mode,
+                tone: match mode {
+                    "request" => chip_tone,
+                    "news" => Tone {
+                        kind: "news",
+                        read: false,
+                    },
+                    _ => Tone {
+                        kind: "subtle",
+                        read: false,
+                    },
+                },
+            }
+        });
+    let bucket = if needs_you || group == "done" {
+        "turn"
+    } else if agent.waiting_on_descendants {
+        "delegating"
+    } else if group == "working" {
+        "working"
+    } else {
+        "resting"
+    };
+    let counts = agent.descendant_counts;
+    let waits_on_children = agent.waiting_on_descendants
+        || counts.working + counts.question + counts.approval + counts.error > 0;
+    let working = group == "working" || agent.waiting_on_descendants;
+    let verb = agent
+        .request
+        .as_ref()
+        .map(|request| request.verb)
+        .unwrap_or(if group == "working" {
+            RequestVerb::Working
+        } else {
+            RequestVerb::Idle
+        });
+    let request_todo = matches!(
+        verb,
+        RequestVerb::Answer
+            | RequestVerb::Fix
+            | RequestVerb::Review
+            | RequestVerb::Stopped
+            | RequestVerb::Result
+    );
+    RowState {
+        attention,
+        needs_you,
+        root: !agent.delegated,
+        title_emphasized: !(agent.delegated && !attention) && (attention || agent.emphasized),
+        selection_emphasizes_title: !agent.delegated || attention,
+        asking,
+        working,
+        waits_on_children,
+        chip_tone,
+        mark_tone,
+        line,
+        branch_badge: agent
+            .lineage_worktree_badge
+            .as_deref()
+            .filter(|_| agent.delegated)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned),
+        bucket,
+        attention_rank: match group {
+            "needs_you" if demand == "error" => 0,
+            "needs_you" => 1,
+            "done" => 2,
+            "working" => 3,
+            _ => 4,
+        },
+        graph_rank: if asking || bucket == "turn" {
+            0
+        } else if bucket == "working" {
+            1
+        } else if waits_on_children {
+            2
+        } else {
+            3
+        },
+        edge: if asking {
+            "ask"
+        } else if activity == "working" {
+            "flow"
+        } else if waits_on_children {
+            "wait"
+        } else {
+            "rest"
+        },
+        search_tone: match chip_kind {
+            "error" => "failed",
+            "warning" => "attention",
+            "working" => "working",
+            "success" => "done",
+            _ => "muted",
+        },
+        subtree: if agent.requires_close_status_check {
+            "unknown"
+        } else if demand != "none" && !demand.is_empty() {
+            "waiting"
+        } else if activity == "working" {
+            "working"
+        } else if agent.unread && agent.symbol == "✓" {
+            "unread"
+        } else {
+            "quiet"
+        },
+        link: if asking {
+            "question"
+        } else if working {
+            "working"
+        } else {
+            "idle"
+        },
+        verb,
+        request_todo,
+        request_since: if request_todo {
+            agent
+                .request
+                .as_ref()
+                .map(|request| request.verb_since_unix_ms)
+        } else {
+            agent.changed_at_unix_ms
+        },
+    }
+}
+
 /// Runtime gates deliberately distinguish a running process from a root
 /// waiting on work it delegated. Both prevent sleep and reopening.
 pub(crate) fn is_running(agent: &SidebarAgentSnapshot) -> bool {
@@ -274,6 +490,7 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         agent.symbol = crate::agent_sleep::SLEEPING_SYMBOL.to_owned();
         agent.status_code = crate::agent_sleep::status_code(sleep);
     }
+    agent.state = row_state(agent);
 }
 
 /// Re-derives every drawn value of a row whose sleep mark was just set.
@@ -359,4 +576,282 @@ pub(crate) fn verb_of(
         return RequestVerb::Waiting;
     }
     RequestVerb::Idle
+}
+
+/// The notification state machine. Transport and subscription policy stay
+/// in hided; the status transition and descendant raise live with agent state.
+pub mod push {
+    use super::super::tally::phone::{AgentKey, Projection};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::time::Duration;
+    /// What a root agent's notification says, or would say.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum Effective {
+        NeedsYou,
+        Done,
+        Working,
+        Seen,
+        Other,
+    }
+
+    impl Effective {
+        /// The state a notification announces for this one, if any.
+        fn announced(self) -> Option<NoticeState> {
+            match self {
+                Self::NeedsYou => Some(NoticeState::NeedsYou),
+                Self::Done => Some(NoticeState::Done),
+                Self::Working | Self::Seen | Self::Other => None,
+            }
+        }
+
+        fn from_group(group: &str) -> Self {
+            match group {
+                "needs_you" => Self::NeedsYou,
+                "done" => Self::Done,
+                "working" => Self::Working,
+                "seen" => Self::Seen,
+                _ => Self::Other,
+            }
+        }
+    }
+
+    /// The states a notification announces; the wire value is also the key of
+    /// the phone's translated word for it. The last two are the human delivery
+    /// causes (`herdr_core::delivery::worker::HumanNoticeKind`).
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum NoticeState {
+        NeedsYou,
+        Done,
+        ObserverUnconfirmed,
+        LetterUndelivered,
+    }
+
+    impl NoticeState {
+        pub fn as_str(self) -> &'static str {
+            match self {
+                Self::NeedsYou => "needs_you",
+                Self::Done => "done",
+                Self::ObserverUnconfirmed => "observer_unconfirmed",
+                Self::LetterUndelivered => "letter_undelivered",
+            }
+        }
+    }
+
+    /// One notification to send to every subscribed phone. It carries data only:
+    /// the title and the place are the operator's own words, the state is a key
+    /// the phone words in its own language.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct Notice {
+        pub key: AgentKey,
+        pub title: String,
+        pub state: NoticeState,
+        /// The project (`project`, or the part of `project · branch` before the
+        /// branch separator); empty when the agent has no place.
+        pub place: String,
+    }
+
+    /// Each root agent's effective state: its own group, raised to Needs You
+    /// when a descendant asks for something (delegated rows stay Working or
+    /// Seen themselves, docs/status-model.md), plus what its notification says.
+    fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
+        let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
+        for agent in projection.agents() {
+            if agent.root_pane_id == agent.pane_id {
+                let place = agent
+                    .place
+                    .as_deref()
+                    .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
+                    .unwrap_or_default();
+                let entry = roots.entry(agent.key()).or_insert((
+                    Effective::Other,
+                    String::new(),
+                    String::new(),
+                ));
+                let raised = entry.0 == Effective::NeedsYou;
+                entry.0 = if raised {
+                    Effective::NeedsYou
+                } else {
+                    Effective::from_group(&agent.group)
+                };
+                entry.1 = agent.title.clone();
+                entry.2 = place;
+            }
+        }
+        for agent in projection.agents() {
+            if agent.root_pane_id != agent.pane_id
+                && matches!(agent.demand.as_str(), "question" | "approval" | "error")
+            {
+                let entry = roots.entry(agent.root_key()).or_insert((
+                    Effective::Other,
+                    String::new(),
+                    String::new(),
+                ));
+                entry.0 = Effective::NeedsYou;
+            }
+        }
+        roots
+    }
+
+    /// Follows root agents across projections and says which entered Needs You
+    /// or Done, and which the desktop made Seen. The first projection it sees
+    /// only seeds it: nothing that was already waiting is announced.
+    #[derive(Default)]
+    pub struct Transitions {
+        last: Option<BTreeMap<AgentKey, Effective>>,
+        /// Agents that left the list, with their state and when: a device that
+        /// reconnects, or a list that was briefly empty, brings them back in the
+        /// state they had, which is no transition (and no second notice).
+        vanished: BTreeMap<AgentKey, (Effective, std::time::Instant)>,
+    }
+
+    /// How long a vanished agent's state is kept for its return.
+    pub const VANISHED_TTL: Duration = Duration::from_secs(10 * 60);
+
+    impl Transitions {
+        pub fn reset(&mut self) {
+            self.last = None;
+            self.vanished.clear();
+        }
+
+        pub fn observe(&mut self, projection: &Projection) -> (Vec<Notice>, BTreeSet<AgentKey>) {
+            self.observe_at(projection, std::time::Instant::now())
+        }
+
+        pub fn observe_at(
+            &mut self,
+            projection: &Projection,
+            at: std::time::Instant,
+        ) -> (Vec<Notice>, BTreeSet<AgentKey>) {
+            let now = effective(projection);
+            let states: BTreeMap<AgentKey, Effective> = now
+                .iter()
+                .map(|(key, (state, ..))| (key.clone(), *state))
+                .collect();
+            let Some(last) = self.last.replace(states) else {
+                return (Vec::new(), BTreeSet::new());
+            };
+            let mut notices = Vec::new();
+            let mut seen = BTreeSet::new();
+            for (key, (state, title, place)) in &now {
+                let before = last
+                    .get(key)
+                    .copied()
+                    .or_else(|| self.vanished.remove(key).map(|(state, _)| state))
+                    .unwrap_or(Effective::Other);
+                if before == *state {
+                    continue;
+                }
+                if let Some(announced) = state.announced() {
+                    notices.push(Notice {
+                        key: key.clone(),
+                        title: title.clone(),
+                        state: announced,
+                        place: place.clone(),
+                    });
+                } else if *state == Effective::Seen
+                    && matches!(before, Effective::NeedsYou | Effective::Done)
+                {
+                    seen.insert(key.clone());
+                }
+            }
+            for (key, before) in &last {
+                if !now.contains_key(key) {
+                    self.vanished.insert(key.clone(), (*before, at));
+                }
+            }
+            // An agent gone for good: its notification is closed on the next push.
+            self.vanished.retain(|key, (before, since)| {
+                let expired = at.duration_since(*since) >= VANISHED_TTL;
+                if expired && matches!(before, Effective::NeedsYou | Effective::Done) {
+                    seen.insert(key.clone());
+                }
+                !expired
+            });
+            (notices, seen)
+        }
+    }
+}
+
+impl Default for RequestVerb {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+    use crate::sidebar::{SessionSnapshotPayload, project_agents};
+    use serde_json::json;
+
+    fn row() -> SidebarAgentSnapshot {
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({
+            "agents": [{"pane_id": "root", "agent": "claude", "agent_status": "idle", "state_change_seq": 1}]
+        })).unwrap();
+        project_agents(payload).agents.remove(0)
+    }
+
+    #[test]
+    fn read_question_keeps_its_request_line_and_hue_without_operator_attention() {
+        let mut agent = row();
+        agent.demand = "question".into();
+        agent.activity = "stopped".into();
+        agent.group = "seen".into();
+        agent.emphasized = false;
+        agent.unread = false;
+        agent.detail = Some("  진행할까요?  ".into());
+        let state = row_state(&agent);
+        assert!(!state.attention);
+        assert_eq!(state.bucket, "resting");
+        assert_eq!(state.graph_rank, 0);
+        assert_eq!(state.subtree, "waiting");
+        assert_eq!(state.search_tone, "attention");
+        assert_eq!(
+            state.line,
+            Some(RowLine {
+                text: "진행할까요?".into(),
+                mode: "request",
+                tone: Tone {
+                    kind: "warning",
+                    read: true
+                },
+            })
+        );
+        assert_eq!(
+            state.mark_tone,
+            Tone {
+                kind: "warning",
+                read: true
+            }
+        );
+        // Delegation changes title treatment, not the question's hue.
+        agent.delegated = true;
+        agent.lineage_worktree_badge = Some("  feature  ".into());
+        let child = row_state(&agent);
+        assert!(!child.root);
+        assert!(!child.selection_emphasizes_title);
+        assert_eq!(child.branch_badge.as_deref(), Some("feature"));
+        assert_eq!(child.mark_tone, state.mark_tone);
+    }
+
+    #[test]
+    fn waiting_root_keeps_distinct_row_chip_and_graph_decisions() {
+        let mut agent = row();
+        agent.group = "working".into();
+        agent.activity = "stopped".into();
+        agent.emphasized = false;
+        agent.unread = false;
+        agent.waiting_on_descendants = true;
+        let state = row_state(&agent);
+        assert_eq!(state.mark_tone.kind, "working");
+        assert_eq!(state.chip_tone.kind, "subtle");
+        assert_eq!(state.search_tone, "muted");
+        assert_eq!(state.bucket, "delegating");
+        assert_eq!(state.edge, "wait");
+        assert_eq!(state.graph_rank, 2);
+        assert_eq!(state.link, "working");
+        assert!(state.working);
+        assert!(!state.title_emphasized);
+        assert!(state.selection_emphasizes_title);
+    }
 }

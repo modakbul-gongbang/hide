@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -38,10 +39,10 @@ function project(device: string): { workspace: Workspace; agent: AgentRow; check
       tabs: [{ id: `${scope}tab:w3Y:t7`, label: "Codex", panes: [{ id: paneId }] }],
     }],
   } as unknown as Workspace;
-  const agent = {
+  const agent = legacyAgentRow({
     id: `${scope}agent:w3Y:p7`, pane_id: paneId, identity_label: "인사에 답하기", agent_kind: "codex", symbol: "○", group: "seen",
     status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "stopped",
-  } as AgentRow;
+  }) as AgentRow;
   return { workspace, agent, checkoutId };
 }
 

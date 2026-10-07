@@ -107,34 +107,25 @@ export function graphDevices(agents: readonly LensAgent[]): string[] {
 /** Where an agent stands for ordering and folding (B5): 0 the operator's attention, 1 working, 2 waiting on children, 3 resting. */
 export type Attention = 0 | 1 | 2 | 3;
 
-const REQUESTS = new Set(["question", "approval", "error"]);
-
 /** The agent holds a question, an approval or an error of its own, delegated or not (B17). */
 export function isAsking(agent: AgentRow): boolean {
-  return REQUESTS.has(agent.demand ?? "none");
+  return agent.state.asking;
 }
 
 /** A quiet agent whose descendants are still working or asking, so it is not done (docs/status-model.md). */
 export function waitsOnChildren(agent: AgentRow): boolean {
-  if (agent.waiting_on_descendants) return true;
-  const counts = agent.descendant_counts;
-  return counts !== undefined && counts.working + counts.question + counts.approval + counts.error > 0;
+  return agent.state.waits_on_children;
 }
 
 export function attentionOf(value: LensAgent): Attention {
-  const { agent, bucket } = value;
-  if (isAsking(agent) || bucket === "turn") return 0;
-  if (bucket === "working") return 1;
-  return waitsOnChildren(agent) ? 2 : 3;
+  return value.agent.state.graph_rank;
 }
 
 /** A line's colour follows the child it leads to (D-04, B9). */
 export type EdgeKind = "ask" | "flow" | "wait" | "rest";
 
 export function edgeKindOf(child: AgentRow): EdgeKind {
-  if (isAsking(child)) return "ask";
-  if (child.activity === "working") return "flow";
-  return waitsOnChildren(child) ? "wait" : "rest";
+  return child.state.edge;
 }
 
 /** The second line a row draws, a question in warning, only while the agent asks (D-27). */

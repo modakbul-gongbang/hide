@@ -181,10 +181,7 @@ export type TasksBoard = {
 
 /** How much an agent needs the operator; lower first. */
 function attention(agent: AgentRow): number {
-  if (agent.group === "needs_you") return agent.demand === "error" ? 0 : 1;
-  if (agent.group === "done") return 2;
-  if (agent.group === "working") return 3;
-  return 4;
+  return agent.state.attention_rank;
 }
 
 /** The agents a card names: the two that need the operator most, in the core's order otherwise. */
@@ -614,7 +611,7 @@ const PR_GROUPS: readonly PrGroup[] = ["turn", "fixing", "blocked", "merged"];
 
 /** An agent at work, a parent waiting on its working children included (status-model's activity axis, PRD Risks). */
 function isWorking(agent: AgentRow): boolean {
-  return agent.group === "working" || agent.waiting_on_descendants === true;
+  return agent.state.working;
 }
 
 /** The issue a pull request works on: the task when the source lists it, else the reference its body closes. */

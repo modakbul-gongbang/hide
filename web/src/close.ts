@@ -99,13 +99,7 @@ export type Subtree = {
 };
 
 export function subtreeState(agent: AgentRow): SubtreeState {
-  // The core's own close guard, so the sheet blocks exactly what the core
-  // would refuse (B10, D-22).
-  if (agent.requires_close_status_check) return "unknown";
-  if (agent.demand && agent.demand !== "none") return "waiting";
-  if (agent.activity === "working") return "working";
-  if (agent.unread && agent.symbol === "✓") return "unread";
-  return "quiet";
+  return agent.state.subtree;
 }
 
 /**

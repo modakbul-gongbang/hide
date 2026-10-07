@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28): four stages from Git, a card per issue and per worktree, the
 // backlog that starts work, the pull request as the result, at most two
@@ -72,7 +73,7 @@ function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task
 }
 
 function agent(pane: string, group = "working", extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra };
+  return legacyAgentRow({ id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra });
 }
 
 function one(project: Workspace, agents: AgentRow[] = []): BoardProject[] {

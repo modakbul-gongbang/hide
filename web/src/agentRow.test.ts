@@ -1,10 +1,11 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { badgeLabel, badgeParts, badgeWords, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree, sidebarLine, unfoldedRows } from "./agentRow";
 import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow } from "./snapshot";
 
 function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -19,7 +20,7 @@ function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
     demand: "none",
     activity: "working",
     ...patch,
-  };
+  });
 }
 
 describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
@@ -29,7 +30,7 @@ describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
     expect(line.mode).toBe("request");
     expect(lineShownAtRest(line, false)).toBe(true);
     expect(lineTone(line, asking)).toBe("text-warning opacity-(--opacity-read-status)");
-    const unread: AgentRow = { ...asking, group: "needs_you", emphasized: true, unread: true };
+    const unread: AgentRow = legacyAgentRow({ ...asking, group: "needs_you", emphasized: true, unread: true });
     expect(lineTone(line, unread)).toBe("text-warning");
     const failed = row("e", { demand: "error", detail: "빌드 실패", group: "needs_you", emphasized: true });
     expect(lineTone(rowLine(failed)!, failed)).toBe("text-destructive");
@@ -39,7 +40,7 @@ describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
     const changed = row("w", { detail: "main 브랜치에 커밋하고 서버 시작", unread: true });
     expect(rowLine(changed)).toEqual({ text: "main 브랜치에 커밋하고 서버 시작", mode: "news" });
     expect(lineTone(rowLine(changed)!, changed)).toBe("text-foreground");
-    const read = rowLine({ ...changed, unread: false })!;
+    const read = rowLine(legacyAgentRow({ ...changed, unread: false }))!;
     expect(read.mode).toBe("quiet");
     expect(lineShownAtRest(read, false)).toBe(false);
     expect(lineShownAtRest(read, true)).toBe(true);

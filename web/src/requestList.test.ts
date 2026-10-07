@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The request view's rules (PRD overview-request-view): which rows it draws
 // and in what order, the Requests tile, the one-line request (D-42), and the
 // chips. The expected answers are the PRD's Behaviors and the operator
@@ -49,7 +50,7 @@ function block(verb: RequestVerb, extra: Partial<AgentRequest> = {}): AgentReque
 }
 
 function agent(pane: string, verb: RequestVerb | null, extra: Partial<AgentRow> = {}): AgentRow {
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -63,7 +64,7 @@ function agent(pane: string, verb: RequestVerb | null, extra: Partial<AgentRow> 
     last_activity: "0000000000001",
     ...(verb ? { request: block(verb) } : {}),
     ...extra,
-  };
+  });
 }
 
 function lens(row: AgentRow, task: Task | null = null): LensAgent {

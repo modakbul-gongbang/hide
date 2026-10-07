@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
@@ -20,7 +21,7 @@ function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff"
 }
 
 function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra };
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
 }
 
 describe("numbering (electron-digit-shortcuts-hints D-02)", () => {

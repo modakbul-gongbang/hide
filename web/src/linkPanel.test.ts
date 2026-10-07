@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { foldLines, requestTurn, resumeBlock, resumeCheckout, sameIssue, sessionLines, spanText, viewBlock } from "./linkPanel";
 import type { AgentRow, Checkout, Device, LinkedSession, Workspace } from "./snapshot";
@@ -7,7 +8,7 @@ function line(id: string, patch: Partial<LinkedSession> = {}): LinkedSession {
 }
 
 function agent(session: string, patch: Partial<AgentRow>): AgentRow {
-  return { pane_id: `pane-${session}`, session_id: session, group: "idle", demand: "none", ...patch } as AgentRow;
+  return legacyAgentRow({ pane_id: `pane-${session}`, session_id: session, group: "idle", demand: "none", ...patch }) as AgentRow;
 }
 
 function checkout(path: string, patch: Partial<Checkout> = {}): Checkout {

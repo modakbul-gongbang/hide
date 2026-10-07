@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { agentClosing, closeDecision, closeSheet, statusUnknownNotice, stopWorkCopy, stopWorkOf, subtreeOf, subtreeTitle } from "./close";
 import { subtreeSummaryWords } from "./components/subtree-list";
@@ -19,7 +20,7 @@ function pane(id: string, extra: Partial<PaneRow> = {}): PaneRow {
 }
 
 function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
-  return {
+  return legacyAgentRow({
     id: `agent:${paneId}`,
     pane_id: paneId,
     identity_label: "claude",
@@ -31,7 +32,7 @@ function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
     emphasized: false,
     unread: false,
     ...extra,
-  };
+  });
 }
 
 describe("closeDecision", () => {

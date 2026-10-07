@@ -31,10 +31,7 @@ const BUCKET_LABEL: Record<AgentBucket, MessageKey> = {
 const BUCKETS: readonly AgentBucket[] = ["turn", "working", "delegating", "resting"];
 
 export function bucketOf(agent: AgentRow): AgentBucket {
-  if (agent.group === "needs_you" || agent.group === "done") return "turn";
-  if (agent.waiting_on_descendants) return "delegating";
-  if (agent.group === "working") return "working";
-  return "resting";
+  return agent.state.bucket;
 }
 
 /** One agent the Overview draws, with where it works. */

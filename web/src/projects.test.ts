@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -53,7 +54,7 @@ describe("projectRows", () => {
   it("raises Needs You then Done above Pinned, in the core's order, and keeps them in the tree", () => {
     const withPanes = (id: string, panes: string[], extra: Partial<Workspace> = {}) =>
       workspace(id, { checkouts: [{ id: `${id}-main`, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout], ...extra });
-    const agent = (pane: string, group: string, extra: Partial<AgentRow> = {}) => ({ agent: { pane_id: pane, id: pane, group, ...extra } as AgentRow, device: null });
+    const agent = (pane: string, group: string, extra: Partial<AgentRow> = {}) => ({ agent: legacyAgentRow({ pane_id: pane, id: pane, group, ...extra }) as AgentRow, device: null });
     const listed = [
       agent("done-1", "done"),
       agent("ask-2", "needs_you", { lineage_collapsed: false }),
@@ -79,7 +80,7 @@ describe("projectRows", () => {
   it("draws the five latest Needs You and three latest Done, folding the rest until their group is opened", () => {
     const panes = [...Array.from({ length: 7 }, (_, i) => `ask-${i}`), ...Array.from({ length: 4 }, (_, i) => `done-${i}`)];
     const projects = [workspace("a", { checkouts: [{ id: "a-main", tabs: [{ id: "a-t", panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout] })];
-    const listed = panes.map((pane) => ({ agent: { pane_id: pane, id: pane, group: pane.startsWith("ask") ? "needs_you" : "done" } as AgentRow, device: null }));
+    const listed = panes.map((pane) => ({ agent: legacyAgentRow({ pane_id: pane, id: pane, group: pane.startsWith("ask") ? "needs_you" : "done" }) as AgentRow, device: null }));
     const sections = (open: string[]) =>
       projectRows(projects, [], listed, null, open).flatMap((row) =>
         row.kind === "raised" ? [{ group: row.group, drawn: row.agents.map(({ agent }) => agent.pane_id), more: row.more.map(({ agent }) => agent.pane_id), expanded: row.expanded }] : [],

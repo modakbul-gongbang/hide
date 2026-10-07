@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { agentPlaces, agentSections, allAgents, allProjectsCount, boardProjects, deviceListedAgents, mainSections } from "./navigation";
 import { projectRows } from "./projects";
@@ -5,7 +6,7 @@ import { contextAllWorkspaces, contextHome, contextWorkspaces, projectsOf } from
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
 function agent(paneId: string, group: string): AgentRow {
-  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" } as AgentRow;
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
 }
 
 function workspace(id: string, deviceId: string, extra: Partial<Workspace> = {}, panes: string[] = []): Workspace {

@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Agents graph (PRD agents-graph-view): columns, bands, rows, folds,
 // filters and the lines' routes. The expected answers are the PRD's
 // Behaviors read against small fixtures; a line that runs through a box is
@@ -95,7 +96,7 @@ function workspace(checkouts: Checkout[], id = "project", tasks: Task[] = []): W
 let clock = 0;
 function agent(pane: string, extra: Partial<AgentRow> = {}): AgentRow {
   clock += 1;
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -110,7 +111,7 @@ function agent(pane: string, extra: Partial<AgentRow> = {}): AgentRow {
     activity: "stopped",
     last_activity: String(1000 + clock).padStart(13, "0"),
     ...extra,
-  };
+  });
 }
 
 const WORKING: Partial<AgentRow> = { group: "working", activity: "working", symbol: "●" };

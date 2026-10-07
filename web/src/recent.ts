@@ -354,7 +354,7 @@ export type CycleItem = {
   /** The device's name when the row is not on the device in front, drawn as a chip (PRD home-device-rail D-16); null otherwise. */
   chip: DeviceChipView | null;
   /** The one agent a tab holds, drawn with its status mark and its own mark. */
-  agent: Pick<AgentRow, "agent_kind" | "symbol" | "status_code" | "demand" | "activity" | "emphasized" | "waiting_on_descendants"> | null;
+  agent: import("./snapshot").TabAgent | null;
   target: CycleTarget;
 };
 

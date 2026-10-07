@@ -12,12 +12,8 @@ export type LiveState = { kind: "working" | "question" | "idle"; agent: AgentRow
 
 export type SessionLine = { line: LinkedSession; live: LiveState | null };
 
-const ASKING = new Set(["question", "approval", "error"]);
-
 function liveState(agent: AgentRow): LiveState {
-  if (ASKING.has(agent.demand ?? "none")) return { kind: "question", agent };
-  if (agent.group === "working" || agent.waiting_on_descendants === true) return { kind: "working", agent };
-  return { kind: "idle", agent };
+  return { kind: agent.state.link, agent };
 }
 
 const LIVE_ORDER: Record<LiveState["kind"], number> = { question: 0, working: 1, idle: 2 };

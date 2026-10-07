@@ -228,6 +228,7 @@ pub(crate) fn apply<'a>(
             }),
             pull_requests,
         });
+        row.state = crate::agent_state::row_state(row);
     }
     verbs_changed
 }

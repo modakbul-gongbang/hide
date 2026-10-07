@@ -25,10 +25,7 @@ type CheckoutFact = {
 };
 
 function attention(agent: AgentRow): number {
-  if (agent.group === "needs_you") return agent.demand === "error" ? 0 : 1;
-  if (agent.group === "done") return 2;
-  if (agent.group === "working") return 3;
-  return 4;
+  return agent.state.attention_rank;
 }
 
 function mark(counts: DescendantCounts, agent: AgentRow) {

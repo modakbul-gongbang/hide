@@ -572,3 +572,16 @@ No GitHub mutation is allowed by this path.
 The existing purpose mirror worker clears a branch issue setting when an observed worktree path is removed; a branch switch, detached HEAD, or unregistered project is not a removed worktree.
 While a worktree stays detached, the worker retains its last known branch for cleanup if that path is later removed.
 A rejected cleanup enqueue is retained for the next catalog synchronization.
+
+## Row presentation and phone notifications
+
+`agent_state/turn.rs::row_state` supplies each row’s attention, title emphasis, line mode, semantic tones, graph bucket and priority, search tone, close state and request timing.
+The shell maps semantic tones to its existing tokens and translates status words; a tab carries only the mark tone it needs.
+A waiting root intentionally has a working row mark and a subdued chip and search result.
+`row_tests::read_question_keeps_its_request_line_and_hue_without_operator_attention` and `row_tests::waiting_root_keeps_distinct_row_chip_and_graph_decisions` pin these surface differences.
+
+`agent_state/tally.rs::phone` projects the phone’s groups, roots, places and safe row values from the published snapshot.
+`agent_state/turn.rs::push` owns the effective notification state and transition ledger; hided keeps pairing, push encryption, transport and delivery policy.
+A read root question clears the server’s effective push state, while the phone’s existing open-page rule keeps its notification while the demand remains.
+The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
+The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.

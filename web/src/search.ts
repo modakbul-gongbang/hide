@@ -170,18 +170,8 @@ function deviceChip(device: Device, front: string): SearchEntry["chip"] {
 }
 
 /** An agent's state as the sidebar colours it (`chipTone`'s rules, as tones). */
-function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" | "status_code">, t: TFunction<"translation">): EntryStatus {
-  const tone: Tone =
-    agent.demand === "error"
-      ? "failed"
-      : agent.demand === "question" || agent.demand === "approval"
-        ? "attention"
-        : agent.activity === "working"
-          ? "working"
-          : agent.activity === "stopped" && agent.emphasized
-            ? "done"
-            : "muted";
-  return { tone, label: statusText(t, agent.status_code) };
+function agentStatus(agent: Pick<AgentRow, "state" | "status_code">, t: TFunction<"translation">): EntryStatus {
+  return { tone: agent.state.search_tone, label: statusText(t, agent.status_code) };
 }
 
 /**

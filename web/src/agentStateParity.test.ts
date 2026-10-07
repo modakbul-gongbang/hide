@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // Frozen surface values before consolidating status ownership in the core.
 // A delegated question and a read question intentionally count differently
 // in the Agents headings, physical group totals and the Requests tile.
@@ -6,18 +7,18 @@ import { initializeInterfaceI18n } from "./i18n/instance";
 import { agentTree, groupCounts } from "./navigation";
 import { agentsTile, scopeAgents } from "./overviewLens";
 import { requestGroups, requestRows, requestsTile } from "./requestList";
-import type { AgentRow, Workspace } from "./snapshot";
+import type { AgentRow, RequestVerb, Workspace } from "./snapshot";
 
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const ready = { state: "ready" } as const;
 
 it("preserves physical counts, root headings and scope-dependent request exclusion independently", () => {
-  const row = (pane: string, group: string, verb: string, extra = {}) => ({
+  const row = (pane: string, group: string, verb: RequestVerb, extra = {}) => (legacyAgentRow({
     id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude",
     symbol: "○", group, demand: "none", activity: "stopped", unread: false,
     emphasized: false, status_code: "idle", changed_at_unix_ms: 10,
-    request: { verb, verb_since_unix_ms: 10 }, ...extra,
-  }) as AgentRow;
+    request: { verb, verb_since_unix_ms: 10, request: null, later_by: null, reply: null, pull_requests: [] }, ...extra,
+  })) as AgentRow;
   const agents = [
     row("root", "working", "waiting", { waiting_on_descendants: true, lineage_child_pane_ids: ["child"], close_descendant_pane_ids: ["child"] }),
     row("child", "seen", "answer", { delegated: true, demand: "question", lineage_parent_pane_id: "root" }),

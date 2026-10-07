@@ -1,3 +1,4 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -35,8 +36,8 @@ async function pathRow() {
   const root = createRoot(container);
   const checkout = { id: "main", workspace_id: "project", path: "/checkout", exists: true, label: "main", branch: "main", tabs: [] } as unknown as Checkout;
   const project: Workspace = { id: "project", label: "Studio", path: "/checkout", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
-  const agent: AgentRow = { id: "agent", pane_id: "pane", identity_label: "결과물", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
-    request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: "[report](./report.md) https://example.test/result", cut: false, at_unix_ms: 0 }, pull_requests: [] } };
+  const agent: AgentRow = legacyAgentRow({ id: "agent", pane_id: "pane", identity_label: "결과물", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
+    request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: "[report](./report.md) https://example.test/result", cut: false, at_unix_ms: 0 }, pull_requests: [] } });
   const row: RequestRow = { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
   const events: Parameters<DispatchFn>[0][] = [];
   const actions = createActions((event) => { events.push(event); return true; });
@@ -139,8 +140,8 @@ it("keeps twenty unchanged rows asleep, but renders changed facts and uses curre
   const checkout = { id: "main", label: "main", branch: "main", tabs: [] } as unknown as Checkout;
   const project: Workspace = { id: "project", label: "Studio", path: "/fixture", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
   const rows: RequestRow[] = Array.from({ length: 20 }, (_, index) => {
-    const agent: AgentRow = { id: `a${index}`, pane_id: `a${index}`, identity_label: `결과물 ${index}`, agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
-      request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: `진행 ${index}`, cut: false, at_unix_ms: 0 }, pull_requests: [] } };
+    const agent: AgentRow = legacyAgentRow({ id: `a${index}`, pane_id: `a${index}`, identity_label: `결과물 ${index}`, agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
+      request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: `진행 ${index}`, cut: false, at_unix_ms: 0 }, pull_requests: [] } });
     return { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
   });
   const actions = createActions(() => true);

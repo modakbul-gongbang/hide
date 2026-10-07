@@ -27,7 +27,7 @@ describe("tab composition", () => {
     const checkout = {
       id: "c1", next_tab_label: "Tab 2",
       strip: [{ id: "herdr:t1", kind: "herdr", source_id: "t1", label: "작업 제목", preview: false }],
-      tabs: [{ id: "t1", agent: { agent_kind: "claude", symbol: "!", demand: "approval", activity: "stopped", emphasized: true, waiting_on_descendants: false, status_code: "approval" } }],
+      tabs: [{ id: "t1", agent: { state: { mark_tone: { kind: "warning", read: false } }, agent_kind: "claude", symbol: "!", demand: "approval", activity: "stopped", emphasized: true, waiting_on_descendants: false, status_code: "approval" } }],
     } as unknown as import("./snapshot").Checkout;
     const markup = renderToStaticMarkup(createElement(TooltipProvider, { children: createElement(AgentTab, { number: 2, checkout, entry: checkout.strip[0]!, interaction: { selected: true, fit: "titled", areaActive: true, dragging: false, press: () => {}, select: () => {} }, renaming: false, onCancelRename: () => {}, actions: {} as import("./actions").Actions }) }));
     const mark = markup.indexOf('data-tab-status="approval"');

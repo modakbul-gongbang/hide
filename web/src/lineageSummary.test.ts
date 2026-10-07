@@ -1,9 +1,10 @@
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { foldedLineage } from "./lineageSummary";
 import type { AgentRow, Workspace } from "./snapshot";
 
 function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -20,7 +21,7 @@ function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
     device_id: "local",
     device_label: "This Mac",
     ...patch,
-  };
+  });
 }
 
 function workspace(device: string, rows: { id: string; branch: string; panes: string[]; pr?: number }[]): Workspace {

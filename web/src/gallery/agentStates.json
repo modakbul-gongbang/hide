@@ -1,0 +1,441 @@
+{
+  "panes": {
+    "tn1": 0,
+    "a1": 1,
+    "a1c1": 2,
+    "a1c2": 3,
+    "a2": 4,
+    "a2c1": 5,
+    "a2c2": 6,
+    "a3": 7,
+    "q1": 7,
+    "q2": 8,
+    "e1": 9,
+    "h1": 7,
+    "h2": 0,
+    "remote:mini:pane:1": 7,
+    "remote:mini:pane:2": 9,
+    "remote:mini:busy:0": 7,
+    "remote:mini:busy:1": 7,
+    "remote:mini:busy:2": 7,
+    "remote:mini:busy:3": 7,
+    "remote:mini:busy:4": 7,
+    "remote:mini:busy:5": 7,
+    "remote:mini:busy:6": 7,
+    "remote:mini:busy:7": 7,
+    "remote:mini:busy:8": 7,
+    "remote:mini:busy:9": 7,
+    "remote:mini:busy:10": 7,
+    "remote:mini:done:1": 8,
+    "remote:mini:working:2": 9,
+    "p-parent": 10,
+    "p-child": 11,
+    "p-dag": 12
+  },
+  "presets": [
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "edge": "rest",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "idle",
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": true,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": false,
+      "asking": false,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": "feat/ui",
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": false,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "edge": "rest",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "idle",
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": true,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "delegating",
+      "attention_rank": 3,
+      "graph_rank": 2,
+      "edge": "wait",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": false,
+      "asking": true,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "warning",
+        "read": true
+      },
+      "mark_tone": {
+        "kind": "warning",
+        "read": true
+      },
+      "line": {
+        "text": "",
+        "mode": "request",
+        "tone": {
+          "kind": "warning",
+          "read": true
+        }
+      },
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 0,
+      "edge": "ask",
+      "search_tone": "attention",
+      "subtree": "waiting",
+      "link": "question",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": false,
+      "asking": false,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": true,
+      "needs_you": true,
+      "root": true,
+      "title_emphasized": true,
+      "selection_emphasizes_title": true,
+      "asking": true,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "warning",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "warning",
+        "read": false
+      },
+      "line": {
+        "text": "",
+        "mode": "request",
+        "tone": {
+          "kind": "warning",
+          "read": false
+        }
+      },
+      "branch_badge": null,
+      "bucket": "turn",
+      "attention_rank": 1,
+      "graph_rank": 0,
+      "edge": "ask",
+      "search_tone": "attention",
+      "subtree": "waiting",
+      "link": "question",
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": true,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "success",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "success",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "turn",
+      "attention_rank": 2,
+      "graph_rank": 0,
+      "edge": "rest",
+      "search_tone": "done",
+      "subtree": "quiet",
+      "link": "idle",
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": true,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "success",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "success",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "turn",
+      "attention_rank": 2,
+      "graph_rank": 0,
+      "edge": "rest",
+      "search_tone": "done",
+      "subtree": "quiet",
+      "link": "idle",
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    }
+  ]
+}

@@ -51,6 +51,9 @@ function agent(group: AgentGroup["group"], pane: string, root = pane, demand = "
     line: null,
     status_code: "unknown",
     demand,
+    emphasized: group === "needs_you" || group === "done",
+    // Frozen pre-refactor phone values, including the read-question difference.
+    holds_notification: group === "needs_you" || group === "done" || ["question", "approval", "error"].includes(demand),
   };
 }
 

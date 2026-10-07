@@ -9,7 +9,27 @@ import type { ProviderUsage } from "./generated/hided-ws";
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "attached" | "sleeping" | "waking" | "sleep_failed";
 
+export type StatusTone = { kind: "error" | "warning" | "working" | "success" | "subtle" | "news"; read: boolean };
+
+/** Agent decisions are projected by herdr-core::agent_state, never reconstructed by the shell. */
+export type AgentState = {
+  attention: boolean; needs_you: boolean; root: boolean;
+  title_emphasized: boolean; selection_emphasizes_title: boolean;
+  asking: boolean; working: boolean; waits_on_children: boolean;
+  chip_tone: StatusTone; mark_tone: StatusTone;
+  line: { text: string; mode: "request" | "news" | "quiet"; tone: StatusTone } | null;
+  branch_badge: string | null;
+  bucket: "turn" | "working" | "delegating" | "resting";
+  attention_rank: number; graph_rank: 0 | 1 | 2 | 3;
+  edge: "ask" | "flow" | "wait" | "rest";
+  search_tone: "failed" | "attention" | "working" | "done" | "muted";
+  subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
+  link: "working" | "question" | "idle";
+  verb: RequestVerb; request_todo: boolean; request_since: number | null;
+};
+
 export type AgentRow = {
+  state: AgentState;
   id: string;
   pane_id: string;
   identity_label: string;
@@ -128,6 +148,7 @@ export type DescendantCounts = { error: number; approval: number; question: numb
 
 /** One agent in a line of them: a pane header chip or a lineage step's sibling (`AgentChipSnapshot`). */
 export type AgentChip = {
+  tone: StatusTone;
   pane_id: string;
   label: string;
   checkout_label?: string | null;
@@ -421,7 +442,7 @@ export type PaneRow = {
   sleep_action?: AgentSleepAction;
 };
 
-export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_code">;
+export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
 
 export type Tab = {
   agent?: TabAgent | null;

@@ -41,7 +41,7 @@ export type RequestGroup = { verb: RequestVerb; rows: RequestRow[] };
 
 /** A row the core has not laid a block on yet reads from its group: working while it works, else resting. */
 function verbOf(agent: AgentRow): RequestVerb {
-  return agent.request?.verb ?? (agent.group === "working" ? "working" : "idle");
+  return agent.state.verb;
 }
 
 /**
@@ -84,8 +84,7 @@ export function requestGroups(rows: readonly RequestRow[]): RequestGroup[] {
 
 /** When a row's time counts from: the verb's start in a to-do group, else the last activity (D-40, B50). */
 export function rowSince(row: RequestRow): number | null {
-  if (TODO_VERBS.includes(row.verb)) return row.lens.agent.request?.verb_since_unix_ms ?? null;
-  return row.lens.agent.changed_at_unix_ms;
+  return row.lens.agent.state.request_since;
 }
 
 /**

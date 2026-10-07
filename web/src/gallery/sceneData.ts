@@ -7,6 +7,7 @@
 // the way the core applies the same events, so a chevron really folds.
 
 import type { AgentRow, Checkout, MarkCounts, PullRequest, SnapshotRest, Workspace } from "../snapshot";
+import { galleryAgentState } from "./agentStates";
 
 /** Which titles the scene carries: the Pen frame's, or long Korean ones for truncation. */
 export type SceneContent = "reference" | "long";
@@ -74,7 +75,9 @@ const UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 
 
 function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
   const unit = UNIT_MS[elapsed.slice(-1)] ?? 0;
+  const changed = Date.now() - Number(elapsed.slice(0, -1)) * unit;
   return {
+    state: galleryAgentState(spec.pane_id, spec.detail, changed),
     id: spec.pane_id,
     identity_label: spec.pane_id,
     agent_kind: "claude",
@@ -83,7 +86,7 @@ function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
     unread: false,
     demand: "none",
     activity: "idle",
-    changed_at_unix_ms: Date.now() - Number(elapsed.slice(0, -1)) * unit,
+    changed_at_unix_ms: changed,
     ...spec,
   };
 }

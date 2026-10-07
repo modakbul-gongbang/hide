@@ -571,7 +571,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
               <StatusMark symbol={child.symbol} className={markTone(child)} />
               <AgentMark kind={child.agent_kind} />
               <span className="min-w-0 max-w-[40%] shrink-0 truncate text-foreground">{child.identity_label}</span>
-              <span className="shrink-0 text-subtle-foreground">{t(VERB_LABEL[child.request?.verb ?? (child.group === "working" ? "working" : "idle")])}</span>
+              <span className="shrink-0 text-subtle-foreground">{t(VERB_LABEL[child.state.verb])}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{child.request?.line ?? child.request?.reply?.text.split("\n").at(-1) ?? ""}</span>
               <button type="button" data-request-focus="chip" data-request-child-open={child.pane_id} className="shrink-0 rounded-xs text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => handlers.openAgent(child.pane_id)}>
                 {t("common.open")}

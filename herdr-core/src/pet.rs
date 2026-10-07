@@ -147,6 +147,7 @@ mod tests {
             other => (other, "none"),
         };
         SidebarAgentSnapshot {
+            state: Default::default(),
             id: pane_id.to_owned(),
             herdr_name: None,
             pane_id: pane_id.to_owned(),

@@ -940,6 +940,7 @@ pub struct DeviceTestStageSnapshot {
 /// rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
+    pub state: crate::agent_state::RowState,
     pub id: String,
     /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
     /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
@@ -1650,6 +1651,7 @@ impl AgentStatusCode {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabAgentSnapshot {
+    pub state: crate::agent_state::TabState,
     pub agent_kind: String,
     pub symbol: String,
     pub demand: String,
@@ -1662,6 +1664,9 @@ pub struct TabAgentSnapshot {
 impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
     fn from(agent: &SidebarAgentSnapshot) -> Self {
         Self {
+            state: crate::agent_state::TabState {
+                mark_tone: agent.state.mark_tone,
+            },
             agent_kind: agent.agent_kind.clone(),
             symbol: agent.symbol.clone(),
             demand: agent.demand.clone(),
@@ -1898,6 +1903,7 @@ pub struct PaneChildrenSnapshot {
 /// sibling, or an Overview worktree row's agent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AgentChipSnapshot {
+    pub tone: crate::agent_state::Tone,
     pub pane_id: String,
     /// The short name the chip shows beside its mark.
     pub label: String,
