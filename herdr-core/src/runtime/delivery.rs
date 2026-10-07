@@ -127,11 +127,12 @@ impl Runtime {
                 .map(|old| old.status_changed_at_unix_ms)
                 .or_else(|| persisted.map(|watch| watch.status_changed_at_unix_ms))
                 .unwrap_or(now);
-            let session_kind = match kind {
-                "codex" => Some(hide_session::Agent::Codex),
-                "claude" | "claude-code" | "claude_code" => Some(hide_session::Agent::Claude),
-                _ => None,
-            };
+            // The same reading of the kind the bell target uses, so a pane
+            // the bell reaches is never one whose session read is skipped.
+            let session_kind = crate::agent_hooks::runtime_of(kind).map(|runtime| match runtime {
+                hide_agent_hooks::runtime::AgentRuntime::Codex => hide_session::Agent::Codex,
+                hide_agent_hooks::runtime::AgentRuntime::ClaudeCode => hide_session::Agent::Claude,
+            });
             let turn = match session_kind {
                 Some(kind) if kind.reports_turns() => labels
                     .and_then(|labels| labels.waiting(agent))
@@ -1097,6 +1098,11 @@ pub(crate) mod tests {
         assert_eq!(
             observe(&mut guard, "claude", 2, "recipient-native", None),
             Turn::NotReported
+        );
+        assert_eq!(
+            observe(&mut guard, " Codex", 2, "recipient-native", Some(&overlay)),
+            Turn::Unread,
+            "the kind as the bell target reads it"
         );
     }
 
