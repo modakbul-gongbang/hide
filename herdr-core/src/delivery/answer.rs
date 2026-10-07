@@ -25,7 +25,6 @@ pub struct AgentView {
     pub pane: String,
     pub parent: Option<String>,
     /// The spawner, independently of responsibility; null for ordinary roots.
-    #[schemars(required)]
     pub origin: Option<String>,
     pub project: Option<String>,
     pub runtime: Runtime,
@@ -145,6 +144,7 @@ mod tests {
         let agent = schemas["agent"]["required"].as_array().unwrap();
         for field in [
             "parent",
+            "origin",
             "project",
             "watch",
             "runtime",
@@ -169,5 +169,54 @@ mod tests {
             schemas["agent"]["definitions"]["Runtime"]["enum"],
             json!(["running", "ended"])
         );
+    }
+
+    #[test]
+    fn origin_is_present_and_nullable_in_single_and_list_answers() {
+        let schemas = answer_schemas();
+        for schema in [
+            &schemas["agent"],
+            &schemas["agent_list"]["definitions"]["AgentView"],
+        ] {
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("origin"))
+            );
+            assert_eq!(
+                schema["properties"]["origin"]["type"],
+                json!(["string", "null"])
+            );
+        }
+        for (parent, origin) in [
+            (None, None),
+            (Some("agent-1"), Some("agent-1")),
+            (None, Some("agent-1")),
+        ] {
+            let agent = AgentView {
+                id: "agent-2".into(),
+                name: "worker".into(),
+                machine: "local".into(),
+                host_scope: "fixture".into(),
+                session: "native-worker".into(),
+                instance: "terminal-2".into(),
+                pane: "worker".into(),
+                parent: parent.map(str::to_owned),
+                origin: origin.map(str::to_owned),
+                project: None,
+                runtime: Runtime::Running,
+                connection: Connection::Connected,
+                registered: true,
+                watch: None,
+            };
+            let single = serde_json::to_value(&agent).unwrap();
+            let list = serde_json::to_value(AgentList { items: vec![agent] }).unwrap();
+            for answer in [&single, &list["items"][0]] {
+                assert!(answer.as_object().unwrap().contains_key("origin"));
+                assert_eq!(answer["origin"], json!(origin));
+                assert_eq!(answer["parent"], json!(parent));
+            }
+        }
     }
 }

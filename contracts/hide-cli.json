@@ -142,7 +142,10 @@
                 },
                 "origin": {
                     "description": "The spawner, independently of responsibility; null for ordinary roots.",
-                    "type": "string"
+                    "type": [
+                        "string",
+                        "null"
+                    ]
                 },
                 "pane": {
                     "type": "string"
@@ -255,7 +258,10 @@
                         },
                         "origin": {
                             "description": "The spawner, independently of responsibility; null for ordinary roots.",
-                            "type": "string"
+                            "type": [
+                                "string",
+                                "null"
+                            ]
                         },
                         "pane": {
                             "type": "string"
@@ -1649,7 +1655,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:a6180be5448e4469bf4b179244df02a9120daa568d1b0b53edc1094e4d2bbfda",
+    "digest": "sha256:8b566393194954c506287a04404d97f99ff9730cc9fd8976c091fd6431b5a96a",
     "envelopes": {
         "agent": {
             "answer": "value",
