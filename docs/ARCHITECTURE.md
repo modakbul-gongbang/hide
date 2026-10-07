@@ -604,7 +604,8 @@ The content constructor bounds text to 8 KiB, choices to eight and each choice t
 A device report with an unknown adapter id contributes no Settings row rather than a row with an empty feature table.
 The core logs the id and stable device id once per exact pair in a runtime, keeping at most 128 pairs whose fields are at most 512 bytes each, without eviction or relogging.
 Exhausting that resource or receiving an oversized identity is a reported failure domain: the row stays omitted, and one limit diagnostic identifies the first triggering device and agent with UTF-8-safe prefixes of at most 128 bytes, original byte lengths and truncation flags.
-No additional identity is retained or individually logged after that failure; once-per-pair identity logging is guaranteed only inside the admitted domain.
+An identity outside those bounds is never retained or individually logged, and the limit diagnostic is emitted only once.
+After an oversized identity is rejected, later admissible pairs remain eligible while capacity remains; once-per-pair identity logging is guaranteed only inside the admitted domain.
 This adds bounded work when a kit report arrives, no new polling, notifier fan-out, process or persistent file.
 The adapter lookup on projection and hook paths performs only a scan of the fixed static rows and their aliases.
 
