@@ -405,6 +405,7 @@ pub fn handle_with_progress(
             worktrees::ignored_repository(&absolute(&worktree)?)
                 .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
         ),
+        Call::PathFacts { paths } => to_value(crate::catalog::path_facts(&paths)?),
         Call::RealPaths { paths } => {
             let paths = paths
                 .iter()

@@ -13,6 +13,7 @@
 pub mod ai;
 pub mod attachments;
 pub mod bytes;
+pub mod catalog;
 pub mod cleanup;
 pub mod clone;
 pub mod disk;

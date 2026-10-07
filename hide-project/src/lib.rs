@@ -151,6 +151,8 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
 
 pub mod git {
     use super::ResolveError;
+    use serde::{Deserialize, Serialize};
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::io::{BufRead, BufReader, Read};
     use std::path::{Path, PathBuf};
@@ -238,6 +240,24 @@ pub mod git {
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
             Ok(parse_branch_value(&text, branch, "issue"))
         }
+
+        /// Every branch's description and issue in the repository's config,
+        /// each read as [`Repository::branch_description`] and
+        /// [`Repository::branch_issue`] read one branch; a branch with
+        /// neither is not listed.
+        pub fn branch_notes(&self) -> Result<BTreeMap<String, BranchNote>, String> {
+            let path = self.common_dir.join("config");
+            let text = fs::read_to_string(&path)
+                .map_err(|error| format!("repository config could not be read: {error}"))?;
+            Ok(parse_branch_notes(&text))
+        }
+    }
+
+    /// What a repository's config says of one branch.
+    #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+    pub struct BranchNote {
+        pub description: Option<String>,
+        pub issue: Option<String>,
     }
 
     pub fn discover(path: &Path) -> Option<Repository> {
@@ -394,6 +414,52 @@ pub mod git {
             return (!first.is_empty()).then(|| first.to_owned());
         }
         None
+    }
+
+    /// Each branch's first `description` and first `issue`, in the order
+    /// [`parse_branch_value`] would find them.
+    fn parse_branch_notes(config: &str) -> BTreeMap<String, BranchNote> {
+        let mut notes = BTreeMap::<String, BranchNote>::new();
+        let mut seen = BTreeSet::<(String, bool)>::new();
+        let mut branch = None;
+        for raw_line in config.lines() {
+            let line = raw_line.trim();
+            if line.starts_with('[') {
+                branch = parse_branch_section(line);
+                continue;
+            }
+            let Some(branch) = branch.as_ref() else {
+                continue;
+            };
+            if line.is_empty() || line.starts_with(['#', ';']) {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            let description = if key.eq_ignore_ascii_case("description") {
+                true
+            } else if key.eq_ignore_ascii_case("issue") {
+                false
+            } else {
+                continue;
+            };
+            if !seen.insert((branch.clone(), description)) {
+                continue;
+            }
+            let value = parse_config_value(value.trim());
+            let first = value.lines().next().unwrap_or_default().trim_end();
+            let value = (!first.is_empty()).then(|| first.to_owned());
+            let note = notes.entry(branch.clone()).or_default();
+            if description {
+                note.description = value;
+            } else {
+                note.issue = value;
+            }
+        }
+        notes.retain(|_, note| note.description.is_some() || note.issue.is_some());
+        notes
     }
 
     fn parse_branch_section(line: &str) -> Option<String> {
@@ -596,6 +662,35 @@ pub mod git {
                 parse_branch_value(config, "topic", "issue").as_deref(),
                 Some("owner/repository#42")
             );
+        }
+
+        /// One pass over the config reads every branch as the one-branch
+        /// readers do: the first value of each key wins, an empty first
+        /// value is no value, and another section's keys are not a branch's.
+        #[test]
+        fn branch_notes_read_every_branch_as_the_one_branch_readers_do() {
+            let config = concat!(
+                "[core]\n\tdescription = not a branch\n",
+                "[branch \"topic\"]\n\tissue = \"owner/repository#42\"\n\tdescription = purpose\n",
+                "[branch \"empty\"]\n\tdescription =\n\tdescription = later\n",
+                "[branch \"topic\"]\n\tdescription = second\n",
+                "[branch \"plain\"]\n\tmerge = refs/heads/plain\n",
+            );
+            let notes = parse_branch_notes(config);
+            for branch in ["topic", "empty", "plain"] {
+                let note = notes.get(branch).cloned().unwrap_or_default();
+                assert_eq!(
+                    note.description,
+                    parse_branch_description(config, branch),
+                    "{branch}"
+                );
+                assert_eq!(
+                    note.issue,
+                    parse_branch_value(config, branch, "issue"),
+                    "{branch}"
+                );
+            }
+            assert_eq!(notes.keys().collect::<Vec<_>>(), ["topic"]);
         }
     }
 }

@@ -228,6 +228,11 @@ pub enum Call {
     IgnoredRepository {
         worktree: String,
     },
+    /// What each path is on this node, as the core's catalog reads it
+    /// (`catalog::PathFacts`), at most `catalog::PATH_FACTS_LIMIT` paths.
+    PathFacts {
+        paths: Vec<String>,
+    },
     /// Each path with its links and aliases resolved (`cleanup::PathState`).
     RealPaths {
         paths: Vec<String>,
