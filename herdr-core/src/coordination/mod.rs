@@ -1183,7 +1183,10 @@ mod tests {
                 let child_id = bound["child"].as_str().unwrap().to_owned();
                 let complete = Mutation::Complete { id: spawn };
                 let receipt = apply(&mut ledger, &caller, &complete, 4).unwrap();
-                assert_eq!(receipt["auto_watch_id"].is_null(), mode == SpawnMode::Handoff);
+                assert_eq!(
+                    receipt["auto_watch_id"].is_null(),
+                    mode == SpawnMode::Handoff
+                );
                 if mode == SpawnMode::Handoff {
                     watch::start(&mut ledger, &caller, &child_actor, 5).unwrap();
                 }
@@ -1206,7 +1209,10 @@ mod tests {
                 let mut restored: Ledger =
                     serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
                 let before = restored.clone();
-                assert_eq!(apply(&mut restored, &caller, &complete, 6).unwrap(), receipt);
+                assert_eq!(
+                    apply(&mut restored, &caller, &complete, 6).unwrap(),
+                    receipt
+                );
                 assert_eq!(restored, before);
 
                 // Losing the spawner's pane ends that registration alone;
