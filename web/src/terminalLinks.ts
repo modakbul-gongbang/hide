@@ -219,21 +219,24 @@ type Interpretation = { text: string; lead: number; trail: number; target: LinkT
 // A base particle may take one of the four listed secondary particles.
 const GRAMMAR = /[)\]}>"'`](?:에서|에게|으로|부터|까지|에|께|로|와|과|을|를|은|는|이|가|의|도|만)(?:도|만|는|은)?$/u;
 
+/** The text up to and including the closing mark a Korean particle follows, or null when none does. */
+function withoutParticle(text: string): string | null {
+  const match = GRAMMAR.exec(text);
+  return match ? text.slice(0, match.index + 1) : null;
+}
+
 /** Six finite stages preserve literal punctuation and location before interpreting either. */
 function interpretations(token: string): Interpretation[] {
   const symbols = strip(token);
   const ordinary = parseTarget(symbols.text);
   // URI schemes follow the existing parser; never probe a URL as a local path.
   if (ordinary?.kind === "url" || uriTarget(symbols.text) !== undefined) {
-    return ordinary ? [{ ...symbols, target: ordinary, original: true }] : [];
+    const parsed = parseToken(token);
+    return parsed ? [{ ...parsed, original: true }] : [];
   }
   // Grammar-only removal preserves both leading and closing punctuation.
   // Apply it separately to raw and symbol-only spelling, never one character
   // at a time, so each literal stage can beat a shorter interpretation.
-  const withoutParticle = (text: string) => {
-    const match = GRAMMAR.exec(text);
-    return match ? text.slice(0, match.index + 1) : null;
-  };
   // Existing outer sentence punctuation is context, but raw leading symbols
   // remain part of this grammar-only literal stage.
   const rawGrammarText = withoutParticle(token.slice(0, token.length - symbols.trail));
@@ -265,10 +268,18 @@ function interpretations(token: string): Interpretation[] {
 
 /** What a whitespace-free token links to, with how much of it the link leaves out at either end. */
 export function parseToken(token: string): { text: string; lead: number; trail: number; target: LinkTarget } | null {
-  const { text, lead, trail } = strip(token);
-  if (text.length === 0) return null;
-  const target = parseTarget(text);
-  return target ? { text, lead, trail, target } : null;
+  const symbols = strip(token);
+  if (symbols.text.length === 0) return null;
+  const target = parseTarget(symbols.text);
+  if (target?.kind !== "url") return target ? { ...symbols, target } : null;
+  // A URL cannot be checked the way a path is, so a particle after its
+  // closing mark is always prose: `(https://x/pull/682)이` links the address.
+  const prose = withoutParticle(symbols.text);
+  if (prose === null) return { ...symbols, target };
+  const bare = strip(prose);
+  const url = parseTarget(bare.text);
+  const lead = symbols.lead + bare.lead;
+  return url ? { text: bare.text, lead, trail: token.length - lead - bare.text.length, target: url } : null;
 }
 
 function parseTarget(text: string): LinkTarget | null {
