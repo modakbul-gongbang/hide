@@ -881,7 +881,7 @@ const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
 /// What a refused delivery or agent command asks of its caller.
 fn delivery_next_action(code: &str) -> &'static str {
     if code == "agent_pane_required" {
-        "Run the command inside the agent's own pane; an agent on Codex's shared daemon needs a session started with --no-daemon"
+        "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
     } else {
         "Check the current agent pane and retry the same intent"
     }
@@ -3175,6 +3175,19 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A caller refused for lacking an agent pane is told where to run the
+    /// command; every other delivery refusal keeps the retry advice.
+    #[test]
+    fn a_missing_agent_pane_names_where_to_run_the_command() {
+        let next = delivery_next_action("agent_pane_required");
+        assert!(next.contains("pane where the agent is running"), "{next}");
+        assert!(next.contains("--no-daemon"), "{next}");
+        assert_eq!(
+            delivery_next_action("caller_identity_conflict"),
+            "Check the current agent pane and retry the same intent"
+        );
+    }
 
     /// A device range is accepted only as the range asked for: same offset
     /// and file size, never longer, and short only where the read ends

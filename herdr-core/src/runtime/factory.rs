@@ -46,8 +46,8 @@ impl Runtime {
             crate::workspace_control::Caller::Pane(pane) => Some(pane.to_owned()),
             crate::workspace_control::Caller::Checkout { .. } => None,
         };
-        // A pane caller whose hint names another pane may be that pane's
-        // agent on a borrowed credential, so the hint can make it a worker.
+        // A hint naming another pane than a pane caller's own can only make
+        // the caller a worker, never an operator.
         let claimed = pane
             .as_deref()
             .and(hint)
@@ -408,8 +408,8 @@ mod tests {
         let (runtime, actor, _, _) = crate::runtime::delivery::tests::fixture(root.path());
         let context = crate::runtime::delivery::tests::authority(&actor).context;
         let mut runtime = runtime.lock().unwrap();
-        // The hinted pane is a worker's child: as a pane caller it has a
-        // lineage, which a checkout caller naming it must not borrow.
+        // The hinted pane is a worker's child with a lineage of its own; a
+        // checkout caller's hint is not read, so none of it applies.
         runtime.delivery_ledger = Ok(Arc::new(Ledger {
             agents: vec![
                 agent("agent-worker", "w1:p1", None),

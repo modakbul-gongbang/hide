@@ -132,9 +132,11 @@ pub fn run(env: &Env, command: Delivery) -> Result<(), String> {
                 .as_str()
                 .unwrap_or("agent_unavailable")
                 .to_owned();
+            // The daemon's next step is what the caller can act on.
+            let message = answer["next_action"].as_str().unwrap_or(&code);
             println!(
                 "{}",
-                serde_json::json!({"ok":false,"error":{"code":code,"message":code}})
+                serde_json::json!({"ok":false,"error":{"code":code,"message":message}})
             );
             Err(code)
         }
