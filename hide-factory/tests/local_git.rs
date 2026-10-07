@@ -232,6 +232,25 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
         MainCheck::Green
     );
 
+    // The first `revert_check` starts the revert's bundle and looks at it
+    // once, so a command that has already exited is answered in that same
+    // call. The bundle first reads a FIFO the test opens after the check:
+    // until then it runs, whatever the machine's speed.
+    let gate = fx.project.with_file_name("gate");
+    let made = Command::new("mkfifo").arg(&gate).status().unwrap();
+    assert!(made.success());
+    let factory = Factory {
+        config: Config {
+            verification: Verification::Commands {
+                commands: vec![
+                    format!("cat '{}'", gate.display()),
+                    "test -f b.txt && test -f c.txt".into(),
+                ],
+            },
+            ..factory.config.clone()
+        },
+        ..factory
+    };
     let revert = fx.projects.revert(&factory, &t, &sha).unwrap();
     assert_eq!(revert.pr, None);
     let check = fx.projects.revert_check(&factory, &revert).unwrap();
@@ -240,6 +259,8 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
         MainCheck::Pending,
         "the revert is verified before it lands"
     );
+    // Opening the FIFO waits for the bundle's `cat`, which that check started.
+    std::fs::write(&gate, "open\n").unwrap();
     let guard = Instant::now() + Duration::from_secs(120);
     let mut check = check;
     while check == MainCheck::Pending && Instant::now() < guard {

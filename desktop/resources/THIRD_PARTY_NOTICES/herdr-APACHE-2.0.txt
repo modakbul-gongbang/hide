@@ -4,10 +4,10 @@ herdr
 Copyright 2025 herdr contributors.
 
 This application bundles the herdr binary from:
-https://github.com/herdrdev/herdr/releases/tag/v0.9.1
+https://github.com/herdrdev/herdr/releases/tag/v0.9.3
 
 BEGIN HERDR PROVENANCE
-This application distributes the upstream Herdr release v0.9.1 from herdrdev/herdr.
+This application distributes the upstream Herdr release v0.9.3 from herdrdev/herdr.
 The bundled binary is not modified by hide.
 hide monitors upstream stable through herdr-update.yml; updates must pass contract and runtime checks.
 END HERDR PROVENANCE
@@ -17,8 +17,8 @@ The complete license text is available at:
 https://www.apache.org/licenses/LICENSE-2.0
 
 The bundled macOS arm64 binary is verified at build time:
-Version: 0.9.1
-SHA-256: 5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de
+Version: 0.9.3
+SHA-256: 5173a3e0ae42d5d1ab7ebfa5d5e6329f7c3d23f8e1a3677c7ce3231da2884157
 
 The Windows and Linux packages carry the same release's Windows and Linux assets,
 each verified against the digest contracts/herdr-bundle.json records for it at build time.
