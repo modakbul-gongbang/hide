@@ -155,6 +155,7 @@ impl Panes {
             .keep();
         let socket = folder.join("bootstrap.sock");
         let bound = (|| {
+            private::restrict_to_owner(&folder)?;
             let wire = hide_platform::path::to_wire(&socket)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
             let listener = LocalListener::bind(&socket)?;
