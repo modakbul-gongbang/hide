@@ -44,8 +44,6 @@ typify = "=0.7.0"
 [dev-dependencies]
 hide-host = { path = "../hide-host", features = ["call-log"] }
 hide-node = { path = "../hide-node" }
-# The loopback SSH server of the `remote_delivery` lane (tests/support).
-russh = { version = "=0.63.3", default-features = false, features = ["ring", "rsa"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

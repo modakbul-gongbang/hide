@@ -200,7 +200,7 @@ async fn serve(
                     let (stop, cancelled) = watch::channel(false);
                     let handler = Handler {
                         shared: Arc::clone(&shared), channels: HashMap::new(),
-                        forward: None, stop: stop.clone(), cancelled,
+                        stop: stop.clone(), cancelled,
                     };
                     if let Ok(running) = server::run_stream(config, stream, handler).await {
                         let handle = running.handle();
@@ -239,7 +239,6 @@ async fn serve(
 struct Handler {
     shared: Arc<Shared>,
     channels: HashMap<ChannelId, Channel<Msg>>,
-    forward: Option<(u32, watch::Sender<bool>)>,
     stop: watch::Sender<bool>,
     cancelled: watch::Receiver<bool>,
 }
@@ -337,66 +336,6 @@ impl server::Handler for Handler {
         self.start_process(id, command, session)
     }
 
-    async fn tcpip_forward(
-        &mut self,
-        address: &str,
-        port: &mut u32,
-        session: &mut Session,
-    ) -> Result<bool> {
-        if address != "127.0.0.1" || *port != 0 || self.forward.is_some() {
-            return Ok(false);
-        }
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
-        *port = listener.local_addr()?.port().into();
-        let forward_port = *port;
-        let handle = session.handle();
-        let shared = Arc::clone(&self.shared);
-        let mut stop = self.cancelled.clone();
-        let (cancel, mut cancelled) = watch::channel(false);
-        self.forward = Some((forward_port, cancel));
-        self.shared.job(async move {
-            loop {
-                tokio::select! {
-                    _ = stop.changed() => return,
-                    _ = cancelled.changed() => return,
-                    accepted = listener.accept() => {
-                        let Ok((mut socket, peer)) = accepted else { return };
-                        let handle = handle.clone();
-                        let mut stop = stop.clone();
-                        let _ = shared.job(async move {
-                            tokio::select! {
-                                _ = stop.changed() => {},
-                                channel = handle.channel_open_forwarded_tcpip("127.0.0.1", forward_port, "127.0.0.1", peer.port().into()) => {
-                                    if let Ok(channel) = channel {
-                                        let mut stream = channel.into_stream();
-                                        tokio::select! {
-                                            _ = stop.changed() => {},
-                                            _ = tokio::io::copy_bidirectional(&mut socket, &mut stream) => {}
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-        })?;
-        Ok(true)
-    }
-
-    async fn cancel_tcpip_forward(
-        &mut self,
-        address: &str,
-        port: u32,
-        _session: &mut Session,
-    ) -> Result<bool> {
-        if address != "127.0.0.1" || self.forward.as_ref().is_none_or(|(old, _)| *old != port) {
-            return Ok(false);
-        }
-        let (_, cancel) = self.forward.take().expect("forward");
-        let _ = cancel.send(true);
-        Ok(true)
-    }
 }
 
 impl Handler {
