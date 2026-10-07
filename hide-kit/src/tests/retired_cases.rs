@@ -377,16 +377,14 @@ fn gemini_clis_hide_hook_and_shared_stub_go_and_the_operators_settings_stay() {
     assert!(report.agents.iter().all(|agent| agent.id != "gemini-cli"));
 
     // A later pass does not look at Gemini CLI's files: one it could not
-    // read is not a failure (B4).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let settings = gemini_settings(&fixture);
-        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let again = apply(&fixture.target, &Scope::automatic());
-        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(again.legacy_retirement.is_empty(), "{again:?}");
-    }
+    // parse is not a failure, and it is left as it is (B4).
+    write(&gemini_settings(&fixture), "{ not json");
+    let again = apply(&fixture.target, &Scope::automatic());
+    assert!(again.legacy_retirement.is_empty(), "{again:?}");
+    assert_eq!(
+        std::fs::read_to_string(gemini_settings(&fixture)).unwrap(),
+        "{ not json"
+    );
 }
 
 #[test]
@@ -414,20 +412,18 @@ fn gemini_clis_shared_stub_stays_while_codex_is_on_and_reads_it() {
     );
 }
 
-/// A Gemini settings file the pass cannot read keeps the piece in the record
+/// A Gemini settings file the pass cannot parse keeps the piece in the record
 /// and says why in the retirement report (which goes to the diagnostic log,
-/// not to the screen); the next pass finishes it.
-#[cfg(unix)]
+/// not to the screen); the next pass finishes it once the file parses.
 #[test]
-fn a_gemini_settings_file_that_cannot_be_read_is_tried_again_by_the_next_pass() {
-    use std::os::unix::fs::PermissionsExt;
+fn a_gemini_settings_file_that_cannot_be_parsed_is_tried_again_by_the_next_pass() {
     let fixture = Fixture::new();
     gemini_as_an_earlier_build_left_it(&fixture);
     let settings = gemini_settings(&fixture);
-    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let written = std::fs::read_to_string(&settings).unwrap();
+    write(&settings, &format!("{written} trailing"));
 
     let first = apply(&fixture.target, &Scope::automatic());
-    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o644)).unwrap();
 
     assert!(
         first
@@ -438,12 +434,13 @@ fn a_gemini_settings_file_that_cannot_be_read_is_tried_again_by_the_next_pass() 
         "{first:?}"
     );
     assert!(record(&fixture).contains("hook:gemini-cli"));
-    assert!(
-        std::fs::read_to_string(&settings)
-            .unwrap()
-            .contains("hide-guidance")
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        format!("{written} trailing"),
+        "a file that does not parse is left as it is"
     );
 
+    write(&settings, &written);
     let second = apply(&fixture.target, &Scope::automatic());
 
     assert!(second.legacy_retirement.failures.is_empty(), "{second:?}");

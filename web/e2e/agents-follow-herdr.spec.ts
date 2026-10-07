@@ -138,6 +138,7 @@ test("a Mac an earlier build put Gemini CLI on loses only Hide's Gemini pieces a
     await expect(list.locator('[data-agent-row*="gemini"]')).toHaveCount(0);
     await expect(list).not.toContainText("Gemini");
     await expect(page.locator("body")).not.toContainText("from the screen");
+    await expect(list.locator("[data-agents-check]")).toHaveAttribute("data-agents-check", "idle");
     await screenshot(page, "agents-after-gemini-retired");
   } finally {
     daemon.stop();
