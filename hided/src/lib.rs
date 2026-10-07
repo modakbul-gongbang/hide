@@ -13,7 +13,6 @@ pub mod cli_contract;
 pub mod core;
 pub mod delivery_cli;
 pub mod demand;
-pub mod device_watch;
 pub mod env;
 pub mod factory_cli;
 pub mod file_url;
@@ -334,10 +333,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         env.workspace_bridge_dir.clone(),
     );
     let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
-    let watch = Arc::new(watch::WatchService::new(
-        Arc::clone(&boundary),
-        Arc::clone(&core),
-    ));
+    let watch = Arc::new(watch::WatchService::new(Arc::clone(&core)));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
@@ -646,15 +642,12 @@ fn apply_snapshot(
     );
     let (root, expanded) = watch_state_from_value(value);
     let root = root.filter(|root| boundary.known_root(root).is_some());
-    let expanded = expanded
+    let expanded: Vec<String> = expanded
         .into_iter()
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
-    watch.reconcile(boundary, root, expanded);
-    watch.reconcile_device(device_watch::target_from_value(
-        value,
-        boundary.node().as_str(),
-    ));
+    watch.reconcile(root.map(|root| watch::Target::of(boundary.node().as_str(), root, &expanded)));
+    watch.reconcile_device(watch::device_target(value, boundary.node().as_str()));
 }
 
 /// The folders whose changes the Explorer wants announced: the focused

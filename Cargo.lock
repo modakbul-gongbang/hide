@@ -1387,6 +1387,7 @@ dependencies = [
  "hide-host",
  "hide-kit",
  "hide-node",
+ "hide-node-link",
  "hide-platform",
  "hide-session",
  "http-body-util",
