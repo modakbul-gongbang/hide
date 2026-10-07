@@ -17,9 +17,9 @@ impl Runtime {
         }
         self.pane_focus_in_flight = None;
         let current_connection = control.live_generation == self.live_generation;
-        // The answer settles the tab move this focus makes, read before it
-        // updates where Hide knows Herdr is. A refusal moved nothing; a lost
-        // answer may still land, so its move waits out the deadline.
+        // The answer settles the tab move this focus makes when Herdr was
+        // already on its tab. A refusal moved nothing; a lost answer may
+        // still land, so its move waits out the deadline.
         if current_connection {
             match &result {
                 Ok(_) => self.answer_pane_focus_tab(control.serial),

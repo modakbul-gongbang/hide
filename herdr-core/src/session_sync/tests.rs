@@ -99,6 +99,109 @@ fn event(kind: &str, data: Value) -> ReplicaEvent {
     }
 }
 
+/// A session can fold Herdr's moves into one state; the replica keeps each
+/// `tab_focused` it applies as a move, so a reader can tell t2 from t2, t3,
+/// t2. Only the latest `TAB_FOCUS_LIMIT` are kept, and the count says how
+/// many there were. A snapshot read on its own carries none.
+#[test]
+fn every_applied_tab_focus_is_one_move_and_the_latest_are_kept() {
+    let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).unwrap();
+    let focus = |tab: &str| {
+        event(
+            "tab_focused",
+            json!({"type":"tab_focused","workspace_id":"w1","tab_id":tab}),
+        )
+    };
+    for tab in ["w1:t2", "w1:t1", "w1:t2"] {
+        replica.apply(focus(tab), ApplyMode::Strict).unwrap();
+    }
+    let moves = replica
+        .project()
+        .tab_moves
+        .expect("a replica keeps its moves");
+    assert_eq!(moves.applied, 3);
+    assert_eq!(moves.recent, ["w1:t2", "w1:t1", "w1:t2"]);
+
+    let limit = crate::sidebar::TAB_FOCUS_LIMIT;
+    for index in 0..limit {
+        let tab = if index % 2 == 0 { "w1:t1" } else { "w1:t2" };
+        replica.apply(focus(tab), ApplyMode::Strict).unwrap();
+    }
+    let moves = replica
+        .project()
+        .tab_moves
+        .expect("a replica keeps its moves");
+    assert_eq!(moves.applied, 3 + limit as u64);
+    assert_eq!(moves.recent.len(), limit);
+    assert_eq!(moves.recent.back().map(String::as_str), Some("w1:t2"));
+    assert!(
+        moves.since(moves.generation, 3).is_some(),
+        "the moves after the first three are all kept"
+    );
+    assert!(
+        moves.since(moves.generation, 2).is_none(),
+        "the third move was dropped"
+    );
+    assert!(moves.since(moves.generation + 1, 3).is_none());
+
+    assert!(
+        crate::session_sync::project_snapshot(&two_tab_snapshot())
+            .unwrap()
+            .tab_moves
+            .is_none()
+    );
+}
+
+/// A move into a workspace still waiting for its layout publishes nothing by
+/// itself: the held state lacks the workspace the creation worker already
+/// projected, and publishing it retired that workspace's pane before its
+/// terminal attached (Windows CI). The move arrives with the publish that
+/// releases the workspace.
+#[test]
+fn a_move_into_a_held_workspace_rides_on_the_publish_that_releases_it() {
+    let created: Value = serde_json::from_str(&snapshot().to_string().replace("w1", "w2")).unwrap();
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let mut apply = |kind: &str, data: Value| {
+        replica
+            .apply(event(kind, data), ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("{kind}: {error:?}"))
+            .publish
+    };
+    apply(
+        "workspace_created",
+        json!({"type": "workspace_created", "workspace": created["workspaces"][0]}),
+    );
+    apply(
+        "tab_created",
+        json!({"type": "tab_created", "tab": created["tabs"][0]}),
+    );
+    assert!(
+        !apply(
+            "tab_focused",
+            json!({"type": "tab_focused", "workspace_id": "w2", "tab_id": "w2:t1"}),
+        ),
+        "the move waits for the workspace it moved into"
+    );
+    apply(
+        "pane_created",
+        json!({"type": "pane_created", "workspace_id": "w2", "tab_id": "w2:t1", "pane": created["panes"][0]}),
+    );
+    assert!(apply(
+        "layout_updated",
+        json!({"type": "layout_updated", "layout": created["layouts"][0]}),
+    ));
+    let published = replica.project();
+    assert!(
+        published
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.workspace_id == "w2")
+    );
+    let moves = published.tab_moves.expect("a replica keeps its moves");
+    assert_eq!(moves.applied, 1);
+    assert_eq!(moves.recent, ["w2:t1"]);
+}
+
 #[test]
 fn creation_focus_cause_is_retired_when_another_workspace_takes_focus() {
     let mut value = two_tab_snapshot();
