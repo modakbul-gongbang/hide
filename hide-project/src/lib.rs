@@ -170,7 +170,8 @@ pub mod git {
     /// The regular file a repository's name resolves to. A repository's files
     /// are written by whatever runs in it, so a pipe or a device is refused
     /// without blocking the reader. A link is followed, as Git follows it: a
-    /// config a dotfile manager links in still names its branches.
+    /// config a dotfile manager links in still names its branches. Discovery
+    /// still takes only a repository whose `HEAD` is a regular file.
     fn open_file(path: &Path) -> std::io::Result<std::fs::File> {
         hide_platform::fs::open_regular(&std::fs::canonicalize(path)?)
     }
@@ -653,19 +654,18 @@ pub mod git {
             );
         }
 
-        /// A linked `HEAD` and config are followed, as Git follows them.
+        /// A linked branch ref and config are followed, as Git follows them.
         #[cfg(unix)]
         #[test]
-        fn a_linked_head_and_config_are_read_through_the_link() {
+        fn a_linked_ref_and_config_are_read_through_the_link() {
             let (temp, repository) = repository("ref: refs/heads/main");
-            fs::write(repository.common_dir.join("refs/heads/main"), FIRST).unwrap();
             let elsewhere = temp.path().join("dotfiles");
             fs::create_dir_all(&elsewhere).unwrap();
             for (name, text) in [
-                ("HEAD", "ref: refs/heads/main\n"),
+                ("refs/heads/main", FIRST),
                 ("config", "[branch \"main\"]\n\tdescription = linked\n"),
             ] {
-                let target = elsewhere.join(name);
+                let target = elsewhere.join(name.replace('/', "-"));
                 fs::write(&target, text).unwrap();
                 let at = repository.common_dir.join(name);
                 fs::remove_file(&at).ok();
