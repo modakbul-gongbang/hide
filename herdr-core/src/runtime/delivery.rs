@@ -325,7 +325,10 @@ impl Runtime {
             } if target.starts_with(crate::delivery::FACTORY_PREFIX) => {
                 // A Factory is addressed by its code-owned name only; no
                 // pane can stand in for it.
-                let actor = Actor::factory(&target[crate::delivery::FACTORY_PREFIX.len()..]);
+                let actor = Actor::factory(
+                    &target[crate::delivery::FACTORY_PREFIX.len()..],
+                    self.node.as_str(),
+                );
                 if !self.factory_recipient_current(&actor) {
                     return Err("target_unavailable".into());
                 }
@@ -439,7 +442,8 @@ impl Runtime {
             .pane_id
             .strip_prefix(crate::delivery::FACTORY_PREFIX)
             .is_some_and(|id| {
-                self.factory_recipients.contains_key(id) && *actor == Actor::factory(id)
+                self.factory_recipients.contains_key(id)
+                    && *actor == Actor::factory(id, self.node.as_str())
             })
     }
 
@@ -454,12 +458,12 @@ impl Runtime {
         &self,
         id: &str,
     ) -> Result<(crate::delivery::worker::Client, Authority, Actor), String> {
-        let actor = Actor::factory(id);
+        let actor = Actor::factory(id, self.node.as_str());
         if !self.factory_recipient_current(&actor) {
             return Err("factory_unavailable".into());
         }
         let context = Context {
-            device_id: "local".into(),
+            device_id: self.node.as_str().into(),
             workspace_id: actor.pane_id.clone(),
             checkout_id: actor.pane_id.clone(),
             checkout_path: String::new(),
@@ -1161,7 +1165,7 @@ pub(crate) mod tests {
         let mut guard = runtime.lock().unwrap();
         guard.install_delivery_client(client);
         let context = guard
-            .workspace_control_query("local", "sender", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "sender", Query::Info)
             .unwrap()
             .context;
         let send = |intent: &str| Command::Send {
@@ -1172,7 +1176,13 @@ pub(crate) mod tests {
         };
         assert_eq!(
             guard
-                .prepare_delivery("local", "sender", &context, None, send("early"))
+                .prepare_delivery(
+                    crate::node::TEST_NODE,
+                    "sender",
+                    &context,
+                    None,
+                    send("early")
+                )
                 .err()
                 .as_deref(),
             Some("target_unavailable"),
@@ -1184,7 +1194,13 @@ pub(crate) mod tests {
         );
         guard.set_factory_recipients([("f-1".to_owned(), 30 * 60_000)].into());
         let prepared = guard
-            .prepare_delivery("local", "sender", &context, None, send("once"))
+            .prepare_delivery(
+                crate::node::TEST_NODE,
+                "sender",
+                &context,
+                None,
+                send("once"),
+            )
             .unwrap();
         drop(guard);
         let result = prepared.run(Duration::from_secs(5)).unwrap();
@@ -1193,11 +1209,19 @@ pub(crate) mod tests {
 
         // The Factory answers as itself; a pane cannot borrow its authority.
         let guard = runtime.lock().unwrap();
-        assert!(!guard.factory_authority_current("sender", &Actor::factory("f-1")));
-        assert!(guard.factory_authority_current("factory:f-1", &Actor::factory("f-1")));
+        assert!(
+            !guard.factory_authority_current(
+                "sender",
+                &Actor::factory("f-1", crate::node::TEST_NODE)
+            )
+        );
+        assert!(guard.factory_authority_current(
+            "factory:f-1",
+            &Actor::factory("f-1", crate::node::TEST_NODE)
+        ));
         let forged = Actor {
             session: Some("forged".into()),
-            ..Actor::factory("f-1")
+            ..Actor::factory("f-1", crate::node::TEST_NODE)
         };
         assert!(!guard.factory_recipient_current(&forged));
         let prepared = guard

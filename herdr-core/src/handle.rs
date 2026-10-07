@@ -472,11 +472,13 @@ impl Core {
         if !check_owner_thread(self, "factory.prepare") {
             return Err("factory_unavailable".into());
         }
-        if device != "local" {
+        let factory = self.factory.as_ref().ok_or("factory_unavailable")?;
+        let runtime = lock_recover(&self.runtime);
+        if device != runtime.node().as_str() {
             return Err("factory_local_only".into());
         }
-        let factory = self.factory.as_ref().ok_or("factory_unavailable")?;
-        let caller = lock_recover(&self.runtime).factory_caller(caller, expected, hint)?;
+        let caller = runtime.factory_caller(caller, expected, hint)?;
+        drop(runtime);
         Ok(factory.prepare(caller, command))
     }
 

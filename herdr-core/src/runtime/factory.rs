@@ -36,7 +36,7 @@ impl Runtime {
         hint: Option<&str>,
     ) -> Result<crate::factory::FactoryCaller, String> {
         let context = self
-            .workspace_control_query("local", caller, Query::Info)
+            .workspace_control_query(self.node.as_str(), caller, Query::Info)
             .map_err(|refusal| refusal.reason.to_owned())?
             .context;
         if context != *expected {
@@ -156,7 +156,7 @@ impl Runtime {
             .workspace_control_query(&actor.device_id, pane, Query::Info)
             .map_err(|_| "agent_pane_required")?
             .context;
-        let recipient = Actor::factory(factory);
+        let recipient = Actor::factory(factory, self.node.as_str());
         if !self.factory_recipient_current(&recipient) {
             return Err("target_unavailable".into());
         }
@@ -288,10 +288,7 @@ impl Runtime {
     /// read the machine. A Codex start needs that answer (`codex_launch`),
     /// and the Factory starts workers with no Settings on screen.
     pub(crate) fn factory_kit_read(&mut self) -> bool {
-        if self
-            .kit_states
-            .contains_key(crate::workspace::LOCAL_DEVICE_ID)
-        {
+        if self.kit_states.contains_key(self.node.as_str()) {
             return true;
         }
         self.request_kit_check();
@@ -347,7 +344,7 @@ mod tests {
         AgentRecord {
             id: id.into(),
             name: id.into(),
-            machine: "local".into(),
+            machine: crate::node::TEST_NODE.into(),
             host_scope: "fixture".into(),
             native_machine: "fixture-machine".into(),
             session: id.into(),
@@ -356,12 +353,12 @@ mod tests {
             parent: parent.map(str::to_owned),
             project: None,
             actor: match pane.strip_prefix("factory:") {
-                Some(factory) => Actor::factory(factory),
+                Some(factory) => Actor::factory(factory, crate::node::TEST_NODE),
                 None => Actor {
                     pane_id: pane.into(),
                     name: id.into(),
                     kind: "claude".into(),
-                    device_id: "local".into(),
+                    device_id: crate::node::TEST_NODE.into(),
                     session: crate::wire::session_digest(id),
                 },
             },

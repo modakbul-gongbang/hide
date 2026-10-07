@@ -28,6 +28,7 @@ enum Command {
         reply: Sender<Result<herdr_core::delivery::worker::Prepared, String>>,
     },
     FactoryPrepare {
+        device_id: String,
         pane_id: String,
         expected: Context,
         hint: Option<String>,
@@ -151,12 +152,13 @@ impl CoreHandle {
         hint: Option<String>,
         command: hide_factory::Command,
     ) -> Result<herdr_core::factory::PreparedFactory, String> {
-        if device != herdr_core::workspace::LOCAL_DEVICE_ID {
+        if device != self.node.as_str() {
             return Err("factory_local_only".into());
         }
         let (reply, result) = mpsc::channel();
         self.commands
             .send(Command::FactoryPrepare {
+                device_id: device.to_owned(),
                 pane_id: pane.to_owned(),
                 expected: expected.clone(),
                 hint,
@@ -421,6 +423,7 @@ fn owner_loop(
                 let _ = reply.send(core.prepare_delivery_human());
             }
             Command::FactoryPrepare {
+                device_id,
                 pane_id,
                 expected,
                 hint,
@@ -428,7 +431,7 @@ fn owner_loop(
                 reply,
             } => {
                 let _ = reply.send(core.prepare_factory(
-                    herdr_core::workspace::LOCAL_DEVICE_ID,
+                    &device_id,
                     &pane_id,
                     &expected,
                     hint.as_deref(),
