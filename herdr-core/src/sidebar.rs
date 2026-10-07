@@ -181,6 +181,10 @@ pub struct AgentLabel {
 pub struct SessionAgentPayload {
     #[serde(default)]
     pub id: Option<String>,
+    /// The name Herdr knows the agent by (`agent.start --name`, `agent
+    /// rename`); absent when it was given none.
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub pane_id: Option<String>,
     #[serde(default)]
@@ -1496,6 +1500,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
+        herdr_name: non_empty(agent.name.as_deref())
+            .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
+            .map(str::to_owned),
         pane_id,
         workspace_label,
         checkout_label: None,

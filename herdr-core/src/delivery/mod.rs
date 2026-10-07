@@ -6,6 +6,8 @@ pub mod mailbox;
 pub mod watch;
 pub mod worker;
 
+pub mod answer;
+
 pub use mailbox::Command;
 
 pub const DELIVERY_EXPIRY_MS: u64 = 60 * 60 * 1_000;
@@ -22,7 +24,9 @@ pub const FILE_LIMIT: usize = 16 * 1_024 * 1_024;
 pub const HOOK_LIMIT: usize = 8 * 1_024;
 pub const HOOK_LETTERS: usize = 5;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct Actor {
     pub pane_id: String,
     pub name: String,

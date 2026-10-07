@@ -578,7 +578,9 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
         }
         Command::WatchStop { id } => {
             watch::stop(ledger, actor, id)?;
-            Ok(json!({"stopped":id}))
+            Ok(json!(super::answer::Stopped {
+                stopped: id.clone()
+            }))
         }
         Command::WatchAssign {
             id,

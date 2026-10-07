@@ -4,6 +4,7 @@
 mod executor;
 pub(crate) mod lineage;
 
+use crate::delivery::answer::{AgentView, RegisterCheck};
 use crate::delivery::{Actor, ledger::Ledger, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -128,13 +129,33 @@ pub fn resolve_actor<'a>(ledger: &'a Ledger, key: &str) -> Option<&'a Actor> {
 }
 
 pub(crate) fn view(record: &AgentRecord, ledger: &Ledger) -> Value {
-    json!({"id":record.id,"name":record.name,"machine":record.machine,
-        "hostScope":record.host_scope,"session":record.session,"instance":record.instance,
-        "pane":record.pane,"parent":record.parent,"project":record.project,
-        "runtime":if record.ended { "ended" } else { "running" },
-        "connection":if record.ended { "disconnected" } else { "connected" },
-        "registered":!record.ended,
-        "watch":ledger.watches.iter().find(|watch| watch.target.same_identity(&record.actor))})
+    json!(agent_view(record, ledger))
+}
+
+pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
+    AgentView {
+        id: record.id.clone(),
+        name: record.name.clone(),
+        machine: record.machine.clone(),
+        host_scope: record.host_scope.clone(),
+        session: record.session.clone(),
+        instance: record.instance.clone(),
+        pane: record.pane.clone(),
+        parent: record.parent.clone(),
+        project: record.project.clone(),
+        runtime: if record.ended { "ended" } else { "running" },
+        connection: if record.ended {
+            "disconnected"
+        } else {
+            "connected"
+        },
+        registered: !record.ended,
+        watch: ledger
+            .watches
+            .iter()
+            .find(|watch| watch.target.same_identity(&record.actor))
+            .cloned(),
+    }
 }
 
 fn key(value: &str) -> bool {
@@ -254,7 +275,11 @@ pub(crate) fn apply(
                 return Err("name_in_use".into());
             }
             if *check {
-                return Ok(json!({"registered":false,"name":record.name,"pane":record.pane}));
+                return Ok(json!(RegisterCheck {
+                    registered: false,
+                    name: record.name.clone(),
+                    pane: record.pane.clone(),
+                }));
             }
             if ledger.agents.len() >= AGENT_LIMIT {
                 return Err("capacity".into());

@@ -9,6 +9,7 @@ pub mod browser_relay;
 pub mod browser_routes;
 pub mod build_id;
 pub mod cli;
+pub mod cli_contract;
 pub mod core;
 pub mod delivery_cli;
 pub mod demand;
