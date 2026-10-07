@@ -310,6 +310,25 @@ fn a_review_refused_because_hide_ai_is_off_says_to_turn_it_on_once() {
 }
 
 #[test]
+fn a_review_answering_after_its_task_was_cancelled_asks_nothing() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().hold_judgments = true;
+    h.world().judgment_failure = Some("transient".into());
+    let id = h.add("Cancelled early", &[])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let cancelled = h.op(Command::Cancel { task: id.clone() });
+    assert_eq!(cancelled["ok"], true, "{cancelled}");
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    assert_eq!(h.state(&f, &id), TaskState::Cancelled);
+    assert_eq!(h.task(&f, &id).open_questions().count(), 0);
+    assert_eq!(h.op(Command::Inbox)["count"], 0);
+}
+
+#[test]
 fn a_review_that_cannot_run_keeps_the_task_drafting_and_asks_for_the_provider() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

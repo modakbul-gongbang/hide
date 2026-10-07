@@ -4586,6 +4586,31 @@ impl Engine {
                 &answer.id,
                 &output,
             );
+            // A judgment that answers after its Task was cancelled, taken
+            // outside or finished asks nothing of a person.
+            if let Some(id) = task.as_deref()
+                && self.task(&factory, id).is_none_or(|t| {
+                    matches!(
+                        t.state,
+                        TaskState::Cancelled | TaskState::Outside | TaskState::Done
+                    )
+                })
+            {
+                if matches!(purpose, Purpose::Drift | Purpose::Check)
+                    && let Some(count) = self
+                        .checks_running
+                        .get_mut(&(factory.clone(), id.to_owned()))
+                {
+                    *count = count.saturating_sub(1);
+                }
+                self.record(
+                    &factory,
+                    Some(id),
+                    "judgment.dropped",
+                    json!({"purpose": format!("{purpose:?}")}),
+                );
+                continue;
+            }
             match (&answer.outcome, purpose, task) {
                 (JudgmentOutcome::Answered { value }, Purpose::Intake, Some(task)) => {
                     self.apply_intake(&factory, &task, value)
