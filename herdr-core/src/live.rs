@@ -39,7 +39,7 @@ use crate::workspace;
 #[cfg(test)]
 use hide_herdr_client::HERDR_PROTOCOL_REVISION;
 use hide_herdr_client::{
-    ApiConnector, ApiError, LocalSocketConnector, request_small_response, request_with_connector,
+    ApiConnector, ApiError, request_small_response, request_with_connector,
     request_with_correlation_id,
 };
 use hide_platform::process::OwnedChild;
@@ -913,7 +913,9 @@ fn mutation_request(
             ApiError::Remote { code, message } => {
                 ControlFailure::Definite(format!("{method} was refused: {code}: {message}"))
             }
-            ApiError::Transport(message) | ApiError::Malformed(message) => {
+            ApiError::NotRunning(message)
+            | ApiError::Transport(message)
+            | ApiError::Malformed(message) => {
                 ControlFailure::Ambiguous(format!("{method} result is unknown: {message}"))
             }
         }
@@ -2137,7 +2139,9 @@ fn execute_pane_focus_with_timeout(
         ApiError::Remote { code, message } => {
             ControlFailure::Definite(format!("pane.focus was refused: {code}: {message}"))
         }
-        ApiError::Transport(message) | ApiError::Malformed(message) => {
+        ApiError::NotRunning(message)
+        | ApiError::Transport(message)
+        | ApiError::Malformed(message) => {
             ControlFailure::Ambiguous(format!("pane.focus result is unknown: {message}"))
         }
     })?;
@@ -2522,7 +2526,9 @@ fn scroll_request(
             ApiError::Remote { code, message } => {
                 ViewportScrollError::Refused(format!("{method} was refused: {code}: {message}"))
             }
-            ApiError::Transport(message) | ApiError::Malformed(message) => {
+            ApiError::NotRunning(message)
+            | ApiError::Transport(message)
+            | ApiError::Malformed(message) => {
                 ViewportScrollError::Unreachable(format!("{method} failed: {message}"))
             }
         })?;
@@ -2918,6 +2924,7 @@ pub(crate) fn install(
     runtime: &Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     own_node: Arc<dyn crate::node_access::NodeLink>,
+    own_herdr: Arc<dyn ApiConnector>,
     socket_path: &str,
     herdr_bin: Option<&str>,
     usage_paths: crate::usage::UsagePaths,
@@ -2927,7 +2934,7 @@ pub(crate) fn install(
         herdr_bin: herdr_bin.map(PathBuf::from),
         runtime: Arc::downgrade(runtime),
         notifier: notifier.clone(),
-        api_connector: Arc::new(LocalSocketConnector::new(socket_path)),
+        api_connector: own_herdr,
         node: Arc::clone(&own_node),
     };
     if let Ok(mut guard) = runtime.lock() {
@@ -2955,16 +2962,6 @@ pub(crate) fn install(
     }
 }
 
-pub fn fetch_session(socket_path: &Path) -> Result<SessionSnapshotPayload, SessionFetchError> {
-    if !socket_path.exists() {
-        return Err(SessionFetchError::SocketMissing(format!(
-            "Herdr socket file does not exist at {}; the herdr server is not running",
-            socket_path.display()
-        )));
-    }
-    fetch_session_with_connector(&LocalSocketConnector::new(socket_path))
-}
-
 fn fetch_session_with_connector(
     connector: &dyn ApiConnector,
 ) -> Result<SessionSnapshotPayload, SessionFetchError> {
@@ -2974,7 +2971,10 @@ fn fetch_session_with_connector(
         wire::empty_params(),
         Duration::from_secs(5),
     )
-    .map_err(|error| SessionFetchError::Unreachable(error.to_string()))?;
+    .map_err(|error| match error {
+        ApiError::NotRunning(message) => SessionFetchError::SocketMissing(message),
+        error => SessionFetchError::Unreachable(error.to_string()),
+    })?;
     wire::live_session_response(result)
 }
 
@@ -3947,6 +3947,8 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    use hide_herdr_client::LocalSocketConnector;
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
@@ -5672,8 +5674,10 @@ mod tests {
 
     #[test]
     fn missing_socket_file_is_distinguished_from_unreachable() {
-        let error =
-            fetch_session(Path::new("/nonexistent/herdr-core-test.sock")).expect_err("must fail");
+        let error = fetch_session_with_connector(&LocalSocketConnector::new(
+            "/nonexistent/herdr-core-test.sock",
+        ))
+        .expect_err("must fail");
         assert_eq!(error.state(), "socket_missing");
     }
 }

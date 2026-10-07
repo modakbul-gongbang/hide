@@ -311,7 +311,7 @@ mod tests {
         let socket = root.join("absent.sock");
         let outcome = report(&socket, "w1:p1", PaneCounters::default());
         assert!(
-            matches!(outcome, Err(ApiError::Transport(_))),
+            matches!(outcome, Err(ApiError::NotRunning(_))),
             "{outcome:?}"
         );
 
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(failure.event, "SessionStart");
         assert_eq!(failure.socket_path, socket.display().to_string());
         assert!(
-            failure.error.contains("connect failed"),
+            failure.error.contains("not running"),
             "{}",
             failure.error
         );

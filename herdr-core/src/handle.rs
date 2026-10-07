@@ -194,11 +194,16 @@ impl Core {
 
     /// `own_node` answers for the machine this core runs on (PRD
     /// core-host-node D-21); the core reaches that machine only through it.
+    /// `own_herdr` is that node's connection to the Herdr server at
+    /// `options.herdr_socket_path`, given exactly when a socket is.
     pub fn create(
         options: CoreOptions,
         own_node: std::sync::Arc<dyn crate::node_access::NodeLink>,
+        own_herdr: Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>>,
     ) -> Option<Box<Self>> {
-        if validate_options(&options).is_err() {
+        if validate_options(&options).is_err()
+            || options.herdr_socket_path.is_some() != own_herdr.is_some()
+        {
             return None;
         }
         let environment = match options.home.as_deref() {
@@ -333,11 +338,14 @@ impl Core {
                 })
                 .ok()
             });
-        let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
+        let session_sync = if let (Some(socket_path), Some(own_herdr)) =
+            (options.herdr_socket_path.as_deref(), own_herdr)
+        {
             live::install(
                 &runtime,
                 notifier.clone(),
                 Arc::clone(&own_node),
+                own_herdr,
                 socket_path,
                 options.herdr_bin_path.as_deref(),
                 usage_paths,

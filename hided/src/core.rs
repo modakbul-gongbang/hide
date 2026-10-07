@@ -422,7 +422,11 @@ fn owner_loop(
     {
         own_node = own_node.bundled(kit_dir);
     }
-    let Some(core) = Core::create(options, std::sync::Arc::new(own_node)) else {
+    let own_herdr = options
+        .herdr_socket_path
+        .as_deref()
+        .map(|socket| hide_node::herdr(std::path::Path::new(socket)));
+    let Some(core) = Core::create(options, std::sync::Arc::new(own_node), own_herdr) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),
         ));

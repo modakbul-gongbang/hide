@@ -1307,6 +1307,7 @@ name = "hide-node"
 version = "0.1.0"
 dependencies = [
  "cap-std",
+ "hide-herdr-client",
  "hide-host",
  "hide-node-link",
  "serde_json",

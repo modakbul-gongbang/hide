@@ -6,10 +6,12 @@
 
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use cap_std::fs::Dir;
+use hide_herdr_client::{ApiConnector, LocalSocketConnector};
 use hide_host::serve::{Env, KitPlace};
 use hide_node_link::RootIdentity;
 use hide_node_link::protocol::Call;
@@ -46,6 +48,13 @@ impl Local {
             env: Env::of_process(),
         }
     }
+}
+
+/// This machine's connection to the Herdr server listening at `socket`.
+/// A socket file that is not there answers `ApiError::NotRunning`, so the
+/// core reads a stopped server from the answer, never from the disk.
+pub fn herdr(socket: &std::path::Path) -> Arc<dyn ApiConnector> {
+    Arc::new(LocalSocketConnector::new(socket))
 }
 
 /// Checkout roots the daemon opened under its pinned registrations, held open
