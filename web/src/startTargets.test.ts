@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -12,7 +13,7 @@ function checkout(id: string, workspaceId: string, path: string, over: Partial<C
 }
 
 function workspace(id: string, label: string, device: string, checkouts: Checkout[], over: Partial<Workspace> = {}): Workspace {
-  return { id, label, path: `/${label}`, device_id: device, checkouts, temporary: false, registered: true, ...over } as Workspace;
+  return { agent_scope: emptyScope(), id, label, path: `/${label}`, device_id: device, checkouts, temporary: false, registered: true, ...over } as Workspace;
 }
 
 const device = (id: string, label: string, kind: "local" | "remote"): Device => ({ id, label, kind, state: kind === "local" ? "local" : "ready" }) as Device;

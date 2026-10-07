@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { agentCycle, agentOrigin, areaCycle, focusedCycleScope } from "./areaCycle";
 import { noteAreaFrame } from "./areaFrames";
@@ -15,9 +16,9 @@ import type { KeyboardOwner } from "./viewFocus";
 function world(): SnapshotRest {
   const limits = { areas: 6, depth: 5, displays: 64 };
   const tabs = ["t1", "t2", "t3", "outside"].map((id) => ({ id, label: id, panes: [{ id: `${id}-pane` }], workspace_id: "w", checkout_id: "c", empty: false, delegated: false }));
-  const checkout = { id: "c", workspace_id: "w", path: "/fixture", label: "fixture", tabs, active_tab_id: "t1", strip: [] };
+  const checkout = { agent_scope: emptyScope(), id: "c", workspace_id: "w", path: "/fixture", label: "fixture", tabs, active_tab_id: "t1", strip: [] };
   return {
-    navigator: { focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "w", devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }], workspaces: [{ id: "w", label: "fixture", device_id: "local", checkouts: [checkout, { ...checkout, id: "other", path: "/other", tabs: [{ ...tabs[0], id: "other-tab" }] }] }] },
+    navigator: { focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "w", devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }], workspaces: [{ agent_scope: emptyScope(), id: "w", label: "fixture", device_id: "local", checkouts: [checkout, { ...checkout, id: "other", path: "/other", tabs: [{ ...tabs[0], id: "other-tab" }] }] }] },
     workspace_view: { device_id: "local", path: "/fixture", views: true, layout: { root: { area: { id: "a1", active: "d1", displays: ["d1", "d2"].map((id) => ({ id, kind: "browser", label: id, url: "about:blank", state: "open", tab_id: null })) } }, active_area: "a1", display_count: 2, limits }, agent_layout: { root: { split: { id: "s1", axis: "row", ratio: 0.5, first: { area: { id: "a1", active: "t1", displays: ["t1", "t2", "t3"].map((id) => ({ id })) } }, second: { area: { id: "a2", active: "outside", displays: [{ id: "outside" }] } } } }, active_area: "a1", canvases: {}, display_count: 4, limits } },
   } as unknown as SnapshotRest;
 }
@@ -99,8 +100,8 @@ function devices(): SnapshotRest {
   const agent = (pane: string, label: string) => ({ id: label, pane_id: pane, identity_label: label, agent_kind: "claude", symbol: "●", status_code: "working" });
   nav.agents = [agent("t1-pane", "planner"), agent("t2-pane", "writer"), agent("other-tab-pane", "fixer"), agent("outside-pane", "porter"), agent("child-pane", "child")] as never;
   const miniTab = { id: "remote:mini:tab:m1", label: "m1", panes: [{ id: "remote:mini:pane:p1" }], workspace_id: "remote:mini:workspace:w", checkout_id: "remote:mini:checkout:c", empty: false, delegated: false };
-  const miniCheckout = { id: "remote:mini:checkout:c", workspace_id: "remote:mini:workspace:w", path: "/mini", label: "api", tabs: [miniTab], active_tab_id: miniTab.id, strip: [] };
-  rest.status = { remote: [{ target_id: "mini", state: "connected", session: { workspaces: [{ id: "remote:mini:workspace:w", label: "api", device_id: "mini", checkouts: [miniCheckout] }], agents: [{ id: "b", pane_id: "remote:mini:pane:p1", identity_label: "reviewer", agent_kind: "codex", symbol: "●", status_code: "working" }], active_tab_ids: {}, focused_workspace_id: null, focused_checkout_id: null, focused_tab_id: null, focused_pane_id: null, pane_layouts: [] } }] } as never;
+  const miniCheckout = { agent_scope: emptyScope(), id: "remote:mini:checkout:c", workspace_id: "remote:mini:workspace:w", path: "/mini", label: "api", tabs: [miniTab], active_tab_id: miniTab.id, strip: [] };
+  rest.status = { remote: [{ target_id: "mini", state: "connected", session: { workspaces: [{ agent_scope: emptyScope(), id: "remote:mini:workspace:w", label: "api", device_id: "mini", checkouts: [miniCheckout] }], agents: [{ id: "b", pane_id: "remote:mini:pane:p1", identity_label: "reviewer", agent_kind: "codex", symbol: "●", status_code: "working" }], active_tab_ids: {}, focused_workspace_id: null, focused_checkout_id: null, focused_tab_id: null, focused_pane_id: null, pane_layouts: [] } }] } as never;
   return rest;
 }
 const panes = (cycle: ReturnType<typeof agentCycle>) => cycle?.items.map((row) => row.target.kind === "pane" ? row.target.paneId : "wrong-kind");

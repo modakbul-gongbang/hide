@@ -36,17 +36,17 @@ export const homeKey = (deviceId: string) => `home:${deviceId}`;
 export const checkoutKey = (deviceId: string, path: string) => `checkout:${deviceId}:${path}`;
 
 /** The core's own node before the snapshot names it: the empty id, which an event carries as no `device_id`. */
-const localDevice = (t: TFunction<"translation">): Device => ({ id: "", label: t("common.thisMac"), kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null });
+const localDevice = (t: TFunction<"translation">): Pick<Device, "id" | "label" | "kind"> => ({ id: "", label: t("common.thisMac"), kind: "local" });
 
 /** A device's workspaces as the catalog lists them, and whether the device answers commands now. */
-function deviceWorkspaces(rest: SnapshotRest, device: Device): { workspaces: Workspace[]; connected: boolean } {
+function deviceWorkspaces(rest: SnapshotRest, device: Pick<Device, "id" | "kind">): { workspaces: Workspace[]; connected: boolean } {
   if (device.kind !== "remote") return { workspaces: rest.navigator?.workspaces ?? [], connected: true };
   const status = rest.status?.remote?.find((row) => row.target_id === device.id) ?? null;
   const session = status?.session ?? null;
   return { workspaces: session?.workspaces ?? [], connected: status?.state === "connected" && session !== null };
 }
 
-function groupOf(rest: SnapshotRest, device: Device, front: boolean, t: TFunction<"translation">): TargetGroup {
+function groupOf(rest: SnapshotRest, device: Pick<Device, "id" | "label" | "kind">, front: boolean, t: TFunction<"translation">): TargetGroup {
   const { workspaces, connected } = deviceWorkspaces(rest, device);
   const disabled = connected ? null : "not_connected";
   // Only the front device's items go unprefixed: the trigger already sits where that device is.

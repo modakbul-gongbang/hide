@@ -115,8 +115,7 @@ fn checkout_has_live_exception(
     checkout: &CheckoutSnapshot,
     focused_checkout_id: Option<&str>,
 ) -> bool {
-    checkout.agent_summary.working > 0
-        || checkout.agent_summary.needs_you > 0
+    crate::agent_state::checkout_has_active_agents(&checkout.agent_summary)
         || checkout.dirty
         || checkout
             .unpushed
@@ -287,6 +286,7 @@ mod tests {
         pane_ids: &[&str],
     ) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -320,6 +320,7 @@ mod tests {
         pane_ids: &[&str],
     ) -> CheckoutSnapshot {
         CheckoutSnapshot {
+            agent_scope: Default::default(),
             id: id.to_owned(),
             is_primary: true,
             worktree: last_commit_unix_seconds.map(|seconds| WorktreeSnapshot {
@@ -401,6 +402,7 @@ mod tests {
         last_commit_unix_seconds: Option<u64>,
     ) -> CheckoutSnapshot {
         CheckoutSnapshot {
+            agent_scope: Default::default(),
             id: id.to_owned(),
             workspace_id: workspace_id.to_owned(),
             label: id.to_owned(),

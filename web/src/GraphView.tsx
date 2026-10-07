@@ -214,9 +214,9 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   const onCross = (chip: CrossChip) => {
     if (onSelectBox && projects.some(({ workspace }) => workspace.id === chip.project.id)) {
       const drawn = board.sections.some((section) => section.rows.has(chip.paneIds[0]!));
-      onSelectBox(chip.box, { fold: drawn ? null : foldHolding(chip.project, everyone, chip.box, "all"), clearFilter: !drawn && graphFilterActive(filter) });
+      onSelectBox(chip.box, { fold: drawn ? null : foldHolding(chip.project, chip.box, "all"), clearFilter: !drawn && graphFilterActive(filter) });
       setJump((last) => ({ box: chip.box, count: (last?.count ?? 0) + 1 }));
-    } else handlers.openProjectBox(chip.project, chip.box, foldHolding(chip.project, everyone, chip.box, "project"));
+    } else handlers.openProjectBox(chip.project, chip.box, foldHolding(chip.project, chip.box, "project"));
   };
   if (board.empty) {
     return (
@@ -618,7 +618,7 @@ function CrossProjectChip({ chip, onClick }: { chip: CrossChip; onClick: () => v
         <Arrow aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
         <span className="min-w-0 truncate font-sans" data-graph-cross-name="true">{chip.project.label}</span>
         {device ? <span className="min-w-0 truncate font-sans text-subtle-foreground">{device}</span> : null}
-        {chip.paneIds.length > 1 ? <span className="shrink-0">{chip.paneIds.length}</span> : null}
+        {chip.count > 1 ? <span className="shrink-0">{chip.count}</span> : null}
       </button>
     </Hint>
   );

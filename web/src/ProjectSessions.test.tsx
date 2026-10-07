@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -21,7 +22,7 @@ afterAll(() => browserCanvas.restore());
 // Expectations come from the server-session-search handoff: independent
 // history/search arrival, truthful incomplete outcomes, metadata fallback,
 // and a query scoped to the selected Project rather than the front Workspace.
-const project: Workspace = {
+const project: Workspace = { agent_scope: emptyScope(),
   id: "project:studio", label: "Studio", path: "/projects/studio", device_id: "local",
   registered: true, temporary: false, pinned: false, checkouts: [],
   inactive_checkouts: { expanded: false, checkout_ids: [] },

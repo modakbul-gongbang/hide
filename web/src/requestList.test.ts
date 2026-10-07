@@ -1,3 +1,7 @@
+import { legacyWork } from "../test/legacyRequestWork";
+import { emptyScope } from "../test/legacyAgentScope";
+import { requestRows, requestGroups, requestsTile } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // The request view's rules (PRD overview-request-view): which rows it draws
 // and in what order, the Requests tile, the one-line request (D-42), and the
 // chips. The expected answers are the PRD's Behaviors and the operator
@@ -6,22 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { LensAgent } from "./overviewLens";
-import {
-  childrenSummary,
-  fullRequest,
-  openCandidates,
-  pullRequestChip,
-  requestGroups,
-  requestLine,
-  requestRows,
-  requestsTile,
-  senderWords,
-  resultLine,
-  rowIssues,
-  rowIssueChips,
-  splitTail,
-  verdictLine,
-} from "./requestList";
+import { childrenSummary, fullRequest, openCandidates, pullRequestChip as drawPullRequestChip, requestLine, senderWords, resultLine, rowIssues as drawRowIssues, rowIssueChips as drawRowIssueChips, splitTail, verdictLine,  } from "./requestList";
 import type { AgentPullRequest, AgentRequest, AgentRow, Checkout, RequestVerb, Task, Workspace } from "./snapshot";
 
 const NOW = new Date(2026, 9, 3, 15, 0, 0).getTime();
@@ -29,7 +18,7 @@ const NOW = new Date(2026, 9, 3, 15, 0, 0).getTime();
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
-const PROJECT = {
+const PROJECT = { agent_scope: emptyScope(),
   id: "project",
   label: "Project",
   path: "/fixture",
@@ -49,7 +38,7 @@ function block(verb: RequestVerb, extra: Partial<AgentRequest> = {}): AgentReque
 }
 
 function agent(pane: string, verb: RequestVerb | null, extra: Partial<AgentRow> = {}): AgentRow {
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -63,7 +52,7 @@ function agent(pane: string, verb: RequestVerb | null, extra: Partial<AgentRow> 
     last_activity: "0000000000001",
     ...(verb ? { request: block(verb) } : {}),
     ...extra,
-  };
+  });
 }
 
 function lens(row: AgentRow, task: Task | null = null): LensAgent {
@@ -307,3 +296,13 @@ describe("the words of a row follow the interface language", () => {
     expect(requestsTile([], { state: "unavailable", text: "ssh refused", retry: "connect" }, english).failure).toBe("Couldn't read agents · ssh refused");
   });
 });
+
+function withWork(row: import("./requestList").RequestRow, project: Workspace) {
+  return { ...project, agent_scope: { ...emptyScope(), work: { [row.lens.agent.pane_id]: legacyWork(row.lens, project) } } };
+}
+function rowIssues(row: import("./requestList").RequestRow, project: Workspace) { return drawRowIssues(row, withWork(row, project)); }
+function rowIssueChips(row: import("./requestList").RequestRow, project: Workspace) { return drawRowIssueChips(row, withWork(row, project)); }
+function pullRequestChip(pulls: AgentPullRequest[]) {
+  const [row] = requestRows([lens(agent("a", "review", { request: block("review", { pull_requests: pulls }) }))], []);
+  return drawPullRequestChip({ ...row!, lens: { ...row!.lens, project: withWork(row!, PROJECT) } });
+}

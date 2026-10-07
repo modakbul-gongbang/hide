@@ -11,7 +11,8 @@ What it needs from the operator, whether it is running, whether it has reported 
 - Read: read, unread.
 - Ownership: operator, delegated.
 
-`herdr-core/src/sidebar.rs` is the single owner of all five.
+`herdr-core/src/agent_state/axes.rs` is the single owner of all five.
+`agent_state/turn.rs` derives the group, request verb, close and rest gates from them; `sidebar.rs` assembles the snapshot rows.
 It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant badge, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
@@ -20,7 +21,7 @@ It is read back off the row: a row whose lineage depth is greater than zero is d
 
 ## agent_status provenance and background waits
 
-Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `sidebar.rs`.
+Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `agent_state/axes.rs`.
 For Claude Code and Codex, Herdr's [official agent reference](https://herdr.dev/docs/agents/) describes terminal-screen inference as the lifecycle source, rather than lifecycle state reported by their session hooks.
 A native session reference or display-only hook token does not prove that a tool is running or that its command completed.
 Other integrations can have full lifecycle reporting, so this screen-inference statement is specific to those two agents, not every agent Herdr supports.
@@ -107,7 +108,7 @@ Demand has two sources:
 - Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
 - Approval is also a plan waiting for the operator's approval that Herdr reads as an ordinary stop, Codex's "Implement this plan?" (PRD codex-plan-approval-hold).
   The core reads it from the session file, not the screen: the label worker's session read folds the agent's turn records into a turn tracker (`hide-session/src/turns.rs`), and a plan-mode turn that proposed a plan and finished, with no later turn or person's message, waits.
-  The answer holds only for the Herdr `state_change_seq` the read was asked under and the session it proved, it is laid on the row's facts (`RowFacts.awaiting_operator`, never on the wire), and it is not shown while Herdr says the agent works.
+  The answer holds only for the Herdr `state_change_seq` the read was asked under and the session it proved, it is laid on the row's facts (`RowFacts.awaiting_operator`, never on the wire) and resolved by `agent_state::agent_blocked`, and it is not shown while Herdr says the agent works.
   A wait no read has settled for the current state is not shown: the row shows what Herdr says, and the letter doorbell holds instead (`docs/delivery.md`, A menu Herdr reads as a stop).
   It needs no Hide AI: agent summaries off, the read still runs.
   "No, stay in Plan mode" writes nothing to the session, so after that answer the row stays in Needs You until Codex's next turn starts.
@@ -246,7 +247,7 @@ A new agent in the pane, whether a wake, the operator or a restore started it, i
 
 ### Workspace aggregation
 
-`sidebar.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
+`agent_state/tally.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
 Each Workspace counts unique agent pane IDs physically owned by its tabs, independent of sidebar visibility, raised rows, parent collapse, or Workspace collapse.
 The existing status synchronization indexes pane ownership once and visits each canonical agent once; it adds no timer, I/O, or per-frame work and publishes only changed summaries.
 A descendant running in another checkout contributes to that checkout, even if its lineage row appears beneath a parent elsewhere.
@@ -265,7 +266,7 @@ A read error in Seen cannot outrank an unread question in Needs You.
 The Workspace draws the representative agent's exact mark, color, and emphasis through the shared presentation.
 
 The web shell draws no representative chip; it draws a status badge in its place.
-The same pass counts each agent under the mark its own row draws (`RowMark` in `sidebar.rs`, the one decision behind the row's symbol): error, approval, question, working, done, and idle, the hollow ring of a quiet agent the operator has already seen.
+The same pass counts each agent under the mark its own row draws (`RowMark` in `agent_state/tally.rs`, the one decision behind the row's symbol): error, approval, question, working, done, and idle, the hollow ring of a quiet agent the operator has already seen.
 A row Herdr reports as unknown draws `~` and is counted in none of them, so the badge claims nothing the projection cannot vouch for.
 The counts ride the summary as `marks`, and a project's badge is its checkouts' counts added up.
 The badge draws one mark and count per state, worst first (`× ! ? ● ✓ ○`), zero states left out, in the marks and colors the rows use, so it says what opening the rows would show.
@@ -333,13 +334,13 @@ The pet's badge row counts three of the sidebar's groups, in the same order; See
 A count of zero hides that badge.
 
 The pet's "act now" number is the whole Needs You count and its done number is the whole Done count, so a badge can never disagree with the section it stands for.
-`herdr-core/src/pet.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
+`herdr-core/src/agent_state/tally.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
 The pet dashboard's count tiles read the same four groups, plus the rows whose server stopped answering.
 
 ## The subagent badge
 
 The badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
-`pet.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
+`agent_state/tally.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
 It is the one count the hook can vouch for; Herdr's own wire carries no ambient counts, and nothing here scans transcripts or output.
 
 Regression owner: `subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_quiet_while_disconnected`.
@@ -502,6 +503,9 @@ Projection adds bounded-by-metadata strings per agent to the existing snapshot b
 
 ### The request view's verb
 
+`agent_state/work.rs` owns the row’s PR and issue association, the live PR ordering and the one row holding each PR’s duty.
+`agent_state/turn.rs::verb_of` owns the verb independently of the sidebar group.
+`request_view.rs` assembles the block and keeps verb timestamps through the existing ledger.
 Each agent row also carries a `request` block (`herdr-core/src/request_view.rs`, PRD overview-request-view): the operator's last request with who sent it, the last reply, the row's pull requests, and one verb the request view groups by.
 The verb is computed in the core from the axes above and the row's pull requests, never by the shell, and the first rule that holds wins:
 a demand (a question or an approval) is `answer`; a running agent is `working`; then, over the open pull requests whose duty the row holds, failed checks are `fix` and passing, absent or unknown checks are `review`; a turn the label read as `unfinished`, on a row with no working descendants, is `stopped`; running checks are `waiting`; an unread completion, or a pull request settled since the operator's last request and since the operator last opened the row's result (`result_opened_unix_ms` in the verb record), is `result`; a quiet root with working descendants, or a turn the label read as `waiting` (on something other than a pull request), is `waiting`; anything else is `idle`.
@@ -555,7 +559,8 @@ The core never renames the Herdr tab for this; the Recent Panels label is projec
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
 Every entry opens the Agents graph with the checkout in front selected (PRD agents-graph-view D-22), except Recent Panels, which restores the lens and expanded rows as they were left; the request view is the tab beside it.
-The Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tab's bar and give the status chips their states (`web/src/overviewLens.ts`).
+The Agents view reads the core's four buckets: the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting.
+The core also supplies graph priorities, fold badges and tile counts; `web/src/agentGraph.ts` places rows and lines, and `web/src/overviewLens.ts` translates the bar and chip labels.
 The Issues view is the Tasks board below.
 Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.
@@ -578,3 +583,74 @@ No GitHub mutation is allowed by this path.
 The existing purpose mirror worker clears a branch issue setting when an observed worktree path is removed; a branch switch, detached HEAD, or unregistered project is not a removed worktree.
 While a worktree stays detached, the worker retains its last known branch for cleanup if that path is later removed.
 A rejected cleanup enqueue is retained for the next catalog synchronization.
+
+## Row presentation and phone notifications
+
+`agent_state/turn.rs::row_state` supplies each row’s attention, title emphasis, line mode, semantic tones, graph bucket and priority, search tone, close state and request timing.
+The shell maps semantic tones to its existing tokens and translates status words; a tab carries only the mark tone it needs.
+A waiting root intentionally keeps its hollow row glyph with a working tone, and a subdued chip and search result.
+`row_tests::read_question_keeps_its_request_line_and_hue_without_operator_attention` and `row_tests::waiting_root_keeps_distinct_row_chip_and_graph_decisions` pin these surface differences.
+
+`agent_state/tally.rs::phone` projects the phone’s groups, roots, places and safe row values from the published snapshot.
+`agent_state/turn.rs::push` owns the effective notification state and transition ledger; hided keeps pairing, push encryption, transport and delivery policy.
+A read root question clears the server’s effective push state, while the phone’s existing open-page rule keeps its notification while the demand remains.
+The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
+The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
+
+### Scope projections
+
+`agent_state/tally/scope.rs` publishes `agent_scope` on the navigator, each device, each project and each checkout.
+Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
+Physical row references include an occurrence index so duplicate pane IDs keep their distinct labels and states; Overview and graph membership retain the first source occurrence.
+The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from requests and the Overview attention count, and keeps them in physical agent lists.
+A changed Factory summary refreshes the scope in the same publication; unchanged worker membership reuses the cache.
+Requests exclude a delegated row only when its parent belongs to that scope, and publish their ordered groups and counts separately from physical and Overview totals.
+Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
+The scope cache compares owned agent rows, device connection facts and checkout membership and summaries; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
+The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.
+
+`agent_state/tally/lineage.rs` projects the list headings, direct-child membership, folded checkout badges and checkout trees with their two card representatives.
+The sidebar uses the connected-device tree; the Issues board uses the project device's tree, preserving the previous scope difference.
+A done descendant turns a card yellow only when it is a root relative to that checkout.
+Folded checkout lines carry status-priority tiers; the browser keeps its existing locale-aware alphabetical placement inside a tier so Korean and English labels keep their displayed order.
+The cross-checkout counts, relative-root highlight and fold transitions are asserted by `runtime::tests::agent_scopes::checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority`.
+
+`agent_state/work/board.rs` owns the PR list's branch and maker association, issue chip source, ancestor rows, attention ordering, groups and open count.
+The maker remains listed after moving to other work, but only the branch's agents can make the PR read as fixing or needing review.
+`runtime::tests::agent_scopes::pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes` pins that distinction and GitHub-only invalidation.
+`agent_state/work.rs::row_work` supplies the selected PR, additional-PR count and ordered issue keys for expanded and folded request rows.
+It preserves live-PR-first selection, checkout-task precedence and issues closed after the request; issue facts and checkout task changes invalidate the scope cache.
+The agent palette receives its checkout and closing-issue keys from `tally/relations.rs`.
+The device scope also carries raised sections (five Needs You rows and three Done rows before overflow) and each numbered agent's first checkout owner.
+`runtime::tests::agent_scopes::raised_sections_keep_five_questions_three_completions_and_first_number_owner` pins those limits.
+
+`agent_state/tally/close.rs` publishes the existing pane, tab, checkout and project close targets' confirmation decision, stop-work rows and outside-descendant lists and counts.
+The first unknown target still takes priority over confirmation; a subtree sheet includes every target while counting only descendants outside it.
+The shell chooses the current target and translates the published states; runtime close enforcement is unchanged.
+A removal dialog whose target has left the catalog keeps its existing result without requesting live close consequences.
+`runtime::tests::agent_scopes::close_consequences_keep_unknown_priority_and_outside_descendant_counts` pins these rules and pane-only invalidation.
+
+`agent_state/tally/graph.rs` publishes graph membership, row priority, project attention, cleanup/resting folds and the marks tucked under visible ancestors.
+The three fold toggles and project/all selection have sixteen combinations, with identical badge maps shared in the snapshot.
+The renderer selects a combination, filters text and draws geometry; a filtered box reads the first remaining row in core priority order.
+`runtime::tests::agent_scopes::graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor` pins nested hidden marks and Git-only fold invalidation.
+`graph/cross.rs` projects one outgoing chip per other project, ordered by its most urgent child and then latest activity, followed by the incoming parent chip.
+The first global pane occurrence wins, same-project delegation stays an indent or line, and distinct device IDs retain context even when their labels match.
+Disconnected catalogs retain their chips, matching the graph’s existing last-known membership.
+The chip’s count, names and first checkout are projected together; the web resolves navigation and translates the local device label.
+`runtime::tests::agent_scopes::graph_cross_project_chips_preserve_order_counts_and_stable_device_context` pins the incoming graph screen values and cache invalidation.
+
+`tally.rs` also owns local and remote device counts and project-removal running-agent totals.
+Device scopes publish the current listed rows by source index, preserving duplicate physical rows and local-first order, and the first checkout place for each pane.
+The overall scope concatenates connected listings; a disconnected device keeps its catalog places but marks them unavailable to the live sidebar.
+The PR board publishes its turn/fixing/blocked counts and the review/draft/finished-agent breakdown, including the existing precedence of a finished agent over draft status.
+The scope ownership/disconnect and PR-board tests above assert these values.
+
+The command palette reads `tally/relations.rs` groups and row depths for the selected agent, including its in-checkout ancestors, outside parent and descendants in other checkouts.
+It translates their tags and resolves PR/issue labels without rebuilding lineage membership.
+The relation fixture in `runtime::tests::agent_scopes` covers both the parent caption and the cross-checkout child group.
+
+`turn.rs::AgentUse` and `tally/cleanup.rs` retain checkout-removal use counts, including the last known busy descendants on disconnected devices.
+Their unknown-state and per-ancestor counting rules remain distinct from live close-sheet consequences.
+The existing cleanup tests in `runtime::tests::lineage` continue to exercise the public runtime entrypoint.
+Delegated-tab placement, active-agent project context, request descendant-question counts and the cleanup row's working indicator also read module-owned answers.

@@ -1,13 +1,16 @@
+import { projectRows, projectListNumbers } from "../test/legacyAgentScope";
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { agentListOrder, numberedAgents, numberedTabs, numberOf, projectListNumbers } from "./numbering";
-import { projectRows } from "./projects";
+import { agentListOrder, numberedAgents, numberedTabs, numberOf } from "./numbering";
+
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
 function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff" }[] = []): Checkout {
-  return {
+  return { agent_scope: emptyScope(),
     id: "c1",
     workspace_id: "w1",
     strip: [
@@ -20,7 +23,7 @@ function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff"
 }
 
 function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra };
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, ...extra });
 }
 
 describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
@@ -78,7 +81,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     ];
     const status = { remote: [{ target_id: "mini", state: "connected", session: { agents: [agent("r1", { group: "needs_you" })], workspaces: [] } }] };
     const local = [agent("l1")];
-    const at = (front: string) => agentListOrder({ rest: { navigator: { focused_device_id: front, devices }, status } as unknown as SnapshotRest, agents: local }).map((row) => row.agent.pane_id);
+    const at = (front: string) => agentListOrder({ rest: legacyRest({ navigator: { focused_device_id: front, devices }, status } as unknown as SnapshotRest, local), agents: local }).map((row) => row.agent.pane_id);
     expect(at("local")).toEqual(["l1"]);
     expect(at("mini")).toEqual(["r1"]);
   });
@@ -91,7 +94,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
       navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [{ id: "w1", label: "w", checkouts: [checkoutWith(["t1", "t2"])] }] },
       status: { remote: [] },
     } as unknown as SnapshotRest;
-    const state = { rest, agents: [parent, child, other] };
+    const state = { rest: legacyRest(rest, [parent, child, other]), agents: [parent, child, other] };
     expect(numberedTarget("tabs", 2, state)).toBe("t2");
     expect(numberedTarget("tabs", 3, state)).toBeNull();
     // Needs You draws first; the folded child is not a row, so p1 is second and 3 is empty.
@@ -103,7 +106,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
 
   it("shows each agent's Agents-list number once in Projects: its raised row, else its own checkout's row", () => {
     const checkout = (id: string, panes: string[]) => ({ id, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] });
-    const workspaces = [{ id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
+    const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
     const listed = [agent("ask", { group: "needs_you" }), agent("parent"), agent("child")].map((row) => ({ agent: row, device: null }));
     const rows = projectRows(workspaces, [], listed);
     const numbered = new Map([[1, "ask"], [2, "parent"], [3, "child"]] as const);
@@ -121,7 +124,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
 
   it("leaves a raised agent folded past its section's cap numbered on its tree row until the section opens", () => {
     const panes = ["d1", "d2", "d3", "d4"];
-    const workspaces = [{ id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
+    const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
     const listed = panes.map((pane) => ({ agent: agent(pane, { group: "done" }), device: null }));
     const numbered = new Map([[4, "d4"]] as const);
     const folded = projectListNumbers(numbered, projectRows(workspaces, [], listed), workspaces);

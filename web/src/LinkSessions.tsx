@@ -48,7 +48,7 @@ export function LinkSessions({
   const rest = useShellStore((s) => s.rest);
   const filling = useShellStore((s) => s.linkSummaries?.filling === true);
   const [unfolded, setUnfolded] = useState(false);
-  const agents = allAgents(rest?.status?.remote, rest?.navigator?.devices, rest?.navigator?.agents ?? []).map((entry) => entry.agent);
+  const agents = allAgents(rest?.status?.remote, rest?.navigator?.agents ?? [], rest?.navigator?.agent_scope).map((entry) => entry.agent);
   const lines = sessionLines(panel.sessions, agents);
   const { shown, earlier } = foldLines(lines, unfolded);
   const finding = panel.loading || filling;

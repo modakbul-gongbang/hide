@@ -64,6 +64,7 @@ impl Runtime {
                 .get_or_insert_with(Edited::default)
                 .edit()
                 .summary = Some(summary);
+            self.refresh_agent_scopes();
         }
         if let Some(task) = task {
             self.snapshot.factory_task = task.map(Edited::new);
@@ -330,9 +331,8 @@ impl Runtime {
         WorkerProbe {
             present: agent.is_some(),
             asleep,
-            working: agent
-                .is_some_and(|agent| agent.activity == "working" || agent.group == "working"),
-            waiting: agent.is_some_and(|agent| agent.demand != "none" || agent.blocked),
+            working: agent.is_some_and(crate::agent_state::has_work_in_progress),
+            waiting: agent.is_some_and(crate::agent_state::is_waiting_for_operator),
             status_changed_at_unix_ms: self
                 .delivery_observations
                 .get(pane)

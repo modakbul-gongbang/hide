@@ -1,3 +1,4 @@
+import { EMPTY_GALLERY_SCOPE, galleryScopes } from "./agentScopes";
 // The Projects sidebar's gallery scene (PRD design-review-workflow D-04,
 // B3, B4): a synthetic snapshot the real sidebar renders, with the content
 // `Screen / Projects Sidebar` in design/hide-screens.pen draws, so an actual
@@ -7,6 +8,7 @@
 // the way the core applies the same events, so a chevron really folds.
 
 import type { AgentRow, Checkout, MarkCounts, PullRequest, SnapshotRest, Workspace } from "../snapshot";
+import { galleryAgentState } from "./agentStates";
 
 /** Which titles the scene carries: the Pen frame's, or long Korean ones for truncation. */
 export type SceneContent = "reference" | "long";
@@ -74,7 +76,9 @@ const UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 
 
 function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
   const unit = UNIT_MS[elapsed.slice(-1)] ?? 0;
+  const changed = Date.now() - Number(elapsed.slice(0, -1)) * unit;
   return {
+    state: galleryAgentState(spec.pane_id, spec.detail, changed),
     id: spec.pane_id,
     identity_label: spec.pane_id,
     agent_kind: "claude",
@@ -83,7 +87,7 @@ function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
     unread: false,
     demand: "none",
     activity: "idle",
-    changed_at_unix_ms: Date.now() - Number(elapsed.slice(0, -1)) * unit,
+    changed_at_unix_ms: changed,
     ...spec,
   };
 }
@@ -113,6 +117,7 @@ function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
   const panes = spec.panes ?? [];
   const counted = spec.marks ? marks(spec.marks) : null;
   return {
+    agent_scope: EMPTY_GALLERY_SCOPE,
     id: spec.id,
     workspace_id: spec.workspace,
     label: spec.branch ?? spec.workspace,
@@ -174,6 +179,7 @@ function pane(id: string) {
 
 function workspace(id: string, extra: Partial<Workspace> & Pick<Workspace, "checkouts">, folds: SceneFolds): Workspace {
   return {
+    agent_scope: EMPTY_GALLERY_SCOPE,
     label: id,
     path: `${ROOT}/${id}`,
     device_id: "local",
@@ -305,7 +311,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       workspaces: world ? [...workspaces, world.home] : workspaces,
       inactive_projects: [{ device_id: "local", expanded: folds.inactiveProjectsOpen, project_ids: ["old-prototype", "dotfiles", "research-notes"] }],
       agents,
-      devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: agents.length, test: null }, ...(world?.devices ?? [])],
+      devices: [{ agent_scope: EMPTY_GALLERY_SCOPE, id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: agents.length, test: null }, ...(world?.devices ?? [])],
       focused_device_id: folds.frontDevice,
       focused_checkout_id: null,
     },
@@ -317,7 +323,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     },
     ...(world ? { status: { remote: world.remote } } : {}),
   };
-  return { rest, agents };
+  return { rest: galleryScopes(rest, `${content}:${devices}`, folds.expandedAgents), agents };
 }
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {
@@ -384,8 +390,8 @@ function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number
   return {
     home,
     devices: [
-      { id: "mini", label: "mini", kind: "remote", state: "ready", message: null, ssh_alias: "mini", agent_count: 2, test: null },
-      { id: OFFLINE_DEVICE, label: offlineLabel, kind: "remote", state: "unavailable", message: null, ssh_alias: OFFLINE_DEVICE, agent_count: 0, test: null },
+      { agent_scope: EMPTY_GALLERY_SCOPE, id: "mini", label: "mini", kind: "remote", state: "ready", message: null, ssh_alias: "mini", agent_count: 2, test: null },
+      { agent_scope: EMPTY_GALLERY_SCOPE, id: OFFLINE_DEVICE, label: offlineLabel, kind: "remote", state: "unavailable", message: null, ssh_alias: OFFLINE_DEVICE, agent_count: 0, test: null },
     ],
     registrations: [
       ...workspaces.map((row) => registrationOf(row, "local")),

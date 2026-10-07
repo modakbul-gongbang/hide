@@ -1,3 +1,5 @@
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -27,21 +29,21 @@ function project(device: string): { workspace: Workspace; agent: AgentRow; check
   const scope = device === "local" ? "" : `remote:${device}:`;
   const checkoutId = `${scope}checkout:w3Y`;
   const paneId = `${scope}pane:w3Y:p7`;
-  const workspace = {
+  const workspace = { agent_scope: emptyScope(),
     id: `${scope}workspace:w3Y`, label: "modakbul", path: "/fixture/modakbul", device_id: device, is_git: true, registered: true,
     temporary: false, pinned: false, remote_target_id: device === "local" ? null : device,
     inactive_checkouts: { expanded: false, checkout_ids: [] },
-    checkouts: [{
+    checkouts: [{ agent_scope: emptyScope(),
       id: checkoutId, workspace_id: `${scope}workspace:w3Y`, label: "modakbul", path: "/fixture/modakbul", branch: "main",
       is_primary: true, is_worktree: false, exists: true, active_tab_id: `${scope}tab:w3Y:t7`, strip: [],
       worktree: { branch: "main", head_sha: null, last_commit_unix_seconds: null },
       tabs: [{ id: `${scope}tab:w3Y:t7`, label: "Codex", panes: [{ id: paneId }] }],
     }],
   } as unknown as Workspace;
-  const agent = {
+  const agent = legacyAgentRow({
     id: `${scope}agent:w3Y:p7`, pane_id: paneId, identity_label: "인사에 답하기", agent_kind: "codex", symbol: "○", group: "seen",
     status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "stopped",
-  } as AgentRow;
+  }) as AgentRow;
   return { workspace, agent, checkoutId };
 }
 
@@ -74,7 +76,7 @@ it("draws a selected SSH device's agent rows open under their checkout, with no 
   const thisMac = {
     navigator: { devices: [LOCAL, MINI], workspaces: [local.workspace], agents: [local.agent], focused_device_id: "local" },
   } as unknown as SnapshotRest;
-  useShellStore.setState({ rest: device, agents: [], connection: "live" });
+  useShellStore.setState({ rest: legacyRest(device, []), agents: [], connection: "live" });
   useUiStore.setState({ sidebarMode: "projects" });
   const actions = createActions(() => true);
   const container = document.createElement("div");
@@ -87,7 +89,7 @@ it("draws a selected SSH device's agent rows open under their checkout, with no 
     expect(open(remote.checkoutId)?.textContent).toContain("인사에 답하기");
     expect(toggle(remote.checkoutId)).toBeNull();
 
-    await act(async () => useShellStore.setState({ rest: thisMac, agents: [local.agent] }));
+    await act(async () => useShellStore.setState({ rest: legacyRest(thisMac, [local.agent]), agents: [local.agent] }));
     expect(open(local.checkoutId)).toBeNull();
     expect(toggle(local.checkoutId)?.getAttribute("aria-label")).toContain("main");
   } finally {

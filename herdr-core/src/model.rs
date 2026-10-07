@@ -504,6 +504,7 @@ pub struct PetOriginSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NavigatorSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub root_path: Option<String>,
     /// The focused local checkout's History scope. A registered subfolder may
     /// be narrower than the Git checkout used by Explorer and editor tabs.
@@ -602,6 +603,7 @@ impl ProviderUsageSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeviceSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub id: String,
     pub label: String,
     pub kind: String,
@@ -949,6 +951,7 @@ pub struct DeviceTestStageSnapshot {
 /// rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
+    pub state: crate::agent_state::RowState,
     pub id: String,
     /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
     /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
@@ -1045,7 +1048,7 @@ pub struct SidebarAgentSnapshot {
     /// The pane this agent was spawned from, as the `parent_pane` token its
     /// spawner declared (Herdr records no lineage). It is a claim that holds
     /// only while both panes still host the sessions it was written for:
-    /// `wire.rs` checks the child's, `sidebar::apply_lineage` the parent's and
+    /// `wire.rs` checks the child's, `crate::agent_state::apply_lineage` the parent's and
     /// clears the claim when either moved on, so an agent that took over a
     /// pane is a root rather than a child of whoever the pane's last agent
     /// was spawned by.
@@ -1173,6 +1176,7 @@ pub struct AgentSleepActionSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub home_issues: crate::issues::ProjectIssuesSnapshot,
     /// The project's tasks in the source-neutral shape the web reads
     /// (`tasks.rs`); `home_issues` stays as older readers read it.
@@ -1357,6 +1361,7 @@ pub struct CheckoutPurposeSnapshot {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub issue: Option<crate::issues::IssueLinkSnapshot>,
     /// The key of the task in its project's `tasks` this checkout works on.
     pub task_key: Option<String>,
@@ -1660,6 +1665,7 @@ impl AgentStatusCode {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabAgentSnapshot {
+    pub state: crate::agent_state::TabState,
     pub agent_kind: String,
     pub symbol: String,
     pub demand: String,
@@ -1672,6 +1678,9 @@ pub struct TabAgentSnapshot {
 impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
     fn from(agent: &SidebarAgentSnapshot) -> Self {
         Self {
+            state: crate::agent_state::TabState {
+                mark_tone: agent.state.mark_tone,
+            },
             agent_kind: agent.agent_kind.clone(),
             symbol: agent.symbol.clone(),
             demand: agent.demand.clone(),
@@ -1908,6 +1917,7 @@ pub struct PaneChildrenSnapshot {
 /// sibling, or an Overview worktree row's agent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AgentChipSnapshot {
+    pub tone: crate::agent_state::Tone,
     pub pane_id: String,
     /// The short name the chip shows beside its mark.
     pub label: String,
@@ -1946,14 +1956,6 @@ pub struct DescendantCountsSnapshot {
     /// Descendants Herdr cannot classify. Not drawn; the log carries it.
     #[serde(skip_serializing)]
     pub unknown: u32,
-}
-
-impl DescendantCountsSnapshot {
-    /// Whether any drawn count is above zero, so a row with descendants that
-    /// are all merely ready wears no badge rather than an empty one.
-    pub fn any_drawn(&self) -> bool {
-        self.error + self.approval + self.question + self.working + self.done > 0
-    }
 }
 
 /// One thing a descendant is doing that its ancestors are told about: an
@@ -4351,6 +4353,7 @@ impl Snapshot {
             schema_version: SCHEMA_VERSION,
             delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
+                agent_scope: Default::default(),
                 root_path: None,
                 changes_root_path: None,
                 focused_device_id: None,
@@ -4947,7 +4950,7 @@ mod wire_enum_tests {
         assert_wire(&contract, "pull_request_checks", &checks);
         checked.insert("pull_request_checks");
 
-        use crate::request_view::RequestVerb;
+        use crate::agent_state::RequestVerb;
         let verbs = [
             RequestVerb::Answer,
             RequestVerb::Fix,

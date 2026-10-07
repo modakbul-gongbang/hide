@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   currentSurface,
@@ -28,7 +29,7 @@ function display(id: string, label: string, kind: ViewDisplaySnapshot["kind"] = 
 }
 
 function checkout(id: string, workspaceId: string, label: string, tabs: Record<string, string[]>): Checkout {
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: workspaceId,
     label,
@@ -41,8 +42,8 @@ function checkout(id: string, workspaceId: string, label: string, tabs: Record<s
 
 const workspaces = (): Workspace[] =>
   [
-    { id: "w-hide", label: "hide", device_id: "local", checkouts: [checkout("c-main", "w-hide", "main", { t1: ["p1"], t2: ["p2", "p3"] }), checkout("c-feature", "w-hide", "hide", { t3: ["p4"] })] },
-    { id: "w-notes", label: "notes", device_id: "local", checkouts: [checkout("c-notes", "w-notes", "notes", { t4: ["p5"] })] },
+    { agent_scope: emptyScope(), id: "w-hide", label: "hide", device_id: "local", checkouts: [checkout("c-main", "w-hide", "main", { t1: ["p1"], t2: ["p2", "p3"] }), checkout("c-feature", "w-hide", "hide", { t3: ["p4"] })] },
+    { agent_scope: emptyScope(), id: "w-notes", label: "notes", device_id: "local", checkouts: [checkout("c-notes", "w-notes", "notes", { t4: ["p5"] })] },
   ] as unknown as Workspace[];
 
 const agents = [

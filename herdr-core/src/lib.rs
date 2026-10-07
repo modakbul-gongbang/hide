@@ -5,6 +5,7 @@ pub mod agent_hooks;
 mod agent_sleep;
 mod agent_sleep_herdr;
 mod agent_start;
+pub mod agent_state;
 mod ai;
 mod changes;
 mod checkout_owner;

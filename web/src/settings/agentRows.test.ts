@@ -1,3 +1,4 @@
+import { emptyScope } from "../../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import type { Device, KitAgent, KitPiece } from "../snapshot";
 import { agentInstalled, agentLeftover, checkFailedReason, docsUrl, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
@@ -16,7 +17,7 @@ const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({
 });
 const device = (patch: Partial<Device> & { agents?: KitAgent[]; unavailable?: string | null }): Device => {
   const { agents = [], unavailable = null, ...rest } = patch;
-  return {
+  return { agent_scope: emptyScope(),
     id: "studio",
     label: "Studio",
     kind: "remote",

@@ -1,3 +1,4 @@
+import { deviceScope, type AgentScope } from "./agentScope";
 // What ⌘n and ⌥n select, and the number each tab and agent row carries
 // while a hold reveals it (PRD electron-digit-shortcuts-hints D-02). The
 // number is the screen order at that moment, first to ninth: the strip's
@@ -11,7 +12,7 @@ import { frontDeviceId } from "./devices";
 import { agentListRows, agentTree, deviceListedAgents, type ListedAgent } from "./navigation";
 import type { ProjectRow } from "./projects";
 import { DIGITS, type Digit } from "./shortcuts";
-import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
 import { agentEntries } from "./workspace";
 
 /** Local area tree order, then each bar left to right; devices retain their strip order. */
@@ -40,12 +41,12 @@ export function numberOf(numbered: Map<Digit, string>, id: string): Digit | null
 
 /** The Agents list's rows in draw order, the list ⌥n numbers whichever list is on screen (B2): the front device's. */
 export function agentListOrder(state: { rest: SnapshotRest | null; agents: AgentRow[] }): TreeRow[] {
-  return listedAgentOrder(deviceListedAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents, frontDeviceId(state.rest)));
+  return listedAgentOrder(deviceListedAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents, frontDeviceId(state.rest)), deviceScope(state.rest, frontDeviceId(state.rest)));
 }
 
 /** The Agents list's rows in draw order, from the agents it lists. */
-export function listedAgentOrder(listed: ListedAgent[]): TreeRow[] {
-  return agentListRows(agentTree(listed));
+export function listedAgentOrder(listed: ListedAgent[], scope: AgentScope | null): TreeRow[] {
+  return agentListRows(agentTree(listed, scope));
 }
 
 /**
@@ -59,16 +60,12 @@ export function listedAgentOrder(listed: ListedAgent[]): TreeRow[] {
 export function projectListNumbers(
   numbered: Map<Digit, string>,
   rows: readonly ProjectRow[],
-  workspaces: readonly Workspace[],
+  scope: AgentScope | null,
 ): (paneId: string, checkoutId: string | null) => Digit | null {
   // A raised agent folded past its section's cap is not drawn there, so its number stays on its tree row.
   const raised = new Set(rows.flatMap((row) => (row.kind === "raised" ? [...row.agents, ...(row.expanded ? row.more : [])].map(({ agent }) => agent.pane_id) : [])));
-  const owners = new Map<string, string>();
-  for (const workspace of workspaces) {
-    for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout.id);
-  }
   return (paneId, checkoutId) => {
-    const shown = checkoutId === null ? raised.has(paneId) : !raised.has(paneId) && owners.get(paneId) === checkoutId;
+    const shown = checkoutId === null ? raised.has(paneId) : !raised.has(paneId) && scope?.owners[paneId] === checkoutId;
     return shown ? numberOf(numbered, paneId) : null;
   };
 }
