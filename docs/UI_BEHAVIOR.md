@@ -1173,6 +1173,7 @@ An empty column keeps only its label and zero count; old completions still fold 
 
 One card component serves the board and graph, choosing its contents by its own width.
 Below 240 CSS pixels it shows only the state icon, a title capped at two lines, real issue and PR links at the top left, the worker runtime's existing logo at the top right, and a left band when a person is needed.
+GitHub numbers open their source URL; a local issue opens its Overview panel when the local catalog carries its identity, and otherwise stays a plain reference until that catalog read arrives.
 From 240 through 419 pixels it adds the one-line summary (at most 60 Unicode characters), elapsed time, the existing child-agent badge and popover, a four-cell stage bar, one problem line and the primary action.
 From 420 pixels it allows a two-line summary and adds the state word, the worker's existing status mark, secondary actions, and an existing AI label below a dashed rule with ✦, only when that label exists and summaries are enabled.
 Unknown runtime logos use the shared initial fallback.
