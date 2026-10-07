@@ -20,7 +20,8 @@ pub fn local_utc_offset_ms() -> io::Result<i64> {
     }
     // SAFETY: a non-null answer means `localtime_r` filled `local`.
     let local = unsafe { local.assume_init() };
-    Ok(i64::from(local.tm_gmtoff) * 1000)
+    // `tm_gmtoff` is a `c_long`, 64 bits on every Unix target this builds for.
+    Ok(local.tm_gmtoff * 1000)
 }
 
 /// The offset from UTC the machine's local time zone applies now, in
