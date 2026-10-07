@@ -268,19 +268,24 @@ impl Device {
 /// work without relying on when the executor or node happens to run it.
 struct ProductionEvents {
     panes: hided::node_panes::Events,
-    proofs: std::sync::Mutex<usize>,
-    closed: std::sync::Mutex<usize>,
+    counts: std::sync::Mutex<CallbackCounts>,
     changed: std::sync::Condvar,
 }
 
+#[derive(Default)]
+struct CallbackCounts {
+    proofs: usize,
+    closed: usize,
+}
+
 impl ProductionEvents {
-    fn wait(&self, counter: &std::sync::Mutex<usize>, expected: usize) {
-        let value = counter.lock().unwrap();
+    fn wait(&self, expected: usize, count: impl Fn(&CallbackCounts) -> usize) {
+        let value = self.counts.lock().unwrap();
         let (value, _) = self
             .changed
-            .wait_timeout_while(value, TIMEOUT, |value| *value < expected)
+            .wait_timeout_while(value, TIMEOUT, |value| count(value) < expected)
             .unwrap();
-        assert_eq!(*value, expected);
+        assert_eq!(count(&value), expected);
     }
 }
 
@@ -289,14 +294,14 @@ impl hide_node::ssh::PaneEvents for ProductionEvents {
         let proof = matches!(&event, NodeEvent::PaneProof { .. });
         self.panes.event(node, link, event);
         if proof {
-            *self.proofs.lock().unwrap() += 1;
+            self.counts.lock().unwrap().proofs += 1;
             self.changed.notify_all();
         }
     }
 
     fn closed(&self, node: &str, link: &hide_node::ssh::RemoteHost) {
         self.panes.closed(node, link);
-        *self.closed.lock().unwrap() += 1;
+        self.counts.lock().unwrap().closed += 1;
         self.changed.notify_all();
     }
 }
@@ -343,8 +348,7 @@ fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
         panes: hided::node_panes::Events(Arc::new(hided::node_panes::NodePanes::new(
             runtime.handle().clone(),
         ))),
-        proofs: std::sync::Mutex::new(0),
-        closed: std::sync::Mutex::new(0),
+        counts: std::sync::Mutex::default(),
         changed: std::sync::Condvar::new(),
     });
     let device = Device::start_with_pane_events(Some(events.clone()));
@@ -397,9 +401,9 @@ fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
             waiting.push(request(socket, nonce));
         }
     }
-    events.wait(&events.proofs, 32);
+    events.wait(32, |counts| counts.proofs);
     let mut overflow = request(&sockets[2], 32);
-    events.wait(&events.proofs, 33);
+    events.wait(33, |counts| counts.proofs);
     gate.release();
     runtime.block_on(worker).unwrap();
     let read = |reader: &mut BufReader<UnixStream>| {
@@ -426,7 +430,7 @@ fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
     for link in &links {
         link.close("contract");
     }
-    events.wait(&events.closed, 3);
+    events.wait(3, |counts| counts.closed);
     for socket in &sockets {
         gone_within(Path::new(socket), TIMEOUT);
         assert!(!Path::new(socket).exists());
