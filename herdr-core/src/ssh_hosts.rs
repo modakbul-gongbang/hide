@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn ssh_g_names_the_accounts_own_config_and_home() {
-        let home = Path::new("/home/someone");
+        let home = Path::new("/account");
         let command = command(Path::new("/usr/bin/ssh"), home, "studio");
         let config = home.join(".ssh").join("config");
         assert_eq!(command.get_program(), "/usr/bin/ssh");
