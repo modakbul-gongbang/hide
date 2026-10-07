@@ -472,9 +472,9 @@ function crossChipsOf(value: LensAgent, lineage: Lineage): CrossChip[] {
   const chip = (direction: CrossChip["direction"], others: LensAgent[]): CrossChip => {
     const ordered = others.slice().sort(byAttentionThenActivity);
     const first = ordered[0]!;
-    const own = value.device ?? THIS_DEVICE;
+    const sameDevice = value.project.device_id === first.project.device_id;
     const theirs = first.device ?? THIS_DEVICE;
-    return { direction, project: first.project, device: own === theirs ? null : theirs, paneIds: ordered.map((other) => other.agent.pane_id), names: ordered.map((other) => other.agent.identity_label), box: first.checkout.id };
+    return { direction, project: first.project, device: sameDevice ? null : theirs, paneIds: ordered.map((other) => other.agent.pane_id), names: ordered.map((other) => other.agent.identity_label), box: first.checkout.id };
   };
   const chips: CrossChip[] = [];
   const byProject = new Map<string, LensAgent[]>();

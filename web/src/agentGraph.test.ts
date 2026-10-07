@@ -412,6 +412,7 @@ describe("across projects (issue 718)", () => {
 
   it("pairs ends across devices by the pane id the core names per device, and names the other end's device", () => {
     const remote = workspace([checkout("remote:mini:checkout:1", { primary: true, tabs: [["remote:mini:pane:p1"]] })], "remote:mini:sasu");
+    remote.device_id = "mini";
     const local = workspace([checkout("local-main", { primary: true, tabs: [["p1", "p2"]] })], "herdr-ide");
     const localAgents = [agent("p1", { ...WORKING, identity_label: "Local lead" }), agent("p2", WORKING)];
     const remoteAgents = [child("remote:mini:pane:p1", "p1", { ...WORKING, identity_label: "Remote child" })];
@@ -423,6 +424,25 @@ describe("across projects (issue 718)", () => {
     expect(row(board, "p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["out", "remote:mini:sasu", "mini"]]);
     expect(row(board, "remote:mini:pane:p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["in", "herdr-ide", THIS_DEVICE]]);
     expect(row(board, "p2").cross).toEqual([]);
+  });
+
+  it.each([
+    ["different devices", "device-b", "mini"],
+    ["the same device", "device-a", null],
+  ] as const)("keeps device context for %s with matching device labels", (_relation, childDevice, expectedDevice) => {
+    const parentPane = "remote:device-a:pane:p1";
+    const childPane = `remote:${childDevice}:pane:p2`;
+    const parentProject = workspace([checkout("parent-main", { primary: true, tabs: [[parentPane]] })], "remote:device-a:ide");
+    parentProject.device_id = "device-a";
+    const childProject = workspace([checkout("child-main", { primary: true, tabs: [[childPane]] })], `remote:${childDevice}:sasu`);
+    childProject.device_id = childDevice;
+    const all: BoardProject[] = [
+      { workspace: parentProject, agents: [agent(parentPane, WORKING)], device: "mini" },
+      { workspace: childProject, agents: [child(childPane, parentPane, WORKING)], device: "mini" },
+    ];
+    const board = graph(all, { scope: "all" });
+    expect(row(board, parentPane).cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["out", childProject.id, expectedDevice]]);
+    expect(row(board, childPane).cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["in", parentProject.id, expectedDevice]]);
   });
 
   it("selects a box on All projects only in the section that draws it", () => {
