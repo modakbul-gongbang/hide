@@ -99,12 +99,13 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
     const next = answer as unknown as InitPreview;
     setPreview(next);
     // The first answer preselects what the engine detected, the checks before the commands (B3).
+    // Only a new answer is read: a project change clears the pick while the old answer is still held.
     if (verification === null) {
       const first = next.candidates[0];
       setVerification(first?.kind === "ci" ? { kind: "ci" } : detectedCommands(next));
       setPreselected(true);
     }
-  }, [probe.state, verification]);
+  }, [probe.state]);
   useEffect(() => {
     // A repository with no required checks still lists CI first; when the
     // engine refuses the sheet's own CI pick for that, it picks the commands.

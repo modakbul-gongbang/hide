@@ -237,3 +237,76 @@ it("waits behind Settings or a close confirmation instead of swapping the screen
   actions.openFactory();
   expect(useUiStore.getState().screen?.kind).toBe("factory");
 });
+
+function type(field: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function lastAction(events: Parameters<DispatchFn>[0][]) {
+  return events.filter((event) => (event as unknown as { kind: string }).kind === "factory_action").at(-1) as unknown as { payload: { request_id: string; command: Record<string, unknown> } };
+}
+
+it("keeps a check's instruction until the engine takes it, then reads the config again, since a check answers with no config (B22)", async () => {
+  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings" });
+  await answerConfig(summary, events);
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!;
+  await act(async () => type(field, "README가 최신인지"));
+  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
+  await act(async () => add.click());
+  const check = lastAction(events);
+  expect(check.payload.command).toMatchObject({ verb: "check", instruction: "README가 최신인지" });
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: check.payload.request_id, answer: { ok: false, reason: "instruction_required", next_action: "Give --instruction" } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("README가 최신인지");
+  await act(async () => add.click());
+  const again = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: again.payload.request_id, answer: { ok: true, message: "check added" } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("");
+  expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [] });
+  expect(container.querySelector("[data-factory-close]")).not.toBeNull();
+});
+
+it("puts an emptied number back to the saved value instead of sending 0 (B22)", async () => {
+  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings" });
+  await answerConfig(summary, events);
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='question_deadline_hours']")!;
+  await act(async () => type(field, ""));
+  await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(events.some((event) => ((event as unknown as { payload: { command?: { set?: unknown[] } } }).payload?.command?.set?.length ?? 0) > 0)).toBe(false);
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='question_deadline_hours']")!.value).toBe("24");
+});
+
+it("keeps a change request's comment while the engine refuses it, and closes the form once taken (B19)", async () => {
+  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail("merge_waiting", ["merge", "request-changes", "cancel"]) } }));
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-action='request-changes']")!.click());
+  await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-comment]")!, "테스트를 더 써 주세요"));
+  await act(async () => container.querySelector("[data-factory-comment]")!.closest("form")!.requestSubmit());
+  const sent = lastAction(events);
+  expect(sent.payload.command).toMatchObject({ verb: "request_changes", comment: "테스트를 더 써 주세요" });
+  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: sent.payload.request_id, answer: { ok: false, reason: "factory_busy", next_action: "Try again in a moment" } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-comment]")!.value).toBe("테스트를 더 써 주세요");
+  await act(async () => container.querySelector("[data-factory-comment]")!.closest("form")!.requestSubmit());
+  const again = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: again.payload.request_id, answer: { ok: true } }] } }));
+  expect(container.querySelector("[data-factory-comment]")).toBeNull();
+});
+
+it("says a Task is gone when its Factory has left the summary, instead of loading forever", async () => {
+  const { container } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "gone", task: "T-1" } });
+  expect(container.querySelector("[data-factory-task-missing]")).not.toBeNull();
+  expect(container.querySelector("[data-factory-task-loading]")).toBeNull();
+});
+
+it("does not send a taken answer again while its item is still on screen (B10)", async () => {
+  const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+  const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
+  await act(async () => send.click());
+  const sent = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
+  expect(sentVerbs(events)).toEqual(["merge"]);
+});

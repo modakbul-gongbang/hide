@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon, BanIcon, CircleIcon, ExternalLinkIcon, GitPullRequestIcon, ListChecksIcon, MessageSquareIcon, PaperclipIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed, useRemaining } from "../components/elapsed";
@@ -15,7 +15,7 @@ import { ACTION_LABEL, GATE_LABEL, OUTCOME_LABEL, STAGE_LABEL, STOP_LABEL, TONE_
 import type { AttemptView, CardView, FactorySummary, FactoryView, Question, TaskDetail } from "./model";
 import { Refusal } from "./MyTurn";
 import { Revive } from "./FactoryBoard";
-import { useFactoryRequest } from "./request";
+import { useFactoryRequest, type RequestState } from "./request";
 import { inboxKey, taskChain } from "./view";
 
 const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
@@ -42,7 +42,9 @@ export function TaskPage({ summary, place, actions }: { summary: FactorySummary;
           {t(TAB_LABEL[place.tab])}
         </Button>
       </div>
-      {section === null || factory === null ? (
+      {factory === null ? (
+        <p className="pt-md text-body text-muted-foreground" data-factory-task-missing="true">{t("factory.task.missing")}</p>
+      ) : section === null ? (
         <div className="flex flex-col gap-md pt-md" aria-busy="true" aria-label={t("factory.loading")} data-factory-task-loading="true">
           <div className="h-(--size-control-lg) w-2/5 rounded-sm bg-muted" />
           <div className="h-(--size-control) w-3/5 rounded-sm bg-muted" />
@@ -74,7 +76,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
           </span>
           {detail.stop_code ? <span className="text-caption text-warning" data-factory-stop={detail.stop_code}>{t(STOP_LABEL[detail.stop_code])}</span> : null}
           <span className="flex-1" />
-          <PageActions detail={detail} task={task} send={send} sending={request.state.phase === "sending"} actions={actions} />
+          <PageActions detail={detail} task={task} send={send} phase={request.state.phase} actions={actions} />
         </div>
         <span className="flex min-w-0 flex-wrap gap-xs text-caption text-muted-foreground">
           <span className="font-mono">{card.display_id}</span>
@@ -241,10 +243,17 @@ function ChainColumn({ title, cards, factory, onRemove }: { title: string; cards
 }
 
 /** The state's actions as buttons (D-07, B19): nothing the engine would refuse in this state is drawn. */
-function PageActions({ detail, task, send, sending, actions }: { detail: TaskDetail; task: string; send: (command: FactoryCommand) => void; sending: boolean; actions: Actions }) {
+function PageActions({ detail, task, send, phase, actions }: { detail: TaskDetail; task: string; send: (command: FactoryCommand) => void; phase: RequestState["phase"]; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const [comment, setComment] = useState<string | null>(null);
   const [priority, setPriority] = useState<string | null>(null);
+  const sending = phase === "sending";
+  // A form stays open with what was typed until the engine takes it, so a refusal loses nothing.
+  useEffect(() => {
+    if (phase !== "taken") return;
+    setComment(null);
+    setPriority(null);
+  }, [phase]);
   const allowed = PAGE_ACTIONS.filter((action) => detail.allowed.includes(action));
   if (allowed.length === 0) return null;
   const button = (action: (typeof PAGE_ACTIONS)[number], onClick: () => void, variant: "default" | "secondary" | "ghost" = "secondary") => (
@@ -262,7 +271,7 @@ function PageActions({ detail, task, send, sending, actions }: { detail: TaskDet
             return comment === null ? (
               button(action, () => setComment(""))
             ) : (
-              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); if (comment.trim()) send({ verb: "request_changes", task, comment: comment.trim() }); setComment(null); }}>
+              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); if (comment.trim() && !sending) send({ verb: "request_changes", task, comment: comment.trim() }); }}>
                 <Input autoFocus value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("factory.turn.commentPlaceholder")} aria-label={t("factory.turn.commentPlaceholder")} data-factory-comment="true" />
                 <Button type="submit" size="sm" disabled={!comment.trim()}>{t("factory.action.requestChanges")}</Button>
               </form>
@@ -277,7 +286,7 @@ function PageActions({ detail, task, send, sending, actions }: { detail: TaskDet
             return priority === null ? (
               button(action, () => setPriority(String(detail.card.priority)))
             ) : (
-              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); const value = Number(priority); if (Number.isInteger(value)) send({ verb: "priority", task, priority: value }); setPriority(null); }}>
+              <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); const value = Number(priority); if (priority.trim() !== "" && Number.isInteger(value) && !sending) send({ verb: "priority", task, priority: value }); }}>
                 <Input autoFocus type="number" className="w-[calc(var(--size-control-lg)*3)]" value={priority} onChange={(event) => setPriority(event.target.value)} aria-label={t("factory.action.priority")} data-factory-priority="true" />
                 <Button type="submit" size="sm">{t("factory.task.set")}</Button>
               </form>

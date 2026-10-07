@@ -139,9 +139,16 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
     if (read.state.phase === "taken") setAnswer(read.state.answer as unknown as ConfigAnswer);
   }, [read.state]);
   const [refusals, setRefusals] = useState(0);
+  const [writes, setWrites] = useState(0);
   useEffect(() => {
-    if (write.state.phase === "taken") setAnswer(write.state.answer as unknown as ConfigAnswer);
     if (write.state.phase === "refused") setRefusals((count) => count + 1);
+    if (write.state.phase !== "taken") return;
+    setWrites((count) => count + 1);
+    // A config write answers with the config; a check or a close answers
+    // with a message, so the config is read again.
+    const taken = write.state.answer as Record<string, unknown>;
+    if ("config" in taken) setAnswer(taken as unknown as ConfigAnswer);
+    else read.send({ verb: "config", project: factory.project, set: [] });
   }, [write.state]);
   if (answer === null) {
     return read.state.phase === "refused" ? <Refusal state={read.state} /> : <div className="h-(--size-control-lg) rounded-md bg-muted" aria-busy="true" aria-label={t("factory.loading")} data-factory-settings-loading="true" />;
@@ -207,7 +214,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
             <span className="min-w-0 text-body text-subtle-foreground [overflow-wrap:anywhere]">{check.instruction}</span>
           </Row>
         ))}
-        <AddCheck onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
+        <AddCheck written={writes} onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
       </Group>
       <Group title={t("factory.settings.notifyKeep")} data-factory-settings-group="keep">
         <Row label={t("factory.settings.macosNotifications")} detail={<Note>{t("factory.settings.macosNotificationsDetail")}</Note>}>
@@ -267,6 +274,8 @@ function TextField({ value, onCommit, placeholder, numeric = false, data, reset 
     sent.current = null;
   }, [value, reset]);
   const commit = () => {
+    // An emptied number would read as 0, so it goes back to the saved value.
+    if (numeric && draft.trim() === "") return setDraft(value);
     if (draft === value || draft === sent.current) return;
     sent.current = draft;
     onCommit(draft.trim());
@@ -310,15 +319,22 @@ function Choice({ value, options, onChange, data }: { value: string; options: [s
   );
 }
 
-function AddCheck({ onAdd }: { onAdd: (at: (typeof CHECK_POINTS)[number], instruction: string) => void }) {
+/** The instruction stays until the engine takes the check, so a refusal keeps what was typed. */
+function AddCheck({ onAdd, written }: { onAdd: (at: (typeof CHECK_POINTS)[number], instruction: string) => void; written: number }) {
   const { t } = useInterfaceTranslation();
   const [at, setAt] = useState<(typeof CHECK_POINTS)[number]>("after_done");
   const [instruction, setInstruction] = useState("");
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!asked.current) return;
+    asked.current = false;
+    setInstruction("");
+  }, [written]);
   return (
     <Row label={t("factory.settings.addCheck")}>
       <Choice value={at} options={CHECK_POINTS.map((point) => [point, t(CHECK_LABEL[point])])} onChange={(value) => setAt(value as (typeof CHECK_POINTS)[number])} data="check_at" />
       <Input value={instruction} className="w-(--size-settings-control-w)" placeholder={t("factory.settings.checkInstruction")} aria-label={t("factory.settings.checkInstruction")} data-factory-setting="check_instruction" onChange={(event) => setInstruction(event.target.value)} />
-      <Button size="sm" variant="secondary" disabled={!instruction.trim()} onClick={() => { onAdd(at, instruction.trim()); setInstruction(""); }}>
+      <Button size="sm" variant="secondary" disabled={!instruction.trim()} onClick={() => { asked.current = true; onAdd(at, instruction.trim()); }}>
         {t("factory.settings.add")}
       </Button>
     </Row>

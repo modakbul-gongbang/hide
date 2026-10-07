@@ -179,8 +179,9 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
   }, [needsText]);
   const command = choice ? choiceCommand(item, choice, text) : null;
   const sending = request.state.phase === "sending";
+  // A taken answer stays taken until the summary drops the item, so it is not sent twice.
   const send = () => {
-    if (command && !sending) request.send(command);
+    if (command && !sending && request.state.phase !== "taken") request.send(command);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
