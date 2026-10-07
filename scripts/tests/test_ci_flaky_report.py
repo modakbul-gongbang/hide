@@ -367,8 +367,14 @@ class NightlyFailures(unittest.TestCase):
         marker = "<!-- nightly-failure:package / package (macos):desktop/e2e/s.spec.ts > server picker -->"
         github = nightly(self.package_failed(issues=[{"number": 5, "body": marker}]))
         self.assertEqual((github.opened(), github.commented()), ([], [5]))
-        again = nightly(self.package_failed(issues=[{"number": 5, "body": marker}], comments={5: [{"body": "<!-- nightly-run:100:1 -->"}]}))
+        seen = {5: [{"body": "<!-- nightly-run:100:1 -->"}]}
+        again = nightly(self.package_failed(issues=[{"number": 5, "body": marker}], comments=seen))
         self.assertEqual(again.writes, [])
+        rerun = self.package_failed(issues=[{"number": 5, "body": marker}], comments=seen)
+        attempt = r.Nightly("o/r", RUN, 2, "", rerun, SCRIPT.parents[1], TODAY)
+        attempt.apply(attempt.plan())
+        self.assertEqual(rerun.commented(), [5])
+        self.assertIn("<!-- nightly-run:100:2 -->", rerun.writes[0][2]["body"])
 
     def test_a_lane_that_passes_closes_its_issues_and_a_skipped_or_cancelled_one_does_not(self):
         issues = [{"number": n, "body": f"<!-- nightly-failure:{lane}:step x -->"}
