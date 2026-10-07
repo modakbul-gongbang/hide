@@ -2209,7 +2209,9 @@ impl RusshRemoteClient {
     fn remote_snapshot_error(&self, error: ApiError) -> RemoteError {
         let (stage, retryable, action_required) = match &error {
             ApiError::Malformed(_) => (RemoteStage::Protocol, false, true),
-            ApiError::Transport(_) | ApiError::Remote { .. } => (RemoteStage::Herdr, true, false),
+            ApiError::NotRunning(_) | ApiError::Transport(_) | ApiError::Remote { .. } => {
+                (RemoteStage::Herdr, true, false)
+            }
         };
         remote_error(
             "remote-herdr-snapshot",

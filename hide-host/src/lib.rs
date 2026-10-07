@@ -10,24 +10,39 @@
 //! exec channel on a registered device, so a local and a remote checkout obey
 //! one contract (PRD S5.5 D-05, D-06).
 
+pub mod ai;
+pub mod attachments;
 pub mod bytes;
+pub mod catalog;
+pub mod cleanup;
 pub mod clone;
+pub mod disk;
+pub mod disk_layers;
 pub mod document;
-pub mod error;
+#[cfg(all(test, unix))]
+mod executable_fixture;
+pub mod gh;
 pub mod git;
+pub mod git_command;
+pub mod git_watch;
 pub mod home;
 pub mod index;
 pub mod kit;
 pub mod list;
 pub mod mutate;
 pub mod pane_peer;
-pub mod protocol;
+pub mod ports;
+pub mod project;
 pub mod register;
+pub mod reporting;
 pub mod root;
 pub mod save;
 pub mod serve;
+pub mod sessions;
+pub mod usage;
 pub mod workspace_bridge;
 pub mod worktrees;
 
-pub use error::{ErrorCode, HostError, HostResult};
+pub use hide_node_link::{ErrorCode, HostError, HostResult};
+pub use hide_node_link::{error, protocol};
 pub use root::{Root, RootIdentity};

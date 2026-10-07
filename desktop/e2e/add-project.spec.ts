@@ -11,7 +11,7 @@ import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
 import { toPage } from "../src/main/wirePath";
 import { sendEvent } from "../../web/e2e/wire";
-import { isolate, launch, test } from "./fixture";
+import { isolate, launch, nodeOf, test } from "./fixture";
 import { compositorPresents } from "../../web/e2e/wait";
 
 type Pick = { canceled: boolean; filePaths: string[] };
@@ -60,7 +60,7 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     const [addBox, searchBox] = [(await add.boundingBox())!, (await page.locator("[data-sidebar-search]").boundingBox())!];
     expect(addBox.x).toBeLessThan(searchBox.x);
     await add.click();
-    await expect(dialog).toHaveAttribute("data-add-project", "local");
+    await expect(dialog).toHaveAttribute("data-add-project", nodeOf(run.env));
     await expect(dialog.getByRole("heading", { name: "Add a project" })).toBeVisible();
     await expect(dialog.locator("[data-add-project-host]")).toHaveText(/This Mac/);
     await expect(browse).toBeFocused();

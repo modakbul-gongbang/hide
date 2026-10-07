@@ -23,7 +23,7 @@ export function HideAiTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { refusal } = useHideAiWords();
   const ai = useShellStore((s) => s.rest?.status?.background_ai);
-  const kitAgents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.id === "local")?.kit?.agents);
+  const kitAgents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit?.agents);
   const issueSettings = useShellStore((s) => s.rest?.ui_state?.issue_settings);
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const aiError = useErrorSince(changedAt, ["ai_settings."]);

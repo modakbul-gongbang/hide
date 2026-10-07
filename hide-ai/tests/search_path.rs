@@ -90,7 +90,7 @@ fn fixture(name: &str) -> PathBuf {
 
 fn request() -> AiRequest {
     AiRequest {
-        feature_id: "fixture",
+        feature_id: "fixture".into(),
         request_id: RequestId("req-1".to_owned()),
         subject_id: "pane-1".to_owned(),
         system: "Answer as JSON.".to_owned(),
@@ -101,7 +101,7 @@ fn request() -> AiRequest {
             "properties": {"summary": {"type": "string"}}
         }),
         deadline: Duration::from_secs(30),
-        schema_version: "fixture.v1",
+        schema_version: "fixture.v1".into(),
     }
 }
 

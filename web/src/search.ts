@@ -150,8 +150,8 @@ export type SearchDevice = { device: Device; agents: AgentRow[]; workspaces: Wor
 /** This machine and each connected device, in the rail's order; a device that is not connected has no current agents or projects to find. */
 export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   const rows: SearchDevice[] = [];
-  // A snapshot that names no device is this machine's alone.
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: "local", label: translate("common.thisMac"), kind: "local" } as Device];
+  // A snapshot that names no device is the core's own node alone, by the id it has before the snapshot names it.
+  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: localDeviceId(rest), label: translate("common.thisMac"), kind: "local" } as Device];
   for (const device of devices) {
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];

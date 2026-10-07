@@ -495,7 +495,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
         id: workspace_id.clone(),
         label: "Closed pane".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -560,7 +560,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
         Some(session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![current_workspace],
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     assert_eq!(
@@ -1039,9 +1039,9 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         "remote:macbook:checkout:w1",
     ));
     let (document, place) = files::open_document(
-        &crate::host_access::InProcessHost,
+        &hide_node::Local::of_process(),
         &files::DocumentRoot {
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             path: root.to_string_lossy().into_owned(),
             identity: None,
         },
@@ -1454,7 +1454,7 @@ fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
         id: "workspace:0".to_owned(),
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];

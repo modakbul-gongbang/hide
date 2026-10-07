@@ -83,6 +83,25 @@ pub(crate) fn owner_of<'a>(
     OwnerOpen::for_checkout(device_id, path, path, is_git, "").find_in(workspaces)
 }
 
+/// The owner of the checkout at `path` on the core's own node. A plain
+/// folder's owner opened before node ids existed carries the mark of the
+/// legacy `local` device until Herdr drops workspace tokens on a restart; it
+/// is still this folder's owner, so no second one is opened (PRD
+/// core-host-node D-23, the transition path engineering principle 1 keeps).
+pub(crate) fn node_owner_of<'a>(
+    node: &str,
+    path: &str,
+    is_git: bool,
+    workspaces: impl IntoIterator<Item = WorkspaceFacts<'a>>,
+) -> Option<&'a str> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    OwnerOpen::for_checkout(node, path, path, is_git, "")
+        .on_node()
+        .find_in(workspaces)
+}
+
 /// How a checkout with no open owner gets one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnerOpen {
@@ -103,6 +122,10 @@ pub enum OwnerOpen {
         path: String,
         label: String,
         mark: String,
+        /// The mark this folder's owner on the core's own node carried before
+        /// node ids existed (`on_node`); a workspace carrying it is reused,
+        /// and a new owner gets `mark`.
+        legacy_mark: Option<String>,
     },
 }
 
@@ -126,7 +149,35 @@ impl OwnerOpen {
                 path: path.to_owned(),
                 label: label.to_owned(),
                 mark: owner_mark(device_id, path),
+                legacy_mark: None,
             }
+        }
+    }
+
+    /// This owner is on the core's own node, so a folder owner marked for
+    /// the legacy `local` device is accepted too (`node_owner_of`).
+    pub(crate) fn on_node(self) -> Self {
+        match self {
+            Self::Folder {
+                path, label, mark, ..
+            } => Self::Folder {
+                legacy_mark: Some(owner_mark(crate::node::LEGACY_LOCAL_DEVICE_ID, &path)),
+                path,
+                label,
+                mark,
+            },
+            worktree => worktree,
+        }
+    }
+
+    /// Whether a workspace's `hide_owner` value marks it as this folder's
+    /// owner.
+    pub(crate) fn marks(&self, value: &str) -> bool {
+        match self {
+            Self::Folder {
+                mark, legacy_mark, ..
+            } => mark == value || legacy_mark.as_deref() == Some(value),
+            Self::Worktree { .. } => false,
         }
     }
 
@@ -143,7 +194,7 @@ impl OwnerOpen {
                 Self::Worktree { path, .. } => workspace
                     .bound_path
                     .is_some_and(|bound| comparable(bound) == comparable(path)),
-                Self::Folder { mark, .. } => workspace.mark == Some(mark.as_str()),
+                Self::Folder { .. } => workspace.mark.is_some_and(|mark| self.marks(mark)),
             })
             .map(|workspace| workspace.workspace_id)
     }

@@ -15,14 +15,12 @@ use hide_ai::{
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 use serde_json::{Value, json};
 
-use super::DeviceTranscripts;
+use super::NodeTranscripts;
 use super::analyzer::LabelAnalyzer;
 use super::facts::Requester;
 use super::input::OperatorInput;
 use super::store::{LOCAL_TARGET, LabelStore};
-use super::worker::{
-    LabelWorker, LocalTranscripts, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig,
-};
+use super::worker::{LabelWorker, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig};
 use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 
 /// A provider that answers from a queue and can hold an answer back.
@@ -127,7 +125,7 @@ impl AiBackend for Scripted {
 
 /// Counts the reads it passes on to this machine's files.
 struct CountingSource {
-    inner: LocalTranscripts,
+    inner: super::NodeTranscripts,
     reads: AtomicUsize,
 }
 
@@ -176,7 +174,7 @@ impl Harness {
             locks: tempfile::tempdir().unwrap(),
             backend,
             analyzer: Arc::new(analyzer),
-            input: Arc::default(),
+            input: Arc::new(super::input::OperatorInput::new(LOCAL_TARGET)),
         }
     }
 
@@ -184,13 +182,16 @@ impl Harness {
         Arc::new(LabelStore::open(
             Some(self.state.path()),
             Some(self.home.path()),
+            LOCAL_TARGET,
         ))
     }
 
     fn worker(&self, store: Arc<LabelStore>) -> (LabelWorker, Receiver<()>, Arc<CountingSource>) {
         let source = Arc::new(CountingSource {
-            inner: LocalTranscripts {
-                home: self.home.path().to_path_buf(),
+            inner: {
+                let node: Arc<dyn crate::node_access::NodeLink> =
+                    Arc::new(hide_node::Local::new(Some(self.home.path().to_path_buf())));
+                super::NodeTranscripts::new(Box::new(move || Ok(Arc::clone(&node))))
             },
             reads: AtomicUsize::new(0),
         });
@@ -204,7 +205,7 @@ impl Harness {
             self.store(),
             "device:mini",
             "device-mini.lock",
-            Arc::new(DeviceTranscripts::new(channel)),
+            Arc::new(NodeTranscripts::new(channel)),
         )
     }
 
@@ -672,15 +673,15 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
 /// A helper from before protocol 12, which does not know the call.
 struct OlderHelper;
 
-impl crate::host_access::HostChannel for OlderHelper {
+impl crate::node_access::NodeLink for OlderHelper {
     fn call(
         &self,
-        _: hide_host::protocol::Call,
+        _: hide_node_link::protocol::Call,
         _: Duration,
-    ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
-        Err(crate::host_access::HostCallError::Refused(
-            hide_host::error::HostError::new(
-                hide_host::error::ErrorCode::InvalidRequest,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        Err(crate::node_access::LinkError::Refused(
+            hide_node_link::error::HostError::new(
+                hide_node_link::error::ErrorCode::InvalidRequest,
                 "unknown variant `label_transcript`",
             ),
         ))
@@ -691,19 +692,19 @@ impl crate::host_access::HostChannel for OlderHelper {
 /// (the harness's), as `hide-host-helper` does under the device's.
 struct HelperAt(PathBuf);
 
-impl crate::host_access::HostChannel for HelperAt {
+impl crate::node_access::NodeLink for HelperAt {
     fn call(
         &self,
-        call: hide_host::protocol::Call,
+        call: hide_node_link::protocol::Call,
         timeout: Duration,
-    ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
         match call {
-            hide_host::protocol::Call::LabelTranscript { request } => {
+            hide_node_link::protocol::Call::LabelTranscript { request } => {
                 hide_host::serve::label_transcript(&self.0, &request)
-                    .map(crate::host_access::HostAnswer::Parsed)
-                    .map_err(crate::host_access::HostCallError::Refused)
+                    .map(crate::node_access::LinkAnswer::Parsed)
+                    .map_err(crate::node_access::LinkError::Refused)
             }
-            call => crate::host_access::InProcessHost.call(call, timeout),
+            call => hide_node::Local::of_process().call(call, timeout),
         }
     }
 
@@ -726,7 +727,7 @@ fn a_device_panes_label_is_read_through_its_helper() {
         ],
     );
     harness.backend.answer("미니 배치 실행 작업", "done", "");
-    let helper: Arc<dyn crate::host_access::HostChannel> =
+    let helper: Arc<dyn crate::node_access::NodeLink> =
         Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
     let idle = agent(&path, "idle", 1);
@@ -751,7 +752,7 @@ fn a_disconnected_device_keeps_its_label_and_catches_up_after_it_returns() {
     harness.backend.answer("첫 번째 기기 작업", "done", "");
     harness.backend.answer("두 번째 기기 작업", "done", "");
     let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let helper: Arc<dyn crate::host_access::HostChannel> =
+    let helper: Arc<dyn crate::node_access::NodeLink> =
         Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let link = Arc::clone(&connected);
     let (mut worker, woken) = harness.device_worker(Box::new(move || {
@@ -809,7 +810,7 @@ fn a_helper_that_cannot_read_conversations_leaves_the_provider_name() {
         &[("user", "요청"), ("assistant", "답")],
     );
     let (mut worker, woken) = harness.device_worker(Box::new(|| {
-        Ok(Arc::new(OlderHelper) as Arc<dyn crate::host_access::HostChannel>)
+        Ok(Arc::new(OlderHelper) as Arc<dyn crate::node_access::NodeLink>)
     }));
     let idle = agent(&path, "idle", 1);
     observe(&mut worker, &idle);
@@ -891,7 +892,7 @@ fn concurrent_workers_keep_local_records_on_disk_and_device_records_in_memory() 
     for thread in threads {
         thread.join().unwrap();
     }
-    let reopened = LabelStore::open(Some(harness.state.path()), None);
+    let reopened = LabelStore::open(Some(harness.state.path()), None, LOCAL_TARGET);
     assert_eq!(reopened.target(super::store::LOCAL_TARGET).len(), 1);
     assert_eq!(
         reopened.target(super::store::LOCAL_TARGET),
@@ -923,7 +924,7 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
     let options = |home: String| crate::CoreOptions {
         schema_version: crate::SCHEMA_VERSION,
         home: Some(home),
-        machine_id: None,
+        node_id: crate::node::test_node(),
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: state.path().join("core-state.json").display().to_string(),
@@ -933,16 +934,24 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     assert!(
-        crate::Core::create(options("relative/home".to_owned())).is_none(),
+        crate::Core::create(
+            options("relative/home".to_owned()),
+            std::sync::Arc::new(hide_node::Local::of_process()),
+            None,
+        )
+        .is_none(),
         "a relative home names no account folder"
     );
-    let core =
-        crate::Core::create(options(home.path().display().to_string())).expect("a core starts");
+    let core = crate::Core::create(
+        options(home.path().display().to_string()),
+        std::sync::Arc::new(hide_node::Local::new(Some(home.path().to_path_buf()))),
+        None,
+    )
+    .expect("a core starts");
     drop(core);
-    let imported = LabelStore::open(Some(state.path()), None).target(LOCAL_TARGET);
+    let imported = LabelStore::open(Some(state.path()), None, LOCAL_TARGET).target(LOCAL_TARGET);
     assert_eq!(
         imported.keys().cloned().collect::<Vec<_>>(),
         ["w9:p1"],
@@ -1333,7 +1342,7 @@ fn a_read_keeps_the_newest_recent_sightings_and_reports_the_rest() {
 #[test]
 fn a_devices_worker_keeps_no_sightings() {
     let harness = Harness::new();
-    let helper: Arc<dyn crate::host_access::HostChannel> =
+    let helper: Arc<dyn crate::node_access::NodeLink> =
         Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
     let path = tool_session(

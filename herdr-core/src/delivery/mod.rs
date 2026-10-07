@@ -45,14 +45,14 @@ pub const FACTORY_PREFIX: &str = "factory:";
 pub const FACTORY_INACTIVITY_MS: u64 = 30 * 60_000;
 
 impl Actor {
-    /// The code-owned recipient `factory:<id>` on this machine.
-    pub fn factory(id: &str) -> Self {
+    /// The code-owned recipient `factory:<id>` on `node`, the core's own.
+    pub fn factory(id: &str, node: &str) -> Self {
         let name = format!("{FACTORY_PREFIX}{id}");
         Self {
             pane_id: name.clone(),
             name: name.clone(),
             kind: FACTORY_KIND.into(),
-            device_id: "local".into(),
+            device_id: node.into(),
             session: crate::wire::session_digest(&name),
         }
     }

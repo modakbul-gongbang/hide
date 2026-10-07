@@ -1,5 +1,6 @@
 // The status page reads its state from its hash (`#connecting`,
-// `#failed=<reason>`) and asks for Retry by setting `#retry`, which the
+// `#failed=<reason>`, with `&file=<path>` when a stored file stopped the
+// daemon) and asks for Retry by setting `#retry`, which the
 // host sees as an in-page navigation. It has no bridge and no Node API.
 // Its sentences arrive in its address, written by the host from the
 // interface catalogs in the language in effect; a missing one is a host bug
@@ -17,11 +18,14 @@ document.documentElement.lang = words("lang");
 document.getElementById("connecting").textContent = words("connecting");
 document.getElementById("failed-title").textContent = words("failed");
 document.getElementById("retry").textContent = words("retry");
-const REASONS = ["cli_missing", "start_failed", "no_response", "other_build"];
+const REASONS = ["cli_missing", "start_failed", "no_response", "other_build", "state_refused"];
 
 function show() {
-  const hash = location.hash.slice(1);
-  const failed = hash.startsWith("failed=") ? hash.slice("failed=".length) : null;
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const failed = hash.get("failed");
+  const file = document.getElementById("file");
+  file.textContent = hash.get("file") ?? "";
+  file.hidden = !file.textContent;
   document.getElementById("connecting").hidden = failed !== null;
   document.getElementById("failed").hidden = failed === null;
   if (failed !== null) {

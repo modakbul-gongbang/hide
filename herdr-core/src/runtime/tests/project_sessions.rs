@@ -83,15 +83,28 @@ fn fixture() -> Fixture {
 }
 
 fn project(path: &Path, checkouts: bool) -> WorkspaceSnapshot {
-    let mut project = workspace::inspect_registered(&crate::model::WorkspaceRegistration {
-        primary_checkout_id: None,
-        id: workspace::workspace_id_for_path(path),
-        label: "Project".to_owned(),
-        path: path.to_string_lossy().into_owned(),
-        device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
-        pinned: false,
-        home: false,
-    });
+    let mut project = workspace::inspect_registered(
+        &crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: workspace::workspace_id_for_path(path),
+            label: "Project".to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        },
+        &workspace::paths_here([&crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: workspace::workspace_id_for_path(path),
+            label: "Project".to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        }
+        .path
+        .clone()]),
+    );
     if !checkouts {
         project.checkouts.clear();
     }
@@ -103,6 +116,7 @@ fn project(path: &Path, checkouts: bool) -> WorkspaceSnapshot {
 fn shared(fixture: &Fixture) -> SharedRuntime {
     let mut runtime = runtime();
     runtime.home_path = Some(fixture.home.clone());
+    runtime.own_node = Arc::new(hide_node::Local::new(Some(fixture.home.clone())));
     let alpha = project(&fixture.alpha, false);
     let zeta = project(&fixture.zeta, true);
     runtime.snapshot.navigator.focused_workspace_id = Some(zeta.id.clone());
@@ -248,7 +262,10 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
         memories: Vec::new(),
         state: None,
     };
-    let landed = runtime.ingest_project_sessions(stale, Ok(settle_history(load, &[])));
+    let landed = runtime.ingest_project_sessions(
+        stale,
+        Ok(settle_history(load, &[], &mut |_| HashSet::new())),
+    );
 
     assert!(!landed);
     let sessions = runtime.snapshot.project_sessions.clone().unwrap();
@@ -262,7 +279,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
     let fixture = fixture();
     let shared = shared(&fixture);
     shared.lock().unwrap().snapshot.navigator.devices = vec![
-        workspace::local_device(),
+        workspace::local_device(&crate::node::test_node()),
         DeviceSnapshot {
             id: "ssh-build".to_owned(),
             label: "build-box".to_owned(),
@@ -270,7 +287,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
             state: "ready".to_owned(),
             message: None,
             problem: None,
-            ..workspace::local_device()
+            ..workspace::local_device(&crate::node::test_node())
         },
     ];
 
@@ -467,7 +484,10 @@ fn refreshes_during_a_history_read_coalesce_into_one_more_read() {
         memories: Vec::new(),
         state: None,
     };
-    runtime.ingest_project_sessions(running, Ok(settle_history(load, &[])));
+    runtime.ingest_project_sessions(
+        running,
+        Ok(settle_history(load, &[], &mut |_| HashSet::new())),
+    );
     assert!(!runtime.project_sessions_work.list_waiting);
     assert!(runtime.project_sessions_work.list_in_flight);
     assert!(runtime.snapshot.project_sessions.as_ref().unwrap().loading);
@@ -645,12 +665,12 @@ fn a_session_whose_file_moved_away_stays_listed_as_unavailable_from_its_memory_r
     };
     fs::create_dir_all(database.parent().unwrap()).unwrap();
     let identity =
-        hide_project::resolve(&fixture.alpha, workspace::LOCAL_DEVICE_ID).expect("alpha resolves");
+        hide_project::resolve(&fixture.alpha, crate::node::TEST_NODE).expect("alpha resolves");
     let moved = fixture.alpha.join("moved-away.jsonl");
     {
         let store = hide_memory::MemoryStore::open(&database).unwrap();
         store
-            .ensure_project(&identity.id, &identity.root, workspace::LOCAL_DEVICE_ID)
+            .ensure_project(&identity.id, &identity.root, crate::node::TEST_NODE)
             .unwrap();
         store
             .upsert_session_source(&hide_memory::SessionSourceRecord {
@@ -713,7 +733,7 @@ fn rejected_search_keeps_its_identity_and_fences_late_valid_answers() {
     let mut runtime = shared.lock().unwrap();
     let payload = |query: String, days| SearchPayload {
         workspace_id: workspace_id(&fixture.alpha),
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         query,
         provider: "all".into(),
         clear: false,
@@ -753,7 +773,7 @@ fn search_setup_failures_are_observable_and_successful_retry_recovers() {
     let mut r = runtime();
     r.state_path = dir.path().join("state.json");
     r.snapshot.project_sessions = Some(ProjectSessionsSnapshot {
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         workspace_id: "p".into(),
         unavailable_reason: None,
         loading: false,
@@ -771,7 +791,7 @@ fn search_setup_failures_are_observable_and_successful_retry_recovers() {
             .unwrap()
             .request_session_search(SearchPayload {
                 workspace_id: "p".into(),
-                device_id: "local".into(),
+                device_id: crate::node::TEST_NODE.into(),
                 query: "valid query".into(),
                 provider: "all".into(),
                 clear: false,
@@ -825,7 +845,7 @@ fn search_capacity_reason_survives_publication() {
         .known
         .insert("p".into(), rows.clone());
     r.snapshot.project_sessions = Some(ProjectSessionsSnapshot {
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         workspace_id: "p".into(),
         unavailable_reason: None,
         loading: false,
@@ -842,7 +862,7 @@ fn search_capacity_reason_survives_publication() {
         .unwrap()
         .request_session_search(SearchPayload {
             workspace_id: "p".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             query: String::new(),
             provider: "all".into(),
             clear: false,
@@ -875,7 +895,7 @@ fn real_project_replacement_clears_search_delta_and_rejects_late_old_answer() {
     let mut r = shared.lock().unwrap();
     let answer = crate::model::SessionSearchSnapshot {
         workspace_id: workspace_id(&f.zeta),
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         query: "old".into(),
         page: hide_session::search::SearchPage {
             hits: vec![hide_session::search::SearchHit {

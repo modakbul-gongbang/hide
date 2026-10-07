@@ -88,7 +88,7 @@ pub(super) fn installed() -> HookStatus {
 
 /// This Mac's kit as the first check reported it: every adapter's row, on.
 pub(super) fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
-    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    let mut kit = runtime.kit_state(crate::node::TEST_NODE);
     kit.codex_daemon = Some(true);
     kit.codex_daemon_on = codex_daemon_on;
     kit.agents = hide_kit::agents::ADAPTERS
@@ -115,7 +115,7 @@ pub(super) fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
             }
         })
         .collect();
-    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    runtime.set_kit_state(crate::node::TEST_NODE, kit);
 }
 
 pub(super) fn sessions_of(runtime: &Runtime, agent: &str) -> Option<u32> {
@@ -260,6 +260,7 @@ fn with_live(runtime: &mut Runtime) {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 }
 
@@ -435,9 +436,9 @@ fn reopen_refuses_what_it_cannot_do_with_a_code_and_never_for_a_missing_hook() {
 
     // A Codex whose capability was never read does not know whether to leave
     // the shared server, so it starts nothing.
-    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    let mut kit = runtime.kit_state(crate::node::TEST_NODE);
     kit.codex_daemon = None;
-    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    runtime.set_kit_state(crate::node::TEST_NODE, kit);
     feed(&mut runtime, &[("w1:p2", "codex", false)]);
     assert!(reopen(&mut runtime, "w1:p2"));
     assert_eq!(
@@ -526,20 +527,23 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
         Some(PaneConnectionReason::CodexSharedServer)
     );
 
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
     assert_eq!(
         runtime.local_kit_pending,
         Some(hide_kit::Scope::codex_daemon_off())
     );
-    assert!(!disable(&mut runtime, "local"), "the same intent runs once");
+    assert!(
+        !disable(&mut runtime, crate::node::TEST_NODE),
+        "the same intent runs once"
+    );
 
     // A read that lands first says nothing about the request.
-    runtime.ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &report_with(true, None));
+    runtime.ingest_kit_report(crate::node::TEST_NODE, &report_with(true, None));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
 
     runtime.ingest_kit_report(
-        crate::workspace::LOCAL_DEVICE_ID,
+        crate::node::TEST_NODE,
         &report_with(
             true,
             Some(hide_kit::CodexDaemonOff::Failed {
@@ -562,10 +566,10 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
 
     // Trying again is a new attempt; a success turns the pane's reason into
     // the one a session started before the hook has.
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
     runtime.ingest_kit_report(
-        crate::workspace::LOCAL_DEVICE_ID,
+        crate::node::TEST_NODE,
         &report_with(
             false,
             Some(hide_kit::CodexDaemonOff::Done { no_daemon: None }),
@@ -577,7 +581,7 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
         Some(PaneConnectionReason::StartedBeforeHide)
     );
     assert!(
-        !disable(&mut runtime, "local"),
+        !disable(&mut runtime, crate::node::TEST_NODE),
         "already off: nothing to turn off"
     );
 }
@@ -590,7 +594,7 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
 #[test]
 fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_turn_off() {
     use crate::model::CodexDaemonOffSnapshot as Off;
-    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let local = crate::node::TEST_NODE;
     let read = |running: Option<bool>, off: Option<hide_kit::CodexDaemonOff>| hide_kit::KitReport {
         codex_daemon_running: running,
         ..report_with(false, off)
@@ -607,7 +611,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         Some(PaneConnectionReason::StartedBeforeHide)
     );
     assert!(
-        !disable(&mut runtime, "local"),
+        !disable(&mut runtime, crate::node::TEST_NODE),
         "nothing answers: nothing to turn off"
     );
 
@@ -616,7 +620,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         reason(&runtime),
         Some(PaneConnectionReason::CodexSharedServer)
     );
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
 
     runtime.ingest_kit_report(
@@ -640,7 +644,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         Some(PaneConnectionReason::CodexSharedServer)
     );
     assert!(
-        disable(&mut runtime, "local"),
+        disable(&mut runtime, crate::node::TEST_NODE),
         "a failed stop can be asked again"
     );
 
@@ -656,7 +660,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
         reason(&runtime),
         Some(PaneConnectionReason::StartedBeforeHide)
     );
-    assert!(!disable(&mut runtime, "local"));
+    assert!(!disable(&mut runtime, crate::node::TEST_NODE));
 }
 
 /// B7: a stop that failed because the daemon's answer could not be read
@@ -664,7 +668,7 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
 /// read says no daemon answers.
 #[test]
 fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_answers() {
-    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let local = crate::node::TEST_NODE;
     let read = |running: Option<bool>, off: Option<hide_kit::CodexDaemonOff>| hide_kit::KitReport {
         codex_daemon_running: running,
         ..report_with(false, off)
@@ -677,7 +681,7 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
         connection_of(runtime, "w1:p1").and_then(|connection| connection.reason)
     };
     runtime.ingest_kit_report(local, &read(Some(true), None));
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
 
     runtime.ingest_kit_report(
         local,
@@ -700,7 +704,10 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
         Some(PaneConnectionReason::CodexSharedServer),
         "a later read that still cannot tell keeps the retry"
     );
-    assert!(disable(&mut runtime, "local"), "the retry is accepted");
+    assert!(
+        disable(&mut runtime, crate::node::TEST_NODE),
+        "the retry is accepted"
+    );
 
     runtime.ingest_kit_report(local, &read(Some(false), None));
     assert_eq!(
@@ -713,7 +720,7 @@ fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_an
 /// goes to the log once, not on every read (B13).
 #[test]
 fn an_unreadable_daemon_answer_is_no_answer_and_is_logged_once() {
-    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let local = crate::node::TEST_NODE;
     let mut runtime = runtime();
     let unreadable = hide_kit::KitReport {
         codex_daemon_unreadable: Some("codex answered `daemon: ok?`".to_owned()),
@@ -737,7 +744,7 @@ fn an_unreadable_daemon_answer_is_no_answer_and_is_logged_once() {
 fn a_machine_with_no_kit_or_no_such_device_refuses_the_request_with_an_error() {
     let mut runtime = runtime();
     runtime.set_local_kit_unavailable("standalone daemon");
-    assert!(disable(&mut runtime, "local"));
+    assert!(disable(&mut runtime, crate::node::TEST_NODE));
     assert_eq!(
         runtime
             .snapshot()
@@ -839,6 +846,7 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
             runtime: Arc::downgrade(&shared),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
+            node: Arc::new(hide_node::Local::of_process()),
         });
         assert!(reopen(&mut runtime, "w1:p2"));
         assert_eq!(

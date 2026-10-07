@@ -87,12 +87,14 @@ fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path, cwd: &Path
 /// carries a receipt only when the helper read the session and the cwd from
 /// stdin, which is how the test sees stdin cross the shell.
 fn enable_memory(home: &Path, project_root: &Path) {
-    let project = hide_project::resolve(project_root, "local").unwrap();
+    // The hook keys this machine's Projects by its node id.
+    let node = hide_platform::host::machine_id().unwrap();
+    let project = hide_project::resolve(project_root, &node).unwrap();
     let path = hide_agent_hooks::memory::database_path(home);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let store = hide_memory::MemoryStore::open(&path).unwrap();
     store
-        .ensure_project(&project.id, &project.root, "local")
+        .ensure_project(&project.id, &project.root, &node)
         .unwrap();
     store.set_enabled(&project.id, true, true).unwrap();
 }

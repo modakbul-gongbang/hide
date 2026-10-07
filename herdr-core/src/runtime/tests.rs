@@ -442,7 +442,7 @@ pub(super) fn runtime() -> Runtime {
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
         home: None,
-        machine_id: None,
+        node_id: crate::node::test_node(),
         herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
         herdr_bin_path: None,
         app_state_path: state
@@ -456,7 +456,6 @@ pub(super) fn runtime() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     let mut runtime = Runtime::new(
         options,
@@ -465,6 +464,7 @@ pub(super) fn runtime() -> Runtime {
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     );
     runtime.test_dirs.push(state);
     runtime
@@ -492,6 +492,7 @@ fn live_runtime() -> Runtime {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     runtime
 }
@@ -687,7 +688,7 @@ fn workspace(
         path: path.to_owned(),
         remote_target_id: None,
         expanded: true,
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         repo_name: label.to_owned(),
         is_git: false,
         default_branch: None,
@@ -831,7 +832,7 @@ fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         id: "workspace:order".to_owned(),
         label: "order".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];
@@ -904,6 +905,7 @@ fn live_tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     (runtime, checkout_id)
 }
@@ -1384,7 +1386,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
             id: format!("workspace:{index}"),
             label: format!("workspace {index}"),
             path: path.to_string_lossy().into_owned(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         })
@@ -1440,7 +1442,7 @@ fn focus_local_checkout(runtime: &mut Runtime, root: &Path) {
         id: "workspace:0".to_owned(),
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];
@@ -1464,7 +1466,7 @@ fn explorer_event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
 fn closed_file(key: &str, path: &str) -> ClosedItem {
     ClosedItem::File {
         key: key.to_owned(),
-        device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         workspace_id: "workspace:0".to_owned(),
         checkout_id: "checkout:0".to_owned(),
         checkout_path: "/repo".to_owned(),

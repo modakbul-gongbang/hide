@@ -12,7 +12,6 @@
 //! never under `Mutex<Runtime>`; the answer is a code the pane's popover turns
 //! into one line, and Herdr's own words stay in the diagnostic.
 
-use std::path::Path;
 use std::thread;
 
 use hide_herdr_client::ApiConnector;
@@ -61,6 +60,7 @@ fn failure(code: PaneReopenFailure, detail: impl Into<String>) -> ReopenFailure 
 /// start follows only once the shell holds the terminal again.
 pub(crate) fn reopen(
     connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
     request: &ReopenRequest,
 ) -> Result<(), ReopenFailure> {
     if crate::codex_launch::start_arguments(&request.kind, request.codex_daemon, Vec::new())
@@ -81,24 +81,27 @@ pub(crate) fn reopen(
         ));
     };
     if let Some(cwd) = request.cwd.as_deref()
-        && !Path::new(cwd).is_dir()
+        && !crate::node_access::is_directory(node, cwd)
     {
         return Err(failure(
             PaneReopenFailure::StartRefused,
             format!("{cwd} is not a directory"),
         ));
     }
-    agent_sleep_herdr::end_agent(connector, &request.pane_id, &request.kind).map_err(|error| {
-        match error {
-            // The decision was made on a list up to a second old, so an agent
-            // that started working since is told as busy, and nothing was
-            // signalled.
-            EndError::Busy(detail) => failure(PaneReopenFailure::AgentBusy, detail),
-            EndError::Failed(detail) => failure(PaneReopenFailure::EndRefused, detail),
-        }
-    })?;
+    agent_sleep_herdr::end_agent(connector, node, &request.pane_id, &request.kind).map_err(
+        |error| {
+            match error {
+                // The decision was made on a list up to a second old, so an agent
+                // that started working since is told as busy, and nothing was
+                // signalled.
+                EndError::Busy(detail) => failure(PaneReopenFailure::AgentBusy, detail),
+                EndError::Failed(detail) => failure(PaneReopenFailure::EndRefused, detail),
+            }
+        },
+    )?;
     match agent_sleep_herdr::start_agent(
         connector,
+        node,
         &WakeRequest {
             pane_id: request.pane_id.clone(),
             kind: request.kind.clone(),
@@ -121,7 +124,11 @@ pub(crate) fn spawn_reopen(context: LiveContext, request: ReopenRequest) -> Resu
     thread::Builder::new()
         .name("herdr-core-pane-reopen".into())
         .spawn(move || {
-            let result = reopen(context.api_connector.as_ref(), &request);
+            let result = reopen(
+                context.api_connector.as_ref(),
+                context.node.as_ref(),
+                &request,
+            );
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
@@ -197,7 +204,12 @@ mod tests {
             let herdr = FakeHerdr::start("pane-reopen-refused", |method, _| {
                 panic!("unexpected {method}")
             });
-            let error = reopen(&herdr.connector(), &request(kind, daemon)).expect_err(case);
+            let error = reopen(
+                &herdr.connector(),
+                &hide_node::Local::of_process(),
+                &request(kind, daemon),
+            )
+            .expect_err(case);
             assert_eq!(error.code, expected, "{case}");
             assert!(!error.ended, "{case}");
             assert!(herdr.methods().is_empty(), "{case}");
@@ -205,7 +217,8 @@ mod tests {
         let herdr = FakeHerdr::start("pane-reopen-cwd", |method, _| panic!("unexpected {method}"));
         let mut gone = request("claude", CodexDaemon::Unknown);
         gone.cwd = Some("/nonexistent/pane-reopen-test".into());
-        let error = reopen(&herdr.connector(), &gone).expect_err("folder gone");
+        let error = reopen(&herdr.connector(), &hide_node::Local::of_process(), &gone)
+            .expect_err("folder gone");
         assert_eq!(error.code, PaneReopenFailure::StartRefused);
         assert!(herdr.methods().is_empty());
     }
@@ -217,8 +230,12 @@ mod tests {
             "agent.get" => agent_info("claude", "working"),
             other => panic!("unexpected {other}"),
         });
-        let error = reopen(&herdr.connector(), &request("claude", CodexDaemon::Unknown))
-            .expect_err("working");
+        let error = reopen(
+            &herdr.connector(),
+            &hide_node::Local::of_process(),
+            &request("claude", CodexDaemon::Unknown),
+        )
+        .expect_err("working");
         assert_eq!(error.code, PaneReopenFailure::AgentBusy);
         assert_eq!(herdr.methods(), ["agent.get"]);
     }
@@ -255,7 +272,12 @@ mod tests {
                 let _ = child.wait();
                 exited.store(true, Ordering::SeqCst);
             });
-            reopen(&herdr.connector(), &request(kind, daemon)).expect("reopened");
+            reopen(
+                &herdr.connector(),
+                &hide_node::Local::of_process(),
+                &request(kind, daemon),
+            )
+            .expect("reopened");
             reaper.join().expect("reaped");
             let methods = herdr.methods();
             let first_start = methods
@@ -320,8 +342,12 @@ mod tests {
             let _ = child.wait();
             exited.store(true, Ordering::SeqCst);
         });
-        let error = reopen(&herdr.connector(), &request("claude", CodexDaemon::Unknown))
-            .expect_err("refused");
+        let error = reopen(
+            &herdr.connector(),
+            &hide_node::Local::of_process(),
+            &request("claude", CodexDaemon::Unknown),
+        )
+        .expect_err("refused");
         reaper.join().expect("reaped");
         assert_eq!(error.code, PaneReopenFailure::StartRefused);
         assert!(
@@ -379,7 +405,12 @@ mod tests {
             let _ = child.wait();
             exited.store(true, Ordering::SeqCst);
         });
-        reopen(&herdr.connector(), &request("claude", CodexDaemon::Unknown)).expect("reopened");
+        reopen(
+            &herdr.connector(),
+            &hide_node::Local::of_process(),
+            &request("claude", CodexDaemon::Unknown),
+        )
+        .expect("reopened");
         reaper.join().expect("reaped");
         assert_eq!(
             starts.load(Ordering::SeqCst),

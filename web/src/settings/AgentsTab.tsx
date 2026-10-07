@@ -5,6 +5,7 @@ import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { useInterfaceTranslation } from "../i18n/client";
+import { localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { agentMachines, checkFailedReason, type AgentMachine } from "./agentRows";
 import { AgentRow, NotInstalledRow } from "./AgentRow";
@@ -24,10 +25,11 @@ export function AgentsTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const remote = useShellStore((s) => s.rest?.status?.remote);
-  const [selected, setSelected] = useState("local");
+  const own = useShellStore((s) => localDeviceId(s.rest));
+  const [selected, setSelected] = useState<string | null>(null);
   useAgentsDemand(actions, true);
   const machines = agentMachines(devices ?? [], remote);
-  const machine = machines.find((row) => row.device.id === selected) ?? machines[0];
+  const machine = machines.find((row) => row.device.id === (selected ?? own)) ?? machines[0];
   return (
     <>
       {machines.length > 1 ? (
@@ -42,7 +44,7 @@ export function AgentsTab({ actions }: { actions: Actions }) {
         >
           {machines.map((row) => (
             <ToggleGroupItem key={row.device.id} value={row.device.id} data-agents-machine={row.device.id}>
-              {row.device.id === "local" ? t("common.thisMac") : row.device.label}
+              {row.device.kind !== "remote" ? t("common.thisMac") : row.device.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>

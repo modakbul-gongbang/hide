@@ -130,7 +130,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
             herdr_bin_path: None,
             app_state_path: path.to_string_lossy().into_owned(),
@@ -140,13 +140,13 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
-            kit_dir: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     );
     assert_eq!(
         restarted.snapshot().ui_state.agent_sleep_after_hours,

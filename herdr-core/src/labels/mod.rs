@@ -26,10 +26,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use hide_host::protocol::Call;
+use hide_node_link::protocol::Call;
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 
-use crate::host_access::{HostCallError, HostChannel, call_as};
+use crate::node_access::{LinkError, NodeLink, call_as};
 use crate::runtime::Runtime;
 use analyzer::LabelAnalyzer;
 use store::LabelStore;
@@ -64,47 +64,55 @@ impl LabelServices {
         state_dir: Option<&Path>,
         home: Option<PathBuf>,
         runtime: Weak<Mutex<Runtime>>,
+        node: &crate::node::NodeId,
+        own_node: Arc<dyn NodeLink>,
     ) -> Result<Self, String> {
-        let store = Arc::new(LabelStore::open(state_dir, home.as_deref()));
+        let store = Arc::new(LabelStore::open(state_dir, home.as_deref(), node.as_str()));
         let settings_home = home.clone();
         let standing = Arc::new(crate::ai::AiStanding::default());
+        // The labels run on the core's own machine's provider logins.
         let analyzer = LabelAnalyzer::spawn(
             Box::new(move || analysis_settings(&runtime, settings_home.as_deref())),
             Arc::clone(&standing),
+            own_node,
         )?;
         Ok(Self {
             store,
             analyzer: Arc::new(analyzer),
             standing,
-            input: Arc::default(),
+            input: Arc::new(input::OperatorInput::new(node.as_str())),
             local_wake: Mutex::new(None),
             home,
             state_dir: state_dir.map(Path::to_path_buf),
         })
     }
 
-    /// The worker for this machine's Herdr server at `socket_path`.
+    /// The worker for this machine's Herdr server at `socket_path`, reading
+    /// conversations through the core's own node.
     pub(crate) fn local_worker(
         &self,
         socket_path: &Path,
+        node: Arc<dyn NodeLink>,
         wake: Wake,
     ) -> Result<Option<LabelWorker>, String> {
-        let Some(home) = self.home.clone() else {
+        if self.home.is_none() {
             return Ok(None);
-        };
+        }
         *self
             .local_wake
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(Arc::clone(&wake));
         LabelWorker::spawn(
             WorkerConfig {
-                target: store::LOCAL_TARGET.to_owned(),
+                target: self.store.node().to_owned(),
                 lock_path: Some(generator::local_lock_path(socket_path)),
                 input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(worker::LocalTranscripts { home }),
+            Arc::new(NodeTranscripts::new(Box::new(move || {
+                Ok(Arc::clone(&node))
+            }))),
             wake,
         )
         .map(Some)
@@ -140,7 +148,7 @@ impl LabelServices {
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(DeviceTranscripts::of_device(device_id, runtime)),
+            Arc::new(NodeTranscripts::of_device(device_id, runtime)),
             wake,
         )
     }
@@ -178,15 +186,16 @@ pub(crate) fn analysis_settings(
 /// The device helper's channel when it has one, or the stable reason it does
 /// not (no connection yet, a helper still starting).
 pub(crate) type ChannelSource =
-    Box<dyn Fn() -> Result<Arc<dyn HostChannel>, &'static str> + Send + Sync>;
+    Box<dyn Fn() -> Result<Arc<dyn NodeLink>, &'static str> + Send + Sync>;
 
-/// A device's conversations, read by its helper and brought here in memory
-/// only (PRD D-03); nothing of them is stored.
-pub(crate) struct DeviceTranscripts {
+/// A node's conversations, read on its machine and brought here in memory
+/// only (PRD D-03); nothing of them is stored. The core's own node answers in
+/// process, a device's through its helper.
+pub(crate) struct NodeTranscripts {
     channel: ChannelSource,
 }
 
-impl DeviceTranscripts {
+impl NodeTranscripts {
     pub(crate) fn new(channel: ChannelSource) -> Self {
         Self { channel }
     }
@@ -199,13 +208,13 @@ impl DeviceTranscripts {
             let runtime = runtime.upgrade().ok_or("runtime_gone")?;
             let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
             guard
-                .device_channel(&device_id)
+                .node_link(&device_id)
                 .map_err(|_| "device_helper_not_ready")
         }))
     }
 }
 
-impl TranscriptSource for DeviceTranscripts {
+impl TranscriptSource for NodeTranscripts {
     fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
         let channel =
             (self.channel)().map_err(|reason| ReadFailure::Unavailable(reason.to_owned()))?;
@@ -217,19 +226,19 @@ impl TranscriptSource for DeviceTranscripts {
             DEVICE_READ_TIMEOUT,
         )
         .map_err(|error| match error {
-            HostCallError::NotConnected(_) => {
+            LinkError::NotConnected(_) => {
                 ReadFailure::Unavailable("device_helper_not_connected".to_owned())
             }
-            HostCallError::Busy => ReadFailure::Unavailable("device_helper_busy".to_owned()),
-            HostCallError::Unknown(_) => {
-                ReadFailure::Unavailable("device_helper_unknown".to_owned())
-            }
+            LinkError::Busy => ReadFailure::Unavailable("device_helper_busy".to_owned()),
+            LinkError::Unknown(_) => ReadFailure::Unavailable("device_helper_unknown".to_owned()),
             // A helper older than protocol 12 does not know the call; the
             // device's kit status already offers the reinstall (B15).
-            HostCallError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+            LinkError::Refused(error)
+                if error.code == hide_node_link::ErrorCode::InvalidRequest =>
+            {
                 ReadFailure::Refused("device_helper_unsupported".to_owned())
             }
-            HostCallError::Refused(error) => ReadFailure::Refused(error.message),
+            LinkError::Refused(error) => ReadFailure::Refused(error.message),
         })
     }
 }

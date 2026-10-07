@@ -59,10 +59,17 @@ impl LocalSocketConnector {
 impl ApiConnector for LocalSocketConnector {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
         let stream = LocalStream::connect(&self.socket_path).map_err(|error| {
-            ApiError::Transport(format!(
-                "connect failed for {}: {error}",
-                self.socket_path.display()
-            ))
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ApiError::NotRunning(format!(
+                    "Herdr socket file does not exist at {}; the herdr server is not running",
+                    self.socket_path.display()
+                ))
+            } else {
+                ApiError::Transport(format!(
+                    "connect failed for {}: {error}",
+                    self.socket_path.display()
+                ))
+            }
         })?;
         Ok(Box::new(stream))
     }
@@ -166,8 +173,13 @@ fn read_acknowledgement(stream: &mut LocalStream, deadline: Instant) -> Result<V
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApiError {
+    /// The server's socket is not there: no server is running at it.
+    NotRunning(String),
     Transport(String),
-    Remote { code: String, message: String },
+    Remote {
+        code: String,
+        message: String,
+    },
     Malformed(String),
 }
 
@@ -175,7 +187,7 @@ impl ApiError {
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::Remote { code, .. } => Some(code),
-            Self::Transport(_) | Self::Malformed(_) => None,
+            Self::NotRunning(_) | Self::Transport(_) | Self::Malformed(_) => None,
         }
     }
 }
@@ -183,7 +195,9 @@ impl ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transport(message) | Self::Malformed(message) => formatter.write_str(message),
+            Self::NotRunning(message) | Self::Transport(message) | Self::Malformed(message) => {
+                formatter.write_str(message)
+            }
             Self::Remote { code, message } => write!(formatter, "{code}: {message}"),
         }
     }

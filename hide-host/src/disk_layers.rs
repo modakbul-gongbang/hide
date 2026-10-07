@@ -11,71 +11,10 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
-use hide_host::index::IgnoreRules;
-use serde::Serialize;
+pub use hide_node_link::disk::FolderRefusal;
+use hide_node_link::disk::{DiskLayers, Layer, LayerFolder};
 
-/// A layer Hide will empty.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Layer {
-    BuildCache,
-    Dependencies,
-}
-
-impl Layer {
-    pub fn code(self) -> &'static str {
-        match self {
-            Layer::BuildCache => "build_cache",
-            Layer::Dependencies => "dependencies",
-        }
-    }
-
-    pub fn from_code(code: &str) -> Option<Self> {
-        match code {
-            "build_cache" => Some(Layer::BuildCache),
-            "dependencies" => Some(Layer::Dependencies),
-            _ => None,
-        }
-    }
-}
-
-/// One cell of the table: what a checkout holds in one layer.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct LayerCell {
-    pub bytes: u64,
-    pub folders: usize,
-    /// The biggest folder of the cell, relative to the checkout.
-    pub largest_name: Option<String>,
-}
-
-/// A checkout's allocated bytes by layer.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct DiskLayers {
-    pub build_cache: LayerCell,
-    pub dependencies: LayerCell,
-    /// Ignored folders no rule vouches for. Measured, never removed.
-    pub other: LayerCell,
-    /// Everything the ignore rules do not name.
-    pub source_bytes: u64,
-}
-
-impl DiskLayers {
-    pub fn cell(&self, layer: Layer) -> &LayerCell {
-        match layer {
-            Layer::BuildCache => &self.build_cache,
-            Layer::Dependencies => &self.dependencies,
-        }
-    }
-}
-
-/// A folder of a layer, kept by the core so the cleanup can move it. The
-/// wire carries the cell totals, never these paths.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LayerFolder {
-    pub path: PathBuf,
-    pub layer: Layer,
-    pub bytes: u64,
-}
+use crate::index::IgnoreRules;
 
 /// What the walk holds of one top ignored folder while it is being counted.
 pub(crate) struct FolderTally {
@@ -279,30 +218,11 @@ fn has_cache_tag(folder: &Path) -> bool {
         && head == CACHEDIR_SIGNATURE
 }
 
-/// Why a folder is no longer safe to move, decided right before the move.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FolderRefusal {
-    NotFound,
-    Symlink,
-    /// No longer ignored, or no rule or tag vouches for it as this layer.
-    Changed,
-}
-
-impl FolderRefusal {
-    pub fn code(self) -> &'static str {
-        match self {
-            FolderRefusal::NotFound => "not_found",
-            FolderRefusal::Symlink => "symlink",
-            FolderRefusal::Changed => "changed",
-        }
-    }
-}
-
 /// Reads the folder's classification again from the files: it is inside the
 /// checkout, reached through no link, ignored by the rules of every folder
 /// above it, and still vouched for as `layer`. `exclude_dir` is the shared
 /// Git directory's `info` folder.
-pub(crate) fn verify_folder(
+pub fn verify_folder(
     root: &Path,
     folder: &Path,
     layer: Layer,

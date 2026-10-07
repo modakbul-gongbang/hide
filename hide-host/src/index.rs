@@ -9,24 +9,15 @@
 //! answers `Call::Index` with the same walk, so both rank the same list.
 
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
+pub use hide_node_link::index::{INDEX_CAP, Walked};
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Files one checkout's index holds; past it the index is reported truncated.
-pub const INDEX_CAP: usize = 50_000;
 /// Folders one walk visits; past it the index is reported truncated.
 pub const DIRECTORY_CAP: usize = 50_000;
-
-/// One walk's answer.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Walked {
-    pub paths: Vec<String>,
-    pub truncated: bool,
-}
 
 /// Walks the opened root honoring the ignore files, and returns the relative
 /// file paths with the truncation flag. `root` is the root's real path, which

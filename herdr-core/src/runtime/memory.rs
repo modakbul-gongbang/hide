@@ -4,6 +4,8 @@ use crate::model::{
     MemoryRevisionSnapshot, MemoryRowSnapshot, MemorySourceSnapshot, SessionsMode,
     SessionsProviderFilter, SessionsSnapshot,
 };
+use crate::node::NodeId;
+use crate::node_access::{NodeLink, call_as};
 use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
@@ -11,16 +13,17 @@ use hide_memory::{
     HideNativeAnalyzer, Injection, InjectionOutcome, MemoryStore, SessionCursorRecord,
     SessionSourceRecord,
 };
-use hide_session::{
-    Agent, EventKind, SESSION_READ_LIMIT_BYTES, SessionAvailability, SessionCatalog, SessionCursor,
-    read_bounded,
-};
+use hide_node_link::protocol::Call;
+use hide_node_link::sessions::{SessionChunk, SessionStat};
+use hide_session::{Agent, EventKind, ProjectSession, SessionAvailability};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::fs;
 
 const MEMORY_QUIESCENCE_MS: u64 = 60_000;
+/// One session call on the node that holds the Project's sessions; a
+/// listing walks at most `hide_session::SESSION_DISCOVERY_LIMIT` files.
+const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
 const RELATION_CONTEXT_INPUT_LIMIT_BYTES: usize = 16 * 1024;
 
@@ -83,19 +86,24 @@ impl Runtime {
         let Some((_, _, checkout_path)) = self.focused_memory_context() else {
             return false;
         };
-        let Some(home) = self.home_path.clone() else {
-            return false;
-        };
         let Some(context) = self.worker_context.clone() else {
             return false;
         };
+        let sessions_node = self.own_node();
         self.memory_next_poll_unix_ms = now_unix_ms.saturating_add(MEMORY_POLL_INTERVAL_MS);
         self.memory_poll_in_flight = true;
         let database = self.memory_database_path();
+        let node = self.node.clone();
         let spawn = thread::Builder::new()
             .name("hide-project-memory-poll".to_owned())
             .spawn(move || {
-                let due = memory_analysis_due(&database, &home, &checkout_path, now_unix_ms);
+                let due = memory_analysis_due(
+                    &node,
+                    sessions_node.as_ref(),
+                    &database,
+                    &checkout_path,
+                    now_unix_ms,
+                );
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -187,15 +195,14 @@ impl Runtime {
         }
         self.memory_sessions_load_in_flight = true;
         self.memory_sessions_load_pending = false;
-        let home = self.home_path.clone();
+        let sessions_node = self.own_node();
         let database = self.memory_database_path();
+        let node = self.node.clone();
         thread::Builder::new()
             .name("hide-project-memory-read".to_owned())
             .spawn(move || {
-                let result = home
-                    .as_deref()
-                    .ok_or_else(|| "The home directory is unavailable".to_owned())
-                    .and_then(|home| load_sessions(home, &database, &checkout_path));
+                let result =
+                    load_sessions(&node, sessions_node.as_ref(), &database, &checkout_path);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -454,6 +461,7 @@ impl Runtime {
             .collect::<HashSet<_>>();
         let database = self.memory_database_path();
         let project_id = self.snapshot.sessions.project_id.clone();
+        let sessions_node = self.own_node();
         thread::Builder::new()
             .name("hide-archive-detail".to_owned())
             .spawn(move || {
@@ -462,7 +470,14 @@ impl Runtime {
                         .ok_or_else(|| "Project Memory is unavailable".to_owned())
                         .and_then(|project_id| {
                             row.ok_or_else(|| "Session is no longer in this Project".to_owned())
-                                .and_then(|row| load_session_detail(&database, &project_id, row))
+                                .and_then(|row| {
+                                    load_session_detail(
+                                        sessions_node.as_ref(),
+                                        &database,
+                                        &project_id,
+                                        row,
+                                    )
+                                })
                         }),
                     "memory" => project_id
                         .ok_or_else(|| "Project Memory is unavailable".to_owned())
@@ -566,7 +581,8 @@ impl Runtime {
                 );
                 return true;
             }
-            self.queue_kit_reinstall(crate::workspace::LOCAL_DEVICE_ID, parts);
+            let node = self.node.clone();
+            self.queue_kit_reinstall(node.as_str(), parts);
             self.memory_enable_after_hook_update = true;
             self.snapshot.sessions.analysis = MemoryAnalysisSnapshot {
                 state: "hooks_need_update".to_owned(),
@@ -683,26 +699,33 @@ impl Runtime {
             };
         }
         let database = self.memory_database_path();
-        let home = self.home_path.clone();
         let settings = self.ai_settings.clone().unwrap_or_default();
         self.memory_analysis_settings = analyzes.then(|| settings.clone());
+        let node = self.node.clone();
+        let ai_node = self.own_node();
+        let sessions_node = self.own_node();
         thread::Builder::new()
             .name("hide-project-memory-write".to_owned())
             .spawn(move || {
-                let mut result = mutate_memory(&database, &checkout_path, payload);
+                let mut result = mutate_memory(
+                    &node,
+                    sessions_node.as_ref(),
+                    &database,
+                    &checkout_path,
+                    payload,
+                );
                 if result.is_ok() && analyzes {
-                    result = match home {
-                        Some(home) => Ok(analyze_project(
-                            &database,
-                            &home,
-                            &checkout_path,
-                            &settings,
-                            &cancel,
-                            &context,
-                            generation,
-                        )),
-                        None => Err("The home directory is unavailable".to_owned()),
-                    };
+                    result = Ok(analyze_project(
+                        &node,
+                        sessions_node.as_ref(),
+                        &crate::ai::memory_router(&ai_node, &settings),
+                        &database,
+                        &checkout_path,
+                        &cancel,
+                        |snapshot| {
+                            report_analysis(&context, generation, &checkout_path, snapshot);
+                        },
+                    ));
                 }
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
@@ -796,6 +819,11 @@ mod scope_tests {
         should_request_memory_due_poll_after_load, trusted_memory_receipt, update_hook_projection,
         validate_candidates,
     };
+    /// The node id the agent hook keys this machine's Projects by.
+    fn hook_node() -> String {
+        hide_platform::host::machine_id().unwrap()
+    }
+
     use crate::model::MemoryAnalysisSnapshot;
     use hide_agent_hooks::{
         memory::{HookMemoryOutcome, HookMemoryResult, database_path, project_memory_output_until},
@@ -894,8 +922,13 @@ mod scope_tests {
             availability: SessionAvailability::Available,
         });
 
-        let detail =
-            load_session_detail(&temp.path().join("missing.sqlite3"), "project-1", row).unwrap();
+        let detail = load_session_detail(
+            &hide_node::Local::of_process(),
+            &temp.path().join("missing.sqlite3"),
+            "project-1",
+            row,
+        )
+        .unwrap();
 
         assert_eq!(detail.events.len(), 1);
         assert_eq!(detail.events[0].text, "open me");
@@ -1061,11 +1094,11 @@ mod scope_tests {
         let temp = tempdir().unwrap();
         let project_root = temp.path().join("project");
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
         let database = temp.path().join("memory.sqlite3");
         let store = MemoryStore::open(&database).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &hook_node())
             .unwrap();
         let item_key = "m1@2";
         let auth = store
@@ -1176,12 +1209,12 @@ mod scope_tests {
         let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
         let database = database_path(&home);
         fs::create_dir_all(database.parent().unwrap()).unwrap();
         let store = MemoryStore::open(&database).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &hook_node())
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         drop(store);
@@ -1245,7 +1278,13 @@ mod scope_tests {
                 availability: SessionAvailability::Available,
             };
             let mut store = MemoryStore::open(&database).unwrap();
-            update_hook_projection(&mut store, &project.id, &session).unwrap();
+            update_hook_projection(
+                &mut store,
+                &hide_node::Local::of_process(),
+                &project.id,
+                &session,
+            )
+            .unwrap();
             assert_eq!(
                 store
                     .session_start_receipt_ids(&project.id, provider, session_id)
@@ -1368,23 +1407,22 @@ fn report_analysis(
 }
 
 fn analyze_project(
+    node: &NodeId,
+    sessions_node: &dyn NodeLink,
+    router: &hide_ai::AiRouter,
     database: &Path,
-    home: &Path,
     checkout_path: &str,
-    settings: &hide_ai::AiSettings,
     cancel: &CancelToken,
-    context: &RuntimeWorkerContext,
-    generation: u64,
+    progress: impl FnMut(MemoryAnalysisSnapshot),
 ) -> MemoryMutationOutcome {
     let result = analyze_project_inner(
+        node,
+        sessions_node,
+        router,
         database,
-        home,
         checkout_path,
-        settings,
         cancel,
-        |snapshot| {
-            report_analysis(context, generation, checkout_path, snapshot);
-        },
+        progress,
     );
     match result {
         Ok(result) => result,
@@ -1402,25 +1440,23 @@ fn analyze_project(
 }
 
 fn analyze_project_inner(
+    node: &NodeId,
+    sessions_node: &dyn NodeLink,
+    router: &hide_ai::AiRouter,
     database: &Path,
-    home: &Path,
     checkout_path: &str,
-    settings: &hide_ai::AiSettings,
     cancel: &CancelToken,
     mut progress: impl FnMut(MemoryAnalysisSnapshot),
 ) -> Result<MemoryMutationOutcome, AnalysisFailure> {
-    let identity = hide_project::resolve(Path::new(checkout_path), workspace::LOCAL_DEVICE_ID)
-        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    let sessions = SessionCatalog::new(home, workspace::LOCAL_DEVICE_ID)
-        .project_sessions(&identity)
-        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
+    let identity =
+        project_identity(sessions_node, node, checkout_path).map_err(AnalysisFailure::Local)?;
+    let sessions = project_sessions(sessions_node, &identity).map_err(AnalysisFailure::Local)?;
     let discovered = sessions.len();
     let mut store =
         MemoryStore::open(database).map_err(|error| AnalysisFailure::Local(error.to_string()))?;
     store
-        .ensure_project(&identity.id, &identity.root, workspace::LOCAL_DEVICE_ID)
+        .ensure_project(&identity.id, &identity.root, node.as_str())
         .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    let router = crate::ai::memory_router(settings);
     let analyzer = HideNativeAnalyzer;
     let mut analyzed = 0;
     let mut failed = 0;
@@ -1456,7 +1492,7 @@ fn analyze_project_inner(
             })
             .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
         if availability.is_none() {
-            update_hook_projection(&mut store, &identity.id, &session)
+            update_hook_projection(&mut store, sessions_node, &identity.id, &session)
                 .map_err(AnalysisFailure::Local)?;
         }
         if availability.is_some() {
@@ -1464,10 +1500,13 @@ fn analyze_project_inner(
             progress(analysis_progress(discovered, analyzed, failed));
             continue;
         }
-        if !session_is_quiescent(&session, now_ms()) {
+        let Ok(stat) = session_stat(sessions_node, &session) else {
+            continue;
+        };
+        if !session_is_quiescent(&stat, now_ms()) {
             continue;
         }
-        if !session_has_pending_analysis(&store, &identity.id, &session)
+        if !session_has_pending_analysis(&store, &identity.id, &session, &stat)
             .map_err(AnalysisFailure::Local)?
         {
             continue;
@@ -1475,7 +1514,8 @@ fn analyze_project_inner(
 
         match analyze_session(
             &mut store,
-            &router,
+            sessions_node,
+            router,
             &analyzer,
             &identity.id,
             &session,
@@ -1567,28 +1607,96 @@ fn analysis_progress(discovered: usize, analyzed: usize, failed: usize) -> Memor
     }
 }
 
-fn session_is_quiescent(session: &hide_session::ProjectSession, now_unix_ms: u64) -> bool {
-    fs::metadata(&session.locator)
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| {
-            now_unix_ms.saturating_sub(duration.as_millis() as u64) >= MEMORY_QUIESCENCE_MS
-        })
-        .unwrap_or(false)
+fn session_is_quiescent(stat: &SessionStat, now_unix_ms: u64) -> bool {
+    stat.modified_unix_ms
+        .is_some_and(|modified| now_unix_ms.saturating_sub(modified) >= MEMORY_QUIESCENCE_MS)
+}
+
+/// The Project that holds `checkout_path`, as the node that holds it reads
+/// it; the id names the node.
+fn project_identity(
+    sessions_node: &dyn NodeLink,
+    node: &NodeId,
+    checkout_path: &str,
+) -> Result<hide_project::ProjectIdentity, String> {
+    let facts: hide_project::ProjectFacts = call_as(
+        sessions_node,
+        Call::Project {
+            path: checkout_path.to_owned(),
+        },
+        SESSION_CALL_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(hide_project::ProjectIdentity {
+        id: hide_project::project_id(node.as_str(), &facts.root),
+        root: facts.root,
+        checkout_root: facts.checkout_root,
+        device_id: node.as_str().to_owned(),
+        kind: facts.kind,
+    })
+}
+
+fn project_sessions(
+    sessions_node: &dyn NodeLink,
+    identity: &hide_project::ProjectIdentity,
+) -> Result<Vec<ProjectSession>, String> {
+    call_as(
+        sessions_node,
+        Call::ProjectSessions {
+            project: identity.clone(),
+        },
+        SESSION_CALL_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn session_stat(
+    sessions_node: &dyn NodeLink,
+    session: &ProjectSession,
+) -> Result<SessionStat, String> {
+    call_as(
+        sessions_node,
+        Call::SessionStat {
+            path: session.locator.to_string_lossy().into_owned(),
+        },
+        SESSION_CALL_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// One bounded read of `session` past the saved checkpoint, on its node.
+fn session_chunk(
+    sessions_node: &dyn NodeLink,
+    session: &ProjectSession,
+    saved: Option<&SessionCursorRecord>,
+) -> Result<SessionChunk, String> {
+    let checkpoint = saved
+        .filter(|record| !record.checkpoint.is_empty())
+        .map(|record| serde_json::from_slice(&record.checkpoint))
+        .transpose()
+        .map_err(|error| format!("session_checkpoint:{error}"))?;
+    call_as(
+        sessions_node,
+        Call::SessionChunk {
+            path: session.locator.to_string_lossy().into_owned(),
+            checkpoint,
+        },
+        SESSION_CALL_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn memory_analysis_due(
+    node: &NodeId,
+    sessions_node: &dyn NodeLink,
     database: &Path,
-    home: &Path,
     checkout_path: &str,
     now_unix_ms: u64,
 ) -> Result<bool, String> {
-    if !database.is_file() {
+    if !MemoryStore::exists(database) {
         return Ok(false);
     }
-    let identity = hide_project::resolve(Path::new(checkout_path), workspace::LOCAL_DEVICE_ID)
-        .map_err(|error| error.to_string())?;
+    let identity = project_identity(sessions_node, node, checkout_path)?;
     let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
     let state = match store.project_state(&identity.id) {
         Ok(state) => state,
@@ -1598,17 +1706,18 @@ fn memory_analysis_due(
     if !state.enabled {
         return Ok(false);
     }
-    let sessions = SessionCatalog::new(home, workspace::LOCAL_DEVICE_ID)
-        .project_sessions(&identity)
-        .map_err(|error| error.to_string())?;
+    let sessions = project_sessions(sessions_node, &identity)?;
     for session in sessions {
         if !matches!(&session.availability, SessionAvailability::Available) {
             continue;
         }
-        if !session_is_quiescent(&session, now_unix_ms) {
+        let Ok(stat) = session_stat(sessions_node, &session) else {
+            continue;
+        };
+        if !session_is_quiescent(&stat, now_unix_ms) {
             continue;
         }
-        if session_has_pending_analysis(&store, &identity.id, &session)? {
+        if session_has_pending_analysis(&store, &identity.id, &session, &stat)? {
             return Ok(true);
         }
     }
@@ -1617,26 +1726,16 @@ fn memory_analysis_due(
 
 fn update_hook_projection(
     store: &mut MemoryStore,
+    sessions_node: &dyn NodeLink,
     project_id: &str,
-    session: &hide_session::ProjectSession,
+    session: &ProjectSession,
 ) -> Result<(), String> {
     let provider = session.agent.as_str();
     let saved = store
         .load_hook_projection_cursor(project_id, provider, &session.id)
         .map_err(|error| error.to_string())?;
-    let mut cursor = match saved.as_ref() {
-        Some(record) if !record.checkpoint.is_empty() => {
-            SessionCursor::restore_checkpoint(&record.checkpoint)
-                .map_err(|error| error.to_string())?
-        }
-        _ => SessionCursor::new(),
-    };
-    let chunk = cursor
-        .read(&session.locator)
-        .map_err(|error| error.to_string())?;
-    let checkpoint = cursor
-        .encode_checkpoint()
-        .map_err(|error| error.to_string())?;
+    let chunk = session_chunk(sessions_node, session, saved.as_ref())?;
+    let checkpoint = serde_json::to_vec(&chunk.checkpoint).map_err(|error| error.to_string())?;
     let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
     for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
         if let Some(receipt) = trusted_memory_receipt(
@@ -1683,7 +1782,7 @@ fn update_hook_projection(
             project_id: project_id.to_owned(),
             provider: provider.to_owned(),
             session_id: session.id.clone(),
-            byte_offset: cursor.offset(),
+            byte_offset: chunk.offset,
             checkpoint,
             last_content_hash: (!chunk.contents.is_empty()).then(|| digest(&[&chunk.contents])),
             updated_at_unix_ms: now_ms(),
@@ -1708,22 +1807,17 @@ fn normalized_topic_terms(text: &str) -> String {
 fn session_has_pending_analysis(
     store: &MemoryStore,
     project_id: &str,
-    session: &hide_session::ProjectSession,
+    session: &ProjectSession,
+    stat: &SessionStat,
 ) -> Result<bool, String> {
-    let metadata = fs::metadata(&session.locator).map_err(|error| error.to_string())?;
     let cursor = store
         .load_cursor(project_id, session.agent.as_str(), &session.id)
         .map_err(|error| error.to_string())?;
     Ok(match cursor {
-        None => metadata.len() > 0,
+        None => stat.size > 0,
         Some(cursor) => {
-            let modified_ms = metadata
-                .modified()
-                .ok()
-                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_millis() as u64)
-                .unwrap_or_default();
-            metadata.len() != cursor.byte_offset || modified_ms > cursor.updated_at_unix_ms
+            stat.size != cursor.byte_offset
+                || stat.modified_unix_ms.unwrap_or_default() > cursor.updated_at_unix_ms
         }
     })
 }
@@ -1733,30 +1827,23 @@ struct SessionAnalysis {
     batch_ids: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)] // one session's analysis: its store, node, router and cancel
 fn analyze_session(
     store: &mut MemoryStore,
+    sessions_node: &dyn NodeLink,
     router: &hide_ai::AiRouter,
     analyzer: &HideNativeAnalyzer,
     project_id: &str,
-    session: &hide_session::ProjectSession,
+    session: &ProjectSession,
     cancel: &CancelToken,
 ) -> Result<SessionAnalysis, AnalysisFailure> {
     let provider = session.agent.as_str();
     let saved = store
         .load_cursor(project_id, provider, &session.id)
         .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    let mut cursor = match saved.as_ref() {
-        Some(record) if !record.checkpoint.is_empty() => {
-            SessionCursor::restore_checkpoint(&record.checkpoint)
-                .map_err(|error| AnalysisFailure::Local(error.to_string()))?
-        }
-        _ => SessionCursor::new(),
-    };
-    let chunk = cursor
-        .read(&session.locator)
-        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    let checkpoint = cursor
-        .encode_checkpoint()
+    let chunk =
+        session_chunk(sessions_node, session, saved.as_ref()).map_err(AnalysisFailure::Local)?;
+    let checkpoint = serde_json::to_vec(&chunk.checkpoint)
         .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
     if chunk.contents.is_empty() {
         store
@@ -1764,7 +1851,7 @@ fn analyze_session(
                 project_id: project_id.to_owned(),
                 provider: provider.to_owned(),
                 session_id: session.id.clone(),
-                byte_offset: cursor.offset(),
+                byte_offset: chunk.offset,
                 checkpoint,
                 last_content_hash: saved.and_then(|record| record.last_content_hash),
                 updated_at_unix_ms: now_ms(),
@@ -1893,7 +1980,7 @@ fn analyze_session(
             project_id: project_id.to_owned(),
             provider: provider.to_owned(),
             session_id: session.id.clone(),
-            byte_offset: cursor.offset(),
+            byte_offset: chunk.offset,
             checkpoint,
             last_content_hash: last_hash,
             updated_at_unix_ms: now_ms(),
@@ -2082,20 +2169,18 @@ fn now_ms() -> u64 {
 }
 
 pub(super) fn load_sessions(
-    home: &Path,
+    node: &NodeId,
+    sessions_node: &dyn NodeLink,
     database: &Path,
     checkout_path: &str,
 ) -> Result<SessionsLoad, String> {
-    let identity = hide_project::resolve(Path::new(checkout_path), workspace::LOCAL_DEVICE_ID)
-        .map_err(|error| error.to_string())?;
-    let sessions = SessionCatalog::new(home, workspace::LOCAL_DEVICE_ID)
-        .project_sessions(&identity)
-        .map_err(|error| error.to_string())?;
+    let identity = project_identity(sessions_node, node, checkout_path)?;
+    let sessions = project_sessions(sessions_node, &identity)?;
     let mut rows = sessions
         .into_iter()
         .map(project_session_row)
         .collect::<Vec<_>>();
-    let (state, memories) = if database.is_file() {
+    let (state, memories) = if MemoryStore::exists(database) {
         let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
         match store.project_state(&identity.id) {
             Ok(state) => {
@@ -2164,7 +2249,7 @@ fn persisted_unavailable_session_row(source: SessionSourceRecord) -> SessionRowS
     }
 }
 
-fn project_session_row(session: hide_session::ProjectSession) -> SessionRowSnapshot {
+fn project_session_row(session: ProjectSession) -> SessionRowSnapshot {
     let unavailable_reason = match session.availability {
         SessionAvailability::Available => None,
         SessionAvailability::Unavailable { reason } => Some(reason),
@@ -2205,6 +2290,7 @@ fn lifecycle_name(value: hide_memory::MemoryLifecycle) -> String {
 }
 
 pub(super) fn load_session_detail(
+    sessions_node: &dyn NodeLink,
     database: &Path,
     project_id: &str,
     row: SessionRowSnapshot,
@@ -2223,10 +2309,15 @@ pub(super) fn load_session_detail(
             memory: None,
         });
     }
-    let contents = read_bounded(Path::new(&row.locator), SESSION_READ_LIMIT_BYTES)
-        .map_err(|error| format!("Session unavailable: {error}"))?;
-    let store = database
-        .is_file()
+    let contents: String = call_as(
+        sessions_node,
+        Call::SessionText {
+            path: row.locator.clone(),
+        },
+        SESSION_CALL_TIMEOUT,
+    )
+    .map_err(|error| format!("Session unavailable: {error}"))?;
+    let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
     let agent = if row.provider == "codex" {
@@ -2425,15 +2516,16 @@ fn load_memory_detail(
 }
 
 fn mutate_memory(
+    node: &NodeId,
+    sessions_node: &dyn NodeLink,
     database: &Path,
     checkout_path: &str,
     payload: events::MemoryActionPayload,
 ) -> Result<MemoryMutationOutcome, String> {
-    let identity = hide_project::resolve(Path::new(checkout_path), workspace::LOCAL_DEVICE_ID)
-        .map_err(|error| error.to_string())?;
+    let identity = project_identity(sessions_node, node, checkout_path)?;
     let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
     store
-        .ensure_project(&identity.id, &identity.root, workspace::LOCAL_DEVICE_ID)
+        .ensure_project(&identity.id, &identity.root, node.as_str())
         .map_err(|error| error.to_string())?;
     match payload.action.as_str() {
         "enable" => {

@@ -182,7 +182,7 @@ pub const COMMANDS: &[Spec] = &[
         rest: None,
         answers: &["agent"],
         refusals: &[
-            "pane_capability_required",
+            "agent_pane_required",
             "caller_identity_conflict",
             "participant_unavailable",
             "participant_ended",

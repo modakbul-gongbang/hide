@@ -15,6 +15,7 @@ hide-ai = { path = "../hide-ai" }
 hide-factory = { path = "../hide-factory" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-host = { path = "../hide-host" }
+hide-node-link = { path = "../hide-node-link" }
 hide-memory = { path = "../hide-memory" }
 hide-platform = { path = "../hide-platform" }
 hide-project = { path = "../hide-project" }
@@ -45,6 +46,7 @@ typify = "=0.7.0"
 
 [dev-dependencies]
 hide-host = { path = "../hide-host", features = ["call-log"] }
+hide-node = { path = "../hide-node" }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

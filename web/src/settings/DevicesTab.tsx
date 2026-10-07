@@ -7,6 +7,7 @@ import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTi
 import { Group, Note, Row } from "../components/settings-rows";
 import { latestDraft } from "../editor/draft";
 import { useInterfaceTranslation } from "../i18n/client";
+import { frontDeviceId } from "../devices";
 import { deviceRemovalLines, draftExported, kitRemovalLine, unstoredDeviceDrafts } from "../settings";
 import type { Device } from "../snapshot";
 import { useShellStore } from "../store";
@@ -20,7 +21,7 @@ import { useErrorSince } from "./useErrorSince";
 export function DevicesTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id ?? "local");
+  const focused = useShellStore((s) => frontDeviceId(s.rest));
   const remote = useShellStore((s) => s.rest?.status?.remote);
   const [removing, setRemoving] = useState<Device | null>(null);
   const [allowing, setAllowing] = useState<Device | null>(null);

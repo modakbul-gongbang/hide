@@ -9,18 +9,28 @@
 //! [`BackgroundRead`](crate::reader::BackgroundRead)'s worker thread, and the
 //! runtime mutex is never held across any of it.
 //!
+//! Every provider backend here is a [`NodeBackend`]: the router stays in
+//! the core and each backend call is answered by the core's own node, which
+//! runs the provider processes with its logins (`hide_host::ai`).
+//!
 //! It also reads nothing at all while nobody is looking. `observing` is false
 //! unless the Background AI group is on screen, and an unobserved request
 //! answers from no provider, so an idle Hide starts no provider process.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hide_ai::{
-    AiBackend, AiLogEvent, AiLogSink, AiRouter, AiSettings, Availability, ModelCatalog, ProviderId,
+    AiBackend, AiError, AiLogEvent, AiLogSink, AiRequest as ProviderRequest, AiResponse, AiRouter,
+    AiSettings, Availability, CancelToken, ModelCatalog, ProcessMeasurement, ProviderId,
     ProviderStatus,
 };
+use hide_node_link::ai::{BackendSpec, Logged};
+use hide_node_link::protocol::Call;
+
+use crate::node_access::{LinkError, NodeLink, call_as, call_as_with_progress};
 
 use crate::model::{BackgroundAiProviderSnapshot, BackgroundAiSnapshot};
 use crate::reader::BackgroundRead;
@@ -95,7 +105,8 @@ pub struct AiReader {
 }
 
 impl AiReader {
-    pub fn new() -> Self {
+    /// A reader whose providers run on `node`, the core's own machine.
+    pub fn new(node: Arc<dyn NodeLink>) -> Self {
         // One router outlives the reads that use it, so a Codex app-server
         // child is started once for a screen rather than once per read. It is
         // rebuilt only when the configured models change, because the model
@@ -119,7 +130,7 @@ impl AiReader {
                     }
                     _ => {
                         let router = Arc::new(AiRouter::new(
-                            backends(&request.models, only.as_ref()),
+                            backends(&node, &request.models, only.as_ref()),
                             hide_ai::RouterConfig::default(),
                             Arc::new(DiagnosticLogSink),
                         ));
@@ -148,12 +159,6 @@ impl AiReader {
     }
 }
 
-impl Default for AiReader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Writes the provider boundary's events to the core's diagnostic log, so a
 /// fallback, an over-budget restart or a swept `CODEX_HOME` is visible from
 /// outside the process. `emit` only queues, so logging from a provider thread
@@ -173,13 +178,14 @@ fn diagnostic_record(event: &AiLogEvent) -> serde_json::Value {
         .unwrap_or_else(|error| serde_json::json!({ "serialize_error": error.to_string() }));
     if let Some(fields) = record.as_object_mut() {
         fields.remove("event");
-        fields.insert("kind".to_owned(), event.event.into());
+        fields.insert("kind".to_owned(), event.event.as_ref().into());
         fields.insert("component".to_owned(), "ai".into());
     }
     record
 }
 
 fn backends(
+    node: &Arc<dyn NodeLink>,
     models: &BTreeMap<ProviderId, String>,
     only: Option<&BTreeSet<ProviderId>>,
 ) -> Vec<Arc<dyn AiBackend>> {
@@ -191,18 +197,161 @@ fn backends(
                 .get(provider)
                 .cloned()
                 .unwrap_or_else(|| hide_ai::settings::default_model(*provider).to_owned());
-            hide_ai::build_backend(*provider, &model, Arc::new(DiagnosticLogSink))
+            Arc::new(NodeBackend::new(Arc::clone(node), *provider, model)) as Arc<dyn AiBackend>
         })
         .collect()
+}
+
+/// Numbers each backend the core builds; its node keeps one real backend
+/// per number.
+static NEXT_BACKEND: AtomicU64 = AtomicU64::new(1);
+/// How long a node may take to say whether a provider can answer: the
+/// Codex probe starts its app-server first.
+const NODE_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+/// What a request may take past its own deadline before the core stops
+/// waiting for its node.
+const NODE_EXECUTE_MARGIN: Duration = Duration::from_secs(30);
+const NODE_RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A provider backend answered by a node. The router in the core picks,
+/// retries and budgets; the node runs the provider. Dropping it releases the
+/// node's backend, which ends its resident process.
+struct NodeBackend {
+    node: Arc<dyn NodeLink>,
+    spec: BackendSpec,
+}
+
+impl NodeBackend {
+    fn new(node: Arc<dyn NodeLink>, provider: ProviderId, model: String) -> Self {
+        Self {
+            node,
+            spec: BackendSpec {
+                instance: NEXT_BACKEND.fetch_add(1, Ordering::Relaxed),
+                provider,
+                model,
+            },
+        }
+    }
+
+    /// One call whose answer carries the backend's log events, which go to
+    /// the diagnostic log here.
+    fn logged<T: serde::de::DeserializeOwned>(&self, call: Call) -> Result<T, LinkError> {
+        let answer: Logged<T> = call_as(self.node.as_ref(), call, NODE_PROBE_TIMEOUT)?;
+        write_log(answer.log);
+        Ok(answer.value)
+    }
+}
+
+fn write_log(events: Vec<AiLogEvent>) {
+    for event in events {
+        DiagnosticLogSink.log(event);
+    }
+}
+
+impl AiBackend for NodeBackend {
+    fn id(&self) -> ProviderId {
+        self.spec.provider
+    }
+
+    fn availability(&self) -> Availability {
+        self.logged(Call::AiAvailability {
+            backend: self.spec.clone(),
+        })
+        .unwrap_or_else(|error| Availability::Unavailable {
+            reason: format!("The provider's machine could not be asked: {error}"),
+        })
+    }
+
+    fn models(&self) -> ModelCatalog {
+        self.logged(Call::AiModels {
+            backend: self.spec.clone(),
+        })
+        .unwrap_or_else(|error| ModelCatalog::Unknown {
+            reason: format!("The provider's machine could not be asked: {error}"),
+        })
+    }
+
+    fn execute(
+        &self,
+        request: &ProviderRequest,
+        cancel: &CancelToken,
+    ) -> Result<AiResponse, AiError> {
+        let call = Call::AiExecute {
+            backend: self.spec.clone(),
+            request: request.clone(),
+        };
+        let answer = call_as_with_progress::<Logged<Result<AiResponse, AiError>>, serde_json::Value>(
+            self.node.as_ref(),
+            call,
+            request.deadline + NODE_EXECUTE_MARGIN,
+            |_| !cancel.is_cancelled(),
+        );
+        match answer {
+            Ok(answer) => {
+                write_log(answer.log);
+                answer.value
+            }
+            // Nothing reached the provider.
+            Err(error @ (LinkError::NotConnected(_) | LinkError::Busy | LinkError::Refused(_))) => {
+                Err(AiError::ProviderUnavailable(error.to_string()))
+            }
+            Err(LinkError::Unknown(reason)) => Err(AiError::CompletionUnknown(reason)),
+        }
+    }
+
+    fn last_measurement(&self) -> ProcessMeasurement {
+        call_as(
+            self.node.as_ref(),
+            Call::AiMeasurement {
+                backend: self.spec.clone(),
+            },
+            NODE_RELEASE_TIMEOUT,
+        )
+        .unwrap_or(ProcessMeasurement::Unavailable)
+    }
+
+    fn restart(&self) {
+        let restarted = call_as::<()>(
+            self.node.as_ref(),
+            Call::AiRestart {
+                backend: self.spec.clone(),
+            },
+            NODE_RELEASE_TIMEOUT,
+        );
+        if let Err(error) = restarted {
+            crate::diagnostic!(serde_json::json!({
+                "component": "ai", "kind": "backend.restart_failed",
+                "provider": self.spec.provider.as_str(), "error": error.to_string(),
+            }));
+        }
+    }
+}
+
+impl Drop for NodeBackend {
+    fn drop(&mut self) {
+        let released = call_as::<()>(
+            self.node.as_ref(),
+            Call::AiRelease {
+                instance: self.spec.instance,
+            },
+            NODE_RELEASE_TIMEOUT,
+        );
+        if let Err(error) = released {
+            crate::diagnostic!(serde_json::json!({
+                "component": "ai", "kind": "backend.release_failed",
+                "provider": self.spec.provider.as_str(), "error": error.to_string(),
+            }));
+        }
+    }
 }
 
 /// Builds the same provider boundary for Project Memory that the Settings
 /// probe describes. The feature owns its prompt and parsing; this retains the
 /// shared provider selection, process, retry, cancellation, and budget caps.
-pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
+pub(crate) fn memory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
     let config = memory_router_config(settings);
     AiRouter::new(
-        backends(&settings.models_by_provider(), None),
+        backends(node, &settings.models_by_provider(), None),
         config,
         Arc::new(DiagnosticLogSink),
     )
@@ -211,9 +360,9 @@ pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
 /// The Software Factory's own router (PRD software-factory D-13, D-44): the
 /// operator's provider choice with one request in flight, separate from the
 /// label and Project Memory routers so its queue never takes their budget.
-pub(crate) fn factory_router(settings: &AiSettings) -> AiRouter {
+pub(crate) fn factory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
     AiRouter::new(
-        backends(&settings.models_by_provider(), None),
+        backends(node, &settings.models_by_provider(), None),
         settings.router_config(),
         Arc::new(DiagnosticLogSink),
     )
@@ -222,9 +371,9 @@ pub(crate) fn factory_router(settings: &AiSettings) -> AiRouter {
 /// The same provider boundary for agent labels (PRD labels-in-hided D-05):
 /// the operator's provider and model choice, and the router's own retry,
 /// cooldown and budget rules.
-pub(crate) fn labels_router(settings: &AiSettings) -> AiRouter {
+pub(crate) fn labels_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
     AiRouter::new(
-        backends(&settings.models_by_provider(), None),
+        backends(node, &settings.models_by_provider(), None),
         settings.router_config(),
         Arc::new(DiagnosticLogSink),
     )
@@ -439,6 +588,7 @@ pub(crate) fn branch_slug(text: &str) -> String {
 /// Asks the operator's background AI for a worktree name. Runs on a worker
 /// thread; the router starts and stops its own provider process.
 pub(crate) fn suggest_worktree_name(
+    node: &Arc<dyn NodeLink>,
     settings: &AiSettings,
     subject: &str,
     prefix: &str,
@@ -447,7 +597,7 @@ pub(crate) fn suggest_worktree_name(
 ) -> Result<String, String> {
     let body: String = body.chars().take(WORKTREE_NAME_BODY_LIMIT).collect();
     let request = hide_ai::AiRequest {
-        feature_id: "worktree_name",
+        feature_id: "worktree_name".into(),
         request_id: hide_ai::RequestId(format!("worktree-name-{subject}")),
         subject_id: subject.to_owned(),
         system: WORKTREE_NAME_SYSTEM.to_owned(),
@@ -459,9 +609,9 @@ pub(crate) fn suggest_worktree_name(
             "additionalProperties": false,
         }),
         deadline: Duration::from_secs(30),
-        schema_version: "1",
+        schema_version: "1".into(),
     };
-    let router = memory_router(settings);
+    let router = memory_router(node, settings);
     let answer = router
         .execute(&request, &hide_ai::CancelToken::new())
         .map_err(|error| format!("{error:?}"))?;
@@ -478,6 +628,11 @@ pub(crate) fn suggest_worktree_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The machine the tests run on, as the core reaches it.
+    fn node() -> Arc<dyn NodeLink> {
+        Arc::new(hide_node::Local::of_process())
+    }
 
     fn models() -> BTreeMap<ProviderId, String> {
         AiSettings::default().models_by_provider()
@@ -517,7 +672,7 @@ mod tests {
             provider: ProviderId::CLAUDE,
             ..AiSettings::default()
         };
-        let router = memory_router(&settings);
+        let router = memory_router(&node(), &settings);
         assert_eq!(
             router.provider_state().unwrap().selected,
             ProviderId::CLAUDE
@@ -539,7 +694,7 @@ mod tests {
 
     #[test]
     fn an_unobserved_request_asks_no_provider_anything() {
-        let mut reader = AiReader::new();
+        let mut reader = AiReader::new(node());
         let request = AiRequest {
             observing: false,
             models: models(),

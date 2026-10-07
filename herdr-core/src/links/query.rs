@@ -6,8 +6,9 @@
 //! conversation path of another Project leaves only through
 //! `--all-projects`. Nothing here writes.
 
-use super::store::{LinkStore, PrRow};
+use super::store::{LinkStore, LocalFiles, PrRow};
 use super::{LinkedIssue, LinkedSession};
+use crate::node_access::NodeLink;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -69,7 +70,9 @@ pub struct ScopeProject {
 /// A refusal: the reason code and the next action the CLI prints.
 pub type Refusal = (&'static str, &'static str);
 
-pub fn run(scope: &Scope, query: &LinksQuery) -> Result<Value, Refusal> {
+/// Answers `query` from the record; `own` is the node `scope.local_device`
+/// names, asked which of this machine's session files are still there.
+pub fn run(scope: &Scope, query: &LinksQuery, own: &dyn NodeLink) -> Result<Value, Refusal> {
     if !query.target.valid() {
         return Err(("invalid_request", "Check hide links arguments and retry"));
     }
@@ -97,7 +100,7 @@ pub fn run(scope: &Scope, query: &LinksQuery) -> Result<Value, Refusal> {
     let mut results = Vec::new();
     if query.all_projects {
         for project in &scope.projects {
-            if let Some(found) = find(&store, scope, project, &query.target).map_err(failed)? {
+            if let Some(found) = find(&store, scope, project, &query.target, own).map_err(failed)? {
                 results.push(found);
             }
         }
@@ -110,11 +113,11 @@ pub fn run(scope: &Scope, query: &LinksQuery) -> Result<Value, Refusal> {
                 "workspace_unavailable",
                 "Run hide links from a checkout of a registered Project",
             ))?;
-        match find(&store, scope, caller, &query.target).map_err(failed)? {
+        match find(&store, scope, caller, &query.target, own).map_err(failed)? {
             Some(found) => results.push(found),
             None => {
                 for project in scope.projects.iter().filter(|p| p.key != scope.caller) {
-                    if find(&store, scope, project, &query.target)
+                    if find(&store, scope, project, &query.target, own)
                         .map_err(failed)?
                         .is_some()
                     {
@@ -145,11 +148,16 @@ fn find(
     scope: &Scope,
     project: &ScopeProject,
     target: &QueryTarget,
+    own: &dyn NodeLink,
 ) -> Result<Option<Value>, String> {
     let Some(row) = store.project(&project.key)? else {
         return Ok(None);
     };
-    let local = Some(scope.local_device.as_str());
+    let present = |asked: &[String]| super::files_present(own, asked);
+    let local = Some(LocalFiles {
+        device: &scope.local_device,
+        present: &present,
+    });
     let (prs, sessions): (Vec<Value>, Vec<LinkedSession>) = match target {
         QueryTarget::Pr { number } => {
             let Some(links) = store.pr_panel(&project.key, *number, local)? else {
@@ -391,7 +399,12 @@ mod tests {
     #[test]
     fn a_pull_request_of_the_callers_project_answers_with_its_sessions_and_links() {
         let (_state, scope) = fixture();
-        let answer = run(&scope, &query(QueryTarget::Pr { number: 7 }, false)).unwrap();
+        let answer = run(
+            &scope,
+            &query(QueryTarget::Pr { number: 7 }, false),
+            &hide_node::Local::of_process(),
+        )
+        .unwrap();
 
         assert_eq!(answer["scope"], "project");
         let result = &answer["results"][0];
@@ -415,12 +428,21 @@ mod tests {
     fn another_projects_target_is_refused_unless_all_projects_is_asked() {
         let (_state, scope) = fixture();
         assert_eq!(
-            run(&scope, &query(QueryTarget::Pr { number: 9 }, false))
-                .unwrap_err()
-                .0,
+            run(
+                &scope,
+                &query(QueryTarget::Pr { number: 9 }, false),
+                &hide_node::Local::of_process()
+            )
+            .unwrap_err()
+            .0,
             "other_project"
         );
-        let answer = run(&scope, &query(QueryTarget::Pr { number: 9 }, true)).unwrap();
+        let answer = run(
+            &scope,
+            &query(QueryTarget::Pr { number: 9 }, true),
+            &hide_node::Local::of_process(),
+        )
+        .unwrap();
         assert_eq!(answer["scope"], "all_projects");
         assert_eq!(answer["results"].as_array().unwrap().len(), 1);
         assert_eq!(answer["results"][0]["project"]["workspace_id"], "ws-lib");
@@ -441,7 +463,13 @@ mod tests {
             },
         ] {
             assert_eq!(
-                run(&scope, &query(target.clone(), true)).unwrap_err().0,
+                run(
+                    &scope,
+                    &query(target.clone(), true),
+                    &hide_node::Local::of_process()
+                )
+                .unwrap_err()
+                .0,
                 "not_found",
                 "{target:?}"
             );
@@ -451,7 +479,12 @@ mod tests {
     #[test]
     fn an_issue_a_branch_and_a_session_read_the_same_record() {
         let (_state, scope) = fixture();
-        let issue = run(&scope, &query(QueryTarget::Issue { number: 3 }, false)).unwrap();
+        let issue = run(
+            &scope,
+            &query(QueryTarget::Issue { number: 3 }, false),
+            &hide_node::Local::of_process(),
+        )
+        .unwrap();
         assert_eq!(issue["results"][0]["prs"][0]["number"], 7);
         assert_eq!(issue["results"][0]["sessions"][0]["pr"], 7);
 
@@ -463,6 +496,7 @@ mod tests {
                 },
                 false,
             ),
+            &hide_node::Local::of_process(),
         )
         .unwrap();
         assert_eq!(branch["results"][0]["prs"][0]["number"], 7);
@@ -471,6 +505,7 @@ mod tests {
         let session = run(
             &scope,
             &query(QueryTarget::Session { id: "s-app".into() }, false),
+            &hide_node::Local::of_process(),
         )
         .unwrap();
         assert_eq!(session["results"][0]["sessions"][0]["id"], "s-app");
@@ -482,9 +517,13 @@ mod tests {
         let (state, mut scope) = fixture();
         scope.store = state.path().join("absent.sqlite3");
         assert_eq!(
-            run(&scope, &query(QueryTarget::Pr { number: 7 }, false))
-                .unwrap_err()
-                .0,
+            run(
+                &scope,
+                &query(QueryTarget::Pr { number: 7 }, false),
+                &hide_node::Local::of_process()
+            )
+            .unwrap_err()
+            .0,
             "links_unavailable"
         );
     }

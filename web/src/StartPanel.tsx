@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, Select
 import { startAnswer, startRequestId } from "./startAnswer";
 import { useStartPanel, startFailure } from "./startDraft";
 import { resolveTarget, startTargets, type StartTarget } from "./startTargets";
+import { localDeviceId } from "./snapshot";
 import { useShellStore } from "./store";
 import { restoreFocus } from "./terminals";
 import { useUiStore } from "./ui";
@@ -97,9 +98,9 @@ export function StartPanelHost({ actions }: { actions: Actions }) {
   return open ? <StartPanel actions={actions} /> : null;
 }
 
-function TargetIcon({ target }: { target: StartTarget }) {
+function TargetIcon({ target, node }: { target: StartTarget; node: string }) {
   if (target.kind === "checkout") return <FolderIcon aria-hidden="true" />;
-  return target.deviceId === "local" ? <HomeIcon aria-hidden="true" /> : <ServerIcon aria-hidden="true" />;
+  return target.deviceId === node ? <HomeIcon aria-hidden="true" /> : <ServerIcon aria-hidden="true" />;
 }
 
 function StartPanel({ actions }: { actions: Actions }) {
@@ -197,7 +198,7 @@ function StartPanel({ actions }: { actions: Actions }) {
                 {index > 0 ? <SelectSeparator className="bg-secondary" /> : null}
                 {group.items.map((item) => (
                   <SelectItem key={item.key} value={item.key} disabled={item.disabled !== null} data-start-target-option={item.key}>
-                    <TargetIcon target={item} />
+                    <TargetIcon target={item} node={localDeviceId(rest)} />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate">{item.label}</span>
                       {item.disabled ? <span className="text-caption text-muted-foreground">{t("devices.rail.notConnected")}</span> : null}

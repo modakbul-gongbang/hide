@@ -23,59 +23,18 @@ use hide_platform::fs::{Access, atomic, identity, link, private};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
+pub use hide_node_link::home::{HomeDrop, HomeLink, HomeSkip, HomeSynced, MAX_LINKS};
 
 /// The Home folder's name inside the account's home directory.
 pub const HOME_DIR_NAME: &str = "hide";
 /// Present in a Home folder Hide made: which links are Hide's.
 pub const MARKER_FILE: &str = ".hide-home.json";
-/// The most project links one Home holds.
-pub const MAX_LINKS: usize = 256;
-
 const AGENTS_FILE: &str = "AGENTS.md";
 const CLAUDE_FILE: &str = "CLAUDE.md";
 const MARKER_VERSION: u32 = 1;
 /// The longest file name most disks take; a longer parent-suffixed name falls
 /// back to the folder's own name.
 const MAX_NAME_BYTES: usize = 255;
-
-/// The Home folder after a sync.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct HomeSynced {
-    /// Absolute, canonical path of `<user home>/hide`.
-    pub home: String,
-    /// This call made the Home folder.
-    pub created: bool,
-    /// Every link Hide manages after the sync, sorted by name.
-    pub links: Vec<HomeLink>,
-    /// Managed links this sync removed.
-    pub dropped: Vec<HomeDrop>,
-    /// Requested projects that got no link.
-    pub skipped: Vec<HomeSkip>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct HomeLink {
-    pub name: String,
-    pub target: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct HomeDrop {
-    pub name: String,
-    pub target: String,
-    /// `unregistered` (the project left the list) or `dangling` (its folder
-    /// is gone).
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct HomeSkip {
-    pub target: String,
-    /// `missing` (not a folder now), `name_taken` (something of the
-    /// operator's holds the link's name), `link_failed` (the disk refused the
-    /// link), `not_absolute`, or `no_name` (the path has no final component).
-    pub reason: String,
-}
 
 /// The links Hide made, as the marker file stores them.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

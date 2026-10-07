@@ -309,6 +309,7 @@ A chip opens the existing child at once; while that move is in flight the chip s
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
 The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name, Copy pane ID and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
 A right-click in the terminal focuses that pane, like a click, and opens a longer menu: Copy (only over a selection), Paste, Select all, and Find; then Split right, Split down, and Zoom pane or Unzoom pane (disabled on a tab's only pane); then the pane menu's items; an item with a chord that does the same shows it, ⌘C and ⌘V included.
+The Zoom pane chord on a tab's only pane does nothing either, on this machine and on a device: the core does not send it and logs `pane.zoom.single_pane` (`remote.control.zoom_single_pane` for a device).
 Copy pane ID, here and in an agent row's menu, copies the id the pane's own Herdr knows it by (`w9J:p52`), the one `herdr pane read` takes on that device, without the `remote:` scope Hide gives a device's pane.
 The right-click leaves the drag selection as it was, so Copy copies what the operator selected; the program in the pane never hears it.
 
@@ -859,7 +860,7 @@ The text that results is ordinary Markdown, with nothing hidden or special in it
 
 ## Projects and checkout context
 
-Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/disk_layers.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
+Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs` (measured on the node by `hide-host/src/disk.rs` and `hide-host/src/disk_layers.rs`), `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
 
 ### Sidebar type, rows and width
 
@@ -1023,7 +1024,7 @@ Only a row click, the header click, the `N files` chip, and the menus' explicit 
 
 ### Disk allocation and cleanup
 
-Web owner: `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts`; core owner: `herdr-core/src/disk.rs`, `herdr-core/src/disk_layers.rs`, `herdr-core/src/worktree_cleanup.rs`.
+Web owner: `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts`; core owner: `herdr-core/src/disk.rs`, `herdr-core/src/worktree_cleanup.rs`; node owner: `hide-host/src/disk.rs`, `hide-host/src/disk_layers.rs`, `hide-host/src/cleanup.rs`.
 Allocated-on-disk sums main, linked worktree folders, and the shared Git directory once; nested roots belong to the longest matching root, hard links share one inode allocation, and descendant symlinks are not followed.
 Each checkout is measured under its own limit of one million entries and 30 seconds, so a checkout that exceeds it or cannot be read is the only row that has no size; the reason is in the diagnostic log.
 An incomplete measurement has no total, and allocated blocks are not a promise of reclaimable space, so the result states only the volume's free space before and after.

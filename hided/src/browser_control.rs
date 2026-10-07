@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::http::Uri;
 use herdr_core::workspace_control::QueryResult;
-use hide_host::pane_peer::process_start;
+use hide_node::pane_proof::process_start;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;

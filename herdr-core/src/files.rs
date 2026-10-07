@@ -1,35 +1,33 @@
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use cap_std::fs::Dir;
-use hide_host::document::Document;
-use hide_host::protocol::{Call, RevisionNow, RootRef};
-use hide_host::save::Saved;
-use hide_host::{ErrorCode, RootIdentity};
-use hide_platform::fs::identity;
+use hide_node_link::cleanup::PathState;
+use hide_node_link::document::Document;
+use hide_node_link::protocol::{Call, RevisionNow, RootRef};
+use hide_node_link::save::Saved;
+use hide_node_link::{ErrorCode, RootIdentity};
 use hide_platform::path::{self, PathError, RelPath};
 
-use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::EditorDocumentSnapshot;
+use crate::node_access::{LinkError, NodeLink, call_as};
 
-/// Opened checkout roots supplied by the daemon after its registration check.
-/// Each root's identity pins the folder every host request names; the opened
-/// handle is held so that identity cannot be reused by another folder while
-/// the daemon runs. A client that supplies none has its requests pin the
-/// root when they first open it.
+/// The checkout roots the daemon opened after its registration check, as the
+/// identities their handles reported. Each identity pins the folder every
+/// host request names; the daemon's node holds the handles
+/// (`hide_node::HeldRoots`), so that identity cannot be reused by another
+/// folder while the daemon runs. A client that supplies none has its
+/// requests pin the root when they first open it.
 type PinnedIdentity = (PathBuf, Option<RootIdentity>);
 
 #[derive(Clone, Debug, Default)]
 pub struct FileRoots {
-    roots: Arc<Vec<(PathBuf, Arc<Dir>)>>,
     identities: Arc<Vec<PinnedIdentity>>,
 }
 
 impl PartialEq for FileRoots {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.roots, &other.roots)
+        Arc::ptr_eq(&self.identities, &other.identities)
             || (self.identities.len() == other.identities.len()
                 && self.identities.iter().zip(other.identities.iter()).all(
                     |((left_path, left_id), (right_path, right_id))| {
@@ -42,17 +40,8 @@ impl PartialEq for FileRoots {
 impl Eq for FileRoots {}
 
 impl FileRoots {
-    pub fn from_opened(roots: Vec<(PathBuf, File)>) -> Self {
-        let mut opened = Vec::with_capacity(roots.len());
-        let mut identities = Vec::with_capacity(roots.len());
-        for (path, file) in roots {
-            let dir = Dir::from_std_file(file);
-            let identity = hide_host::root::identity_of(&dir).ok();
-            identities.push((path.clone(), identity));
-            opened.push((path, Arc::new(dir)));
-        }
+    pub fn from_identities(identities: Vec<PinnedIdentity>) -> Self {
         Self {
-            roots: Arc::new(opened),
             identities: Arc::new(identities),
         }
     }
@@ -134,50 +123,51 @@ pub fn relative_under(root: &str, absolute: &str) -> Result<RelPath, String> {
         .ok_or_else(|| "The file is not inside its checkout".to_owned())
 }
 
-/// `relative_under` for a file on this machine, which a shell may spell
-/// through a link to the checkout's folder (`/var` for `/private/var`) or
-/// in another case on a volume that ignores it: the folder holding the
-/// file is resolved, never the file itself, so a link inside the checkout
-/// is still opened as the link.
-fn local_relative(root: &str, absolute: &str) -> Result<RelPath, String> {
-    relative_under(root, absolute).or_else(|refused| {
-        let (Ok(root), Ok(absolute)) = (path::from_wire(root), path::from_wire(absolute)) else {
-            return Err(refused);
-        };
-        let resolved = absolute
-            .parent()
-            .and_then(|folder| identity::canonical(folder).ok())
-            .zip(absolute.file_name())
-            .map(|(folder, name)| folder.join(name))
-            .zip(identity::canonical(&root).ok());
-        match resolved {
-            Some((absolute, root)) => path::relative(&root, &absolute)
-                .ok()
-                .filter(|relative| !relative.is_root())
-                .ok_or(refused),
-            None => Err(refused),
-        }
-    })
-}
-
-/// The host's checkout-relative path rule, including macOS root aliases
-/// such as `/var` and `/private/var` for local reads.
+/// The host's checkout-relative path rule. A shell may spell a file through
+/// a link to the checkout's folder (`/var` for `/private/var`) or in another
+/// case on a volume that ignores it, so a path the names alone do not place
+/// is placed again with its folder and the root as the node resolves them:
+/// the folder holding the file is resolved, never the file itself, so a link
+/// inside the checkout is still opened as the link.
 pub fn relative_in_root(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     root: &str,
     absolute: &str,
 ) -> Result<RelPath, String> {
-    if channel.in_process() {
-        local_relative(root, absolute)
-    } else {
-        relative_under(root, absolute)
-    }
+    relative_under(root, absolute).or_else(|refused| {
+        let Some((folder, name)) = absolute
+            .rsplit_once('/')
+            .filter(|(folder, name)| !folder.is_empty() && !name.is_empty())
+        else {
+            return Err(refused);
+        };
+        let resolved = call_as::<Vec<PathState>>(
+            channel,
+            Call::RealPaths {
+                paths: vec![folder.to_owned(), root.to_owned()],
+            },
+            REVISION_TIMEOUT,
+        );
+        match resolved.as_deref() {
+            Ok(
+                [
+                    PathState::Real { path: folder },
+                    PathState::Real { path: root },
+                ],
+            ) => {
+                let folder = path::to_wire_lossy(Path::new(folder));
+                let root = path::to_wire_lossy(Path::new(root));
+                relative_under(&root, &format!("{folder}/{name}")).map_err(|_| refused)
+            }
+            _ => Err(refused),
+        }
+    })
 }
 
 /// Opens the document at `absolute` in `root`, as a snapshot and the place
 /// its saves go to. Blocks on the channel.
 pub fn open_document(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     root: &DocumentRoot,
     absolute: &str,
 ) -> Result<(EditorDocumentSnapshot, DocumentPlace), OpenFailure> {
@@ -198,7 +188,7 @@ pub fn open_document(
     // An open is an explicit read, like a listing: a replaced root is
     // refused once and unpinned, so the operator's next open adopts the
     // folder now at that path.
-    if let Err(HostCallError::Refused(error)) = &document
+    if let Err(LinkError::Refused(error)) = &document
         && error.code == ErrorCode::RootReplaced
         && root.identity.is_none()
     {
@@ -208,10 +198,10 @@ pub fn open_document(
     Ok((document_snapshot(absolute, document), place))
 }
 
-fn open_failure(error: HostCallError) -> OpenFailure {
+fn open_failure(error: LinkError) -> OpenFailure {
     match error {
-        HostCallError::Refused(error) if error.code == ErrorCode::NotFound => OpenFailure::Missing,
-        HostCallError::Refused(error) => {
+        LinkError::Refused(error) if error.code == ErrorCode::NotFound => OpenFailure::Missing,
+        LinkError::Refused(error) => {
             OpenFailure::Failed(format!("The file could not be opened: {}", error.message))
         }
         other => OpenFailure::Failed(format!("The file could not be opened: {other}")),
@@ -261,7 +251,7 @@ pub fn check_editable(editor: &EditorDocumentSnapshot, consequence: &str) -> Res
 /// Saves `contents` at `place` if the file there still holds `expected`.
 /// Blocks on the channel.
 pub fn save_document(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     place: &DocumentPlace,
     contents: &str,
     expected: &str,
@@ -277,27 +267,27 @@ pub fn save_document(
         SAVE_TIMEOUT,
     ) {
         Ok(saved) => SaveOutcome::Saved(saved),
-        Err(HostCallError::Refused(error)) if error.code == ErrorCode::Conflict => {
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::Conflict => {
             SaveOutcome::Conflict {
                 disk_revision: error.actual_revision,
                 message: error.message,
             }
         }
-        Err(HostCallError::Refused(error)) => SaveOutcome::Refused(error.message),
-        Err(HostCallError::NotConnected(reason)) => SaveOutcome::Refused(format!(
+        Err(LinkError::Refused(error)) => SaveOutcome::Refused(error.message),
+        Err(LinkError::NotConnected(reason)) => SaveOutcome::Refused(format!(
             "{reason}; nothing was sent and the draft was preserved"
         )),
-        Err(error @ HostCallError::Busy) => SaveOutcome::Refused(error.to_string()),
-        Err(HostCallError::Unknown(reason)) => SaveOutcome::Unknown(reason),
+        Err(error @ LinkError::Busy) => SaveOutcome::Refused(error.to_string()),
+        Err(LinkError::Unknown(reason)) => SaveOutcome::Unknown(reason),
     }
 }
 
 /// The file's revision now, or `None` when it is gone; read after any save
 /// in its folder has finished. Blocks on the channel.
 pub fn revision_now(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     place: &DocumentPlace,
-) -> Result<Option<String>, HostCallError> {
+) -> Result<Option<String>, LinkError> {
     match call_as::<RevisionNow>(
         channel,
         Call::Revision {
@@ -307,7 +297,7 @@ pub fn revision_now(
         REVISION_TIMEOUT,
     ) {
         Ok(now) => Ok(Some(now.revision)),
-        Err(HostCallError::Refused(error)) if error.code == ErrorCode::NotFound => Ok(None),
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::NotFound => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -499,16 +489,13 @@ fn relative_or_root(root: &str, absolute: &str) -> Result<String, String> {
 /// pinned, or the one the channel pinned when it first touched the root, so
 /// a device folder replaced after it was listed is refused rather than
 /// opened or changed in its place.
-pub(crate) fn root_ref(
-    channel: &dyn HostChannel,
-    root: &DocumentRoot,
-) -> Result<RootRef, HostCallError> {
+pub(crate) fn root_ref(channel: &dyn NodeLink, root: &DocumentRoot) -> Result<RootRef, LinkError> {
     match root.identity {
         Some(identity) => Ok(RootRef {
             path: root.path.clone(),
             identity,
         }),
-        None => crate::host_access::pinned_root(channel, &root.path, OPEN_TIMEOUT),
+        None => crate::node_access::pinned_root(channel, &root.path, OPEN_TIMEOUT),
     }
 }
 
@@ -519,7 +506,7 @@ pub(crate) fn root_ref(
 /// request whose answer was lost is reported as an unknown result, which the
 /// tree settles by reading the folder again.
 pub fn apply_explorer_operation(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     root: &DocumentRoot,
     operation: &ExplorerOperation,
 ) -> Result<(), String> {
@@ -559,7 +546,7 @@ pub fn apply_explorer_operation(
             inode: operation.expected_inode,
         },
     };
-    call_as::<hide_host::mutate::Changed>(channel, call, CHANGE_TIMEOUT)
+    call_as::<hide_node_link::mutate::Changed>(channel, call, CHANGE_TIMEOUT)
         .map(drop)
         .map_err(|error| change_failure(operation, error))
 }
@@ -570,12 +557,12 @@ fn file_name(path: &RelPath) -> Result<String, String> {
         .ok_or_else(|| "The checkout root has no name".to_owned())
 }
 
-fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String {
+fn change_failure(operation: &ExplorerOperation, error: LinkError) -> String {
     match error {
-        HostCallError::Refused(error) => error.message,
-        HostCallError::NotConnected(reason) => format!("{reason}; nothing was changed"),
-        error @ HostCallError::Busy => error.to_string(),
-        HostCallError::Unknown(reason) => format!(
+        LinkError::Refused(error) => error.message,
+        LinkError::NotConnected(reason) => format!("{reason}; nothing was changed"),
+        error @ LinkError::Busy => error.to_string(),
+        LinkError::Unknown(reason) => format!(
             "{reason}; whether {} changed is unknown, so the folder is read again",
             operation.source
         ),
@@ -657,6 +644,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::model::DocumentKind;
     use std::fs;
+    #[cfg(unix)]
+    use std::fs::File;
     use std::time::UNIX_EPOCH;
 
     #[test]
@@ -666,7 +655,7 @@ pub(crate) mod tests {
             language: Some("txt".to_owned()),
             document_kind: DocumentKind::Text,
             contents_utf8: Some("old".to_owned()),
-            revision: Some(hide_host::document::revision_of(b"old")),
+            revision: Some(hide_node_link::document::revision_of(b"old")),
             dirty: false,
             readonly_reason: None,
             conflict: None,
@@ -681,12 +670,12 @@ pub(crate) mod tests {
     /// parent folder as the checkout root.
     pub(crate) fn open_local(path: &Path) -> (EditorDocumentSnapshot, DocumentPlace) {
         let root = DocumentRoot {
-            device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             path: path.parent().unwrap().to_string_lossy().into_owned(),
             identity: None,
         };
         open_document(
-            &crate::host_access::InProcessHost,
+            &hide_node::Local::of_process(),
             &root,
             &path.to_string_lossy(),
         )
@@ -707,14 +696,16 @@ pub(crate) mod tests {
         fs::create_dir(&outside).unwrap();
         fs::write(root.join("note.txt"), "inside").unwrap();
         fs::write(outside.join("note.txt"), "outside").unwrap();
-        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let roots = FileRoots::from_identities(
+            hide_node::hold_roots(vec![(root.clone(), File::open(&root).unwrap())]).1,
+        );
         let (pinned_path, identity) = roots.pinned_root(&root.join("note.txt")).unwrap();
         let document_root = DocumentRoot {
             device_id: "local".to_owned(),
             path: pinned_path.to_string_lossy().into_owned(),
             identity: Some(identity),
         };
-        let channel = crate::host_access::InProcessHost;
+        let channel = hide_node::Local::of_process();
         let (document, place) = open_document(
             &channel,
             &document_root,
@@ -782,12 +773,12 @@ pub(crate) mod tests {
         symlink(&root, sandbox.path().join("alias")).unwrap();
         let spelled = sandbox.path().join("alias/src/a.txt");
         let root_path = DocumentRoot {
-            device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             path: root.to_string_lossy().into_owned(),
             identity: None,
         };
         let (document, place) = open_document(
-            &crate::host_access::InProcessHost,
+            &hide_node::Local::of_process(),
             &root_path,
             &spelled.to_string_lossy(),
         )
@@ -798,7 +789,7 @@ pub(crate) mod tests {
         fs::write(sandbox.path().join("elsewhere.txt"), "b").unwrap();
         assert!(
             open_document(
-                &crate::host_access::InProcessHost,
+                &hide_node::Local::of_process(),
                 &root_path,
                 &outside.to_string_lossy(),
             )
@@ -853,12 +844,12 @@ pub(crate) mod tests {
         calls: std::sync::Mutex<Vec<Call>>,
     }
 
-    impl HostChannel for RecordingHost {
+    impl NodeLink for RecordingHost {
         fn call(
             &self,
             call: Call,
             _timeout: Duration,
-        ) -> Result<crate::host_access::HostAnswer, HostCallError> {
+        ) -> Result<crate::node_access::LinkAnswer, LinkError> {
             self.calls.lock().unwrap().push(call);
             Ok(serde_json::json!({}).into())
         }

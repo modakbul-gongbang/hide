@@ -8,9 +8,9 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { deviceLabel, failureKey, foldLines, LOCAL_DEVICE, resumable, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
+import { deviceLabel, failureKey, foldLines, resumable, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
 import { allAgents } from "./navigation";
-import { catalogWorkspaces, type LinkPanel, type Workspace } from "./snapshot";
+import { catalogWorkspaces, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
 import { startAnswer, startRequestId } from "./startAnswer";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -146,10 +146,11 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   const { t } = useInterfaceTranslation();
   const rest = useShellStore((s) => s.rest);
   const devices = rest?.navigator?.devices;
+  const node = localDeviceId(rest);
   const { line, live } = entry;
-  const checkout = resumeCheckout(line, catalogWorkspaces(rest), checkoutBranch);
-  const viewOff = viewBlock(line, devices);
-  const resumeOff = resumeBlock(line, checkout, devices);
+  const checkout = resumeCheckout(line, catalogWorkspaces(rest), checkoutBranch, node);
+  const viewOff = viewBlock(line, devices, node);
+  const resumeOff = resumeBlock(line, checkout, devices, node);
   const { resume, start } = useResume();
   const gone = line.file === "missing";
   const span = spanText(line.started_at_unix_ms, line.ended_at_unix_ms);
@@ -157,7 +158,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   const view = () => actions.openOverview(project.device_id, project.id, { session: { id: line.id, request: line.request } });
   const resumeLine = () => {
     if (!checkout || !resumable(line.agent)) return;
-    start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === LOCAL_DEVICE ? undefined : line.device_id, provider: line.agent as "claude" | "codex", resumeSessionId: line.id, requestId }));
+    start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === node ? undefined : line.device_id, provider: line.agent as "claude" | "codex", resumeSessionId: line.id, requestId }));
   };
   const request = line.request ?? t("links.noRequest");
   return (
@@ -207,7 +208,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
             </>
           )}
           {line.ids.length > 1 ? <span data-link-continued={line.ids.length}>· {t("links.continued", { count: line.ids.length })}</span> : null}
-          {line.device_id !== LOCAL_DEVICE ? (
+          {line.device_id !== node ? (
             <Badge variant="outline" className="font-normal text-muted-foreground" data-link-device={line.device_id}>
               {deviceLabel(devices, line.device_id)}
             </Badge>

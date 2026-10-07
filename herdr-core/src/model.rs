@@ -15,10 +15,10 @@ pub struct CoreOptions {
     /// (a test daemon) names it so nothing reaches the operator's.
     #[serde(default)]
     pub home: Option<String>,
-    /// The stable operating-system machine identity, read by the host before
-    /// the core is placed behind its runtime mutex.
-    #[serde(default)]
-    pub machine_id: Option<String>,
+    /// The machine this core runs on (`node::NodeId`), read by the host
+    /// before the core is placed behind its runtime mutex. Every key naming
+    /// this machine, in the snapshot and in stored state, is this id.
+    pub node_id: crate::node::NodeId,
     pub herdr_socket_path: Option<String>,
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
@@ -53,11 +53,6 @@ pub struct CoreOptions {
     /// Absent keeps them in memory for the session only, as a test core does.
     #[serde(default)]
     pub local_issues_path: Option<String>,
-    /// The running app bundle's `Contents/Resources`, whose parts the install
-    /// kit puts on this Mac (PRD device-parity D-19). Absent for a daemon
-    /// outside the app, which installs nothing and says why.
-    #[serde(default)]
-    pub kit_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2500,10 +2495,10 @@ pub struct MemoryNoticeSnapshot {
 }
 
 /// What kind of document an open file is, decided once by the host that
-/// read it (`hide_host::document`) and drawn by the shell as one view per
+/// read it (`hide_node_link::document`) and drawn by the shell as one view per
 /// kind. Adding a kind is one variant there and one case in the shell's
 /// switch; nothing else in the shell inspects extensions or bytes.
-pub use hide_host::document::DocumentKind;
+pub use hide_node_link::document::DocumentKind;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorDocumentSnapshot {
@@ -3187,7 +3182,8 @@ pub struct WorkspaceRegistration {
     pub id: String,
     pub label: String,
     pub path: String,
-    #[serde(default = "default_local_device_id")]
+    /// The node id for this machine. Stores written before node ids are
+    /// converted once at launch (`node_migration`), so none is missing.
     pub device_id: String,
     /// Absent in a store written before projects could be pinned, which
     /// loads as unpinned without a warning (D-07). Removing the registration
@@ -3246,10 +3242,6 @@ pub struct HostIdentity {
     pub hostname: String,
     pub port: u16,
     pub host_key_sha256: String,
-}
-
-pub(crate) fn default_local_device_id() -> String {
-    "local".to_owned()
 }
 
 pub(crate) fn default_accent_hex() -> String {
@@ -3514,28 +3506,7 @@ pub struct PullRequestSnapshot {
     pub cross_repository: bool,
 }
 
-/// Why a GitHub read failed, as a code the screen words (the reason stays
-/// `gh`'s own stderr, which is data).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GithubFailureCategory {
-    NotInstalled,
-    NotLoggedIn,
-    NoGithubRemote,
-    NetworkOrRateLimit,
-}
-
-impl GithubFailureCategory {
-    /// The words for diagnostics and the errors a command reports.
-    pub fn english(self) -> &'static str {
-        match self {
-            Self::NotInstalled => "not installed",
-            Self::NotLoggedIn => "not logged in",
-            Self::NoGithubRemote => "no GitHub remote",
-            Self::NetworkOrRateLimit => "network or rate limit",
-        }
-    }
-}
+pub use hide_node_link::gh::GithubFailureCategory;
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
 ///
@@ -3865,14 +3836,14 @@ pub struct DiskUsageSnapshot {
     /// What a checkout holds by layer, for a measured checkout row. Absent
     /// for the shared Git directory and for a measurement that failed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub layers: Option<crate::disk_layers::DiskLayers>,
+    pub layers: Option<hide_node_link::disk::DiskLayers>,
     /// Free space of the volume the measured path sits on, in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume_free_bytes: Option<u64>,
     /// The folders behind the layer cells. The core keeps them so a cleanup
     /// can move them; the wire never carries a path.
     #[serde(skip)]
-    pub folders: Vec<crate::disk_layers::LayerFolder>,
+    pub folders: Vec<hide_node_link::disk::LayerFolder>,
 }
 
 /// The right panel's summary card for the selected checkout.
@@ -4341,7 +4312,7 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![crate::workspace::local_device()],
+                devices: vec![crate::workspace::local_device(&options.node_id)],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),

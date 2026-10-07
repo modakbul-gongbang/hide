@@ -9,8 +9,8 @@
 //! reports only to the diagnostic log (design principle 13).
 
 use super::*;
-use crate::host_access::HostCallError;
-use hide_host::home::HomeSynced;
+use crate::node_access::LinkError;
+use hide_node_link::home::HomeSynced;
 
 /// Where one device's Home links stand. `requested` is the project set last
 /// sent to its helper, by a start or a background sync, whatever it answered;
@@ -60,7 +60,7 @@ impl Runtime {
         prompt: Option<String>,
         request_id: Option<String>,
     ) -> bool {
-        let local = device == workspace::LOCAL_DEVICE_ID;
+        let local = device == self.node.as_str();
         if !local
             && !self
                 .snapshot
@@ -93,7 +93,7 @@ impl Runtime {
             );
             return true;
         };
-        let host = match self.device_channel(device) {
+        let host = match self.node_link(device) {
             Ok(host) => host,
             Err(message) => {
                 self.set_request_error("home.unavailable", message, true, request_id.as_deref());
@@ -148,7 +148,7 @@ impl Runtime {
         id: u64,
         device: &str,
         projects: &[String],
-        synced: Result<HomeSynced, HostCallError>,
+        synced: Result<HomeSynced, LinkError>,
     ) -> Option<live::CheckoutTabRequest> {
         if synced.is_err() {
             self.forget_home_sync(device);
@@ -160,8 +160,8 @@ impl Runtime {
         let request_id = operation.request_id.clone();
         let synced = match synced {
             Ok(synced) => synced,
-            Err(HostCallError::Refused(error))
-                if error.code == hide_host::error::ErrorCode::HomeConflict =>
+            Err(LinkError::Refused(error))
+                if error.code == hide_node_link::error::ErrorCode::HomeConflict =>
             {
                 self.log_home_sync_failure(device, "home.conflict", &error.message);
                 self.set_request_error(
@@ -221,7 +221,7 @@ impl Runtime {
 
     /// The navigator row of `device`'s Home, once the catalog carries it.
     fn home_workspace(&self, device: &str) -> Option<&WorkspaceSnapshot> {
-        let workspaces = if device == workspace::LOCAL_DEVICE_ID {
+        let workspaces = if device == self.node.as_str() {
             self.snapshot.navigator.workspaces.as_slice()
         } else {
             self.snapshot
@@ -240,7 +240,7 @@ impl Runtime {
     /// `home`. A registration already at that path becomes Home rather than a
     /// second row.
     fn register_home(&mut self, device: &str, home: &str) {
-        let local = device == workspace::LOCAL_DEVICE_ID;
+        let local = device == self.node.as_str();
         let registrations = &mut self.snapshot.ui_state.workspace_registrations;
         let existing = registrations
             .iter_mut()
@@ -259,7 +259,7 @@ impl Runtime {
                     !(registration.device_id == device && registration.home)
                 });
                 let registration = if local {
-                    match workspace::registration(home, HOME_LABEL, workspace::LOCAL_DEVICE_ID) {
+                    match workspace::registration(home, HOME_LABEL, self.node.as_str()) {
                         Ok(registration) => registration,
                         Err(message) => {
                             self.log_home_sync_failure(device, "home.register_failed", &message);
@@ -329,7 +329,7 @@ impl Runtime {
             // Nothing is recorded as sent until it is: a device whose helper
             // is not ready is asked once and then left until it is
             // (`home_helper_ready`), since every UI state write lands here.
-            let host = match self.device_channel(&device) {
+            let host = match self.node_link(&device) {
                 Ok(host) => host,
                 Err(message) => {
                     crate::diagnostic!(serde_json::json!({
@@ -373,7 +373,7 @@ impl Runtime {
         &mut self,
         device: &str,
         projects: &[String],
-        synced: Result<HomeSynced, HostCallError>,
+        synced: Result<HomeSynced, LinkError>,
     ) {
         if let Some(state) = self.home_links.get_mut(device) {
             state.in_flight = false;

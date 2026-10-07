@@ -82,9 +82,31 @@ const TOPOLOGY_SUBSCRIPTIONS: &[&str] = &[
 pub struct PrecomputedCatalog {
     pub registrations: Vec<WorkspaceRegistration>,
     pub workspaces: Vec<WorkspaceSnapshot>,
-    /// Every pane directory's repository root, so the reconcile that places
-    /// tabs into checkouts never asks git while it holds the runtime lock.
-    pub roots: workspace::RootIndex,
+    /// What the core's own node said about every path the catalog and the
+    /// reconcile read, so neither reads a folder under the runtime lock.
+    pub paths: Arc<workspace::PathIndex>,
+}
+
+#[cfg(test)]
+impl PrecomputedCatalog {
+    /// The catalog the sync coordinator would hand the runtime for
+    /// `payload`, with its paths answered by the node in this process.
+    pub fn here(
+        registrations: Vec<WorkspaceRegistration>,
+        payload: &crate::sidebar::SessionSnapshotPayload,
+        worktrees: &crate::model::WorktreeCatalogSnapshot,
+    ) -> Self {
+        let node = crate::node::test_node();
+        let mut wanted = workspace::PathIndex::wanted(&node, &registrations, &[], worktrees);
+        wanted.extend(Runtime::session_cwds(payload));
+        let paths = workspace::paths_here(wanted);
+        let spaces = Runtime::session_spaces(payload, &paths);
+        Self {
+            workspaces: workspace::build_catalog(&node, &registrations, &spaces, worktrees, &paths),
+            registrations,
+            paths: Arc::new(paths),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,17 +118,24 @@ pub(crate) enum SessionSyncTarget {
 #[derive(Clone)]
 pub(crate) struct SessionSyncContext {
     target: SessionSyncTarget,
+    /// The link to the node this target's machine work goes to, for a
+    /// target the core reads that work from (PRD core-host-node D-21).
+    node: Option<Arc<dyn crate::node_access::NodeLink>>,
     api_connector: Arc<dyn ApiConnector>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
 
 impl SessionSyncContext {
-    pub(crate) fn local(context: &LiveContext) -> Self {
+    pub(crate) fn local(
+        context: &LiveContext,
+        node: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Self {
         Self {
             target: SessionSyncTarget::Local {
                 socket_path: context.socket_path.clone(),
             },
+            node: Some(node),
             api_connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
@@ -125,6 +154,7 @@ impl SessionSyncContext {
                 target_id: target_id.into(),
                 label: label.into(),
             },
+            node: None,
             api_connector,
             runtime,
             notifier,
@@ -141,6 +171,10 @@ impl SessionSyncContext {
     fn is_local(&self) -> bool {
         matches!(self.target, SessionSyncTarget::Local { .. })
     }
+
+    fn node(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
+        self.node.as_ref()
+    }
 }
 
 pub(crate) struct CatalogCache {
@@ -152,7 +186,10 @@ pub(crate) struct CatalogCache {
     /// be republished unchanged.
     worktrees: crate::model::WorktreeCatalogSnapshot,
     workspaces: Vec<WorkspaceSnapshot>,
-    roots: workspace::RootIndex,
+    /// The paths `paths` answered, so a publish asking the same ones within
+    /// `CATALOG_REFRESH_INTERVAL` reuses the answer; empty after a failed ask.
+    asked: BTreeSet<String>,
+    paths: Arc<workspace::PathIndex>,
     built_at: Instant,
 }
 

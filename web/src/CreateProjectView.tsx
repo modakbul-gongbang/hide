@@ -14,13 +14,13 @@ import { Button } from "./components/ui/button";
 import { DialogBody, DialogDescription, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { RegistrationStatus, useRegistration } from "./registration";
-import type { WorkspaceRegistration } from "./snapshot";
+import { localDeviceId, type WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
 
 export function CreateProjectView({ actions, registrations, onBack }: { actions: Actions; registrations: readonly WorkspaceRegistration[]; onBack: () => void }) {
   const { t } = useInterfaceTranslation();
-  const [parent, setParent] = useState(() => defaultProjectParent(registrations));
+  const [parent, setParent] = useState(() => defaultProjectParent(registrations, localDeviceId(useShellStore.getState().rest)));
   const [typed, setTyped] = useState("");
   const registration = useRegistration(registrations);
   const { pending, shown } = registration;
@@ -37,7 +37,7 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
     actions.probeProjectTarget(parent, asked);
   }, [actions, parent, asked, failure]);
 
-  const registered = target?.path ? alreadyRegistered(target.path, "local", registrations) : false;
+  const registered = target?.path ? alreadyRegistered(target.path, localDeviceId(useShellStore.getState().rest), registrations) : false;
   const problem = nameProblem ? t(nameProblem) : registered ? refusalText("already_registered", t) : target?.reason ? refusalText(target.reason, t) : null;
   const ready = name !== "" && problem === null && target?.path != null && !pending;
   const shownParent = target?.parent_label ?? parent;
@@ -46,7 +46,7 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
   const create = () => {
     if (!ready || !target?.path) return;
     const path = target.path;
-    registration.send("local", path, () => actions.createProject(path, name));
+    registration.send(localDeviceId(useShellStore.getState().rest), path, () => actions.createProject(path, name));
   };
 
   const choose = async () => {
