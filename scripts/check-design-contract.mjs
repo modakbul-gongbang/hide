@@ -26,8 +26,13 @@ try {
       const input = file === 'design/hide-ui.lib.pen'
         || file === 'design/hide-screens.pen'
         || file === 'design/tokens.json'
+        || file === 'hide-kit/src/agents.rs'
+        || file === 'hide-ai/src/registry.rs'
         || file.startsWith('web/src/')
-        || [...commands, 'pen-tokens.mjs', 'pen-token-map.json', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs', 'pen-system.mjs', 'pen-screens.mjs', 'pen-screens-disk.mjs', 'gen-tokens.mjs'].some(name => file === 'scripts/' + name);
+        // Pen generators split into screen modules as the library grows.
+        // Export that module family together so its imports stay available.
+        || (file.startsWith('scripts/pen-') && file.endsWith('.mjs'))
+        || [...commands, 'pen-token-map.json', 'gen-tokens.mjs'].some(name => file === 'scripts/' + name);
       if (!input) continue;
       if (stage !== '0') throw new Error(`Resolve staged conflict before design check: ${file}`);
       if (!['100644', '100755'].includes(mode)) throw new Error(`Design inputs must be ordinary files: ${file}`);
