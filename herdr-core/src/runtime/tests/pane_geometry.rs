@@ -531,6 +531,87 @@ fn a_pane_close_waits_behind_a_resize_and_is_drawn_gone_at_once() {
     assert_eq!(drawn(&runtime).pane_ids(), [LEFT], "still drawn gone");
 }
 
+/// D-10: a pane drawn alone because a close ahead took its sibling is still
+/// one of two panes in Herdr's tab, so ⌘W on it waits its turn in the line
+/// rather than meeting the close in progress, and stays drawn until it runs.
+#[test]
+fn closing_the_pane_left_drawn_alone_waits_behind_the_close_ahead() {
+    let herdr = fake_herdr("geometry-close-last");
+    let mut runtime = runtime_on(&herdr, session(Some(0.5), false));
+    dispatch(
+        &mut runtime,
+        "resize_pane",
+        serde_json::json!({"pane_id": LEFT, "direction": "right", "amount": 0.1}),
+    );
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    dispatch(
+        &mut runtime,
+        "close_pane",
+        serde_json::json!({"pane_id": RIGHT, "confirmed": true}),
+    );
+    runtime.ingest_session(Ok(session(Some(0.5), false)));
+    assert_eq!(drawn(&runtime).pane_ids(), [LEFT]);
+
+    dispatch(
+        &mut runtime,
+        "close_pane",
+        serde_json::json!({"pane_id": LEFT, "confirmed": true}),
+    );
+    let queued_closes = |runtime: &Runtime| {
+        let mut closes = runtime
+            .pane_operations
+            .values()
+            .filter(|operation| operation.phase == "queued")
+            .filter_map(|operation| match &operation.request {
+                super::super::operations::GeometryRequest::Close { pane_id, .. } => {
+                    Some(pane_id.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        closes.sort();
+        closes
+    };
+    assert_eq!(
+        queued_closes(&runtime),
+        [RIGHT, LEFT],
+        "both wait, sorted by id"
+    );
+    assert!(
+        runtime.snapshot().recent_closed.notices.is_empty(),
+        "no close was refused"
+    );
+    runtime.ingest_session(Ok(session(Some(0.5), false)));
+    assert_eq!(
+        drawn(&runtime).pane_ids(),
+        [LEFT],
+        "the tab's last pane stays drawn until its close runs"
+    );
+
+    answer(
+        &mut runtime,
+        PaneControlAction::Resize {
+            pane_id: LEFT.to_owned(),
+            direction: PaneResizeDirection::Right,
+            amount: 0.1,
+        },
+        accepted(),
+    );
+    runtime.ingest_session(Ok(session(Some(0.6), false)));
+    assert!(
+        runtime
+            .close_operations
+            .values()
+            .any(|operation| operation.target_id == RIGHT),
+        "the close ahead started"
+    );
+    assert_eq!(
+        queued_closes(&runtime),
+        [LEFT],
+        "the last pane's close waits for it"
+    );
+}
+
 /// B1, B4, D-05: a new tab is drawn from Herdr's answer, as one pane with
 /// Herdr's ids in the requested checkout, and Herdr's own layout replaces it
 /// without the tab moving or the canvas changing; a tab Herdr never lays out

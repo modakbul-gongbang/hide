@@ -237,6 +237,8 @@ The prediction is drawn onto the session payload after every confirmation has re
 A zoom, a resize and a close are drawn at the request; a split and a created tab are drawn at the answer, because only the answer names the new pane, and a created tab waits for its pane's layout as a one-pane tab of the checkout's owner workspace (at most `PROVISIONAL_TAB_LIMIT`, each dropped at the close stage timeout).
 Geometry is laid out with the same split arithmetic that projects Herdr's layouts (`pane_prediction.rs`), so the confirmed layout replaces the drawn one without a jump when they agree; when they do not, Herdr's wins and `pane.prediction_mismatch` records both shapes.
 A close is drawn on the canvas only: the closing pane keeps its sidebar row, session and read state until Herdr confirms the close.
+Whether a close waits in its tab's line is Herdr's layout's answer, not the drawing's: once a close draws its sibling gone, a ⌘W on the pane left drawn alone still closes one of two panes in Herdr's tab, so it waits behind the close ahead instead of meeting it in progress, stays drawn until it runs, and leaves with its tab.
+A waiting close starts only after the close ahead has left the tab's records and after the session update in progress has been applied, because it reads the tab's panes from the navigator, which shows the previous session until then; a close started from it would see its tab change before its effect and cancel itself.
 A drawn change republishes through `RepublishWaker`, which wakes the coordinator once per burst, so the drawing costs one publish and nothing per frame.
 
 The PTY is not resized by a prediction (D-08): Herdr sizes the PTY from the geometry it applied, so a grid drawn ahead would be wrong whenever the prediction is.

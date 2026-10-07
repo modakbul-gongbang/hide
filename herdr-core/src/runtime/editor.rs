@@ -1840,6 +1840,8 @@ impl Runtime {
         }
         if changed {
             self.sync_recent_closed_snapshot();
+            // A close waiting behind one that just left its tab takes its turn.
+            self.pump_geometry_queues();
         }
         self.release_queued_reopen(queued_close_completed);
         changed

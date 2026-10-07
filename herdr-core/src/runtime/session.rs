@@ -2195,6 +2195,20 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
         focus_check: SessionFocusCheck,
     ) -> bool {
+        self.ingesting_session = true;
+        let changed = self.apply_session_update(fetched, precomputed, focus_check);
+        self.ingesting_session = false;
+        // A close waiting in a tab's line starts from the session just
+        // applied, never from the one it replaced.
+        self.pump_geometry_queues() || changed
+    }
+
+    fn apply_session_update(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
+        focus_check: SessionFocusCheck,
+    ) -> bool {
         // Sleeping agents Herdr no longer lists are drawn from their records
         // before anything below reads the agents (PRD agent-sleep B10).
         let mut fetched = fetched;

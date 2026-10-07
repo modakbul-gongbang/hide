@@ -879,26 +879,40 @@ impl Runtime {
     /// close should start now. A close that removes the whole tab, a pane on
     /// a busy tab past the line's limit, and every tree close start as they
     /// always did.
+    ///
+    /// Whether the close removes the whole tab is Herdr's layout's answer,
+    /// not the drawing's: a pane drawn alone because a close ahead took its
+    /// sibling still has that sibling in Herdr's tab, so its close waits its
+    /// turn instead of meeting the close in progress. It is drawn gone only
+    /// while the line leaves another pane; the tab's last pane leaves with
+    /// its tab when the close runs.
     pub(super) fn queue_pane_close(&mut self, pane_id: &str, confirmed: bool) -> bool {
         let Some(scope_id) = self.pane_operation_scope(pane_id) else {
             return false;
         };
         let several = self
-            .snapshot
-            .pane_layouts
-            .iter()
-            .find(|layout| layout.tab_id == scope_id)
+            .confirmed_layouts
+            .get(&scope_id)
+            .or_else(|| {
+                self.snapshot
+                    .pane_layouts
+                    .iter()
+                    .find(|layout| layout.tab_id == scope_id)
+            })
             .is_some_and(|layout| layout.pane_ids().len() > 1);
         if !several || !self.geometry_tab_busy(&scope_id) {
             return false;
         }
+        let keeps_a_pane = self
+            .predicted_tab_layout(&scope_id)
+            .is_some_and(|layout| layout.pane_ids().into_iter().any(|id| id != pane_id));
         let Some(baseline_signature) = self.pane_operation_baseline(pane_id) else {
             return false;
         };
         if !self.admit_to_geometry_queue(&scope_id, "pane.close", pane_id) {
             return true;
         }
-        let prediction = Some(super::pane_prediction::Prediction::Close {
+        let prediction = keeps_a_pane.then(|| super::pane_prediction::Prediction::Close {
             pane: pane_id.to_owned(),
         });
         self.insert_queued_geometry(
@@ -1250,8 +1264,20 @@ impl Runtime {
             else {
                 break;
             };
-            moved = true;
             let request = self.pane_operations[&id].request.clone();
+            // A close starts only once the close ahead of it has left the
+            // tab entirely, one still recorded there would refuse it, and
+            // from a navigator that shows the session as it now stands.
+            if matches!(request, GeometryRequest::Close { .. })
+                && (self.ingesting_session
+                    || self
+                        .close_operations
+                        .values()
+                        .any(|operation| operation.scope_id == scope_id))
+            {
+                break;
+            }
+            moved = true;
             match request {
                 GeometryRequest::Pane(action) => {
                     self.send_pane_operation(&id, action);

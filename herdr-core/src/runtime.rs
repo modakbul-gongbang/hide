@@ -1294,6 +1294,9 @@ pub struct Runtime {
     /// it held there, which orders its drawing among the line's other
     /// predictions. Pruned to the live closes on each insert.
     close_line_places: HashMap<String, (u64, u64)>,
+    /// A session update is being applied: the navigator still shows the one
+    /// it replaces, so a close waiting in a tab's line starts only after it.
+    ingesting_session: bool,
     /// Herdr's confirmed layout of each tab with a drawn prediction, as the
     /// last session showed it; a new request is predicted on it rather than
     /// on the drawing.
@@ -1950,6 +1953,7 @@ impl Runtime {
             drawn_closes: HashMap::new(),
             confirmed_layouts: HashMap::new(),
             close_line_places: HashMap::new(),
+            ingesting_session: false,
             provisional_tabs: Vec::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
