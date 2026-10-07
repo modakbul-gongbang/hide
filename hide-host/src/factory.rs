@@ -633,9 +633,10 @@ fn worktree_root(checkout: &Path) -> HostResult<Option<String>> {
 /// only a discarded one is forced, and only its branch is deleted (D-58).
 fn remove_worktree(root: &Path, checkout: &Path, branch: &str, discard: bool) -> HostResult<()> {
     let io = |reason: String| HostError::new(ErrorCode::Io, reason);
+    // Refused before anything is removed, never after.
+    let branch = branch_name(branch).map_err(invalid)?;
     crate::worktrees::remove_worktree(root, checkout, discard).map_err(io)?;
     if discard {
-        let branch = branch_name(branch).map_err(invalid)?;
         crate::worktrees::git(root, &["branch", "-D", "--", branch]).map_err(io)?;
     }
     Ok(())
@@ -684,6 +685,18 @@ impl Drop for VerifyQueue {
 mod tests {
     use super::*;
     use hide_node_link::factory::FactoryGit;
+
+    /// A branch the removal could not delete is refused before the worktree
+    /// goes, so a retry still finds the folder and the branch together.
+    #[test]
+    fn a_removal_with_an_invalid_branch_removes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("task");
+        std::fs::create_dir(&checkout).unwrap();
+        let refused = remove_worktree(dir.path(), &checkout, "-D", true).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidRequest);
+        assert!(checkout.is_dir());
+    }
 
     fn job(id: &str, dir: &Path, commands: &[&str], timeout: Duration) -> VerifyJob {
         VerifyJob {

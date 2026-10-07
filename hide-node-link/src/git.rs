@@ -201,9 +201,14 @@ impl GitCommand {
             ]),
             Self::ListFiles => owned(&["ls-files", "-z"]),
             Self::CurrentBranch => owned(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
-            Self::Checkout { branch } => {
-                owned(&["checkout", "--no-overwrite-ignore", branch_name(branch)?])
-            }
+            // The closing `--` makes git read the name as a branch only; a
+            // tracked file of that name is never restored over its edits.
+            Self::Checkout { branch } => owned(&[
+                "checkout",
+                "--no-overwrite-ignore",
+                branch_name(branch)?,
+                "--",
+            ]),
             Self::HasLocalBranch { branch } => owned(&[
                 "show-ref",
                 "--verify",
@@ -241,20 +246,24 @@ pub fn revision_name(value: &str) -> Result<&str, String> {
         && value.len() <= 255
         && !value.starts_with('-')
         && !value.contains("..")
-        && value
-            .chars()
-            .all(|c| !c.is_control() && !c.is_whitespace() && !matches!(c, ':' | '\\'));
+        && value.chars().all(|c| {
+            !c.is_control() && !c.is_whitespace() && !matches!(c, ':' | '\\' | '*' | '?' | '[')
+        });
     valid
         .then_some(value)
         .ok_or_else(|| format!("not a revision: {value:?}"))
 }
 
-/// A branch name as a revision, which also cannot leave `refs/heads/`.
+/// A branch name as a revision, which also cannot leave `refs/heads/` or
+/// name a revision relative to one (`~`, `^`, `@{`).
 pub fn branch_name(value: &str) -> Result<&str, String> {
     let value = revision_name(value)?;
-    (!value.starts_with('/') && !value.ends_with('/'))
-        .then_some(value)
-        .ok_or_else(|| format!("not a branch: {value:?}"))
+    (!value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains(['~', '^'])
+        && !value.contains("@{"))
+    .then_some(value)
+    .ok_or_else(|| format!("not a branch: {value:?}"))
 }
 
 #[cfg(test)]
@@ -266,7 +275,21 @@ mod tests {
     /// git sees it, and a setting's value stays text whatever it starts with.
     #[test]
     fn a_value_that_would_read_as_an_option_a_range_or_a_refspec_is_refused() {
-        for branch in ["--orphan=x", "-b", "a..b", "a:b", "main ", "/main", ""] {
+        for branch in [
+            "--orphan=x",
+            "-b",
+            "a..b",
+            "a:b",
+            "main ",
+            "/main",
+            "",
+            "a*",
+            "a?",
+            "a[b]",
+            "HEAD~3",
+            "main^",
+            "main@{1}",
+        ] {
             assert!(
                 GitCommand::Checkout {
                     branch: branch.into()
@@ -301,6 +324,14 @@ mod tests {
             .args()
             .unwrap(),
             ["config", "--", "branch.feature/x.description", "--global"]
+        );
+        assert_eq!(
+            GitCommand::Checkout {
+                branch: "feature/x".into()
+            }
+            .args()
+            .unwrap(),
+            ["checkout", "--no-overwrite-ignore", "feature/x", "--"]
         );
         assert_eq!(
             GitCommand::FetchBranch {

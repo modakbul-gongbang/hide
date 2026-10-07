@@ -3025,7 +3025,7 @@ mod tests {
         assert_eq!(outcome.path, path);
         assert_eq!(
             git.calls.lock().unwrap()[2],
-            ["checkout", "--no-overwrite-ignore", "main"]
+            ["checkout", "--no-overwrite-ignore", "main", "--"]
         );
         let requests = server.requests.lock().unwrap();
         let create = requests
@@ -3054,7 +3054,7 @@ mod tests {
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
             git.calls.lock().unwrap()[3],
-            ["checkout", "--no-overwrite-ignore", "feature"]
+            ["checkout", "--no-overwrite-ignore", "feature", "--"]
         );
         assert_eq!(
             server
