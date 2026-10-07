@@ -40,6 +40,7 @@ mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
 mod terminal;
+mod terminal_input;
 mod tree_close;
 mod view_areas;
 mod view_bookmarks;

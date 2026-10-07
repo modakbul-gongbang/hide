@@ -2308,6 +2308,7 @@ impl Runtime {
                             .any(|pane| pane.id == pane_id)
                     })
             });
+        let mut requests_changed = false;
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -2320,6 +2321,14 @@ impl Runtime {
             let keep =
                 |pane_id: &str| pane_id.starts_with("remote:") || live_pane_ids.contains(pane_id);
             self.retain_terminal_pane_state(keep);
+            let panes_closing = &self.panes_closing;
+            if self
+                .input_requests
+                .follow_panes(keep, |pane_id| panes_closing.contains(pane_id))
+            {
+                self.sync_input_requests();
+                requests_changed = true;
+            }
         }
         let mut excluded = Vec::new();
         let mut rejected_layouts: Vec<(String, String)> = Vec::new();
@@ -2655,6 +2664,7 @@ impl Runtime {
         }
 
         let mut changed = catalog_changed
+            || requests_changed
             || selection_changed
             || timed_out
             || tab_move_timed_out
@@ -3570,6 +3580,23 @@ impl Runtime {
                         Some(device) => self.record_created_device_tab(device, tab_id, &path),
                     }
                 }
+                // A tab made in a checkout this machine's Herdr already holds
+                // is drawn from this answer (D-04, D-05); a new worktree's
+                // workspace is Herdr's to report first.
+                if device.is_none()
+                    && let Some(tab_id) = created_tab_id.as_deref()
+                    && let Some(workspace_id) = self.owner_workspace_of_path(&path)
+                {
+                    self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
+                        workspace_id,
+                        tab_id: tab_id.to_owned(),
+                        pane_id: pane_id.clone(),
+                        cwd: path.clone(),
+                        label: String::new(),
+                        timing_id: None,
+                        recorded_at_unix_ms: unix_milliseconds(),
+                    });
+                }
                 if let Some(detail) = issue_error {
                     self.push_diagnostic(
                         "checkout_issue.create_failed",
@@ -3593,11 +3620,22 @@ impl Runtime {
                 // The creation is settled here; the chosen agent starts on the
                 // same worker afterwards and reports on its own axis.
                 operation.agent_phase = operation.agent_kind.as_ref().map(|_| "starting".into());
+                // Keys typed for a plain terminal tab follow it now; for an
+                // agent they wait for its start (`ingest_task_agent_result`).
+                let input_ready = operation.agent_phase.is_none().then(|| pane_id.clone());
                 if should_focus {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
                     self.snapshot.focused.surface = Surface::Terminal;
                     self.snapshot.focused.pane_id = Some(pane_id.clone());
                     self.snapshot.ui_state.selected_pane_id = Some(pane_id);
+                }
+                // A tab that does not take the screen is not where the
+                // operator's keys were going, agent or not.
+                let origin = super::terminal_input::InputOrigin::Task(id);
+                match input_ready {
+                    _ if !should_focus => self.discard_input_request(&origin, "not_shown"),
+                    Some(pane_id) => self.resolve_input_request(&origin, &pane_id),
+                    None => {}
                 }
                 let normalized = workspace::comparison_by_names(Path::new(&path));
                 self.created_purpose_writes_in_flight.remove(&normalized);
@@ -3649,6 +3687,7 @@ impl Runtime {
                 self.refresh_worktrees();
             }
             Err(message) => {
+                self.discard_input_request(&super::terminal_input::InputOrigin::Task(id), "failed");
                 let operation = self
                     .snapshot
                     .task_operation
@@ -4304,6 +4343,13 @@ impl Runtime {
         }));
         operation.agent_phase = Some(phase.to_owned());
         operation.agent_message = message;
+        // Keys typed while the agent's tab was being made reach the agent
+        // once it has started, never the launch command.
+        let origin = super::terminal_input::InputOrigin::Task(id);
+        match started_pane.flatten() {
+            Some(pane_id) => self.resolve_input_request(&origin, &pane_id),
+            None => self.discard_input_request(&origin, phase),
+        }
         true
     }
 
@@ -4421,6 +4467,54 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
+        let admission = match &action {
+            RemoteControlAction::CreateTab {
+                admission_id: Some(id),
+                ..
+            }
+            | RemoteControlAction::OpenOwner {
+                admission_id: Some(id),
+                ..
+            } => Some(*id),
+            _ => None,
+        };
+        let timing_id = admission.map(super::op_timing::tab_create_op_id);
+        if let Some(id) = admission {
+            let origin = super::terminal_input::InputOrigin::TabCreate(id);
+            match &result {
+                Ok(RemoteControlOutcome::Acknowledged { .. }) => {}
+                Ok(_) => self.discard_input_request(&origin, "no_pane"),
+                Err(error) if error.is_ambiguous() => {
+                    self.discard_input_request(&origin, "unknown")
+                }
+                Err(_) => self.discard_input_request(&origin, "refused"),
+            }
+        }
+        if let Some(id) = timing_id.as_deref() {
+            match &result {
+                Ok(RemoteControlOutcome::Acknowledged {
+                    created_tab_id,
+                    created_pane_id,
+                }) => {
+                    self.op_timings.stamp(
+                        id,
+                        super::op_timing::Stage::HerdrAck,
+                        std::time::Instant::now(),
+                    );
+                    self.op_timings.learn(
+                        id,
+                        created_tab_id.as_deref(),
+                        created_pane_id.as_deref(),
+                    );
+                    if let Some(pane_id) = created_pane_id.as_deref() {
+                        self.op_timings.await_frame(id, pane_id, false);
+                    }
+                }
+                Ok(_) => {}
+                Err(error) if error.is_ambiguous() => self.op_timings.finish(id, "unknown"),
+                Err(_) => self.op_timings.finish(id, "failed"),
+            }
+        }
         if !result.as_ref().is_err_and(|error| error.is_ambiguous()) {
             match &action {
                 RemoteControlAction::CreateTab {
@@ -4477,6 +4571,31 @@ impl Runtime {
                 ) = (created_tab_id.as_deref(), &action)
                 {
                     self.record_created_tab_checkout(tab_id, cwd);
+                }
+                // The tab is drawn from this answer, as one pane with Herdr's
+                // ids, until Herdr's layout replaces it (D-03, D-05). Opening
+                // an owner makes a Herdr workspace as well, which the screen
+                // waits for.
+                if let (
+                    Some(tab_id),
+                    Some(pane_id),
+                    RemoteControlAction::CreateTab {
+                        workspace_id,
+                        cwd,
+                        label,
+                        ..
+                    },
+                ) = (created_tab_id.as_ref(), created_pane_id.as_ref(), &action)
+                {
+                    self.draw_created_tab(super::drawn_ahead::ProvisionalTab {
+                        workspace_id: workspace_id.clone(),
+                        tab_id: tab_id.clone(),
+                        pane_id: pane_id.clone(),
+                        cwd: cwd.clone(),
+                        label: label.clone(),
+                        timing_id: timing_id.clone(),
+                        recorded_at_unix_ms: unix_milliseconds(),
+                    });
                 }
                 if let Some(tab_id) = created_tab_id.as_ref() {
                     let placement = match &action {
@@ -4569,6 +4688,18 @@ impl Runtime {
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
+                }
+                // Keys typed since the tab was asked for follow it only when
+                // it takes the screen; a tab that waits in the strip (the
+                // operator chose another since) gets none of them.
+                if let Some(id) = admission {
+                    let origin = super::terminal_input::InputOrigin::TabCreate(id);
+                    match created_pane_id.as_deref() {
+                        Some(pane_id) if can_show_created => {
+                            self.resolve_input_request(&origin, pane_id)
+                        }
+                        _ => self.discard_input_request(&origin, "not_shown"),
+                    }
                 }
                 // Herdr publishes no event for focusing the tab it already
                 // shows, so a tab focus that lands where Herdr already was is

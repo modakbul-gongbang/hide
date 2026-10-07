@@ -825,10 +825,14 @@ impl Runtime {
             })
     }
 
+    /// Admits a split, zoom or resize into its tab's line and sends it when
+    /// nothing ahead of it is still waiting for Herdr (D-10). A zoom or resize
+    /// is drawn at once on top of what the operations ahead of it will leave
+    /// (D-07); a split is drawn when Herdr names the pane it made.
     pub(super) fn begin_pane_operation(
         &mut self,
-        context: LiveContext,
         action: PaneControlAction,
+        input_request: Option<&str>,
     ) -> bool {
         let kind = action.kind();
         let target_id = action.pane_id().to_owned();
@@ -1314,6 +1318,12 @@ impl Runtime {
                             operation.kind, operation.target_id
                         ),
                     );
+                    self.op_timings.finish(&id, "unknown");
+                    self.discard_input_request(
+                        &super::terminal_input::InputOrigin::Split(id.clone()),
+                        "unknown",
+                    );
+                    expired_scopes.push(operation.scope_id.clone());
                     changed = true;
                 }
                 "unknown" => {

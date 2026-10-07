@@ -1422,7 +1422,7 @@ export type SnapshotRest = {
     operator_focus?: { client_id: string; sequence: number }[];
   };
   pane_layouts?: PaneLayout[];
-  terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
+  terminal?: { pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
     device_rail_visible?: boolean;

@@ -16,6 +16,18 @@ pub(super) struct KeyPayload {
     pub(super) bytes_base64: String,
 }
 
+/// A `key` event as the shell sends it: for a pane, or, right after the
+/// operator asked for a new tab or split, for that creation request (PRD
+/// instant-pane-topology D-11), whose pane only Herdr's answer names.
+#[derive(Debug, Deserialize)]
+pub(super) struct KeyEventPayload {
+    #[serde(default)]
+    pub(super) pane_id: Option<String>,
+    #[serde(default)]
+    pub(super) pending_request: Option<String>,
+    pub(super) bytes_base64: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct AttachmentPayload {
     pub request_id: String,
@@ -1962,6 +1974,19 @@ impl Runtime {
                     .saturating_add(1)
                     .max(unix_milliseconds());
                 let admission_id = self.next_async_operation_id;
+                self.begin_op_timing(
+                    &super::op_timing::tab_create_op_id(admission_id),
+                    "tab.create",
+                    None,
+                    &[],
+                );
+                if let Some(request_id) = payload.request_id.as_deref() {
+                    self.input_requests.open(
+                        request_id,
+                        super::terminal_input::InputOrigin::TabCreate(admission_id),
+                    );
+                    self.sync_input_requests();
+                }
                 if let Some(store) = self.workspace_views.as_mut() {
                     store
                         .agent_admissions
@@ -1992,6 +2017,12 @@ impl Runtime {
                 );
                 if let Err(message) = self.submit_local_control(action) {
                     self.finish_agent_admission(&admission_path, admission_id);
+                    self.op_timings
+                        .finish(&super::op_timing::tab_create_op_id(admission_id), "failed");
+                    self.discard_input_request(
+                        &super::terminal_input::InputOrigin::TabCreate(admission_id),
+                        "not_sent",
+                    );
                     self.set_error("tab.create_worker_failed", message, true);
                 }
                 true

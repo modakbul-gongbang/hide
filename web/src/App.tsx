@@ -10,6 +10,7 @@ import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
+import { noteOperatorPointer, observeInputRequests } from "./keyTarget";
 import { OverviewModal, OverviewPage } from "./Overview";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
@@ -83,6 +84,9 @@ export function App() {
     };
     window.addEventListener("focusin", observeFocus);
     window.addEventListener("pointerdown", endCommit, true);
+    // Pointing anywhere is the operator choosing where they are, so keys stop
+    // following a pending new tab or split (`keyTarget.ts`).
+    window.addEventListener("pointerdown", noteOperatorPointer, true);
     window.addEventListener("keydown", endCommit, true);
     // All projects and an Overview are visits of their own, and leaving one
     // for the Workspace makes the surface there the one in use; neither
@@ -118,6 +122,7 @@ export function App() {
     return () => {
       window.removeEventListener("focusin", observeFocus);
       window.removeEventListener("pointerdown", endCommit, true);
+      window.removeEventListener("pointerdown", noteOperatorPointer, true);
       window.removeEventListener("keydown", endCommit, true);
       unsubscribeScreen();
       unsubscribeNotices();

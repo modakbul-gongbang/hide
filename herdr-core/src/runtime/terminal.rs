@@ -272,6 +272,7 @@ impl Runtime {
             + self.terminal_frames_need_full.len()
             + self.terminal_foreign_frame_sizes.len()
             + self.panes_awaiting_size.len()
+            + self.pane_input_hold.len()
             + self.wheel_before_attach.len()
             + self.viewport_scrolls.len()
             + self.panes_scroll_held.len()
@@ -1576,6 +1577,7 @@ impl Runtime {
             let _released_session = self.terminal_sessions.remove(&pane_id);
             self.panes_awaiting_size.remove(&pane_id);
             self.terminal_recovery.remove(&pane_id);
+            self.pane_input_hold.discard(&pane_id, "released");
             let attempt = self
                 .terminal_session_lifecycles
                 .get(&pane_id)
@@ -1701,6 +1703,10 @@ impl Runtime {
                     self.terminal_sessions.remove(&pane_id);
                     // A late spawn cannot revive an exhausted attempt.
                     self.terminal_session_generations.remove(&pane_id);
+                    // The pane is no longer connecting; keys held for it
+                    // would run whenever the operator reconnects, so they
+                    // end here (PRD instant-pane-topology B10).
+                    self.pane_input_hold.discard(&pane_id, "session_failed");
                 }
                 self.sync_transport_projection(&pane_id);
             }
@@ -2132,6 +2138,11 @@ impl Runtime {
                     true,
                 );
             }
+            // A pane whose control session is still opening keeps its input
+            // until the session can take it (PRD instant-pane-topology D-11).
+            None if self.terminal_session_opening(pane_id) => {
+                self.pane_input_hold.hold(pane_id, &bytes);
+            }
             None => {
                 self.set_error(
                     "terminal.unavailable",
@@ -2139,6 +2150,55 @@ impl Runtime {
                     true,
                 );
             }
+        }
+    }
+
+    /// Input typed while the session was opening goes first, in the order it
+    /// was typed; an observer cannot take it.
+    fn write_held_input(&mut self, pane_id: &str, session: &TerminalSession) {
+        let Some(held) = self.pane_input_hold.take(pane_id) else {
+            return;
+        };
+        if session.mode == TerminalSessionMode::Control {
+            if let Err(message) = session.write_bytes(&held) {
+                self.set_error("terminal.write_failed", message, true);
+            }
+            return;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal_input",
+            "kind": "terminal.input_discarded",
+            "pane_id": pane_id,
+            "reason": "read_only",
+            "bytes": held.len(),
+        }));
+    }
+
+    /// Whether this machine's pane is on its way to a control session: never
+    /// attached yet, waiting for its view's size, starting, or retrying after
+    /// a failed start. A released, ended or closing pane is not.
+    fn terminal_session_opening(&self, pane_id: &str) -> bool {
+        // A pane a creation's answer named is opening even before a layout
+        // carries it: the operator's keys for it arrive first (D-11).
+        if pane_id.starts_with("remote:")
+            || self.panes_closing.contains(pane_id)
+            || (self.layout_holding_pane(pane_id).is_none() && !self.input_requests.names(pane_id))
+        {
+            return false;
+        }
+        match self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .map(|lifecycle| lifecycle.state)
+        {
+            None | Some("idle" | "waiting_size" | "starting") => true,
+            // Retrying; a pane whose retries ran out waits for the operator's
+            // Reconnect and holds nothing for it.
+            Some("unavailable") => self
+                .terminal_recovery
+                .get(pane_id)
+                .is_some_and(|recovery| recovery.due.is_some()),
+            Some(_) => false,
         }
     }
     pub(super) fn append_terminal_chunk(&mut self, pane_id: String, bytes_base64: String) {
