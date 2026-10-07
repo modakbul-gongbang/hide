@@ -43,7 +43,7 @@ use super::facts::{InputView, LogTarget, PullRequestTimes, ReadFacts};
 use super::generator::GeneratorLock;
 use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
-use super::store::{LOCAL_TARGET, LabelStore, PaneRecord};
+use super::store::{LabelStore, PaneRecord};
 
 /// How long after a turn starts a pane whose prompt was not in the
 /// transcript yet is read once more.
@@ -114,7 +114,7 @@ pub(crate) struct ObservedAgent {
 }
 
 pub(crate) struct WorkerConfig {
-    /// The store key: `local`, or `device:<id>`.
+    /// The store key: the core's node id, or `device:<id>`.
     pub(crate) target: String,
     /// The Herdr server's generator lock (D-10); see `generator`.
     pub(crate) lock_path: Option<PathBuf>,
@@ -447,7 +447,7 @@ impl LabelWorker {
     /// it has just made). Only this Mac's projects have their pull requests
     /// read, so a device's worker keeps none.
     fn note_sighted(&mut self, pane_id: &str, sightings: &[PrSighting], now_unix_ms: u64) {
-        if self.target != LOCAL_TARGET {
+        if self.target != self.store.node() {
             return;
         }
         for sighting in sightings {

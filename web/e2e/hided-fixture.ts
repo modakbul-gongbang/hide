@@ -24,6 +24,8 @@ export type Daemon = {
   home: string;
   stateDir: string;
   hostId: string;
+  /** The core's own node id, as the state folder's `node.json` records it. */
+  node: string;
   stop: () => void;
   /** `beforeStart` runs on the daemon's state directory while it is down, and may wait. */
   restart: (beforeStart?: (stateDir: string) => void | Promise<void>) => Promise<Daemon>;
@@ -194,6 +196,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         const origin = `http://127.0.0.1:${state.port}`;
         if ((await fetch(`${origin}/health`)).ok) {
           const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
+          const node = (JSON.parse(fs.readFileSync(path.join(dir, "hide", "node.json"), "utf8")) as { node: string }).node;
           const restart = async (beforeStart?: (stateDir: string) => void | Promise<void>) => {
             end();
             await exited;
@@ -202,7 +205,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             disown();
             return launch(herdr, label, dir, home, String(state.port), extraEnv, bundledAt);
           };
-          return { pid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
+          return { pid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, node, stop, restart };
         }
       } catch {
         /* still starting */

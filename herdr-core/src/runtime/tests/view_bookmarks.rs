@@ -52,7 +52,10 @@ fn herdr_focuses(runtime: &mut Runtime, directory: &Path, active: &str) {
 }
 
 fn key(directory: &Path) -> (String, String) {
-    ("local".to_owned(), directory.to_string_lossy().into_owned())
+    (
+        crate::node::TEST_NODE.to_owned(),
+        directory.to_string_lossy().into_owned(),
+    )
 }
 
 fn layout<'a>(runtime: &'a Runtime, directory: &Path) -> &'a ViewLayout {
@@ -151,15 +154,13 @@ fn open(runtime: &mut Runtime, checkout_id: &str, directory: &Path, name: &str) 
 
 /// A `view_layout` action as the web sends it, named for the front Workspace.
 fn view_act(runtime: &mut Runtime, directory: &Path, mut payload: serde_json::Value) {
-    payload["workspace"] =
-        serde_json::json!({"device_id": "local", "path": directory.to_string_lossy()});
+    payload["workspace"] = serde_json::json!({"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()});
     runtime.dispatch_json(&explorer_event("view_layout", payload));
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
 fn agent_act(runtime: &mut Runtime, directory: &Path, mut payload: serde_json::Value) {
-    payload["workspace"] =
-        serde_json::json!({"device_id": "local", "path": directory.to_string_lossy()});
+    payload["workspace"] = serde_json::json!({"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()});
     runtime.dispatch_json(&explorer_event("agent_layout", payload));
 }
 
@@ -185,7 +186,11 @@ fn bookmark(runtime: &Runtime, directory: &Path, tab: &str) -> Vec<(String, Stri
     runtime
         .workspace_views
         .as_ref()
-        .and_then(|store| store.views.get("local", &directory.to_string_lossy()))
+        .and_then(|store| {
+            store
+                .views
+                .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+        })
         .and_then(|view| view.view_bookmarks.of(tab))
         .map(|areas| {
             areas
@@ -533,7 +538,9 @@ fn bookmarks_are_saved_and_a_restarted_runtime_restores_them() {
 
     let path = runtime.workspace_views.as_ref().unwrap().path.clone();
     let (saved, _) = crate::workspace_views::load(&path, 1);
-    let entry = saved.get("local", &directory.to_string_lossy()).unwrap();
+    let entry = saved
+        .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+        .unwrap();
     assert_eq!(entry.view_bookmarks.of("w-order:t1").unwrap().len(), 1);
     assert_eq!(entry.view_bookmarks.of("w-order:t2").unwrap().len(), 1);
 
@@ -645,12 +652,19 @@ fn control(
     reveal_suffix: &str,
 ) -> crate::workspace_control::ActionResult {
     let expected = runtime
-        .workspace_control_query("local", caller, Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
         .expect("the caller is connected")
         .context;
     let id = format!("{}-{reveal_suffix}", unix_milliseconds());
     runtime
-        .workspace_control_action("local", caller, &expected, &id, action, Ok(None))
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &expected,
+            &id,
+            action,
+            Ok(None),
+        )
         .expect("the action applies")
 }
 
@@ -670,19 +684,26 @@ fn control_file(
         reveal: false,
     };
     let expected = runtime
-        .workspace_control_query("local", caller, Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
         .unwrap()
         .context;
     let id = format!("{}-{suffix}", unix_milliseconds());
     let crate::workspace_control::ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", caller, &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, caller, &expected, &id, &action)
         .unwrap()
     else {
         panic!("a file needs a host read");
     };
     let material = source.read().unwrap();
     runtime
-        .workspace_control_action("local", caller, &expected, &id, action, Ok(Some(material)))
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            caller,
+            &expected,
+            &id,
+            action,
+            Ok(Some(material)),
+        )
         .unwrap();
 }
 

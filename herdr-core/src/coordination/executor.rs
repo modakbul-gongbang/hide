@@ -3,6 +3,7 @@ use crate::delivery::{
     Actor,
     worker::{Authority, Client, Effect},
 };
+use crate::runtime::delivery::CoordinationContext;
 use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
@@ -40,18 +41,7 @@ fn mutate(
         STORE_TIMEOUT,
     )
 }
-fn context(
-    client: &Client,
-    device: &str,
-) -> Result<
-    (
-        Arc<dyn ApiConnector>,
-        String,
-        String,
-        crate::codex_launch::CodexDaemon,
-    ),
-    String,
-> {
+fn context(client: &Client, device: &str) -> Result<CoordinationContext, String> {
     client
         .runtime
         .upgrade()
@@ -109,9 +99,11 @@ fn wait_native_identity(
         );
     }
 }
-fn actor_for(agent: &ProjectedAgent, device: &str) -> Result<Actor, String> {
+/// The actor of `agent` on `device`; `on_node` when that device is the core's
+/// own node, whose panes the core names without a device prefix.
+fn actor_for(agent: &ProjectedAgent, device: &str, on_node: bool) -> Result<Actor, String> {
     let actor = Actor {
-        pane_id: if device == "local" {
+        pane_id: if on_node {
             agent.pane_id.clone()
         } else {
             format!("remote:{device}:pane:{}", agent.pane_id)
@@ -126,6 +118,7 @@ fn actor_for(agent: &ProjectedAgent, device: &str) -> Result<Actor, String> {
 }
 struct HostIdentity<'a> {
     machine: &'a str,
+    on_node: bool,
     scope: &'a str,
     native_machine: &'a str,
 }
@@ -153,7 +146,7 @@ fn record(
         pane: agent.pane_id.clone(),
         parent,
         project,
-        actor: actor_for(agent, host.machine)?,
+        actor: actor_for(agent, host.machine, host.on_node)?,
         ended: false,
     })
 }
@@ -218,8 +211,14 @@ pub(crate) fn run(
                 return Err("invalid_registration".into());
             }
             let machine = registration_machine(machine, &actor.device_id)?;
-            let (connector, actual_scope, native_machine, _) = context(&client, &machine)?;
-            if machine == "local" && host_scope != actual_scope {
+            let CoordinationContext {
+                connector,
+                host_scope: actual_scope,
+                machine: native_machine,
+                on_node,
+                ..
+            } = context(&client, &machine)?;
+            if on_node && host_scope != actual_scope {
                 return Err("host_scope_conflict".into());
             }
             let observed = agents(connector.as_ref())?;
@@ -249,6 +248,7 @@ pub(crate) fn run(
                     machine: &machine,
                     scope: &host_scope,
                     native_machine: &native_machine,
+                    on_node,
                 },
                 instance,
                 name,
@@ -376,12 +376,18 @@ fn spawn(
         if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
         } else {
-            let (connector, host_scope, native_machine, _) = context(client, &actor.device_id)?;
+            let CoordinationContext {
+                connector,
+                host_scope,
+                machine: native_machine,
+                on_node,
+                ..
+            } = context(client, &actor.device_id)?;
             let observed = agents(connector.as_ref())?;
             let native = observed
                 .iter()
                 .find(|agent| {
-                    actor_for(agent, &actor.device_id)
+                    actor_for(agent, &actor.device_id, on_node)
                         .is_ok_and(|current| current.same_identity(actor))
                 })
                 .ok_or("parent_unavailable")?;
@@ -391,6 +397,7 @@ fn spawn(
                     machine: &actor.device_id,
                     scope: &host_scope,
                     native_machine: &native_machine,
+                    on_node,
                 },
                 native.pane_id.clone(),
                 actor.name.clone(),
@@ -439,7 +446,13 @@ fn spawn(
             &ledger,
         ));
     }
-    let (connector, host_scope, native_machine, codex_daemon) = context(client, &actor.device_id)?;
+    let CoordinationContext {
+        connector,
+        host_scope,
+        machine: native_machine,
+        codex: codex_daemon,
+        on_node,
+    } = context(client, &actor.device_id)?;
     if reserved.pane.is_none() {
         // Reconcile a worktree whose creation reply was interrupted. The
         // existing local/device connector and checkout owner are shared with
@@ -575,6 +588,7 @@ fn spawn(
             machine: &actor.device_id,
             scope: &host_scope,
             native_machine: &native_machine,
+            on_node,
         },
         pane.into(),
         name.clone(),
@@ -620,7 +634,13 @@ pub(crate) fn link_fork(
         .lock()
         .map_err(|_| "delivery_unavailable")?
         .coordination_fork_context(parent)?;
-    let (connector, host_scope, native_machine, _) = self::context(&client, &actor.device_id)?;
+    let CoordinationContext {
+        connector,
+        host_scope,
+        machine: native_machine,
+        on_node,
+        ..
+    } = self::context(&client, &actor.device_id)?;
     let observed = agents(connector.as_ref())?;
     let native_parent = observed
         .iter()
@@ -640,6 +660,7 @@ pub(crate) fn link_fork(
                 machine: &actor.device_id,
                 scope: &host_scope,
                 native_machine: &native_machine,
+                on_node,
             },
             parent.into(),
             actor.name.clone(),
@@ -672,6 +693,7 @@ pub(crate) fn link_fork(
             machine: &actor.device_id,
             scope: &host_scope,
             native_machine: &native_machine,
+            on_node,
         },
         child.into(),
         native_child.name.clone().unwrap_or_else(|| child.into()),
@@ -702,18 +724,21 @@ mod tests {
 
     #[test]
     fn a_registration_lands_on_the_callers_own_machine() {
-        assert_eq!(registration_machine(None, "local").as_deref(), Ok("local"));
+        assert_eq!(
+            registration_machine(None, crate::node::TEST_NODE).as_deref(),
+            Ok(crate::node::TEST_NODE)
+        );
         assert_eq!(registration_machine(None, "mini").as_deref(), Ok("mini"));
         assert_eq!(
             registration_machine(Some("mini".into()), "mini").as_deref(),
             Ok("mini")
         );
         assert_eq!(
-            registration_machine(Some("local".into()), "mini"),
+            registration_machine(Some(crate::node::TEST_NODE.into()), "mini"),
             Err("machine_identity_conflict".into())
         );
         assert_eq!(
-            registration_machine(Some(String::new()), "local"),
+            registration_machine(Some(String::new()), crate::node::TEST_NODE),
             Err("invalid_registration".into())
         );
     }
@@ -766,7 +791,7 @@ mod tests {
             let parent = AgentRecord {
                 id: String::new(),
                 name: "sender".into(),
-                machine: "local".into(),
+                machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture-machine".into(),
                 session: "native-parent".into(),
@@ -779,7 +804,7 @@ mod tests {
                     pane_id: "sender".into(),
                     name: "sender".into(),
                     kind: "codex".into(),
-                    device_id: "local".into(),
+                    device_id: crate::node::TEST_NODE.into(),
                     session: crate::wire::session_digest("native-parent"),
                 },
             };
@@ -788,7 +813,7 @@ mod tests {
                 pane_id: "recipient".into(),
                 name: "recipient".into(),
                 kind: "codex".into(),
-                device_id: "local".into(),
+                device_id: crate::node::TEST_NODE.into(),
                 session: crate::wire::session_digest("native-child"),
             };
             let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
@@ -801,7 +826,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &payload, None);
+                .observe_delivery(crate::node::TEST_NODE, &payload, None);
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -859,7 +884,7 @@ mod tests {
             let child = AgentRecord {
                 id: String::new(),
                 name: "recipient".into(),
-                machine: "local".into(),
+                machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture".into(),
                 native_machine: "fixture-machine".into(),
                 session: "native-child".into(),

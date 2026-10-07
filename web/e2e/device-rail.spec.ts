@@ -63,7 +63,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     const rail = page.locator("[data-device-rail]");
     await expect(rail).toBeVisible();
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1);
-    await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
     // #349: device name, shared Overview, then Projects | Agents with direct keycaps.
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
@@ -88,7 +88,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await screenshot(page, "device-rail-hidden");
     await page.locator("[data-sidebar-device-menu]").click();
     const deviceMenu = page.locator("[data-device-menu]");
-    await expect(deviceMenu.locator('[data-device-menu-item="local"]')).toBeVisible();
+    await expect(deviceMenu.locator(`[data-device-menu-item="${daemon.node}"]`)).toBeVisible();
     await screenshot(page, "device-rail-hidden-menu");
     // B1: Add device… opens Settings > Devices > Add device.
     await deviceMenu.locator("[data-device-menu-add]").click();
@@ -100,7 +100,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
 
     // B1: `+` sits directly under the last device tile and opens the same form.
     const addBox = (await rail.locator("[data-rail-add]").boundingBox())!;
-    const lastBox = (await rail.locator('[data-rail-tile="local"]').boundingBox())!;
+    const lastBox = (await rail.locator(`[data-rail-tile="${daemon.node}"]`).boundingBox())!;
     expect(addBox.y).toBeGreaterThan(lastBox.y + lastBox.height - 1);
     expect(addBox.y - (lastBox.y + lastBox.height)).toBeLessThan(24);
     await rail.locator("[data-rail-add]").click();
@@ -115,7 +115,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
-    expect(ids).toEqual(["local", ALIAS]);
+    expect(ids).toEqual([daemon.node, ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
     // It runs the sidebar's full height, so the header line and the tab strip sit right of it, not over it.
     const railBox = (await rail.boundingBox())!;
@@ -129,7 +129,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     expect(Math.round(railBox.height)).toBe(Math.round(sidebarBox.height));
     expect(Math.round((await page.locator("[data-sidebar-title]").boundingBox())!.x)).toBe(Math.round(railBox.x + railBox.width));
     // This Mac is the selection, and the center is where it was.
-    await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     expect(await page.locator("[data-main-screen]").count()).toBe(centerBefore);
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
 
@@ -153,7 +153,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(tile).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(tile).toHaveAttribute("aria-pressed", "true");
-    await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "false");
+    await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "false");
 
     // B8, B9: selected, the sidebar is the name, Not connected and Reconnect, with no tree.
     const disconnected = page.locator("[data-device-disconnected]");
@@ -192,7 +192,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await page.locator("[data-device-remove-go]").click();
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 20_000 });
     await page.keyboard.press("Escape");
-    await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     await expect(page.locator("[data-home-destination]")).toBeVisible();
     await expect(page.locator(CENTER).first()).toBeVisible();

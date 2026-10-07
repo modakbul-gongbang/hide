@@ -101,15 +101,13 @@ export type MenuHost = {
   reveal: RevealHost;
   /** The new-tab chord on this host, or "" where it has none. */
   newTabChord: string;
+  /** The core's own node id; a checkout on any other device is not this computer's. */
+  node: string;
 };
 
-/** The device a receipt names; the daemon's own machine when it names none. */
-function receiptDevice(deviceId: string | null | undefined): string {
-  return deviceId ?? "local";
-}
-
-function onDevice(workspace: Workspace): boolean {
-  return workspace.device_id !== "local";
+/** The device a receipt names; the core's own node when it names none. */
+function receiptDevice(deviceId: string | null | undefined, node: string): string {
+  return deviceId ?? node;
 }
 
 /**
@@ -121,7 +119,7 @@ export function primaryCheckout(workspace: Workspace): Checkout | null {
 }
 
 function revealItem(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, separated: boolean): MenuItem[] {
-  return revealExternalEntry(host.reveal, workspace.device_id, t, null, separated);
+  return revealExternalEntry(host.reveal, workspace.device_id, host.node, t, null, separated);
 }
 
 /**
@@ -226,8 +224,8 @@ export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[
  * refuses the same cases): the choice is stored on this machine's
  * registration of a Git project, for a checkout whose folder exists.
  */
-function primaryProblem(workspace: Workspace, checkout: Checkout, t: TFunction<"translation">): string | null {
-  if (onDevice(workspace)) return t("workspace.unavailable.otherDevice");
+function primaryProblem(workspace: Workspace, checkout: Checkout, node: string, t: TFunction<"translation">): string | null {
+  if (workspace.device_id !== node) return t("workspace.unavailable.otherDevice");
   if (workspace.is_git === false) return t("workspace.unavailable.plainFolder");
   if (checkout.is_primary) return t("workspace.unavailable.alreadyDefault");
   if (!workspace.registered) return t("workspace.unavailable.pinFirst");
@@ -251,7 +249,7 @@ export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: Men
   if (pr) items.push({ id: "open_pull_request", label: t("workspace.menu.openPr", { number: pr.number }), unavailable: null });
   items.push(
     { id: "set_purpose", label: t("workspace.menu.setPurpose"), unavailable: purposeProblem, separated: true },
-    { id: "set_primary", label: t("workspace.menu.setPrimary"), unavailable: primaryProblem(workspace, checkout, t) },
+    { id: "set_primary", label: t("workspace.menu.setPrimary"), unavailable: primaryProblem(workspace, checkout, host.node, t) },
     { id: "copy_branch", label: t("workspace.menu.copyBranch"), unavailable: checkout.branch ? null : t("workspace.unavailable.detached") },
     { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null },
     ...revealItem(workspace, host, t, false),
@@ -320,10 +318,11 @@ export function factsLine(facts: readonly string[]): string {
 export function taskFor(
   operation: TaskOperation | null | undefined,
   request: { kind: string; afterId: number; deviceId?: string; repositoryRoot?: string; branch?: string; path?: string } | null,
+  node: string,
 ): TaskOperation | null {
   if (!operation || !request) return null;
   if (operation.kind !== request.kind || operation.id <= request.afterId) return null;
-  if (request.deviceId !== undefined && receiptDevice(operation.device_id) !== request.deviceId) return null;
+  if (request.deviceId !== undefined && receiptDevice(operation.device_id, node) !== request.deviceId) return null;
   if (request.repositoryRoot !== undefined && operation.repository_root !== request.repositoryRoot) return null;
   if (request.branch !== undefined && operation.branch !== request.branch) return null;
   if (request.path !== undefined && operation.path !== request.path) return null;
@@ -331,8 +330,8 @@ export function taskFor(
 }
 
 /** The removal this page asked for, by the device and checkout it named; another checkout's removal is not its answer. */
-export function removalFor(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string, afterId: number): WorktreeRemoval | null {
-  if (!removal || receiptDevice(removal.device_id) !== deviceId || removal.checkout_path !== checkoutPath || removal.id <= afterId) return null;
+export function removalFor(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string, afterId: number, node: string): WorktreeRemoval | null {
+  if (!removal || receiptDevice(removal.device_id, node) !== deviceId || removal.checkout_path !== checkoutPath || removal.id <= afterId) return null;
   return removal;
 }
 
@@ -341,7 +340,7 @@ export function removalFor(removal: WorktreeRemoval | null | undefined, deviceId
  * answers, whoever confirmed it. A finished removal has taken the row away
  * and a failed one gives it back as it was.
  */
-export function checkoutRemoving(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string): boolean {
-  const current = removalFor(removal, deviceId, checkoutPath, 0);
+export function checkoutRemoving(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string, node: string): boolean {
+  const current = removalFor(removal, deviceId, checkoutPath, 0, node);
   return current !== null && (current.phase === "checking" || current.phase === "closing" || current.phase === "removing");
 }

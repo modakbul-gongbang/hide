@@ -216,7 +216,7 @@ describe("snapshot merge", () => {
     const store = useShellStore.getState();
     const entry = { name: "a.ts", path: "/r/src/a.ts", is_directory: false };
     useShellStore.setState({
-      rest: { navigator: { focused_device_id: "local" } } as never,
+      rest: { navigator: { focused_device_id: "local", devices: [{ id: "local", kind: "local" }] } } as never,
       listings: { "/r/src": { kind: "file_list", root_path: "/r/src", entries: [entry], truncated: false } as never },
       folderChanges: {},
     });

@@ -62,7 +62,7 @@ fn fixture() -> Runtime {
         host: Default::default(),
         kit: Default::default(),
     });
-    runtime.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+    runtime.snapshot.navigator.focused_device_id = Some(crate::node::TEST_NODE.to_owned());
     runtime.snapshot.navigator.focused_workspace_id = Some("workspace-a".to_owned());
     runtime.snapshot.navigator.focused_checkout_id = Some("checkout-a".to_owned());
     runtime.snapshot.navigator.root_path = Some("/tmp/hide-ui-state-focus-a".to_owned());

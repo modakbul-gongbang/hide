@@ -25,7 +25,6 @@ use serde_json::json;
 use crate::handle::ChangeNotifier;
 use crate::host_access::call_as;
 use crate::runtime::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob, Runtime};
-use crate::workspace::LOCAL_DEVICE_ID;
 
 const PUMP_TICK: Duration = Duration::from_millis(250);
 
@@ -63,6 +62,7 @@ impl KitPump {
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
         target: hide_kit::KitTarget,
+        node: crate::node::NodeId,
     ) -> std::io::Result<Self> {
         let (stop, receiver) = mpsc::channel();
         let stop_flag = Arc::clone(&target.stop);
@@ -79,7 +79,7 @@ impl KitPump {
                     let Ok(job) = core.lock().map(|mut locked| {
                         locked
                             .take_local_kit_job(Instant::now())
-                            .map(|job| (job, locked.retirement_projects(LOCAL_DEVICE_ID)))
+                            .map(|job| (job, locked.retirement_projects(node.as_str())))
                     }) else {
                         break;
                     };
@@ -89,7 +89,7 @@ impl KitPump {
                     };
                     let mut target = target.clone();
                     target.retirement_projects = projects.into_iter().map(PathBuf::from).collect();
-                    let report = run(&target, &job);
+                    let report = run(&target, &job, &node);
                     // The hook diagnosis reads the same files, so it is read
                     // again here: Memory's "update hooks" and the agent rows
                     // follow what the kit just wrote.
@@ -99,7 +99,7 @@ impl KitPump {
                         break;
                     };
                     let Ok(changed) = core.lock().map(|mut locked| {
-                        let mut changed = locked.ingest_kit_report(LOCAL_DEVICE_ID, &report);
+                        let mut changed = locked.ingest_kit_report(node.as_str(), &report);
                         if let Some(diagnosis) = diagnosis {
                             changed |= locked.ingest_hook_diagnosis(diagnosis);
                         }
@@ -121,11 +121,15 @@ impl KitPump {
     }
 }
 
-fn run(target: &hide_kit::KitTarget, job: &KitJob) -> hide_kit::KitReport {
+fn run(
+    target: &hide_kit::KitTarget,
+    job: &KitJob,
+    node: &crate::node::NodeId,
+) -> hide_kit::KitReport {
     match job {
         KitJob::Apply(scope) => {
             let report = hide_kit::apply(target, scope);
-            completed(LOCAL_DEVICE_ID, scope, &report);
+            completed(node.as_str(), scope, &report);
             report
         }
         KitJob::Status => hide_kit::status(target),

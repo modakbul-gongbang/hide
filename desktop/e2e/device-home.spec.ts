@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { HIDE_CLI, isolate, relaunch, shellPage, test } from "./fixture";
+import { HIDE_CLI, isolate, nodeOf, relaunch, shellPage, test } from "./fixture";
 import { animationsFinished, compositorPresents } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 300_000 });
@@ -155,7 +155,7 @@ test("a device's Home is made on its first start, the rail follows registration,
 
     // B1: the device's tile joins the rail with This Mac still in front and the same screen.
     await expect(page.locator("[data-rail-tile]")).toHaveCount(2);
-    await expect(page.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(`[data-rail-tile="${nodeOf(run.env)}"]`)).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(`[data-rail-tile="${DEVICE}"]`)).toHaveAttribute("data-rail-connected", "true", { timeout: 120_000 });
     // A device Home start needs the helper, which installs after the route connects.

@@ -415,8 +415,9 @@ impl Runtime {
         {
             self.retire_editor_tab(index);
         }
+        let node = self.node.as_str();
         self.recent_closed
-            .retain(|item| item.device_id() != device_id);
+            .retain(|item| item.device_id(node) != device_id);
         self.sync_recent_closed_snapshot();
         self.forget_device_opens(&scope);
     }
@@ -473,7 +474,7 @@ impl Runtime {
             })?;
         // A device's focus is its Herdr session's, which the core follows;
         // showing one of its files moves nothing on this machine.
-        if device_id != workspace::LOCAL_DEVICE_ID {
+        if device_id != self.node.as_str() {
             return self.activate_editor_tab(tab_id);
         }
         self.activate_editor_tab(tab_id)?;
@@ -643,7 +644,7 @@ impl Runtime {
             .navigator
             .focused_device_id
             .as_deref()
-            .unwrap_or(workspace::LOCAL_DEVICE_ID)
+            .unwrap_or(self.node.as_str())
     }
 
     /// The newest closed item the device in front can reopen. One stack keeps
@@ -655,17 +656,17 @@ impl Runtime {
         self.recent_closed
             .iter()
             .rev()
-            .find(|item| item.device_id() == device)
+            .find(|item| item.device_id(self.node.as_str()) == device)
     }
 
     pub(super) fn sync_recent_closed_snapshot(&mut self) {
         // This machine's close reservations block only this machine's reopen.
-        let local = self.reopen_device() == workspace::LOCAL_DEVICE_ID;
+        let local = self.reopen_device() == self.node.as_str();
         let device = self.reopen_device().to_owned();
         self.snapshot.recent_closed.count = self
             .recent_closed
             .iter()
-            .filter(|item| item.device_id() == device)
+            .filter(|item| item.device_id(self.node.as_str()) == device)
             .count();
         self.snapshot.recent_closed.top_label =
             self.reopenable().map(|item| item.label().to_owned());
@@ -748,7 +749,7 @@ impl Runtime {
             let (device_id, checkout_path) = self
                 .catalog_checkout(&closed_tab.workspace_id, &closed_tab.checkout_id)
                 .map(|(workspace, checkout)| (workspace.device_id.clone(), checkout.path.clone()))
-                .unwrap_or_else(|| (workspace::LOCAL_DEVICE_ID.to_owned(), String::new()));
+                .unwrap_or_else(|| (self.node.as_str().to_owned(), String::new()));
             let key = self.next_recent_closed_key();
             self.push_recent_closed(ClosedItem::File {
                 key,
@@ -1812,7 +1813,7 @@ impl Runtime {
             return;
         }
         self.reopen_after_close = None;
-        let runs = close_completed && self.reopen_device() == workspace::LOCAL_DEVICE_ID;
+        let runs = close_completed && self.reopen_device() == self.node.as_str();
         crate::diagnostic!(serde_json::json!({
             "component": "recent_closed",
             "kind": if runs { "recent_closed.reopen_released" } else { "recent_closed.reopen_dropped" },
@@ -2234,7 +2235,7 @@ impl Runtime {
             }));
             return false;
         }
-        if self.reopen_device() == workspace::LOCAL_DEVICE_ID
+        if self.reopen_device() == self.node.as_str()
             && let Some(key) = self.close_capture_order.back().cloned()
             && let Some(operation) = self.close_operations.get(&key)
         {
@@ -2388,7 +2389,8 @@ impl Runtime {
                 Some(super::projects::owner_open(
                     workspace,
                     checkout,
-                    workspace::LOCAL_DEVICE_ID,
+                    self.node.as_str(),
+                    &self.node,
                 ))
             }
             ClosedItem::File { .. } => None,
@@ -2414,7 +2416,7 @@ impl Runtime {
         {
             return true;
         }
-        let admission = if !tab_exists && self.reopen_device() == workspace::LOCAL_DEVICE_ID {
+        let admission = if !tab_exists && self.reopen_device() == self.node.as_str() {
             match &item {
                 ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => Some((
                     context.checkout_path.clone(),
@@ -2447,7 +2449,7 @@ impl Runtime {
             tab_exists,
             fallback_pane_id,
             owner,
-            codex_daemon: self.codex_daemon(crate::workspace::LOCAL_DEVICE_ID),
+            codex_daemon: self.codex_daemon(self.node.as_str()),
         };
         let spawned = if let ClosedItem::File {
             workspace_id,

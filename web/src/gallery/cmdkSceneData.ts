@@ -27,6 +27,7 @@ export const PR_260 = { number: 260, title: "Terminal links click path", url: "h
 export const RICH = {
   navigator: {
     focused_device_id: "local",
+    devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }],
     agents: [PARENT, CHILD, OTHER],
     workspaces: [
       {

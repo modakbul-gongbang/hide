@@ -303,6 +303,7 @@ impl Runtime {
             }
             _ => {
                 let workspaces = workspace::build_catalog(
+                    &self.node,
                     &self.snapshot.ui_state.workspace_registrations,
                     &self.last_session_spaces,
                     &self.worktree_catalog,
@@ -432,6 +433,7 @@ impl Runtime {
                             })
                     });
                     let Some(workspace_snapshot) = find_workspace_for_context(
+                        &self.node,
                         &mut workspaces,
                         context_path.as_deref(),
                         &layout.workspace_id,
@@ -550,8 +552,8 @@ impl Runtime {
         for workspace in &mut workspaces {
             let is_git = workspace.is_git;
             for checkout in &mut workspace.checkouts {
-                checkout.owner_workspace_id = crate::checkout_owner::owner_of(
-                    workspace::LOCAL_DEVICE_ID,
+                checkout.owner_workspace_id = crate::checkout_owner::node_owner_of(
+                    self.node.as_str(),
                     &checkout.path,
                     is_git,
                     owner_facts.iter().copied(),
@@ -648,7 +650,7 @@ impl Runtime {
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices =
-            workspace::devices(&self.snapshot.ui_state.device_registrations);
+            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
         self.refresh_device_snapshots();
         // An agent belongs to the device whose project holds its pane. The
         // project label is no longer Herdr's workspace label once a
@@ -670,7 +672,7 @@ impl Runtime {
                 .count() as u32;
         }
         if self.snapshot.navigator.focused_device_id.is_none() {
-            self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+            self.snapshot.navigator.focused_device_id = Some(self.node.as_str().to_owned());
         }
         self.resync_navigator_focus();
         self.rebuild_tab_strips();
@@ -1287,9 +1289,7 @@ impl Runtime {
                 let key = (workspace.device_id.clone(), checkout.path.clone());
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
-                if workspace.device_id == workspace::LOCAL_DEVICE_ID
-                    && self.workspace_views.is_some()
-                {
+                if workspace.device_id == self.node.as_str() && self.workspace_views.is_some() {
                     let topology = checkout
                         .tabs
                         .iter()
@@ -1395,7 +1395,7 @@ impl Runtime {
                             // Creation provenance keeps external admissions from
                             // stealing the canvas. Snapshots without event metadata
                             // use first membership; local creates carry a claim.
-                            && (workspace.device_id != workspace::LOCAL_DEVICE_ID
+                            && (workspace.device_id != self.node.as_str()
                                 || self.workspace_views.is_none()
                                 || answered.iter().any(|request| request.tab_id == *tab_id)
                                 || asks.asked(tab_id)
@@ -3851,7 +3851,7 @@ impl Runtime {
         let device = request.device.as_deref();
         self.next_explorer_operation_id = self.next_explorer_operation_id.wrapping_add(1).max(1);
         let id = self.next_explorer_operation_id;
-        let device = device.unwrap_or(workspace::LOCAL_DEVICE_ID);
+        let device = device.unwrap_or(self.node.as_str());
         let target = self
             .front_checkout_owned()
             .and_then(|(workspace_id, checkout_id)| {
@@ -3946,7 +3946,7 @@ impl Runtime {
     /// The folders the Explorer has expanded on `device`: this machine's in
     /// `expanded_paths`, a device's in its own entry.
     pub(super) fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
-        if device == workspace::LOCAL_DEVICE_ID {
+        if device == self.node.as_str() {
             &mut self.snapshot.ui_state.expanded_paths
         } else {
             self.snapshot
@@ -4162,12 +4162,8 @@ impl Runtime {
             kind: operation.agent_kind.clone()?,
             prompt: launch.and_then(|launch| launch.prompt.clone()),
             args: launch.map(|launch| launch.args.clone()).unwrap_or_default(),
-            codex_daemon: self.codex_daemon(
-                operation
-                    .device_id
-                    .as_deref()
-                    .unwrap_or(crate::workspace::LOCAL_DEVICE_ID),
-            ),
+            codex_daemon: self
+                .codex_daemon(operation.device_id.as_deref().unwrap_or(self.node.as_str())),
         })
     }
 
@@ -4407,7 +4403,7 @@ impl Runtime {
                         if store.agent_placements.len() < 64 {
                             store.agent_placements.insert(
                                 tab_id.clone(),
-                                ((workspace::LOCAL_DEVICE_ID.to_owned(), path), area, None),
+                                ((self.node.as_str().to_owned(), path), area, None),
                             );
                         } else {
                             self.push_diagnostic(
@@ -4718,6 +4714,7 @@ impl Runtime {
     #[cfg(test)]
     pub(super) fn rebuild_catalog(&mut self) {
         let mut workspaces = workspace::build_catalog(
+            &self.node,
             &self.snapshot.ui_state.workspace_registrations,
             &self.last_session_spaces,
             &self.worktree_catalog,
@@ -4740,7 +4737,7 @@ impl Runtime {
         );
         self.snapshot.navigator.workspaces = workspaces;
         self.snapshot.navigator.devices =
-            workspace::devices(&self.snapshot.ui_state.device_registrations);
+            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
         self.refresh_device_snapshots();
         self.resync_navigator_focus();
     }
@@ -5109,7 +5106,7 @@ impl Runtime {
                 "Workspace registrations changed during creation; session sync will refresh the catalog",
             );
         }
-        self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
+        self.snapshot.navigator.focused_device_id = Some(self.node.as_str().to_owned());
         self.reconcile_remote_terminal_selection();
         let target_checkout = outcome
             .workspaces

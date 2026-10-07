@@ -685,7 +685,7 @@ test("the phone's start sheet starts an agent in a checkout and in Home, and kee
     const sheet = phone.locator('[data-phone-start-sheet="true"]');
     await expect(sheet).toBeVisible();
     const target = sheet.locator('[data-phone-start-target="true"]');
-    await expect(target).toHaveValue("home:local", { timeout: 20_000 });
+    await expect(target).toHaveValue(`home:${daemon.node}`, { timeout: 20_000 });
     await expect(target.locator("option:checked")).toHaveText("This Mac · Home");
     await expect(sheet.locator('[data-phone-start-kind="true"]')).toHaveValue("claude");
     await expect(sheet.locator('[data-phone-start-submit="true"]')).toBeDisabled();
@@ -734,7 +734,7 @@ test("the phone's start sheet starts an agent in a checkout and in Home, and kee
     await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 30_000 });
 
     // B42, B43: This Mac's Home is the default target; the start lands on its agent.
-    await expect(target).toHaveValue("home:local");
+    await expect(target).toHaveValue(`home:${daemon.node}`);
     await sheet.locator('[data-phone-start-submit="true"]').tap();
     await expect(detail).toBeVisible({ timeout: 45_000 });
     await expect(detail).not.toHaveAttribute("data-phone-detail", new RegExp(`\\|${pane}$`));

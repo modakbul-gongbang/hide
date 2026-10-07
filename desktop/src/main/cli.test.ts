@@ -200,6 +200,16 @@ describe("the hide CLI's answers", () => {
     });
   });
 
+  it("carries the file a refused state folder names, and reads a refusal without one as unreadable", () => {
+    expect(parseConnect(result('{"ok":false,"reason":"state_refused","detail":"belongs to node x","file":"/s/node.json"}', { code: 2 }))).toEqual({
+      kind: "failed",
+      reason: "state_refused",
+      detail: "belongs to node x",
+      file: "/s/node.json",
+    });
+    expect(parseConnect(result('{"ok":false,"reason":"state_refused","detail":"x"}', { code: 2 }))).toMatchObject({ reason: "start_failed" });
+  });
+
   it("keeps the CLI's failure category and turns everything unreadable into start_failed", () => {
     expect(parseConnect(result('{"ok":false,"reason":"no_response","detail":"not healthy"}', { code: 2 }))).toEqual({
       kind: "failed",

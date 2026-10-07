@@ -131,18 +131,6 @@ where
             ..base()
         };
     };
-    let Ok(project) = hide_project::resolve(&cwd, "local") else {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::ProjectUnresolved,
-            ..base()
-        };
-    };
-    if expired() {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::Deadline,
-            ..base()
-        };
-    }
     let Ok(store) =
         MemoryStore::open_hook_read_only_with_expiry(&database_path(home), expired.clone())
     else {
@@ -154,6 +142,27 @@ where
         }
         return base();
     };
+    // A Project is keyed by the machine it lives on, the node id the core
+    // stores it under (PRD core-host-node D-23). It is read only once a store
+    // exists, so a machine without Project Memory pays no lookup.
+    let Ok(node) = hide_platform::host::machine_id() else {
+        return HookMemoryResult {
+            outcome: HookMemoryOutcome::ProjectUnresolved,
+            ..base()
+        };
+    };
+    let Ok(project) = hide_project::resolve(&cwd, &node) else {
+        return HookMemoryResult {
+            outcome: HookMemoryOutcome::ProjectUnresolved,
+            ..base()
+        };
+    };
+    if expired() {
+        return HookMemoryResult {
+            outcome: HookMemoryOutcome::Deadline,
+            ..base()
+        };
+    }
     let runtime_id = match runtime {
         AgentRuntime::Codex => "codex",
         AgentRuntime::ClaudeCode => "claude",
@@ -300,6 +309,11 @@ fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The node id the hook keys this machine's Projects by.
+    fn node() -> String {
+        hide_platform::host::machine_id().unwrap()
+    }
     use hide_memory::{
         AnalysisBatch, Candidate, CandidateKind, CandidateRelation, Injection, InjectionOutcome,
         SessionSourceRecord,
@@ -365,12 +379,12 @@ mod tests {
         let project_root = temp.path().join("project-memory");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &node()).unwrap();
         let path = database_path(&home);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut store = MemoryStore::open(&path).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &node())
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         store
@@ -435,12 +449,12 @@ mod tests {
         let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &node()).unwrap();
         let path = database_path(&home);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut store = MemoryStore::open(&path).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &node())
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         for index in 0..6 {
@@ -520,12 +534,12 @@ mod tests {
         let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &node()).unwrap();
         let path = database_path(&home);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut store = MemoryStore::open(&path).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &node())
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         for index in 0..8 {
@@ -678,12 +692,12 @@ mod tests {
         let linked_cwd = linked.join("crates/memory/src");
         fs::create_dir_all(&linked_cwd).unwrap();
 
-        let project = hide_project::resolve(&linked_cwd, "local").unwrap();
+        let project = hide_project::resolve(&linked_cwd, &node()).unwrap();
         let path = database_path(&home);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut store = MemoryStore::open(&path).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &node())
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         store
@@ -898,12 +912,12 @@ mod tests {
         let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &node()).unwrap();
         let path = database_path(&home);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut store = MemoryStore::open(&path).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &node())
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         let body = "Keep the invocation deadline through rendering";
@@ -1048,12 +1062,12 @@ mod tests {
         let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
-        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let project = hide_project::resolve(&project_root, &node()).unwrap();
         let path = database_path(&home);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let store = MemoryStore::open(&path).unwrap();
         store
-            .ensure_project(&project.id, &project.root, "local")
+            .ensure_project(&project.id, &project.root, &node())
             .unwrap();
         drop(store);
 

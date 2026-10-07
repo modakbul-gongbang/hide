@@ -39,6 +39,19 @@ h1 {
   color: var(--color-muted-foreground);
 }
 
+/* The file a refused start names sits between the reason and Retry. */
+#reason:has(+ #file:not([hidden])) {
+  margin-bottom: var(--spacing-xs);
+}
+
+#file {
+  margin: 0 0 var(--spacing-lg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 button {
   height: var(--size-control);
   padding: 0 var(--spacing-md);

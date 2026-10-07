@@ -26,7 +26,7 @@ pub(super) fn with_new_views(runtime: Runtime, name: &str) -> Runtime {
 pub(super) fn with_views(mut runtime: Runtime, path: &Path) -> Runtime {
     let roots = runtime
         .catalog_workspaces()
-        .filter(|workspace| workspace.device_id == workspace::LOCAL_DEVICE_ID)
+        .filter(|workspace| workspace.device_id == crate::node::TEST_NODE)
         .flat_map(|workspace| workspace.checkouts.iter())
         .filter_map(|checkout| {
             let path = PathBuf::from(&checkout.path);
@@ -127,7 +127,7 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     runtime.snapshot.navigator.workspaces = vec![project.clone()];
     runtime = with_views_only(runtime, &directory.path().join("views.json"));
     let store = runtime.workspace_views.as_mut().unwrap();
-    let layout = &mut store.views.entry("local", &path).layout;
+    let layout = &mut store.views.entry(crate::node::TEST_NODE, &path).layout;
     let browser = layout.new_browser_display("https://example.test/inventory", 1);
     let id = browser.id.clone();
     layout.insert("a1", browser, 1).unwrap();
@@ -137,7 +137,10 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     assert_eq!(runtime.snapshot.browser_views[0].view_id, id);
     assert_eq!(runtime.snapshot.browser_views[0].area_id, "a1");
     assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
-    assert_eq!(runtime.snapshot.browser_scopes[0].device_id, "local");
+    assert_eq!(
+        runtime.snapshot.browser_scopes[0].device_id,
+        crate::node::TEST_NODE
+    );
     assert_eq!(runtime.snapshot.browser_scopes[0].path, path);
     assert_eq!(runtime.snapshot.browser_scopes[0].area_id, "a1");
     let original_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
@@ -166,7 +169,7 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
             .as_ref()
             .unwrap()
             .views
-            .get("local", &path)
+            .get(crate::node::TEST_NODE, &path)
             .unwrap()
             .layout
             .display(&id)
@@ -199,7 +202,7 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     let store = runtime.workspace_views.as_mut().unwrap();
     store
         .views
-        .entry("local", &path)
+        .entry(crate::node::TEST_NODE, &path)
         .layout
         .remove(&id)
         .unwrap();
@@ -224,7 +227,7 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
     let mut runtime = with_views(runtime, &directory.join("views.json"));
     with_tabs(&mut runtime, &directory);
     let store = runtime.workspace_views.as_mut().unwrap();
-    let layout = &mut store.views.entry("local", &path).layout;
+    let layout = &mut store.views.entry(crate::node::TEST_NODE, &path).layout;
     let browser = layout.new_browser_display("https://example.test/scoped", 1);
     layout.insert("a1", browser, 1).unwrap();
     store.generation += 1;
@@ -783,7 +786,7 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
             id: "workspace:other".to_owned(),
             label: "other".to_owned(),
             path: other.to_string_lossy().into_owned(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         });
@@ -877,7 +880,7 @@ pub(super) fn second_checkout(runtime: &mut Runtime, directory: &Path) -> (PathB
             id: "workspace:other".to_owned(),
             label: "other".to_owned(),
             path: other.to_string_lossy().into_owned(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         });
@@ -890,7 +893,11 @@ fn saved_displays(runtime: &Runtime, path: &Path) -> Vec<String> {
     runtime
         .workspace_views
         .as_ref()
-        .and_then(|store| store.views.get("local", &path.to_string_lossy()))
+        .and_then(|store| {
+            store
+                .views
+                .get(crate::node::TEST_NODE, &path.to_string_lossy())
+        })
         .map(|entry| {
             entry
                 .layout
@@ -1066,7 +1073,9 @@ fn removing_a_device_forgets_its_workspace_views() {
         });
     let store = runtime.workspace_views.as_mut().unwrap();
     store.views.entry("studio", "/srv/app").views = true;
-    store.views.entry("local", &directory.to_string_lossy());
+    store
+        .views
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy());
     runtime.apply_area_intent_to(
         &("studio".to_owned(), "/srv/app".to_owned()),
         AreaIntent::Views,
@@ -1079,7 +1088,11 @@ fn removing_a_device_forgets_its_workspace_views() {
 
     let views = &runtime.workspace_views.as_ref().unwrap().views;
     assert!(views.get("studio", "/srv/app").is_none());
-    assert!(views.get("local", &directory.to_string_lossy()).is_some());
+    assert!(
+        views
+            .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+            .is_some()
+    );
     assert!(
         runtime
             .workspace_views

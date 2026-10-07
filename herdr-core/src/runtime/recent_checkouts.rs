@@ -35,7 +35,7 @@ impl Runtime {
             .navigator
             .focused_device_id
             .as_deref()
-            .unwrap_or(workspace::LOCAL_DEVICE_ID);
+            .unwrap_or(self.node.as_str());
         let Some((workspace, checkout)) = self.catalog_checkout(workspace_id, checkout_id) else {
             return;
         };

@@ -342,6 +342,8 @@ export function canRetryDevice(device: Device, remote: RemoteStatus | undefined)
 /**
  * The id a new device registers under: the alias folded to the core's id
  * shape, with a numeric suffix when an existing device already holds it.
+ * `local`, the id the core's own machine had before it was named by its
+ * node id, is refused by the core and never offered.
  */
 export function deviceIdFor(alias: string, existing: readonly string[]): string {
   const base =
