@@ -362,9 +362,9 @@ impl std::fmt::Display for NotLearned {
 /// removal or edit means a writer other than Herdr's install touched the file
 /// in the window, and nothing is learned. The entries the call added are
 /// Herdr's, and so are the recorded entries still in the file (Herdr leaves an
-/// entry it already wrote alone and only replaces its script), so a record
-/// never names an entry that is gone. More than [`MAX_LEARNED_ENTRIES`] added
-/// is refused too.
+/// entry it already wrote alone and only replaces its script), so an accepted
+/// learn drops the entries that are gone. More than [`MAX_LEARNED_ENTRIES`]
+/// added is refused too, and a refusal leaves the record as it was.
 pub fn learn_herdr_entries(
     before: &BTreeSet<HookEntry>,
     after: &BTreeSet<HookEntry>,
