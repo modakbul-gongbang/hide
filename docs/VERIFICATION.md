@@ -153,19 +153,22 @@ An uncatchable controller kill can retain private copies in the ignored run dire
 Authenticated probing currently requires macOS `sandbox-exec`; a real write/socket denial self-test must pass before a provider starts.
 Unsupported hosts fail closed.
 The process guardian supports macOS and the trusted Linux fixture lane; Linux authenticated probing remains unsupported.
-On macOS it retains birth-checked ancestry and discovers same-UID ordinary orphans and traced children through the inherited private owner token.
-The traced-child candidate follows XNU's [public process flag](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info.h#L104) and [tracer/original-parent reparenting](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_exit.c#L2420); a traced flag alone never proves ownership.
-On Linux a successfully established child subreaper retains ordinary daemonized descendants and nested owned subreapers through ancestry, rather than assuming their parent is PID 1.
-Every Linux process-table read requires a matching procfs PID namespace and unrestricted process visibility; an ancestor procfs, missing namespace evidence, restrictive `hidepid` policy or process-entry overmount fails the run before those PIDs can be signalled.
-These checks follow the kernel's [namespace ID rendering](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/fs/proc/array.c#L207), [procfs visibility contract](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/Documentation/filesystems/proc.rst#L2393) and [subreaper selection](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/kernel/exit.c#L640).
-The ownership contract covers trusted same-UID CLI forks and execs, including ordinary double-fork/setsid daemonization; privileged identity changes, entry into an existing external PID namespace, external process brokers and deliberate removal of an unseen child's token are outside that contract and cannot support a cleanup or native-safety acceptance claim.
-Unavailable process metadata or owner-token inspection makes cleanup unconfirmed, while readable peers with current birth-matched ownership still receive bounded teardown.
-Darwin token lookup parses the actual environment using the sampled target pointer width and rechecks the candidate's birth, UID and pointer width afterward; a successful argv-only answer with omitted environment cannot classify a restricted helper as unrelated.
-It preserves empty arguments using XNU's [executable-path alignment](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_exec.c#L6061), with width from the [public LP64 flag](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info.h#L107).
-When the first argument is empty, a positive environment token still proves ownership, but an absent token remains unconfirmed because the kernel's [restricted-target crop](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sysctl.c#L1528) may return only an environment prefix.
-An unavailable answer records the candidate PID/birth/parent, guardian PID, target width, query byte counts and a fixed structural refusal reason/offset; it records no executable, argument, environment or owner-token contents.
-The caller retains at most four diagnostic lines of 512 characters each inside the existing output cap, so an unavailable environment can be distinguished from invalid padding or an incomplete argument envelope without weakening cleanup failure.
-Linux's final poll also requires the subreaper's kernel no-child result, including clone children; macOS disappearance during enumeration or token lookup requires another view within the existing two-second teardown deadline, after which unresolved observation fails.
+Every direct child starts in its own session and process group.
+An EOF guardian sends CONT and TERM to that group, allows a bounded grace period, then sends KILL and requires the kernel to report the group absent.
+It retains the direct child's unreaped identity until the last group signal, so its group ID cannot be reused during signalling.
+No group signal is sent after that child is reaped.
+Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
+A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
+A different live guardian's marker belongs to concurrent work and is excluded.
+The private Herdr server and hided also receive their protocol close before process teardown.
+Unrelated orphans whose environment is empty or unreadable are neither signalled nor treated as cleanup failures.
+The report lists these as "출처 확인 못 함" with only PID, birth and executable name, within a declared record cap.
+A known owned identity that becomes uninspectable still makes cleanup unconfirmed.
+An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution; record this limitation in the PR's Review section.
+This ownership boundary follows the explicitly recorded B8/D-09 scope decision; it does not claim complete workstation process attribution.
+Linux fixture supervision uses a child subreaper and validates its procfs namespace and visibility before using process identities.
+Darwin group enumeration uses Apple's [process-group API](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c).
+Token lookup preserves the existing target-width alignment and birth checks and records no argument, environment or marker contents.
 `--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
 
 Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.

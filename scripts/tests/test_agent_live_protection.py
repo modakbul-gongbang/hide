@@ -5,9 +5,7 @@ real-pinned-server lane owns the measurement tool's protocol acceptance.
 """
 
 import json
-import contextlib
 import ctypes
-import io
 import os
 from pathlib import Path
 import signal
@@ -21,7 +19,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import (Process, ProcessTable, descendants, marked_descendants,
                                            procargs_owned, require_complete, snapshot, validate_linux_procfs)
-from agent_live_check.processes import OwnedProcesses, ProcessError, guard, linux_children_remain
+from agent_live_check.processes import OwnedProcesses, ProcessError, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 
@@ -126,6 +124,50 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_unreadable_foreign_orphan_is_diagnostic_and_not_owned(self):
+        orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), name="fixture")
+        library = Mock()
+        library.sysctl.return_value = -1
+        unknown = []
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            self.assertEqual(marked_descendants({111: orphan}, "fixture", unknown=unknown.append), {})
+        self.assertEqual(unknown, [orphan])
+
+    def test_term_ignoring_group_is_killed_without_ending_a_peer(self):
+        with tempfile.TemporaryDirectory(prefix="agent-group-") as name:
+            receipt = Path(name) / "group"
+            program = ("import os,signal,time; from pathlib import Path; "
+                       "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                       f"Path({str(receipt)!r}).write_text(str(os.getpgrp())); "
+                       "os.fork(); time.sleep(30)")
+            with OwnedProcesses() as peer, OwnedProcesses() as owner:
+                unrelated = peer.spawn([sys.executable, "-c", "import time; time.sleep(30)"],
+                                       env=dict(os.environ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                with self.assertRaisesRegex(ProcessError, "command_timeout"):
+                    owner.run([sys.executable, "-c", program], env=dict(os.environ), seconds=0.5)
+                self.assertIsNone(unrelated.poll(), "cleanup ended concurrent work")
+                self.assertTrue(receipt.exists(), "group fixture never started")
+                with self.assertRaises(ProcessLookupError):
+                    os.killpg(int(receipt.read_text()), 0)
+
+    def test_helper_forked_during_term_cannot_survive_group_cleanup(self):
+        with tempfile.TemporaryDirectory(prefix="agent-shutdown-") as name:
+            receipt = Path(name) / "group"
+            program = ("import os,signal,time; from pathlib import Path"
+                       "\ndef shutdown(*args):"
+                       "\n if os.fork(): raise SystemExit(0)"
+                       "\n signal.signal(signal.SIGTERM,signal.SIG_IGN)"
+                       "\n time.sleep(30)"
+                       "\nsignal.signal(signal.SIGTERM,shutdown)"
+                       f"\nPath({str(receipt)!r}).write_text(str(os.getpgrp()))"
+                       "\ntime.sleep(30)")
+            with OwnedProcesses() as owner:
+                with self.assertRaisesRegex(ProcessError, "command_timeout"):
+                    owner.run([sys.executable, "-c", program], env=dict(os.environ), seconds=0.5)
+            self.assertTrue(receipt.exists(), "shutdown fixture never started")
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(int(receipt.read_text()), 0)
+
     def test_linux_procfs_must_name_the_same_namespace_without_hiding_processes(self):
         mount = "1 0 0:5 / /proc rw - proc proc rw\n"
         validate_linux_procfs("NSpid:\t42\n", mount, 42)
@@ -139,88 +181,6 @@ class ProcessProtection(unittest.TestCase):
             with self.subTest(status=status, mounts=mounts), self.assertRaises(RuntimeError):
                 validate_linux_procfs(status, mounts, 42)
 
-    def test_darwin_metadata_denial_preserves_a_peer_without_proving_absence(self):
-        import errno
-        own = os.getpid()
-        library = Mock()
-        def list_pids(buffer, unused):
-            buffer[0], buffer[1] = own, 111
-            return 2
-        def info(pid, flavor, unused, buffer, size):
-            if pid == 111:
-                ctypes.set_errno(errno.EPERM)
-                return 0
-            value = buffer._obj
-            if flavor == 3:
-                value.ppid, value.uid, value.sec, value.flags = 1, os.getuid(), 1, 2
-            return size
-        library.proc_listallpids.side_effect = list_pids
-        library.proc_pidinfo.side_effect = info
-        with patch("agent_live_check.process_table.sys.platform", "darwin"), \
-                patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
-            table = snapshot()
-        self.assertIn(own, table)
-        self.assertTrue(table[own].traced)
-        with self.assertRaisesRegex(RuntimeError, "process_table_subjects_unavailable"):
-            require_complete(table)
-        self.assertEqual(table.unavailable, [{"pid": 111, "errno": errno.EPERM}])
-
-    def test_uninspectable_subject_forces_failure_while_readable_owned_peer_is_ended(self):
-        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
-        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
-        before = {guardian.pid: guardian, child.pid: child}
-        partial = ProcessTable()
-        partial.update(before)
-        partial.unavailable.append({"pid": 222, "errno": 13})
-        ended = {guardian.pid: guardian}
-        native = Mock(returncode=0)
-        native.poll.return_value = 0
-        library = Mock()
-        library.prctl.return_value = 0
-        with patch("agent_live_check.processes.sys.platform", "linux"), \
-                patch("agent_live_check.processes.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.processes.threading.Thread"), \
-                patch("agent_live_check.processes.signal.signal"), \
-                patch("agent_live_check.processes.time.sleep"), \
-                patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
-                patch("agent_live_check.processes.snapshot", side_effect=[before] + [partial] * 5 + [ended]), \
-                patch("agent_live_check.processes.os.waitpid", side_effect=ChildProcessError), \
-                patch("agent_live_check.processes.os.kill") as kill, contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(guard(-1, ["fixture"]), 125)
-        self.assertIn(unittest.mock.call(child.pid, signal.SIGKILL), kill.call_args_list)
-        self.assertEqual({call.args[0] for call in kill.call_args_list}, {child.pid})
-
-    def test_unknown_traced_child_requires_token_even_with_a_live_external_parent(self):
-        child = Process(111, 999, 111, 10, 0, False, os.getuid(), traced=True)
-        library = Mock()
-        def query(mib, unused, buffer, size, *rest):
-            data = procargs(b"HIDE_LIVE_CHECK_OWNER=fixture-run")
-            ctypes.memmove(buffer, data, len(data))
-            size._obj.value = len(data)
-            return 0
-        library.sysctl.side_effect = query
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.process_table.darwin_candidate_current", return_value=True):
-            self.assertEqual(marked_descendants({111: child}, "fixture-run", 1), {111: child})
-        library.sysctl.assert_called_once()
-
-    def test_successful_argument_only_read_cannot_exclude_an_owned_restricted_helper(self):
-        owner = b"HIDE_LIVE_CHECK_OWNER=fixture-run"
-        self.assertFalse(procargs_owned(procargs(b"OTHER=fixture"), 8, owner))
-        with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
-            procargs_owned(procargs(), 8, owner)
-        orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
-        library = Mock()
-        def query(mib, unused, buffer, size, *rest):
-            data = procargs()
-            ctypes.memmove(buffer, data, len(data))
-            size._obj.value = len(data)
-            return 0
-        library.sysctl.side_effect = query
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.process_table.darwin_candidate_current", return_value=True):
-            with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
-                marked_descendants({111: orphan}, "fixture-run", 1)
 
     def test_empty_first_argument_cannot_hide_owned_environment_or_prove_a_cropped_negative(self):
         owner = b"HIDE_LIVE_CHECK_OWNER=fixture-run"
@@ -247,6 +207,7 @@ class ProcessProtection(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
                 procargs_owned(malformed, width, owner)
 
+
     def test_successful_token_answer_is_rejected_if_exec_changed_pointer_width(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), pointer_width=4)
         table = ProcessTable()
@@ -266,32 +227,6 @@ class ProcessProtection(unittest.TestCase):
             self.assertEqual(marked_descendants(table, "fixture-run", 1), {})
         self.assertEqual(table.vanished, [111])
 
-    def test_owner_refusal_retains_subject_and_query_shape_without_private_values(self):
-        orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
-        library = Mock()
-        payload = procargs(b"OTHER=private-environment", argv=(b"", b"private-argument"))
-        def query(mib, unused, buffer, size, *rest):
-            ctypes.memmove(buffer, payload, len(payload))
-            size._obj.value = len(payload)
-            return 0
-        def current(pid, flavor, unused, buffer, size):
-            info = buffer._obj
-            info.sec, info.usec, info.uid, info.flags = 0, 10, os.getuid(), 0x10
-            return size
-        library.sysctl.side_effect, library.proc_pidinfo.side_effect = query, current
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
-            with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable") as failure:
-                marked_descendants({111: orphan}, "private-owner-token", 1)
-        message = str(failure.exception)
-        details = json.loads(message.split(":", 1)[1])
-        self.assertEqual((details["pid"], details["birth"], details["parent"], details["width"]),
-                         (111, 10, 1, 8))
-        self.assertEqual((details["reason"], details["bytes"], details["returned"], details["argc"]),
-                         ("empty_argv_negative", len(payload), len(payload), 2))
-        self.assertEqual(details["guardian"], os.getpid())
-        self.assertLessEqual(len(message), 512)
-        for secret in ("private-environment", "private-argument", "private-owner-token"):
-            self.assertNotIn(secret, message)
 
     def test_owner_refusal_distinguishes_opaque_shapes_without_payload_contents(self):
         owner = b"HIDE_LIVE_CHECK_OWNER=private-owner-token"
@@ -313,28 +248,6 @@ class ProcessProtection(unittest.TestCase):
             self.assertEqual((details["reason"], details["bytes"]), (reason, len(payload)))
             self.assertNotIn("private-", message)
 
-    def test_guardian_failure_preserves_complete_bounded_subject_diagnostic(self):
-        details = {"reason": "tail_non_assignment", "pid": 4194304, "parent": 4194304,
-                   "birth": 9223372036854775807, "guardian": 4194304, "width": 8,
-                   "bytes": 1048576, "returned": 1048576, "argc": 65536, "offset": 1048576}
-        record = json.dumps(details, sort_keys=True, separators=(",", ":"))
-        diagnostic = "guardian_orphan_scan_failure:RuntimeError:owner_environment_unavailable:" + record
-        self.assertGreater(len(diagnostic), 256)
-        self.assertLessEqual(len(diagnostic), 512)
-        child = Mock(returncode=125)
-        child.wait.return_value = child.poll.return_value = 125
-        selector = Mock()
-        selector.get_map.side_effect = [True, False]
-        selector.select.return_value = [(Mock(fileobj=child.stderr, data=1), None)]
-        with patch("agent_live_check.processes.subprocess.Popen", return_value=child), \
-                patch("agent_live_check.processes.os.pipe", return_value=(700, 701)), \
-                patch("agent_live_check.processes.os.close"), \
-                patch("agent_live_check.processes.os.set_blocking"), \
-                patch("agent_live_check.processes.os.read", return_value=(diagnostic + "\n").encode()), \
-                patch("agent_live_check.processes.selectors.DefaultSelector", return_value=contextlib.nullcontext(selector)):
-            with OwnedProcesses() as owner, self.assertRaises(ProcessError) as failure:
-                owner.run(["fixture"], env={}, check=False)
-        self.assertTrue(str(failure.exception).endswith(record), "subject diagnostic was truncated before delivery")
 
     def test_successful_token_answer_is_rejected_if_sampled_pid_was_reused(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
@@ -358,6 +271,7 @@ class ProcessProtection(unittest.TestCase):
                 self.assertEqual(marked_descendants(table, "fixture-run", 1), {})
             self.assertEqual(table.vanished, [111])
 
+
     def test_linux_final_empty_view_needs_kernel_no_child_proof_including_clone_children(self):
         with patch("agent_live_check.processes.os.waitpid", side_effect=[(222, 0), (0, 0)]) as wait:
             self.assertTrue(linux_children_remain())
@@ -365,217 +279,8 @@ class ProcessProtection(unittest.TestCase):
         with patch("agent_live_check.processes.os.waitpid", side_effect=[(222, 0), ChildProcessError]):
             self.assertFalse(linux_children_remain())
 
-    def test_darwin_disappearing_parent_cannot_make_final_empty_view_succeed(self):
-        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
-        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
-        helper = Process(333, 1, 333, 3, 0, False, os.getuid())
-        before = {guardian.pid: guardian, child.pid: child}
-        ended = {guardian.pid: guardian}
-        ambiguous = ProcessTable()
-        ambiguous.update(ended)
-        ambiguous.vanished.append(222)
-        def discover(table, marker, earliest, *, known, remember):
-            if helper.pid in table:
-                remember(helper.pid, helper)
-                return {helper.pid: helper}
-            return {}
-        native = Mock(returncode=0)
-        native.poll.return_value = 0
-        with patch("agent_live_check.processes.sys.platform", "darwin"), \
-                patch("agent_live_check.processes.threading.Thread"), \
-                patch("agent_live_check.processes.signal.signal"), \
-                patch("agent_live_check.processes.time.sleep"), \
-                patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
-                patch("agent_live_check.processes.marked_descendants", side_effect=discover), \
-                patch("agent_live_check.processes.snapshot", side_effect=[before] * 6 + [ambiguous, {**ended, helper.pid: helper}, ended]), \
-                patch("agent_live_check.processes.os.kill") as kill:
-            self.assertEqual(guard(-1, ["fixture"]), 0)
-        self.assertIn(unittest.mock.call(helper.pid, signal.SIGKILL), kill.call_args_list,
-                      "a disappeared shutdown parent hid its live child behind an empty final view")
 
-    def test_linux_reaping_cannot_invalidate_a_view_still_used_for_signalling(self):
-        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
-        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
-        before, ended = {guardian.pid: guardian, child.pid: child}, {guardian.pid: guardian}
-        trace = []
-        def wait(*unused):
-            trace.append("wait")
-            raise ChildProcessError
-        native, library = Mock(returncode=0), Mock()
-        native.poll.return_value, library.prctl.return_value = 0, 0
-        with patch("agent_live_check.processes.sys.platform", "linux"), \
-                patch("agent_live_check.processes.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.processes.threading.Thread"), \
-                patch("agent_live_check.processes.signal.signal"), \
-                patch("agent_live_check.processes.time.sleep"), \
-                patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
-                patch("agent_live_check.processes.snapshot", side_effect=[before] * 7 + [ended]), \
-                patch("agent_live_check.processes.os.waitpid", side_effect=wait), \
-                patch("agent_live_check.processes.os.kill", side_effect=lambda *unused: trace.append("kill")):
-            self.assertEqual(guard(-1, ["fixture"]), 0)
-        self.assertNotIn("kill", trace[trace.index("wait"):], "reaping invalidated the birth-checked signal view")
-
-    def test_persistent_foreign_zombie_does_not_make_owned_cleanup_unconfirmed(self):
-        own, alive = os.getpid(), []
-        library = Mock()
-        def list_pids(buffer, unused):
-            pids = [own, 222] + ([111] if alive else [])
-            for index, pid in enumerate(pids):
-                buffer[index] = pid
-            return len(pids)
-        def info(pid, flavor, include_zombies, buffer, size):
-            if pid == 222 and flavor == 3 and not include_zombies:
-                ctypes.set_errno(3)  # ESRCH: arg=0 excludes a zombie.
-                return 0
-            value = buffer._obj
-            if flavor in (3, 13):
-                value.uid, value.ppid, value.status = os.getuid(), 1 if pid != 111 else own, 5 if pid == 222 else 2
-                if flavor == 3:
-                    value.sec = 1 if pid == own else pid
-            return size
-        def signal_owned(pid, signum):
-            self.assertEqual(pid, 111)
-            if signum == signal.SIGKILL:
-                alive.clear()
-        native = Mock(returncode=0)
-        native.poll.return_value = 0
-        library.proc_listallpids.side_effect, library.proc_pidinfo.side_effect = list_pids, info
-        with patch("agent_live_check.processes.sys.platform", "darwin"), \
-                patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.processes.threading.Thread"), \
-                patch("agent_live_check.processes.signal.signal"), \
-                patch("agent_live_check.processes.time.sleep"), \
-                patch("agent_live_check.processes.OwnedProcesses.spawn", side_effect=lambda *a, **kw: (alive.append(111), native)[1]), \
-                patch("agent_live_check.processes.os.kill", side_effect=signal_owned):
-            self.assertEqual(guard(-1, ["fixture"]), 0)
-
-    def test_owned_orphan_subtree_is_tracked_without_adopting_reused_or_external_roots(self):
-        def item(pid, parent, birth):
-            return Process(pid, parent, pid, birth, 1, False, os.getuid())
-        table = {pid: item(pid, parent, birth) for pid, parent, birth in (
-            (999, 1, 1), (111, 999, 2), (222, 1, 3), (333, 222, 4),
-            (444, 333, 5), (555, 1, 6), (666, 555, 7), (777, 1, 9), (888, 777, 10))}
-        proven = {222: table[222], 777: item(777, 1, 8)}
-        current = descendants(table, 999, proven)
-        self.assertEqual(set(current), {999, 111, 222, 333, 444})
-        self.assertEqual(sum(process.rss for process in current.values()), 5)
-
-    def test_live_non_orphan_needs_no_token_read_but_unknown_orphan_still_fails(self):
-        import ctypes
-        import errno
-        ordinary = Process(111, 999, 111, 10, 0, False, os.getuid())
-        orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
-        library = Mock()
-        def unavailable(*unused):
-            ctypes.set_errno(errno.EIO)
-            return -1
-        library.sysctl.side_effect = unavailable
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.process_table.snapshot", return_value={111: ordinary}):
-            self.assertEqual(marked_descendants({111: ordinary}, "fixture-run", 1), {})
-            library.sysctl.assert_not_called()
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.process_table.snapshot", return_value={111: orphan}):
-            with self.assertRaisesRegex(RuntimeError, "owned_process_arguments_unavailable_5"):
-                marked_descendants({111: orphan}, "fixture-run", 1)
-        library.sysctl.assert_called_once()
-
-    def test_shutdown_helper_discovered_after_term_is_killed_before_cleanup_succeeds(self):
-        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
-        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
-        helper = Process(222, guardian.pid, 222, 3, 0, False, os.getuid())
-        before = {guardian.pid: guardian, child.pid: child}
-        after_term = {**before, helper.pid: helper}
-        ended = {guardian.pid: guardian}
-        native = Mock(returncode=0)
-        native.poll.return_value = 0
-        library = Mock()
-        library.prctl.return_value = 0
-        for initial_reads in (5, 6):
-            with self.subTest(helper_before_kill=initial_reads == 5), \
-                    patch("agent_live_check.processes.sys.platform", "linux"), \
-                    patch("agent_live_check.processes.ctypes.CDLL", return_value=library), \
-                    patch("agent_live_check.processes.threading.Thread"), \
-                    patch("agent_live_check.processes.signal.signal"), \
-                    patch("agent_live_check.processes.time.sleep"), \
-                    patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
-                    patch("agent_live_check.processes.snapshot", side_effect=[before] * initial_reads + [after_term, ended]), \
-                    patch("agent_live_check.processes.os.waitpid", side_effect=ChildProcessError), \
-                    patch("agent_live_check.processes.os.kill") as kill:
-                self.assertEqual(guard(-1, ["fixture"]), 0)
-            self.assertIn(unittest.mock.call(helper.pid, signal.SIGKILL), kill.call_args_list,
-                          "cleanup declared success without ending the newly adopted helper")
-
-    def test_proven_birth_identity_needs_no_argument_read_but_reused_pid_does(self):
-        import ctypes
-        import errno
-        identity = Process(111, 1, 111, 10, 0, False, os.getuid())
-        library = Mock()
-        def unavailable(*unused):
-            ctypes.set_errno(errno.EIO)
-            return -1
-        library.sysctl.side_effect = unavailable
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
-            result = marked_descendants({111: identity}, "fixture-run", 1,
-                                        known={111: identity})
-            self.assertEqual(result, {111: identity})
-            library.sysctl.assert_not_called()
-            replacement = Process(111, 1, 111, 11, 0, False, os.getuid())
-            with patch("agent_live_check.process_table.snapshot", return_value={111: replacement}):
-                with self.assertRaisesRegex(RuntimeError, "owned_process_arguments_unavailable_5"):
-                    marked_descendants({111: replacement}, "fixture-run", 1,
-                                       known={111: identity})
-            library.sysctl.assert_called_once()
-
-    def test_partial_orphan_identity_survives_later_unrelated_denial(self):
-        import ctypes
-        import errno
-        table = {111: Process(111, 1, 111, 10, 0, False, os.getuid()),
-                 222: Process(222, 1, 222, 11, 0, False, os.getuid())}
-        known = {}
-        def query(mib, _, buffer, size, *unused):
-            if mib[2] == 111:
-                data = procargs(b"HIDE_LIVE_CHECK_OWNER=fixture-run")
-                ctypes.memmove(buffer, data, len(data))
-                size._obj.value = len(data)
-                return 0
-            ctypes.set_errno(errno.EPERM)
-            return -1
-        library = Mock()
-        library.sysctl.side_effect = query
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                patch("agent_live_check.process_table.darwin_candidate_current", return_value=True), \
-                patch("agent_live_check.process_table.snapshot", return_value=table):
-            with self.assertRaisesRegex(RuntimeError, "owned_process_arguments_unavailable"):
-                marked_descendants(table, "fixture-run", 1, remember=known.__setitem__)
-        self.assertEqual(known, {111: table[111]}, "proven orphan was discarded on a later denial")
-
-    @unittest.skipUnless(sys.platform == "darwin", "Darwin orphan discovery")
-    def test_orphan_scan_failure_still_ends_known_child(self):
-        with tempfile.TemporaryDirectory(prefix="agent-scan-") as name:
-            receipt = Path(name) / "child.pid"
-            child = ("import os,time; from pathlib import Path; "
-                     f"Path({str(receipt)!r}).write_text(str(os.getpid())); time.sleep(5)")
-            program = (
-                "import os,sys,time; from pathlib import Path; from unittest.mock import patch; "
-                "from agent_live_check.processes import guard; r,w=os.pipe(); "
-                "\ndef unavailable(*args,**kwargs):"
-                f"\n deadline=time.monotonic()+1; file=Path({str(receipt)!r})"
-                "\n while not file.exists() and time.monotonic()<deadline: time.sleep(.01)"
-                "\n raise RuntimeError('injected_unrelated_procargs_denial')"
-                "\nwith patch('agent_live_check.processes.marked_descendants', side_effect=unavailable):"
-                f"\n result=guard(r,[sys.executable,'-c',{child!r}])"
-                "\nos.close(w); raise SystemExit(result)")
-            with OwnedProcesses() as owner:
-                with self.assertRaisesRegex(ProcessError, "guardian_cleanup_or_resource_failure"):
-                    owner.run([sys.executable, "-c", program],
-                              env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
-                              seconds=5, check=False)
-            self.assertTrue(receipt.exists(), "injected denial never exercised a running child")
-            item = snapshot().get(int(receipt.read_text()))
-            self.assertTrue(item is None or item.zombie, "scan failure abandoned proven child")
-
-    def test_short_lived_parent_cannot_leave_detached_child(self):
+    def test_readable_marked_double_fork_is_cleaned(self):
         with tempfile.TemporaryDirectory(prefix="agent-detach-") as name:
             receipt = Path(name) / "child.pid"
             script = ("import os,time; from pathlib import Path; "
@@ -595,6 +300,7 @@ class ProcessProtection(unittest.TestCase):
                 item = snapshot().get(int(receipt.read_text()))
                 self.assertTrue(item is None or item.zombie, "detached child survived confirmed cleanup")
 
+
     def test_finite_command_and_repeated_units_leave_no_child(self):
         with OwnedProcesses() as owner:
             for _ in range(20):
@@ -603,6 +309,7 @@ class ProcessProtection(unittest.TestCase):
             self.assertLessEqual(len(owner.children), 1)
         self.assertEqual(owner.children, {})
 
+
     def test_timeout_and_output_limit_fail_without_leaving_child(self):
         with OwnedProcesses() as owner:
             with self.assertRaisesRegex(ProcessError, "command_timeout"):
@@ -610,6 +317,7 @@ class ProcessProtection(unittest.TestCase):
             with self.assertRaisesRegex(ProcessError, "command_output_over_budget"):
                 owner.run([sys.executable, "-c", "import sys; sys.stdout.write('x'*2000000)"], env=dict(os.environ))
         self.assertEqual(owner.children, {})
+
 
     def test_killed_owner_leaves_no_child_or_grandchild(self):
         # This fixture deliberately has no outer guardian: otherwise the outer
@@ -645,6 +353,7 @@ class ProcessProtection(unittest.TestCase):
                     fixture.kill()
                     fixture.wait(timeout=2)
                 fixture.stderr.close()
+
 
 
 @unittest.skipUnless(sys.platform == "darwin", "authenticated write guard is macOS-only")

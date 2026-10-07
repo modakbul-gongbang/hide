@@ -1,6 +1,8 @@
 """One child-start boundary, with an EOF guardian for external processes."""
 
 import ctypes
+import hashlib
+import json
 import os
 from pathlib import Path
 import selectors
@@ -12,15 +14,16 @@ import threading
 import time
 
 if __package__:
-    from .process_table import descendants, marked_descendants, require_complete, snapshot
+    from .process_table import darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
 else:
-    from process_table import descendants, marked_descendants, require_complete, snapshot
+    from process_table import darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
 
 MAX_CHILDREN = 16
 MAX_DESCENDANTS = 128
 MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024
 MAX_OUTPUT = 1024 * 1024
 MAX_FAILURE_REASON = 512
+MAX_COMMANDS = 4096
 COMMAND_SECONDS = 15
 RUN_SECONDS = 30 * 60
 POLL_SECONDS = 0.1
@@ -51,8 +54,12 @@ class OwnedProcesses:
     final containment boundary, not a substitute for stopping a server.
     """
 
-    def __init__(self, cancelled: threading.Event | None = None):
+    def __init__(self, cancelled: threading.Event | None = None, diagnostics: Path | None = None):
         self.children = {}
+        self.diagnostics = diagnostics
+        self.sequence = 0
+        if diagnostics is not None:
+            diagnostics.mkdir(mode=0o700)
         self.cancelled = cancelled or threading.Event()
         self.deadline = time.monotonic() + RUN_SECONDS
 
@@ -69,8 +76,16 @@ class OwnedProcesses:
         command = argv
         if _guarded:
             reader, writer = os.pipe()
+            diagnostic = ""
+            if self.diagnostics is not None:
+                if self.sequence >= MAX_COMMANDS:
+                    os.close(reader)
+                    os.close(writer)
+                    raise ProcessError("command_count_over_budget")
+                self.sequence += 1
+                diagnostic = str(self.diagnostics / (str(self.sequence) + ".json"))
             command = [sys.executable, str(Path(__file__).resolve()),
-                       "--guard", str(reader), "--", *map(str, argv)]
+                       "--guard", str(reader), diagnostic, "--", *map(str, argv)]
         try:
             # The only raw spawn. Only the guardian uses the unguarded branch.
             child = subprocess.Popen(command, env=env, cwd=cwd, stdin=stdin,
@@ -145,7 +160,8 @@ class OwnedProcesses:
 
     def usage(self):
         table = snapshot()
-        require_complete(table)
+        # Group guardians enforce caps; a host-wide partial view is only a
+        # sampled resource summary, never an ownership or cleanup verdict.
         current = {}
         for child in self.children:
             if child.poll() is None:
@@ -154,7 +170,7 @@ class OwnedProcesses:
             raise ProcessError("descendant_rss_unavailable")
         measured = {"descendants": len(current),
                     "rss_bytes": sum(max(0, item.rss) for item in current.values()),
-                    "in_flight": len(self.children)}
+                    "in_flight": len(self.children), "sampled": True}
         if (measured["descendants"] > MAX_CHILDREN * (MAX_DESCENDANTS + 1)
                 or measured["rss_bytes"] > MAX_CHILDREN * MAX_RSS_BYTES):
             raise ProcessError("owned_processes_over_budget")
@@ -170,6 +186,25 @@ class OwnedProcesses:
         if failures:
             raise ProcessError("cleanup_unconfirmed: " + ",".join(failures))
 
+    def attribution_report(self):
+        records = {}
+        omitted = False
+        if self.diagnostics is not None:
+            for path in self.diagnostics.iterdir():
+                with path.open("rb") as stream:
+                    data = stream.read(MAX_OUTPUT + 1)
+                if len(data) > MAX_OUTPUT:
+                    raise ProcessError("process_diagnostic_over_budget")
+                for item in json.loads(data)["unattributed"]:
+                    key = (item["pid"], item["birth"])
+                    if key not in records and len(records) >= MAX_DESCENDANTS:
+                        omitted = True
+                    else:
+                        records[key] = item
+        return {"status": "출처 확인 못 함", "processes": list(records.values()),
+                "limit": MAX_DESCENDANTS, "additional_records_omitted": omitted,
+                "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}
+
     def __enter__(self):
         return self
 
@@ -177,13 +212,24 @@ class OwnedProcesses:
         self.close()
 
 
-def guard(reader: int, argv: list[str]) -> int:
+def group_exists(group):
+    try:
+        os.killpg(group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
     cancelled = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, lambda *_: cancelled.set())
+    # Keep the native root unreaped until all group signals are finished. Its
+    # reserved PID also reserves the PGID, including after the root exits.
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     if sys.platform.startswith("linux"):
         libc = ctypes.CDLL(None, use_errno=True)
-        if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+        if libc.prctl(36, 1, 0, 0, 0) != 0:
             return 125
 
     def watch_owner():
@@ -196,139 +242,175 @@ def guard(reader: int, argv: list[str]) -> int:
     threading.Thread(target=watch_owner, daemon=True).start()
     owner = OwnedProcesses(cancelled)
     child = None
-    guardian_identity = None
-    earliest = 0
-    seen_zombies = set()
+    group = None
     observed = {}
+    unattributed = {}
     failed = False
-    marker = secrets.token_hex(32)
+    confirmed = False
+    scope = hashlib.sha256(str(Path(__file__).resolve()).encode()).hexdigest()[:16]
+    initial = snapshot()
+    identity = initial[os.getpid()]
+    marker = f"{scope}:{identity.pid}:{identity.birth}:{secrets.token_hex(32)}"
     deadline = time.monotonic() + RUN_SECONDS
 
-    def capture():
-        nonlocal failed
-        table = snapshot()
-        try:
-            require_complete(table)
-        except RuntimeError as error:
-            failed = True
-            sys.stderr.write("guardian_failure:" + str(error) + "\n")
+    def unknown(process):
+        key = (process.pid, process.birth)
+        if key not in unattributed and len(unattributed) < MAX_DESCENDANTS:
+            unattributed[key] = {"pid": process.pid, "birth": process.birth,
+                                 "executable": process.name[:32]}
+
+    def collect():
+        table = snapshot(group)
+        require_complete(table)
+        # Never infer ownership from an unreadable host orphan. A readable
+        # token from a dead guardian in this checkout proves an earlier run;
+        # another live guardian's token belongs to concurrent work.
+        if sys.platform == "darwin" or sys.platform.startswith("linux"):
+            all_processes = snapshot()
+            if any(subject["pid"] in observed for subject in all_processes.unavailable):
+                raise ProcessError("known_owned_metadata_unavailable")
+
+            def matches(entry):
+                prefix = ("HIDE_LIVE_CHECK_OWNER=" + scope + ":").encode()
+                if not entry.startswith(prefix):
+                    return False
+                value = entry.split(b"=", 1)[1].decode("ascii", errors="replace")
+                if value == marker:
+                    return True
+                parts = value.split(":")
+                if len(parts) != 4 or not parts[1].isdecimal() or not parts[2].isdecimal():
+                    return False
+                guardian_pid, birth = int(parts[1]), int(parts[2])
+                guardian = all_processes.get(guardian_pid)
+                if guardian is not None:
+                    return guardian.birth != birth
+                try:
+                    os.kill(guardian_pid, 0)
+                except ProcessLookupError:
+                    return True
+                return False
+
+            extras = marked_descendants(all_processes, matches, known=observed,
+                                        unknown=unknown)
+            table.update(extras)
+            # Retain an earlier token proof while that exact birth remains.
+            for pid, previous in observed.items():
+                actual = all_processes.get(pid)
+                if actual and actual.birth == previous.birth:
+                    table[pid] = actual
+        observed.update(table)
         return table
 
+    def signal_owned(signum):
+        if group is not None:
+            try:
+                os.killpg(group, signum)
+            except ProcessLookupError:
+                pass
+        # Group signals are atomic with respect to membership. Escaped marked
+        # helpers require a fresh birth check before each individual signal.
+        table = collect()
+        for process in table.values():
+            if process.group == group or process.zombie:
+                continue
+            actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
+                      else snapshot().get(process.pid) if sys.platform.startswith("linux") else None)
+            if actual and actual.birth == process.birth:
+                try:
+                    os.kill(process.pid, signum)
+                except ProcessLookupError:
+                    pass
+
     try:
-        initial = snapshot()
-        require_complete(initial)
-        guardian_identity = initial[os.getpid()]
-        earliest = guardian_identity.birth
-        seen_zombies = {(p.pid, p.birth) for p in initial.values() if p.zombie}
-        child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker}, stdin=None, stdout=None,
-                            stderr=None, _guarded=False)
+        child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker},
+                            stdin=None, stdout=None, stderr=None, _guarded=False)
+        group = child.pid
+        if group <= 1 or group == os.getpgrp() or os.getpgid(child.pid) != group:
+            raise ProcessError("owned_group_unconfirmed")
         while not cancelled.is_set():
-            table = capture()
-            current = descendants(table, os.getpid(), observed)
-            # Record proven ancestry before optional orphan discovery can fail.
-            observed.update(current)
-            observed.pop(os.getpid(), None)
-            if sys.platform == "darwin":
-                current.update(marked_descendants(table, marker, earliest,
-                               known={**observed, os.getpid(): guardian_identity},
-                               remember=observed.__setitem__))
-                current.update(descendants(table, os.getpid(), observed))
-            current.pop(os.getpid(), None)
-            observed.update(current)
-            if (failed or any(p.rss < 0 and not p.zombie for p in current.values())
-                    or len(current) > MAX_DESCENDANTS
-                    or sum(max(0, p.rss) for p in current.values()) > MAX_RSS_BYTES):
-                failed = True
+            table = collect()
+            if (any(p.rss < 0 and not p.zombie for p in table.values())
+                    or len(table) > MAX_DESCENDANTS
+                    or sum(max(0, p.rss) for p in table.values()) > MAX_RSS_BYTES):
+                raise ProcessError("owned_processes_over_budget")
+            root = table.get(child.pid)
+            if root is None:
+                raise ProcessError("unreaped_owned_root_missing")
+            if root.zombie:
                 break
             if time.monotonic() >= deadline:
-                failed = True
-                break
-            if child.poll() is not None:
-                break
+                raise ProcessError("guardian_run_timeout")
             cancelled.wait(POLL_SECONDS)
     except BaseException as error:
         sys.stderr.write("guardian_failure:" + type(error).__name__ + ":" + str(error) + "\n")
         failed = True
     finally:
         try:
-            table = capture()
-            current = descendants(table, os.getpid(), observed)
-            current.pop(os.getpid(), None)
-            observed.update(current)
-            for signum in (signal.SIGCONT, signal.SIGTERM, signal.SIGKILL):
-                table = capture()
-                observed.update(descendants(table, os.getpid(), observed))
-                if sys.platform == "darwin" and guardian_identity is not None:
-                    try:
-                        marked_descendants(table, marker, earliest,
-                                           known={**observed, os.getpid(): guardian_identity},
-                                           remember=observed.__setitem__)
-                    except BaseException as error:
-                        # An unrelated same-UID process can deny procargs reads.
-                        # Keep cleanup unconfirmed, but still end every identity
-                        # already proven ours rather than abandoning teardown.
-                        sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
-                        failed = True
-                observed.update(descendants(table, os.getpid(), observed))
-                observed.pop(os.getpid(), None)
-                for pid, identity in observed.items():
-                    actual = table.get(pid)
-                    if actual and actual.birth == identity.birth and not actual.zombie:
-                        try:
-                            os.kill(pid, signum)
-                        except ProcessLookupError:
-                            pass
-                        except OSError as error:
-                            sys.stderr.write("guardian_signal_failure:" + type(error).__name__ + ":" + str(error.errno) + "\n")
-                            failed = True
-                if signum != signal.SIGKILL:
-                    time.sleep(POLL_SECONDS)
             if child is not None:
-                child.wait(timeout=2)
-            end = time.monotonic() + 2
-            while True:
-                table = capture()
-                observed.update(descendants(table, os.getpid(), observed))
-                if sys.platform == "darwin" and guardian_identity is not None:
-                    try:
-                        marked_descendants(table, marker, earliest,
-                                           known={**observed, os.getpid(): guardian_identity},
-                                           remember=observed.__setitem__)
-                    except BaseException as error:
-                        sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
-                        failed = True
-                observed.update(descendants(table, os.getpid(), observed))
-                observed.pop(os.getpid(), None)
-                survivors = [pid for pid, item in observed.items()
-                             if pid in table and table[pid].birth == item.birth
-                             and not table[pid].zombie]
-                zombies = {(p.pid, p.birth) for p in table.values() if p.zombie}
-                unresolved_children = (linux_children_remain() if not survivors else True) if sys.platform.startswith("linux") else (
-                    bool(getattr(table, "vanished", ())) or bool(zombies - seen_zombies))
-                seen_zombies = zombies
-                if not survivors and not unresolved_children:
-                    break
-                if time.monotonic() >= end:
+                try:
+                    current = collect()
+                    active = any(not process.zombie for process in current.values())
+                except BaseException:
+                    active = True
                     failed = True
-                    break
-                # A shutdown helper may appear after the last signal-table
-                # read. End only identities this fresh snapshot proves ours.
-                for pid in survivors:
+                if active:
+                    # A table error must not prevent ending the reserved group.
+                    for signum in (signal.SIGCONT, signal.SIGTERM):
+                        try:
+                            signal_owned(signum)
+                        except BaseException as error:
+                            failed = True
+                            sys.stderr.write("guardian_signal_failure:" + type(error).__name__ + ":" + str(error) + "\n")
+                    end = time.monotonic() + 0.5
+                    while time.monotonic() < end:
+                        try:
+                            if not any(not p.zombie for p in collect().values()):
+                                break
+                        except BaseException:
+                            failed = True
+                            break
+                        time.sleep(POLL_SECONDS)
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    except OSError as error:
-                        sys.stderr.write("guardian_signal_failure:" + type(error).__name__ + ":" + str(error.errno) + "\n")
+                        signal_owned(signal.SIGKILL)
+                    except BaseException as error:
                         failed = True
-                time.sleep(POLL_SECONDS)
+                        sys.stderr.write("guardian_signal_failure:" + type(error).__name__ + ":" + str(error) + "\n")
+                child.wait(timeout=1)
+                # No group signal after wait: a future reused PGID is not ours.
+                end = time.monotonic() + 2
+                while True:
+                    if sys.platform.startswith("linux"):
+                        linux_children_remain()
+                    remaining = collect()
+                    live_extras = [p for p in remaining.values() if p.group != group and not p.zombie]
+                    for process in live_extras:
+                        actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
+                                  else snapshot().get(process.pid) if sys.platform.startswith("linux") else None)
+                        if actual and actual.birth == process.birth:
+                            try:
+                                os.kill(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                    if not group_exists(group) and not any(p.group != group for p in remaining.values()):
+                        confirmed = True
+                        break
+                    if time.monotonic() >= end:
+                        raise ProcessError("owned_processes_remain")
+                    time.sleep(POLL_SECONDS)
+            else:
+                confirmed = True
         except BaseException as error:
             sys.stderr.write("guardian_cleanup_failure:" + type(error).__name__ + ":" + str(error) + "\n")
             failed = True
-    return 125 if failed else (child.returncode if child is not None else 125)
+        if diagnostic:
+            with open(diagnostic, "x", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
+                json.dump({"confirmed": confirmed, "unattributed": list(unattributed.values()),
+                           "unattributed_limit": MAX_DESCENDANTS,
+                           "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}, stream)
+    return 125 if failed or not confirmed else (child.returncode if child is not None else 125)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5 or sys.argv[1] != "--guard" or sys.argv[3] != "--":
+    if len(sys.argv) < 6 or sys.argv[1] != "--guard" or sys.argv[4] != "--":
         raise SystemExit(2)
-    raise SystemExit(guard(int(sys.argv[2]), sys.argv[4:]))
+    raise SystemExit(guard(int(sys.argv[2]), sys.argv[5:], sys.argv[3]))

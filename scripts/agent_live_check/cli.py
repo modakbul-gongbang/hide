@@ -93,7 +93,7 @@ def main(argv=None):
     if run.exists() or run.is_symlink() or not beneath(run, checkout / "agents/runs"):
         raise ProtectionError("report_directory_must_be_new_and_local_only")
     private_directory(run)
-    owner = OwnedProcesses()
+    owner = OwnedProcesses(diagnostics=run / "process-diagnostics")
     report = {"format": 1, "fixture": bool(args.fixture_bin), "herdr": {}, "agents": [],
               "source": contract["declaration_sha256"], "configuration": {},
               "cleanup": {"confirmed": False}, "failures": [], "resources": {}}
@@ -235,6 +235,11 @@ def main(argv=None):
         else:
             owner.close()
             report["cleanup"] = {"confirmed": True, "probe_removed": True}
+        try:
+            report["cleanup"]["attribution"] = owner.attribution_report()
+        except (OSError, ValueError, ProcessError) as error:
+            report["cleanup"]["confirmed"] = False
+            report["failures"].append({"type": type(error).__name__, "reason": str(error)})
         if guard:
             try:
                 if args.fixture_bin:

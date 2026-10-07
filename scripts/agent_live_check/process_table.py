@@ -86,6 +86,7 @@ class Process:
     uid: int
     traced: bool = False
     pointer_width: int = 8
+    name: str = ""
 
 
 class BsdInfo(ctypes.Structure):
@@ -113,17 +114,20 @@ class TaskInfo(ctypes.Structure):
     _fields_ += [("counts", ctypes.c_int32 * 12)]
 
 
-def snapshot() -> dict[int, Process]:
+def snapshot(group: int | None = None) -> dict[int, Process]:
     result = ProcessTable()
     if sys.platform == "darwin":
         library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
         library.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        library.proc_listpgrppids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
         library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int,
                                         ctypes.c_uint64, ctypes.c_void_p,
                                         ctypes.c_int]
         pids = (ctypes.c_int * MAX_SYSTEM_PROCESSES)()
-        count = library.proc_listallpids(pids, ctypes.sizeof(pids))
-        if count <= 0 or count >= MAX_SYSTEM_PROCESSES:
+        ctypes.set_errno(0)
+        count = (library.proc_listallpids(pids, ctypes.sizeof(pids)) if group is None
+                 else library.proc_listpgrppids(group, pids, ctypes.sizeof(pids)))
+        if count < 0 or (count == 0 and (group is None or ctypes.get_errno())) or count >= MAX_SYSTEM_PROCESSES:
             raise RuntimeError("process_table_unavailable_or_over_budget")
         for pid in pids[:count]:
             info, task = BsdInfo(), TaskInfo()
@@ -141,7 +145,7 @@ def snapshot() -> dict[int, Process]:
                     # A later foreign UID may be a reused PID. Preserve the
                     # earlier disappearance before excluding that replacement.
                     result.vanished.append(pid)
-                if read == ctypes.sizeof(short) and short.uid != os.getuid():
+                if group is None and read == ctypes.sizeof(short) and short.uid != os.getuid():
                     continue
                 if error == errno.ESRCH and (read == ctypes.sizeof(short) or short_error == errno.ESRCH):
                     continue
@@ -153,7 +157,8 @@ def snapshot() -> dict[int, Process]:
                                   info.sec * 1_000_000 + info.usec,
                                   task.resident if read == ctypes.sizeof(task) else -1,
                                   info.status == 5, info.uid, bool(info.flags & 2),
-                                  8 if info.flags & 0x10 else 4)
+                                  8 if info.flags & 0x10 else 4,
+                                  bytes(info.comm).decode("utf-8", errors="replace"))
     elif sys.platform.startswith("linux"):
         linux_procfs_context()
         with os.scandir("/proc") as entries:
@@ -163,20 +168,23 @@ def snapshot() -> dict[int, Process]:
                 if not entry.name.isdecimal():
                     continue
                 try:
+                    if group is not None and os.getpgid(int(entry.name)) != group:
+                        continue
                     raw = (Path(entry.path) / "stat").read_text()
                     fields = raw[raw.rindex(")") + 2:].split()
                     pid = int(entry.name)
                     result[pid] = Process(pid, int(fields[1]), int(fields[2]),
                                           int(fields[19]),
                                           int(fields[21]) * os.sysconf("SC_PAGE_SIZE"),
-                                          fields[0] == "Z", os.stat(entry.path).st_uid)
+                                          fields[0] == "Z", os.stat(entry.path).st_uid,
+                                          name=raw[raw.index("(") + 1:raw.rindex(")")])
                 except (FileNotFoundError, ProcessLookupError):
                     continue
                 except PermissionError as error:
                     result.unavailable.append({"pid": int(entry.name), "errno": error.errno})
     else:
         raise RuntimeError("process_supervision_requires_darwin_or_linux")
-    if os.getpid() not in result:
+    if group is None and os.getpid() not in result:
         if not any(subject["pid"] == os.getpid() for subject in result.unavailable):
             raise RuntimeError("own_process_missing_from_table")
     return result
@@ -221,7 +229,7 @@ class OwnerEnvironmentUnavailable(RuntimeError):
             self.details, sort_keys=True, separators=(",", ":")))
 
 
-def procargs_owned(data: bytes, pointer_width: int, expected: bytes) -> bool:
+def procargs_owned(data: bytes, pointer_width: int, expected) -> bool:
     """Prove token ownership or a complete negative KERN_PROCARGS2 answer."""
     argc = int.from_bytes(data[:4], sys.byteorder, signed=True) if len(data) >= 4 else None
     def refuse(reason, offset=0):
@@ -262,7 +270,7 @@ def procargs_owned(data: bytes, pointer_width: int, expected: bytes) -> bool:
         refuse("tail_empty", offset)
     if any(b"=" not in entry for entry in environment):
         refuse("tail_non_assignment", offset)
-    if expected in environment:
+    if (any(expected(entry) for entry in environment) if callable(expected) else expected in environment):
         return True
     # XNU's restricted-target crop also skips every NUL after the path. With
     # empty argv[0] it can expose only an environment prefix. Missing ownership
@@ -272,19 +280,19 @@ def procargs_owned(data: bytes, pointer_width: int, expected: bytes) -> bool:
     return False
 
 
-def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *, known=None, remember=None) -> dict[int, Process]:
-    """Find same-run Darwin orphans by inherited owner token, never argv logs.
+def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, known=None, remember=None, unknown=None) -> dict[int, Process]:
+    """Find readable marked orphans; unavailable foreign context is diagnostic.
 
-    The marker is installed before the native child exists, survives ordinary
-    double-fork/setsid daemonization, and is not present in concurrent work.
-    Intentionally hostile code that clears its environment is outside this
-    trusted-CLI ownership mechanism; the write guard still applies to it.
+    A caller supplies the current/previous marker predicate. A missing or
+    unreadable token never proves ownership; known identities retain their
+    earlier proof only while their sampled birth still matches.
     """
-    library = ctypes.CDLL(None, use_errno=True)
-    library.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
-                               ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
-                               ctypes.c_void_p, ctypes.c_size_t]
-    expected = ("HIDE_LIVE_CHECK_OWNER=" + marker).encode()
+    if sys.platform == "darwin":
+        library = ctypes.CDLL(None, use_errno=True)
+        library.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+                                   ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                   ctypes.c_void_p, ctypes.c_size_t]
+    expected = marker if callable(marker) else ("HIDE_LIVE_CHECK_OWNER=" + marker).encode()
     result = {}
     for pid, process in table.items():
         if process.uid != os.getuid() or process.birth < earliest or process.zombie:
@@ -302,7 +310,25 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
         # live child to its tracer: the public BSD flag makes that another
         # candidate, never ownership proof. Unrelated ordinary children need
         # no argument inspection.
-        if process.parent != 1 and not process.traced:
+        if process.parent != 1 and not process.traced and not (
+                sys.platform.startswith("linux") and process.parent == os.getpid()):
+            continue
+        if sys.platform.startswith("linux"):
+            try:
+                with (Path("/proc") / str(pid) / "environ").open("rb") as stream:
+                    data = stream.read(MAX_PROC_CONTEXT_BYTES + 1)
+                if not data or len(data) > MAX_PROC_CONTEXT_BYTES:
+                    if unknown:
+                        unknown(process)
+                    continue
+                entries = data.split(b"\0")
+                owned = any(expected(entry) for entry in entries) if callable(expected) else expected in entries
+                fresh = snapshot().get(pid)
+                if fresh is not None and fresh.birth == process.birth and owned:
+                    result[pid] = process
+            except (OSError, RuntimeError):
+                if unknown:
+                    unknown(process)
             continue
         mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2, pid (installed SDK).
         size = ctypes.c_size_t(1024 * 1024)
@@ -313,28 +339,25 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
                 if hasattr(table, "vanished"):
                     table.vanished.append(pid)
                 continue
-            fresh = snapshot()
-            require_complete(fresh)
-            current = fresh.get(pid)
-            if current is None or current.birth != process.birth or current.zombie:
-                if hasattr(table, "vanished"):
-                    table.vanished.append(pid)
-                continue
-            raise RuntimeError("owned_process_arguments_unavailable_" + str(error) + ":" + json.dumps(
-                {"pid": pid, "birth": process.birth, "parent": process.parent,
-                 "guardian": os.getpid()}, sort_keys=True, separators=(",", ":")))
-        if not darwin_candidate_current(process):
+            if unknown:
+                unknown(process)
+            continue
+        try:
+            current = darwin_candidate_current(process)
+        except RuntimeError:
+            if unknown:
+                unknown(process)
+            continue
+        if not current:
             if hasattr(table, "vanished"):
                 table.vanished.append(pid)
             continue
         try:
             owned = procargs_owned(buffer.raw[:size.value], process.pointer_width, expected)
-        except OwnerEnvironmentUnavailable as error:
-            details = {**error.details, "pid": pid, "birth": process.birth,
-                       "parent": process.parent, "guardian": os.getpid(),
-                       "width": process.pointer_width, "returned": size.value}
-            raise RuntimeError("owner_environment_unavailable:" + json.dumps(
-                details, sort_keys=True, separators=(",", ":"))) from error
+        except OwnerEnvironmentUnavailable:
+            if unknown:
+                unknown(process)
+            continue
         if owned:
             result[pid] = process
             if remember:
