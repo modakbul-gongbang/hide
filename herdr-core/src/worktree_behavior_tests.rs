@@ -598,28 +598,47 @@ fn changes_before_sentinel(
 
 /// Settles the repositories' own setup writes before a test measures: they
 /// can reach the watch after it started, and they are real changes of the
-/// projects the test then expects to stay quiet.
-fn settle_setup_writes(sentinel: &Repository, reader: &mut WorktreeReader) {
+/// projects the test then expects to stay quiet. A read they already started
+/// may still be running, so it is joined and its answer taken until the
+/// reader answers the current request with nothing pending.
+fn settle_setup_writes(
+    sentinel: &Repository,
+    reader: &mut WorktreeReader,
+    request: &WorktreeRequest,
+) {
     changes_before_sentinel(sentinel, reader, "settled");
     reader.git_watch.pending.clear();
+    loop {
+        reader.inner.join_pending();
+        match reader.read_if_due(request.clone()) {
+            Some(answer) if !answer.observations_current => {}
+            _ => return,
+        }
+    }
 }
 
 /// The first answer whose read ran `git status` in `path`. The sentinel's own
 /// late writes from settling may answer first, as a read of the sentinel
-/// alone.
+/// alone. `before` is taken here, before the next poll, because no read
+/// starts but from a poll.
 fn next_answer_reading(
     reader: &mut WorktreeReader,
     request: &WorktreeRequest,
     path: &Path,
     what: &str,
 ) -> WorktreeAnswer {
+    const ANSWERS: usize = 4;
     let before = git_call_count(path, "status");
-    loop {
+    for _ in 0..ANSWERS {
         let answer = next_answer(reader, request, what);
         if git_call_count(path, "status") != before {
             return answer;
         }
     }
+    panic!(
+        "{what}: {ANSWERS} answers came and none read {}",
+        path.display()
+    );
 }
 
 #[test]
@@ -663,7 +682,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     assert_eq!(git_call_count(&listed, "status"), status_before);
     request.generation += 1;
     assert!(
-        next_answer(&mut reader, &request, "the manual refresh")
+        next_answer_reading(&mut reader, &request, &listed, "the manual refresh")
             .catalog
             .projects[0]
             .worktrees[0]
@@ -782,7 +801,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     };
     let catalog = next_answer(&mut reader, &request, "initial catalog").catalog;
     assert_eq!(catalog.projects.len(), 3);
-    settle_setup_writes(&sentinel, &mut reader);
+    settle_setup_writes(&sentinel, &mut reader, &request);
     // Status runs in the path git lists, which is the canonical one.
     let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
         PathBuf::from(&catalog.projects[index].worktrees[0].path)
@@ -837,7 +856,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         removals: 0,
     };
     let initial = next_answer(&mut reader, &request, "the first read").catalog;
-    settle_setup_writes(&sentinel, &mut reader);
+    settle_setup_writes(&sentinel, &mut reader, &request);
     let main = PathBuf::from(&initial.projects[0].worktrees[0].path);
     let quiet_path = PathBuf::from(&initial.projects[1].worktrees[0].path);
     let before = git_call_count(&main, "status");
