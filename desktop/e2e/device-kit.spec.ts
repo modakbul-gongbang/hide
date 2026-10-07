@@ -142,6 +142,17 @@ async function inDevicePane(herdr: HerdrFixture, line: string, label: string): P
 test("a device gets this Mac's kit, keeps a part the operator removed out until Reinstall, and gives the kit back on removal", async () => {
   const setup = await startDeviceRun("kit", [ALIAS]);
   const { home, device, run, bridge, helper, cliDir, original, daemonLog } = setup;
+  // An older Hide ran this device: its helper build is what `current` leads to,
+  // and the bridge folder of a service that is gone stayed behind.
+  const OLD_BUILD = "0123456789abcdef";
+  fs.mkdirSync(path.join(helper, OLD_BUILD), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(helper, OLD_BUILD, "hide-host-helper"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+  fs.symlinkSync(OLD_BUILD, path.join(helper, "current"));
+  const leftover = path.join(bridge, "bridge-older-hide");
+  fs.mkdirSync(leftover, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(leftover, "socket"), "");
+  const long = new Date(Date.now() - 10 * 60_000);
+  fs.utimesSync(leftover, long, long);
   let app: ElectronApplication | undefined;
   try {
     app = await relaunch(run.env);
@@ -156,6 +167,17 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     const applied = () => daemonEvents(daemonLog).filter((line) => line.kind === "apply.completed" && line.device_id === DEVICE);
     await expect.poll(() => applied().length, { timeout: 120_000 }).toBeGreaterThan(0);
     expect(applied()[0]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
+
+    // The upgrade leaves only this build, which runs as `hided`; the older
+    // helper's build and the gone service's bridge folder are removed.
+    const builds = fs.readdirSync(helper).filter((name) => name !== "current");
+    expect(builds).toHaveLength(1);
+    expect(builds[0]).not.toBe(OLD_BUILD);
+    expect(fs.readlinkSync(path.join(helper, "current"))).toBe(builds[0]);
+    const installed = fs.readdirSync(path.join(helper, builds[0]!));
+    expect(installed).toContain("hided");
+    expect(installed).not.toContain("hide-host-helper");
+    await expect.poll(() => fs.existsSync(leftover), { timeout: 60_000 }).toBe(false);
 
     // B16: every part names the helper root's `current`, which outlives a build.
     const current = path.join(fs.realpathSync(helper), "current");
