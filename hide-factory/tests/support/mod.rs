@@ -121,6 +121,11 @@ impl Clock for Shared {
     fn now(&self) -> UnixMs {
         self.world().now
     }
+
+    /// The fixtures keep their days in UTC.
+    fn utc_offset_ms(&self) -> i64 {
+        0
+    }
 }
 
 impl TaskSource for Shared {

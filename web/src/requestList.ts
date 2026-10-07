@@ -50,13 +50,21 @@ function verbOf(agent: AgentRow): RequestVerb {
  * (D-30). A child whose parent is gone, or outside the scope, is a row of its
  * own. `all` is every agent of the scope's devices, for the descendants.
  */
-export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[]): RequestRow[] {
+const NO_WORKERS: ReadonlySet<string> = new Set();
+
+/**
+ * The rows of the request view, leaving out the panes that are Factory
+ * workers (`factoryWorkers`), whose turn 내 차례 shows instead.
+ */
+export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[], factoryWorkers: ReadonlySet<string> = NO_WORKERS): RequestRow[] {
   const inScope = new Set(agents.map((value) => value.agent.pane_id));
   const byPane = new Map(all.map((agent) => [agent.pane_id, agent]));
   const rows: RequestRow[] = [];
   for (const lens of agents) {
     const { agent } = lens;
     if (agent.delegated && agent.lineage_parent_pane_id && inScope.has(agent.lineage_parent_pane_id)) continue;
+    // A Factory worker's questions and stops are the Factory's 내 차례 (PRD software-factory-ui D-06, B13).
+    if (factoryWorkers.has(agent.pane_id)) continue;
     // Deepest first from the core; the expanded row reads nearest first.
     const children = (agent.close_descendant_pane_ids ?? [])
       .map((pane) => byPane.get(pane))

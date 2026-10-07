@@ -22,6 +22,7 @@ import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { useFactoryWorkers } from "./factory/hooks";
 import { ProjectSessions } from "./ProjectSessions";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { toggledFold, useUiStore, type OverviewLens } from "./ui";
@@ -64,7 +65,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
-  const rows = useMemo(() => requestRows(lensAgents, deviceAgents ?? []), [lensAgents, deviceAgents]);
+  const workers = useFactoryWorkers();
+  const rows = useMemo(() => requestRows(lensAgents, deviceAgents ?? [], workers), [lensAgents, deviceAgents, workers]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
   const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
   const tiles = useMemo(
