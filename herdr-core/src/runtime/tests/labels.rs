@@ -361,6 +361,82 @@ fn plan_waiting_overlay(seq: u64) -> LabelOverlay {
 /// approval, read for the agent's current state, is an approval in Needs You
 /// that stays there after the row is read; once Herdr's state moves past the
 /// read, the row is what Herdr says again.
+/// B1 with Hide AI off: a Codex session file whose plan turn ended with a
+/// plan, read with no analysis and laid with agent summaries off, puts the
+/// row in Needs You as an approval.
+#[test]
+fn a_plan_read_from_the_session_file_with_summaries_off_is_in_needs_you() {
+    use hide_session::label_transcript::{LabelTranscriptRequest, read};
+    let home = tempfile::tempdir().unwrap();
+    let folder = home.path().join(".codex/sessions/2026/10/07");
+    std::fs::create_dir_all(&folder).unwrap();
+    let event = |kind: &str, extra: serde_json::Value| {
+        let mut payload = serde_json::json!({"type": kind, "turn_id": "turn-1"});
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::json!({"timestamp":"2026-10-07T01:00:02.000Z","type":"event_msg","payload":payload})
+    };
+    let records = [
+        serde_json::json!({"timestamp":"2026-10-07T01:00:00.000Z","type":"session_meta",
+            "payload":{"id":SESSION,"cwd":CHECKOUT,"cli_version":"0.160.1"}}),
+        event(
+            "task_started",
+            serde_json::json!({"collaboration_mode_kind":"plan"}),
+        ),
+        serde_json::json!({"timestamp":"2026-10-07T01:00:01.000Z","type":"response_item",
+            "payload":{"type":"message","role":"user",
+                "content":[{"type":"input_text","text":"계획을 세워줘"}]}}),
+        event(
+            "item_completed",
+            serde_json::json!({"item":{"type":"Plan","id":"i1","text":"1. 고친다"}}),
+        ),
+        event(
+            "task_complete",
+            serde_json::json!({"last_agent_message":null}),
+        ),
+    ];
+    std::fs::write(
+        folder.join(format!("rollout-2026-10-07T01-00-00-{SESSION}.jsonl")),
+        records
+            .iter()
+            .map(|record| format!("{record}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let transcript = read(
+        home.path(),
+        &LabelTranscriptRequest {
+            agent: hide_session::Agent::Codex,
+            reference_kind: "id".to_owned(),
+            reference_value: SESSION.to_owned(),
+            cwd: None,
+            checkpoint: None,
+            subagents: Default::default(),
+            turns: None,
+        },
+    )
+    .unwrap();
+    let record = PaneRecord {
+        owner: hide_session::label_reference_token("codex", "id", SESSION),
+        turns: transcript.turns,
+        turns_seq: Some(4),
+        ..Default::default()
+    };
+    let mut runtime = runtime();
+    // Agent summaries off: the overlay carries no summary, only the facts.
+    runtime.set_label_overlay(LabelOverlay::of_records(
+        [(&PANE.to_owned(), &record)],
+        true,
+        false,
+    ));
+    runtime.ingest_session(Ok(codex_projection("done", 4)));
+    let waiting = row(&runtime);
+    assert_eq!(waiting["group"], "needs_you", "{waiting}");
+    assert_eq!(waiting["demand"], "approval");
+}
+
 #[test]
 fn a_codex_plan_waiting_for_approval_is_an_approval_that_stays_in_needs_you() {
     let mut runtime = runtime();
