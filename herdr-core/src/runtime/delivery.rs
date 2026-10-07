@@ -997,7 +997,7 @@ pub(crate) mod tests {
             crate::workspace_control::checkout_caller_id(&"a".repeat(32), "/checkouts/fixture");
         let ask = |caller: &str, hint: Option<&str>, id: &str| {
             let prepared = runtime.lock().unwrap().prepare_delivery(
-                "local",
+                crate::node::TEST_NODE,
                 caller,
                 &context,
                 hint,
@@ -1024,7 +1024,7 @@ pub(crate) mod tests {
             ledger.agents.push(crate::coordination::AgentRecord {
                 id: "agent-7".into(),
                 name: "recipient".into(),
-                machine: "local".into(),
+                machine: crate::node::TEST_NODE.into(),
                 host_scope: "fixture-scope".into(),
                 native_machine: "fixture-machine".into(),
                 session: "recipient-session".into(),
