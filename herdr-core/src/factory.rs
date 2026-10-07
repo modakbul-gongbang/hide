@@ -1086,7 +1086,10 @@ impl WorkerRuntime for CoreWorkers {
         let runtime = self.runtime()?;
         let (connector, node) = {
             let guard = guard(&runtime);
-            (guard.delivery_connector(guard.node().as_str()), guard.own_node())
+            (
+                guard.delivery_connector(guard.node().as_str()),
+                guard.own_node(),
+            )
         };
         drop(runtime);
         let connector = connector
@@ -1533,7 +1536,10 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             .as_ref()
             .is_none_or(|(current, _)| *current != settings)
         {
-            router = Some((settings.clone(), crate::ai::factory_router(&node, &settings)));
+            router = Some((
+                settings.clone(),
+                crate::ai::factory_router(&node, &settings),
+            ));
         }
         let Some((_, router)) = &router else { continue };
         let request = hide_ai::AiRequest {
