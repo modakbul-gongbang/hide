@@ -845,6 +845,23 @@ Its contract test holds a value at every key the table names and fails when a re
 `UNBOUND` beside it names the rest of a state folder, which holds no machine key, and a test fails on any file in a converted folder that neither list names.
 Project ids hash the node id with the root, so a Memory receipt a transcript carries from before the conversion no longer matches a project id and is not honoured.
 
+### The core and its nodes
+
+The core decides and keeps state; it never touches a machine (PRD core-host-node D-21).
+Every file, process, socket and session-file read is a node's, asked through one contract, `NodeLink` (`hide-node-link`), addressed by node id (`Runtime::node_link`): the core's own node answers today, and a device's helper answers for its machine.
+The contract crate sits below both sides, so the core holds only the trait and the wire types, and the machine side (`hide-node`, over `hide-host`) never depends on the core.
+The core's own node is `hide_node::Local`, which answers in hided's process through `hide_host::serve`; the core gets it in `Core::create`, with the Herdr connector the same node opens.
+
+| The core's | The node's |
+| --- | --- |
+| Every decision, the runtime and its snapshot | Files and folders: lists, bytes, saves, stamps, path facts (`Call::PathFacts`), new projects (`Call::ProjectCreate`) |
+| Its own stores: UI state, saved Views, the delivery ledger, labels, the link record, local issues, saved GitHub answers, its log, and their one-time node-id conversion | Processes: git, `gh`, the AI CLIs, ports, agent sleep's process groups, the file opener (`hide-node/src/opener.rs`) |
+| Which node a call goes to | The Herdr socket (the connector `Core::create` takes), session files, the install kit, pane credential proofs and the bootstrap socket (`hide-node/src/pane_proof.rs`) |
+
+`scripts/check-core-touches-no-machine.py` holds the line: production code under `herdr-core/src` that opens a file, starts a process, opens a socket or reads a session file fails it, unless the file is one of the core's stores, listed with its reason, or something a later layer of the PRD moves out, listed with that layer.
+Until layer 2b the SSH transport (`remote.rs`, `remote/`, `ssh_hosts.rs`) is the core's, until layer 3 the terminal attach child (`live.rs`) and pasted attachments, and until layer 4 the label generator's lock, which is keyed by the Herdr server it labels; an entry that no longer reaches a machine fails the check, so none outlives its layer.
+hided runs both roles in one process: its core role holds the credential registry (`pane_auth.rs`) and the Explorer watcher (`watch.rs`), which ask a node by id, so a second node serves a pane or an Explorer on its machine without a reader changing.
+
 ### Agent labels in the core
 
 What each Claude Code, Codex or OpenCode pane is doing (the session's goal, one line for its turn, and how the turn ended) is made by the core, not by a Herdr plugin and not through pane tokens (PRD labels-in-hided, overview-request-view D-08).
