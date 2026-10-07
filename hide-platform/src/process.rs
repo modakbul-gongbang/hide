@@ -2433,3 +2433,88 @@ mod run_cleanup_tests {
         child.wait().unwrap();
     }
 }
+
+/// TEMP evidence for issue 707 (do not merge): every process with its parent,
+/// executable name and working directory where the system lets it be read.
+#[cfg(windows)]
+pub fn temp_process_cwds() -> Vec<(u32, u32, String, Option<PathBuf>)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtQueryInformationProcess(
+            process: *mut core::ffi::c_void,
+            class: u32,
+            info: *mut core::ffi::c_void,
+            length: u32,
+            returned: *mut u32,
+        ) -> i32;
+    }
+    unsafe fn read<T: Copy>(process: *mut core::ffi::c_void, at: usize) -> Option<T> {
+        let mut value = std::mem::MaybeUninit::<T>::uninit();
+        let mut got = 0usize;
+        let ok = unsafe {
+            ReadProcessMemory(
+                process,
+                at as *const _,
+                value.as_mut_ptr().cast(),
+                std::mem::size_of::<T>(),
+                &mut got,
+            )
+        };
+        (ok != 0 && got == std::mem::size_of::<T>()).then(|| unsafe { value.assume_init() })
+    }
+    fn cwd(pid: u32) -> Option<PathBuf> {
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+        if process.is_null() {
+            return None;
+        }
+        let answer = (|| {
+            let mut basic = [0usize; 6];
+            let status = unsafe {
+                NtQueryInformationProcess(process, 0, basic.as_mut_ptr().cast(), 48, std::ptr::null_mut())
+            };
+            if status < 0 {
+                return None;
+            }
+            let peb = basic[1];
+            let parameters: usize = unsafe { read(process, peb + 0x20) }?;
+            let length: u16 = unsafe { read(process, parameters + 0x38) }?;
+            let buffer: usize = unsafe { read(process, parameters + 0x40) }?;
+            let mut text = vec![0u16; length as usize / 2];
+            let mut got = 0usize;
+            let ok = unsafe {
+                ReadProcessMemory(process, buffer as *const _, text.as_mut_ptr().cast(), length as usize, &mut got)
+            };
+            (ok != 0).then(|| PathBuf::from(String::from_utf16_lossy(&text)))
+        })();
+        unsafe { CloseHandle(process) };
+        answer
+    }
+    let mut table: Vec<(u32, u32, String)> = Vec::new();
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while more {
+        let end = entry.szExeFile.iter().position(|unit| *unit == 0).unwrap_or(entry.szExeFile.len());
+        let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+        table.push((entry.th32ProcessID, entry.th32ParentProcessID, name));
+        more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    table
+        .into_iter()
+        .map(|(pid, parent, name)| (pid, parent, name, cwd(pid)))
+        .collect()
+}

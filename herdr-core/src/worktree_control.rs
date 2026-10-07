@@ -1824,7 +1824,10 @@ pub(crate) fn close_checkout_panes(
             let (present, pane_at_checkout) = confirmation_state(panes, paths)?;
             if pane_ids.iter().all(|id| !present.contains(id)) && !pane_at_checkout {
                 // Herdr has nothing more to say; only the processes remain.
-                return wait_for_processes_to_end(&mut held, deadline, thread::sleep);
+                let waited = wait_for_processes_to_end(&mut held, deadline, thread::sleep);
+                #[cfg(windows)]
+                temp_inside_after_wait(paths);
+                return waited;
             }
             thread::sleep(CONFIRM_POLL.min(deadline.saturating_duration_since(Instant::now())));
         }
@@ -1840,6 +1843,25 @@ pub(crate) fn close_checkout_panes(
         result.as_ref().err().map(String::as_str),
     );
     result
+}
+
+/// TEMP evidence for issue 707 (do not merge): the processes still working
+/// inside the folder at the moment the wait for the panes' processes ended.
+#[cfg(windows)]
+fn temp_inside_after_wait(paths: &[String]) {
+    let spell = |path: &str| path.to_lowercase().replace('/', "\\").trim_end_matches('\\').to_owned();
+    let folders: Vec<String> = paths.iter().map(|path| spell(path)).collect();
+    let inside: Vec<_> = hide_platform::process::temp_process_cwds()
+        .into_iter()
+        .filter_map(|(pid, parent, name, cwd)| {
+            let cwd = spell(&cwd?.to_string_lossy());
+            folders
+                .iter()
+                .any(|folder| cwd == *folder || cwd.starts_with(&format!("{folder}\\")))
+                .then(|| json!({"pid": pid, "parent": parent, "name": name}))
+        })
+        .collect();
+    eprintln!("{}", json!({"kind": "temp.after_wait", "paths": paths, "inside": inside}));
 }
 
 fn confirmation_state(panes: &[Value], paths: &[String]) -> Result<(Vec<String>, bool), String> {
