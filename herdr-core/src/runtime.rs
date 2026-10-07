@@ -64,6 +64,7 @@ use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
+use crate::agent_state::ReadRecordScope;
 use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::handle::ChangeNotifier;
@@ -85,7 +86,7 @@ use crate::model::{
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
-use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
+use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
 fn conversation_agent_kind(kind: &str) -> bool {
@@ -860,7 +861,7 @@ fn sync_pane_status(
             changed = true;
         }
     }
-    changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
+    changed |= crate::agent_state::sync_checkout_agent_summaries(workspaces, agents);
     changed |= sync_strip_agent_identity(workspaces, agents);
     changed |= crate::project_context::sort_projects(workspaces, agents);
     changed
@@ -1679,6 +1680,7 @@ pub struct Runtime {
     next_explorer_operation_id: u64,
     explorer_queue: VecDeque<WaitingExplorerChange>,
     delta: snapshot_delta::DeltaState,
+    agent_scope_cache: crate::agent_state::ScopeCache,
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
     workspace_views: Option<WorkspaceViewStore>,
@@ -2108,6 +2110,7 @@ impl Runtime {
             next_explorer_operation_id: 0,
             explorer_queue: VecDeque::new(),
             delta: snapshot_delta::DeltaState::default(),
+            agent_scope_cache: crate::agent_state::ScopeCache::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),
             browser_pages: HashMap::new(),
@@ -2117,6 +2120,7 @@ impl Runtime {
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();
         runtime.refresh_pet();
+        runtime.refresh_agent_scopes();
         if shortcuts_imported {
             runtime.persist_ui_state();
         }
@@ -2166,6 +2170,19 @@ impl Runtime {
     pub fn install_remote_control(&mut self, context: RemoteControlContext) {
         self.remote_controls
             .insert(context.target_id().to_owned(), context);
+    }
+
+    /// The installed connection owns coordinator writes even before its first
+    /// successful read. Retired coordinators retain their distinct connector
+    /// allocation until they stop, so removal or replacement revokes writes.
+    pub(crate) fn remote_coordinator_is_current(
+        &self,
+        target_id: &str,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+    ) -> bool {
+        self.remote_controls
+            .get(target_id)
+            .is_some_and(|context| Arc::ptr_eq(&context.api_connector(), connector))
     }
 
     /// The Herdr API connection the core already holds for a connected SSH

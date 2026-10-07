@@ -1,3 +1,5 @@
+import { scopeOccurrences, type AgentRef } from "./agentScope";
+import type { AgentScope } from "./agentScope";
 // The Projects list as the sidebar draws it: the raised Needs You and Done
 // agents, then pinned rows under their own header, then the activity rows
 // with a per-device fold of inactive projects, and per project a fold of
@@ -6,7 +8,7 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
-import { AGENT_GROUPS, agentGroupTitle, type AgentGroup, type ListedAgent } from "./navigation";
+import { agentGroupTitle, type AgentGroup, type ListedAgent } from "./navigation";
 import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, RecentCheckout, Workspace } from "./snapshot";
 
 /** Return to this device's last usable checkout, then its primary, then row order. */
@@ -27,12 +29,6 @@ export type ProjectRow =
   | { kind: "inactive_projects"; group: InactiveProjectGroup; count: number };
 
 /**
- * The groups the Projects list raises above its tree, and how many of each it
- * draws before folding the rest (docs/status-model.md); Working and Seen are the Agents tab's.
- */
-const RAISED_CAP: Partial<Record<AgentGroup, number>> = { needs_you: 5, done: 3 };
-
-/**
  * `listed` is every agent the Agents list shows. A raised section holds, in
  * the core's order, the Needs You or Done agents whose pane a drawn project's
  * (or the device's Home's) checkout owns, so every raised agent is also in the tree below; an empty
@@ -45,22 +41,16 @@ export function projectRows(
   workspaces: Workspace[],
   groups: InactiveProjectGroup[],
   listed: ListedAgent[],
-  home: Workspace | null = null,
+  scope: AgentScope | null,
   openRaised: readonly string[] = [],
 ): ProjectRow[] {
   const rows: ProjectRow[] = [];
-  const drawnPanes = new Set<string>();
-  // The device's Home is drawn as its own row above, so its agents are raised like a project's.
-  for (const workspace of home ? [...workspaces, home] : workspaces) {
-    for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) drawnPanes.add(pane.id);
-  }
-  for (const { group } of AGENT_GROUPS) {
-    const cap = RAISED_CAP[group];
-    if (cap === undefined) continue;
-    const raised = listed.filter((row) => row.agent.group === group && drawnPanes.has(row.agent.pane_id));
-    if (raised.length === 0) continue;
-    const agents = raised.map((row) => (row.agent.lineage_collapsed === false ? { ...row, agent: { ...row.agent, lineage_collapsed: true } } : row));
-    rows.push({ kind: "raised", group, agents: agents.slice(0, cap), more: agents.slice(cap), expanded: openRaised.includes(group) });
+  const drawn = (refs: AgentRef[]) => scopeOccurrences(refs, listed.map(r => r.agent)).map(agent => {
+    const row = listed.find(r => r.agent === agent)!;
+    return { ...row, agent: { ...agent, lineage_collapsed: true } };
+  });
+  for (const raised of scope?.raised ?? []) {
+    rows.push({ kind: "raised", group: raised.group, agents: drawn(raised.shown), more: drawn(raised.more), expanded: openRaised.includes(raised.group) });
   }
   const pinned = workspaces.filter((row) => row.pinned);
   const recent = workspaces.filter((row) => !row.pinned);
@@ -145,13 +135,7 @@ export function folderCheckout(workspace: Workspace): Checkout | null {
  * status badge).
  */
 export function projectMarks(workspace: Workspace): MarkCounts {
-  const total: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 };
-  for (const checkout of workspace.checkouts) {
-    const marks = checkout.agent_summary?.marks;
-    if (!marks) continue;
-    for (const state of Object.keys(total) as (keyof MarkCounts)[]) total[state] += marks[state];
-  }
-  return total;
+  return workspace.agent_scope.marks;
 }
 
 /** The glyph a pull request draws: its lifecycle, with a draft keeping its own shape while it is open or under review. */
@@ -247,7 +231,7 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
   const commitSeconds = checkout.worktree?.last_commit_unix_seconds;
   const age = checkout.exists && !gitLoading && commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs, t) : null;
   const summary = checkout.agent_summary;
-  const agentCount = summary ? summary.needs_you + summary.done + summary.working + summary.seen : 0;
+  const agentCount = checkout.agent_scope.badge_total;
 
   const lines: string[] = [];
   if (pr) {
@@ -332,7 +316,7 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
     else rows.push({ key: "branch", label: t("card.branch"), value: worktree.head_sha ? t("card.detachedAt", { sha: worktree.head_sha.slice(0, 7) }) : t("card.detached") });
   }
   const summary = checkout.agent_summary;
-  if (summary && summary.needs_you + summary.done + summary.working + summary.seen > 0) rows.push({ key: "agents", label: t("overview.agents"), marks: summary.marks });
+  if (summary && checkout.agent_scope.badge_total > 0) rows.push({ key: "agents", label: t("overview.agents"), marks: summary.marks });
   const commitSeconds = worktree?.last_commit_unix_seconds;
   const age = activityAge(commitSeconds != null ? commitSeconds * 1000 : null, nowMs);
   if (age) rows.push({ key: "commit", label: t("card.commit"), value: age.unit === "now" ? t("common.now") : t("card.ago", { age: ageText(age, t) }) });

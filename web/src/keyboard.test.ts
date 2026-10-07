@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
 import { commitCycle, panelCycle, projectCycle } from "./keyboard";
@@ -13,7 +14,7 @@ function tab(id: string) {
 }
 
 function checkout(id: string, workspace: string, label: string, tabs: string[]) {
-  return { id, workspace_id: workspace, label, path: `/srv/${label}`, tabs: tabs.map((name) => tab(name)), active_tab_id: tabs[0] ?? null, strip: [] };
+  return { agent_scope: emptyScope(), id, workspace_id: workspace, label, path: `/srv/${label}`, tabs: tabs.map((name) => tab(name)), active_tab_id: tabs[0] ?? null, strip: [] };
 }
 
 function world(front: "local" | "mini"): SnapshotRest {
@@ -28,7 +29,7 @@ function world(front: "local" | "mini"): SnapshotRest {
         { id: "mini", label: "mini", kind: "remote", state: "ready", message: null },
         { id: "build-box", label: "build-box", kind: "remote", state: "unavailable", message: null },
       ],
-      workspaces: [{ id: "w-api", label: "api", device_id: "local", checkouts: [checkout("c-api", "w-api", "api", ["l1"])] }],
+      workspaces: [{ agent_scope: emptyScope(), id: "w-api", label: "api", device_id: "local", checkouts: [checkout("c-api", "w-api", "api", ["l1"])] }],
       agents: [],
     },
     status: {
@@ -38,8 +39,8 @@ function world(front: "local" | "mini"): SnapshotRest {
           state: "connected",
           session: {
             workspaces: [
-              { id: "remote:mini:workspace:w1", label: "web", device_id: "mini", checkouts: [remoteCheckout] },
-              { id: "remote:mini:workspace:home", label: "hide", device_id: "mini", is_home: true, checkouts: [] },
+              { agent_scope: emptyScope(), id: "remote:mini:workspace:w1", label: "web", device_id: "mini", checkouts: [remoteCheckout] },
+              { agent_scope: emptyScope(), id: "remote:mini:workspace:home", label: "hide", device_id: "mini", is_home: true, checkouts: [] },
             ],
             agents: [],
             active_tab_ids: {},

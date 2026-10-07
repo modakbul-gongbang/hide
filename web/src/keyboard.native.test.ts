@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { noteAreaFrame } from "./areaFrames";
@@ -57,7 +58,7 @@ function draw(count = 2) {
   const displays = Array.from({ length: count }, (_, index) => ({ id: `d${index + 1}`, kind: "browser", label: `Page ${index + 1}`, url: `https://page${index + 1}.test/`, state: "open", tab_id: null }));
   const layout = { root: { area: { id: "a1", active: "d1", displays } }, active_area: "a1", display_count: count, limits: { areas: 6, depth: 5, displays: 64 } };
   const rest = {
-    navigator: { focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "w", devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }], workspaces: [{ id: "w", label: "fixture", device_id: "local", checkouts: [{ id: "c", workspace_id: "w", path: "/fixture", label: "fixture", tabs: [], active_tab_id: null, strip: [] }] }] },
+    navigator: { focused_device_id: "local", focused_checkout_id: "c", focused_workspace_id: "w", devices: [{ id: "local", label: "This Mac", kind: "local", state: "local" }], workspaces: [{ agent_scope: emptyScope(), id: "w", label: "fixture", device_id: "local", checkouts: [{ agent_scope: emptyScope(), id: "c", workspace_id: "w", path: "/fixture", label: "fixture", tabs: [], active_tab_id: null, strip: [] }] }] },
     workspace_view: { device_id: "local", path: "/fixture", views: true, layout },
   } as unknown as SnapshotRest;
   const sizes = { areaMinWidth: 100, areaMinHeight: 100, divider: 4, tabStrip: 30 };

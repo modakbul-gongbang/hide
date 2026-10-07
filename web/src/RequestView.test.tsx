@@ -1,3 +1,7 @@
+import { legacyWork } from "../test/legacyRequestWork";
+import { emptyScope } from "../test/legacyAgentScope";
+import { requestScope } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -33,11 +37,12 @@ async function pathRow() {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  const checkout = { id: "main", workspace_id: "project", path: "/checkout", exists: true, label: "main", branch: "main", tabs: [] } as unknown as Checkout;
-  const project: Workspace = { id: "project", label: "Studio", path: "/checkout", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
-  const agent: AgentRow = { id: "agent", pane_id: "pane", identity_label: "결과물", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
-    request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: "[report](./report.md) https://example.test/result", cut: false, at_unix_ms: 0 }, pull_requests: [] } };
+  const checkout = { agent_scope: emptyScope(), id: "main", workspace_id: "project", path: "/checkout", exists: true, label: "main", branch: "main", tabs: [] } as unknown as Checkout;
+  const project: Workspace = { agent_scope: emptyScope(), id: "project", label: "Studio", path: "/checkout", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
+  const agent: AgentRow = legacyAgentRow({ id: "agent", pane_id: "pane", identity_label: "결과물", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
+    request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: "[report](./report.md) https://example.test/result", cut: false, at_unix_ms: 0 }, pull_requests: [] } });
   const row: RequestRow = { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
+  project.agent_scope.work[agent.pane_id] = legacyWork(row.lens);
   const events: Parameters<DispatchFn>[0][] = [];
   const actions = createActions((event) => { events.push(event); return true; });
   const pending: { paths: string[]; resolve: (answers: ProbedPath[]) => void }[] = [];
@@ -68,7 +73,7 @@ async function pathRow() {
     await act(async () => chip()!.click());
     return events.filter((event) => event.kind === "reveal_path").at(-1);
   };
-  const render = async () => act(async () => root.render(<TooltipProvider><RequestView rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {} })} actions={actions} /></TooltipProvider>));
+  const render = async () => act(async () => root.render(<TooltipProvider><RequestView agentScope={requestScope([row])} rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {} })} actions={actions} /></TooltipProvider>));
   const cleanup = async () => {
     await act(async () => root.unmount());
     container.remove();
@@ -137,15 +142,16 @@ it("keeps twenty unchanged rows asleep, but renders changed facts and uses curre
   document.body.append(container);
   const root = createRoot(container);
   const checkout = { id: "main", label: "main", branch: "main", tabs: [] } as unknown as Checkout;
-  const project: Workspace = { id: "project", label: "Studio", path: "/fixture", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
+  const project: Workspace = { agent_scope: emptyScope(), id: "project", label: "Studio", path: "/fixture", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
   const rows: RequestRow[] = Array.from({ length: 20 }, (_, index) => {
-    const agent: AgentRow = { id: `a${index}`, pane_id: `a${index}`, identity_label: `결과물 ${index}`, agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
-      request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: `진행 ${index}`, cut: false, at_unix_ms: 0 }, pull_requests: [] } };
+    const agent: AgentRow = legacyAgentRow({ id: `a${index}`, pane_id: `a${index}`, identity_label: `결과물 ${index}`, agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
+      request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: `진행 ${index}`, cut: false, at_unix_ms: 0 }, pull_requests: [] } });
     return { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
   });
+  for (const row of rows) project.agent_scope.work[row.lens.agent.pane_id] = legacyWork(row.lens);
   const actions = createActions(() => true);
-  let props: RequestViewProps = { rows, scope: "all", lens: NO_REQUEST_LENS, onLens: vi.fn(), handlers: lensHandlers(actions, { openIssue: vi.fn(), toggleFold: vi.fn() }), actions };
-  const render = async () => act(async () => root.render(<TooltipProvider><RequestView {...props} /></TooltipProvider>));
+  let props: RequestViewProps = { agentScope: requestScope(rows), rows, scope: "all", lens: NO_REQUEST_LENS, onLens: vi.fn(), handlers: lensHandlers(actions, { openIssue: vi.fn(), toggleFold: vi.fn() }), actions };
+  const render = async () => act(async () => root.render(<TooltipProvider><RequestView {...props} agentScope={requestScope(props.rows)} /></TooltipProvider>));
   try {
     observation.rows = 0;
     await render();
@@ -178,6 +184,7 @@ it("keeps twenty unchanged rows asleep, but renders changed facts and uses curre
     const completed = { ...agent, request: { ...agent.request, verb: "result" as const, pull_requests: [{ number: 9, title: "전체 과거 PR 제목 ".repeat(20), url: "https://github.com/acme/project/pull/9", badge: "merged" as const, checks: "passing" as const, live: false, head_branch: "feature/history", closing_issues: [], duty: false, created: true, settled_at_unix_ms: 1 }] } };
     const branch = "feature/전체-분기-이름-".repeat(15);
     const result: RequestRow = { ...first, verb: "result", lens: { ...first.lens, checkout: { ...checkout, branch }, agent: completed } };
+    result.lens.project = { ...result.lens.project, agent_scope: { ...result.lens.project.agent_scope, work: { ...result.lens.project.agent_scope.work, [completed.pane_id]: legacyWork(result.lens) } } };
     const openGitHub = vi.fn();
     const openedResult = vi.spyOn(actions, "openResult");
     props = { ...props, rows: [result], lens: NO_REQUEST_LENS, handlers: { ...props.handlers, openGitHub } };

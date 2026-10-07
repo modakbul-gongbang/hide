@@ -83,6 +83,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     let mut runtime = runtime();
     runtime.suppress_terminal_session_workers = true;
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
+        agent_scope: Default::default(),
         id: "mini".to_owned(),
         label: "Mac mini".to_owned(),
         kind: "remote".to_owned(),
