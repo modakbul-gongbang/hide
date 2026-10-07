@@ -178,3 +178,63 @@ fn the_host_answers_a_screen_and_publishes_an_empty_machine() {
     drop(runtime);
     host.shutdown();
 }
+
+fn secretary(runtime: &mut Runtime, pane_id: &str) -> bool {
+    runtime.dispatch_json(
+        &serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "factory_secretary_set",
+            "payload": {"pane_id": pane_id}
+        }))
+        .unwrap(),
+    )
+}
+
+/// The secretary is a pane a tab lists; the core keeps it across a restart,
+/// and a store written before the field existed loads with none (B23).
+#[test]
+fn the_secretary_is_kept_only_once_listed_and_survives_a_restart() {
+    let mut runtime = super::recent_panes::runtime_with(&["sec"]);
+    let path = runtime.state_path.clone();
+    let _state = hold_dirs(&mut runtime);
+    assert!(!secretary(&mut runtime, "not-yet"));
+    assert_eq!(runtime.snapshot().ui_state.factory_secretary_pane, None);
+    assert!(secretary(&mut runtime, "sec"));
+    assert!(
+        !secretary(&mut runtime, "sec"),
+        "the same pane again is no change"
+    );
+    assert_eq!(
+        runtime
+            .snapshot()
+            .ui_state
+            .factory_secretary_pane
+            .as_deref(),
+        Some("sec")
+    );
+
+    drop(runtime);
+    let restarted = super::recent_panes::restart(&path.to_string_lossy());
+    assert_eq!(
+        restarted
+            .snapshot()
+            .ui_state
+            .factory_secretary_pane
+            .as_deref(),
+        Some("sec")
+    );
+
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    stored
+        .as_object_mut()
+        .unwrap()
+        .remove("factory_secretary_pane");
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+    assert_eq!(
+        super::recent_panes::restart(&path.to_string_lossy())
+            .snapshot()
+            .ui_state
+            .factory_secretary_pane,
+        None
+    );
+}

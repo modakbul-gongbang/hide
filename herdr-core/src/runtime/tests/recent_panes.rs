@@ -6,7 +6,7 @@ use crate::model::RECENT_PANE_LIMIT;
 // and saves it, so a reload, the app and the daemon restarting keep it.
 
 /// A runtime whose local checkouts each hold one pane named by `panes`.
-fn runtime_with(panes: &[&str]) -> Runtime {
+pub(super) fn runtime_with(panes: &[&str]) -> Runtime {
     let mut runtime = runtime();
     runtime.snapshot.navigator.workspaces = panes
         .iter()
@@ -44,7 +44,8 @@ fn recent(runtime: &Runtime) -> Vec<String> {
     runtime.snapshot().ui_state.recent_pane_ids.clone()
 }
 
-fn restart(path: &str) -> Runtime {
+/// A runtime started again on the UI-state file at `path`.
+pub(super) fn restart(path: &str) -> Runtime {
     Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
