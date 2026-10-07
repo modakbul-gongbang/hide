@@ -747,11 +747,12 @@ mod tests {
     }
 
     /// This machine's root is stamped by the identity the boundary verified
-    /// at registration, so a root swapped for a link to an outside folder
-    /// before the first poll is refused, never pinned as the checkout.
+    /// at registration, which the node reads as the root it opens, and a
+    /// root swapped for a link to an outside folder is refused at whatever
+    /// poll comes after, the first included, never pinned as the checkout.
     #[cfg(unix)]
     #[test]
-    fn a_root_swapped_before_the_first_poll_is_refused() {
+    fn the_boundary_identity_stamps_the_root_and_refuses_a_swap() {
         use std::os::unix::fs::symlink;
         let node = hide_node::Local::of_process();
         let sandbox = tempfile::tempdir().unwrap();
@@ -771,10 +772,14 @@ mod tests {
         let identity = boundary.root_identity(&root_path).unwrap();
         let target = Target::of("local", root_path.clone(), &[]).pinned_by(identity);
 
-        std::fs::rename(&root, home.join("moved")).unwrap();
-        symlink(&outside, &root).unwrap();
         let pinned = Watching::default().pin_for(&target);
         assert_eq!(pinned, Some(identity), "the watcher opens nothing itself");
+        let (stamped_by, stamps) = stamp_on(&node, &root_path, pinned, &[String::new()]).unwrap();
+        assert_eq!(stamped_by, identity, "the node reads the boundary's identity as its own");
+        assert!(stamps[0].is_some());
+
+        std::fs::rename(&root, home.join("moved")).unwrap();
+        symlink(&outside, &root).unwrap();
         let refused = stamp_on(&node, &root_path, pinned, &[String::new()]).unwrap_err();
         assert!(
             matches!(&refused, LinkError::Refused(error) if error.code == ErrorCode::RootReplaced),

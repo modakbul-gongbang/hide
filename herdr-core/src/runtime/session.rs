@@ -116,10 +116,10 @@ fn nested_worktrees(
 ) -> Vec<String> {
     repositories
         .iter()
-        .map(|worktrees| worktrees.iter().map(|path| read(path)).collect::<Vec<_>>())
-        .find(|worktrees| worktrees.iter().any(|path| path == root))
+        .find(|worktrees| worktrees.iter().any(|path| read(path) == root))
         .into_iter()
         .flatten()
+        .map(|path| read(path))
         .filter(|path| path.as_str() != root && within_by_names(path, root))
         .collect()
 }
