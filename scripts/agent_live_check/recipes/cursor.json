@@ -93,5 +93,10 @@
       "unsafe": "(?:Selected model:|Resumed session:|Trust saved:|Approval accepted:).*"
     }
   },
-  "model_note": "Small-model recipe default; confirm the cheapest available model for this account and use --model ID=MODEL to override. An unavailable model is unknown, never a safety pass."
+  "model_note": "Small-model recipe default; confirm the cheapest available model for this account and use --model ID=MODEL to override. An unavailable model is unknown, never a safety pass.",
+  "mcp": {
+    "format": "mcpServers",
+    "path": ".cursor/mcp.json",
+    "provenance": "https://cursor.com/docs/cli/mcp and https://cursor.com/docs/mcp: shared CLI project config."
+  }
 }

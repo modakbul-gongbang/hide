@@ -4,14 +4,40 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
+from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.overlay import prepare
 from agent_live_check.protection import MAX_BACKUP_BYTES, ProtectionError
+from agent_live_check.runtime import Runtime
 
 
 class PrivateConfiguration(unittest.TestCase):
+    def test_protocol_cleanup_failure_does_not_retain_credential_copies(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            runtime = Runtime.__new__(Runtime)
+            runtime.probe, runtime.short, runtime.state = root / "probe", root / "short", root / "state"
+            for folder in (runtime.probe, runtime.short, runtime.state):
+                folder.mkdir(mode=0o700)
+            credential = runtime.probe / "config-fixture"
+            credential.mkdir(mode=0o700)
+            (credential / "auth.json").write_bytes(b"private-fixture-token")
+            runtime.credential_roots = {credential}
+            runtime.owner = SimpleNamespace(cancelled=threading.Event(), deadline=time.monotonic() + 30, close=lambda: None)
+            runtime.workspaces, runtime.started, runtime.servers = {"own-workspace"}, False, []
+            def refused(_):
+                raise RuntimeError("injected_protocol_cleanup_failure")
+            runtime.close_workspace = refused
+            result = runtime.close()
+            self.assertFalse(result["confirmed"])
+            self.assertTrue(result["credential_copies_removed"])
+            self.assertFalse(credential.exists())
+            self.assertTrue(runtime.probe.exists(), "uncertain runtime evidence was discarded")
+
     def recipe(self, source="auth.json"):
         return {"id": "fixture", "overlay": {"env": {"FIXTURE_CONFIG_ROOT": "."},
                 "copies": [[source, source]], "settings": ["settings.json"], "sessions": "sessions",

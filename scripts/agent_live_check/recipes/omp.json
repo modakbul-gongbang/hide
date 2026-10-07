@@ -111,5 +111,10 @@
     ],
     "sessions": "sessions",
     "provenance": "Installed omp 18.7.0 --help documents PI_CODING_AGENT_DIR and --session-dir; credential DB copy must have empty/absent unchanged WAL."
+  },
+  "mcp": {
+    "format": "mcpServers",
+    "path": ".omp/mcp.json",
+    "provenance": "https://github.com/can1357/oh-my-pi/blob/v18.7.0/docs/mcp-config.md: project .omp/mcp.json."
   }
 }

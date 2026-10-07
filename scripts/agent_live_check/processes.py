@@ -100,7 +100,13 @@ class OwnedProcesses:
             return code, *(bytes(value).decode("utf-8", errors="replace") for value in output)
         finally:
             try:
-                self.end(child)
+                try:
+                    self.end(child)
+                except ProcessError as error:
+                    reasons = [line[:256] for line in output[1].decode("utf-8", errors="replace").splitlines()
+                               if line.startswith(("guardian_failure:", "guardian_cleanup_failure:",
+                                                   "guardian_orphan_scan_failure:", "guardian_signal_failure:"))]
+                    raise ProcessError(str(error) + (": " + "; ".join(reasons[:4]) if reasons else "")) from error
             finally:
                 child.stdout.close()
                 child.stderr.close()
@@ -185,6 +191,9 @@ def guard(reader: int, argv: list[str]) -> int:
         while not cancelled.is_set():
             table = snapshot()
             current = descendants(table, os.getpid())
+            # Record proven ancestry before optional orphan discovery can fail.
+            observed.update(current)
+            observed.pop(os.getpid(), None)
             if sys.platform == "darwin":
                 current.update(marked_descendants(table, marker, earliest))
             current.pop(os.getpid(), None)
@@ -207,14 +216,19 @@ def guard(reader: int, argv: list[str]) -> int:
         try:
             table = snapshot()
             current = descendants(table, os.getpid())
-            if sys.platform == "darwin":
-                current.update(marked_descendants(table, marker, earliest))
             current.pop(os.getpid(), None)
             observed.update(current)
             for signum in (signal.SIGCONT, signal.SIGTERM, signal.SIGKILL):
                 table = snapshot()
                 if sys.platform == "darwin":
-                    observed.update(marked_descendants(table, marker, earliest))
+                    try:
+                        observed.update(marked_descendants(table, marker, earliest))
+                    except BaseException as error:
+                        # An unrelated same-UID process can deny procargs reads.
+                        # Keep cleanup unconfirmed, but still end every identity
+                        # already proven ours rather than abandoning teardown.
+                        sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
+                        failed = True
                 observed.pop(os.getpid(), None)
                 for pid, identity in observed.items():
                     actual = table.get(pid)
@@ -223,6 +237,9 @@ def guard(reader: int, argv: list[str]) -> int:
                             os.kill(pid, signum)
                         except ProcessLookupError:
                             pass
+                        except OSError as error:
+                            sys.stderr.write("guardian_signal_failure:" + type(error).__name__ + ":" + str(error.errno) + "\n")
+                            failed = True
                 if signum != signal.SIGKILL:
                     time.sleep(POLL_SECONDS)
             if child is not None:

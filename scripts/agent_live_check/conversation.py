@@ -46,6 +46,18 @@ def messages(file: Path, kind: str) -> list[tuple[str, str]]:
                         result.append(("tool", json.dumps(part.get("content", ""))))
             texts = [content] if isinstance(content, str) else [part["text"] for part in content
                      if part.get("type") == "text" and isinstance(part.get("text"), str)]
+        elif kind in ("pi", "omp"):
+            # Pi 1.0.4 Session Format and OMP v18.7.0 session-entries contract.
+            if value.get("type") != "message":
+                continue
+            value = value.get("message", {})
+            role = value.get("role")
+            content = value.get("content", [])
+            texts = [content] if isinstance(content, str) else [part["text"] for part in content
+                     if part.get("type") == "text" and isinstance(part.get("text"), str)]
+            if role == "toolResult":
+                result.append(("tool", "\n".join(texts)))
+                continue
         else:
             return []  # Unsupported conversation formats cannot prove delivery.
         if role in ("user", "assistant") and texts:

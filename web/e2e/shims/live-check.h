@@ -15,6 +15,31 @@ static int live_check(int argc, char **argv) {
   raw_terminal();
   const char *scene = getenv("HIDE_LIVE_CHECK_SCENE");
   if (!scene) return 2;
+#ifndef _WIN32
+  /* Only this opt-in lane gets a private HOME. Exercise the controller's
+     real byte recovery, and let e2e identify the exact child/socket to end. */
+  const char *home = getenv("HOME");
+  if (!home) return 2;
+  char location[4096];
+  if (snprintf(location, sizeof location, "%s/.claude.json", home) >= (int)sizeof location) return 2;
+  FILE *config = fopen(location, "wb");
+  if (!config) return 2;
+  fputs("{\"fixture\":\"temporarily-mutated\"}\n", config);
+  fclose(config);
+  if (snprintf(location, sizeof location, "%s/.live-check-child.json", home) >= (int)sizeof location) return 2;
+  FILE *identity = fopen(location, "wb");
+  if (!identity) return 2;
+  const char *socket = getenv("HERDR_SOCKET_PATH");
+  fprintf(identity, "{\"pid\":%ld,\"socket\":\"%s\"}\n", (long)getpid(), socket ? socket : "");
+  fclose(identity);
+  const char *scenario = getenv("LIVE_CHECK_FIXTURE_CASE");
+  if (scenario && strcmp(scenario, "hold") == 0) {
+    live_screen("LIVE_FIXTURE_HOLD\r\n");
+    char ignored;
+    while (terminal_read(&ignored, 1) == 1) {}
+    return 0;
+  }
+#endif
   const char *composer = run_as_codex(argv[0])
     ? "\xe2\x80\xba Ask Codex to do anything\r\n" : "\xe2\x9d\xaf \r\n";
   live_screen(strcmp(scene, "startup") == 0 ? "Do you trust this folder?\r\n1. Trust\r\n2. Cancel\r\n" : composer);

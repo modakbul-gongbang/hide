@@ -114,6 +114,31 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin orphan discovery")
+    def test_orphan_scan_failure_still_ends_known_child(self):
+        with tempfile.TemporaryDirectory(prefix="agent-scan-") as name:
+            receipt = Path(name) / "child.pid"
+            child = ("import os,time; from pathlib import Path; "
+                     f"Path({str(receipt)!r}).write_text(str(os.getpid())); time.sleep(5)")
+            program = (
+                "import os,sys,time; from pathlib import Path; from unittest.mock import patch; "
+                "from agent_live_check.processes import guard; r,w=os.pipe(); "
+                "\ndef unavailable(*args):"
+                f"\n deadline=time.monotonic()+1; file=Path({str(receipt)!r})"
+                "\n while not file.exists() and time.monotonic()<deadline: time.sleep(.01)"
+                "\n raise RuntimeError('injected_unrelated_procargs_denial')"
+                "\nwith patch('agent_live_check.processes.marked_descendants', side_effect=unavailable):"
+                f"\n result=guard(r,[sys.executable,'-c',{child!r}])"
+                "\nos.close(w); raise SystemExit(result)")
+            with OwnedProcesses() as owner:
+                with self.assertRaisesRegex(ProcessError, "guardian_cleanup_or_resource_failure"):
+                    owner.run([sys.executable, "-c", program],
+                              env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+                              seconds=5, check=False)
+            self.assertTrue(receipt.exists(), "injected denial never exercised a running child")
+            item = snapshot().get(int(receipt.read_text()))
+            self.assertTrue(item is None or item.zombie, "scan failure abandoned proven child")
+
     def test_short_lived_parent_cannot_leave_detached_child(self):
         with tempfile.TemporaryDirectory(prefix="agent-detach-") as name:
             receipt = Path(name) / "child.pid"

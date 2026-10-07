@@ -8,7 +8,7 @@ import time
 from .conversation import bell_turn, messages
 from .authentication import AuthenticationRequired, require_no_login
 from .processes import ProcessError
-from .protection import ProtectionError, write_private
+from .protection import ProtectionError, beneath, write_private
 
 
 def matches(pattern: str, screen: str, bell: str) -> bool:
@@ -18,13 +18,24 @@ def matches(pattern: str, screen: str, bell: str) -> bool:
 
 
 def transcript(home: Path, kind: str, session: dict | None, session_root: Path | None = None) -> Path | None:
-    if not session or session.get("kind") != "id" or session.get("source") != "herdr:" + kind:
+    if not session or session.get("source") != "herdr:" + kind:
+        return None
+    roots = {"claude": ".claude/projects", "codex": ".codex/sessions",
+             "pi": ".pi/agent/sessions", "omp": ".omp/agent/sessions"}
+    if kind not in roots:
+        return None
+    root = session_root or home / roots[kind]
+    if session.get("kind") == "path":
+        file = Path(session.get("value", ""))
+        if not file.is_absolute() or not beneath(file, root) or file.is_symlink():
+            raise ProtectionError("native_session_path_outside_owned_history")
+        return file if file.is_file() else None
+    if session.get("kind") != "id":
         return None
     identity = session.get("value", "")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", identity):
         raise ProtectionError("invalid_native_session_identity")
-    root = session_root or home / (".codex/sessions" if kind == "codex" else ".claude/projects")
-    if kind not in ("codex", "claude") or not root.is_dir():
+    if not root.is_dir():
         return None
     pending, count, found = [root], 0, []
     while pending:
@@ -44,7 +55,8 @@ def transcript(home: Path, kind: str, session: dict | None, session_root: Path |
 
 
 def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
-            home: Path, seconds: float, evidence: Path, cwd: Path, overlay: dict) -> dict:
+            home: Path, seconds: float, evidence: Path, cwd: Path, overlay: dict,
+            previous_session: dict | None = None) -> dict:
     data = recipe["scenes"][scene]
     row = {"scene": scene, "arrival": "unreached", "status": "unknown",
            "effect": "not_tested", "reason": "scene_not_observed", "evidence": evidence.name}
@@ -58,7 +70,9 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
             screen = runtime.screen(pane)
             require_no_login(screen)
             agent = runtime.agent(pane)
-            if agent and matches(data["arrived"], screen, bell):
+            previous_visible = (scene != "resume_picker" or runtime.fixture_bin or
+                                (previous_session and any(token in screen for token in previous_session["visible_tokens"])))
+            if agent and matches(data["arrived"], screen, bell) and previous_visible:
                 before = {"screen": screen, "agent": agent}
                 break
             samples = [{"phase": "arrival", "screen": screen, "agent": agent}]

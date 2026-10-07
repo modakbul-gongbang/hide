@@ -16,12 +16,14 @@ from .contracts import SCENES, recipes, source_contract
 from .authentication import AuthenticationRequired, require_no_login
 from .delivery import measure as measure_delivery
 from .overlay import prepare as prepare_overlay
+from .history import LABEL as PREVIOUS_LABEL, seed as seed_history
 from .processes import OwnedProcesses, ProcessError
 from .protection import ConfigGuard, ProtectionError, beneath, private_directory, stamp, write_private
 from .report import save
 from .runtime import Runtime, clean_env
 from .sandbox import WriteSandbox
 from .scenes import observe
+from .setup import configure
 
 
 def parser():
@@ -131,6 +133,8 @@ def main(argv=None):
                 provider["skipped"] = "not_installed"
             else:
                 launch = wrapper(runtime, recipe, Path(executable), sandbox)
+                if recipe.get("overlay") and not args.fixture_bin:
+                    runtime.credential_roots.add(runtime.probe / ("config-" + recipe["id"]))
                 overlay = prepare_overlay(recipe, runtime.probe, agent_home) if not args.fixture_bin else {
                     "env": {}, "copies": [], "settings": [], "session_root": None}
                 provider["private_configuration"] = {key: value for key, value in overlay.items()
@@ -149,6 +153,7 @@ def main(argv=None):
                     provider["skipped"] = "version_probe_failed"
                     write_private(run / (recipe["id"] + "-version-error.txt"), err.encode())
                 else:
+                    previous_session = None
                     for scene in SCENES:
                         workspace = None
                         evidence = run / (recipe["id"] + "-" + scene + ".json")
@@ -156,12 +161,18 @@ def main(argv=None):
                             workspace, pane, cwd = runtime.new_workspace(recipe, scene, agent_home, launch, overlay)
                             history = cwd / "history"
                             private_directory(history)
-                            mcp = cwd / "live-mcp.json"
-                            write_private(mcp, json.dumps({"mcpServers": {"live_probe": {
-                                "command": sys.executable, "args": [str(checkout / "scripts/agent_live_check/mcp_fixture.py")]}}}).encode())
+                            scene_overlay = {**overlay, "settings": list(overlay["settings"])}
+                            if recipe["kind"] in ("pi", "omp"):
+                                scene_overlay["session_root"] = history
+                            extra = configure(runtime, launch, recipe, scene, cwd)
+                            for relative in (recipe["mcp"].get("path"), ".pi/settings.json"):
+                                if relative and (cwd / relative).is_file():
+                                    scene_overlay["settings"].append(cwd / relative)
+                            if scene == "rest" and recipe["kind"] in ("pi", "claude"):
+                                extra.extend(["--name", PREVIOUS_LABEL])
                             values = dict(model=recipe["model"], sockets=str(runtime.short),
-                                          history=str(history), mcp=str(mcp))
-                            native_args = [value.format_map(values) for value in recipe["argv"]]
+                                          history=str(history))
+                            native_args = [value.format_map(values) for value in recipe["argv"]] + extra
                             code, output, err = runtime.command(["agent", "start", "live-" + recipe["id"] + "-" + scene,
                                              "--kind", recipe["kind"], "--pane", pane, "--timeout", "5000",
                                              "--", *native_args], check=False, seconds=10)
@@ -177,11 +188,16 @@ def main(argv=None):
                                 provider["integration"] = {"status": "native_session_observed",
                                     "source": session["source"], "herdr_version": runtime.expected_version,
                                     "binary_sha256": report["herdr"]["sha256"]}
+                            if scene == "rest":
+                                previous_session = seed_history(runtime, pane, recipe, agent_home, scene_overlay,
+                                                                args.scene_seconds)
+                                provider["previous_session"] = previous_session
                             provider["scenes"].append(observe(runtime, pane, recipe, scene, contract["bell"],
-                                                               agent_home, args.scene_seconds, evidence, cwd, overlay))
+                                                               agent_home, args.scene_seconds, evidence, cwd,
+                                                               scene_overlay, previous_session))
                             if scene == "rest" and provider["scenes"][-1]["arrival"] == "reached":
                                 provider["delivery"] = measure_delivery(runtime, pane, recipe, agent_home,
-                                                                        cwd, contract["bell"], args.scene_seconds, overlay)
+                                                                        cwd, contract["bell"], args.scene_seconds, scene_overlay)
                         except AuthenticationRequired:
                             provider["skipped"] = "not_authenticated"
                             if not evidence.exists():

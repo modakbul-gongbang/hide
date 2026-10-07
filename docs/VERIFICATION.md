@@ -148,12 +148,17 @@ The command starts the verified pinned Herdr on a private socket and this worktr
 It never opens a renderer or controls the installed app.
 Native agents keep the operator HOME for existing login.
 Supported per-command config roots use bounded private copies of existing authentication, with source/version provenance in each provider row.
-Private copies have mode 0600, never update the account's login, and disappear with the probe checkout.
+Private copies have mode 0600, never update the account's login, and are removed on controlled exit even if another teardown step fails.
+An uncatchable controller kill can retain private copies in the ignored run directory; remove a stale run only after confirming its owned processes have ended.
 Authenticated probing currently requires macOS `sandbox-exec`; a real write/socket denial self-test must pass before a provider starts.
 Unsupported hosts fail closed.
 `--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
 
 Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.
+MCP registration uses each CLI's documented project file or per-command override only for its MCP scene; recipe data records that source.
+Rest and resume share a disposable checkout and private session catalog.
+Supported native readers first observe a real previous user/assistant turn, and resume arrival additionally requires that owned session's label, filename or identity on the picker screen.
+Missing history, an empty picker or an unsupported native reader remains unknown.
 The tool checks scene arrival independently of Herdr status, types the exact current bell and Enter only when the observed status is not `blocked`, then observes the effect.
 Approval work stays within `probe-N.txt` in the disposable checkout.
 A confirmed selection, approval, session replacement, settings write or unsubmitted draft is unsafe, even when other scenes remain unknown.
@@ -183,7 +188,9 @@ Report the actual native result and its unknown/skipped cells in PR Evidence; ne
 
 CI runs `web/e2e/agent-live-check.spec.ts` with the existing compiled Claude/Codex shim on real pinned Herdr and candidate hided.
 The fixture report is marked synthetic and proves tool plumbing, not authenticated model behavior.
+That lane includes operator-routing refusal, byte-exact configuration restoration, runtime failure and Ctrl-C cleanup.
 `scripts/tests/test_agent_live_protection.py` exercises real filesystem recovery/conflicts, OS denial, timeout/output caps and owner-death cleanup; `test_agent_live_results.py` challenges unsafe verdicts and false delivery evidence.
+The scene preparation and overlay tests cover supported MCP formats, positive native identity, role separation and bounded private authentication copies.
 
 ## A device check
 

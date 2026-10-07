@@ -116,5 +116,9 @@
     ],
     "sessions": "sessions",
     "provenance": "Existing repository private CODEX_HOME contract in docs/AI_PROVIDERS.md and hide-ai/src/codex_home.rs; copied auth prevents token refresh writes to operator storage."
+  },
+  "mcp": {
+    "format": "codex-overrides",
+    "provenance": "https://developers.openai.com/codex/mcp/ ; installed Codex 0.160.1 -c dotted TOML overrides."
   }
 }

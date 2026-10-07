@@ -120,5 +120,10 @@
     ],
     "sessions": null,
     "provenance": "Installed opencode 1.18.30 debug paths under enforced macOS guard confirms all four XDG roots and HOME unchanged; official troubleshooting documents data/opencode/auth.json."
+  },
+  "mcp": {
+    "format": "opencode",
+    "path": "opencode.json",
+    "provenance": "https://opencode.ai/docs/mcp-servers/ ; local command array and project configuration."
   }
 }

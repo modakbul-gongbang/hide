@@ -114,5 +114,10 @@
     ],
     "sessions": "sessions",
     "provenance": "Installed pi 1.0.4 docs/configuration.md and dist/config.js: PI_CODING_AGENT_DIR owns auth/settings/locks; --session-dir owns history."
+  },
+  "mcp": {
+    "format": "mcpServers",
+    "path": ".pi/mcp.json",
+    "provenance": "Installed Pi 1.0.4 docs/mcp.md: project .pi/mcp.json, stdio command/args, direct exposure."
   }
 }
