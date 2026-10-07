@@ -236,6 +236,13 @@ pub(crate) fn parse_subscription_line(line: &str) -> Result<SubscriptionLine, Se
         }
         let response: err::ErrorResponse = serde_json::from_value(value)
             .map_err(|e| malformed(format!("Herdr subscription error is malformed: {e}")))?;
+        // The schema leaves error codes open; the Socket API names this one
+        // for a subscriber that fell behind the server's event history.
+        if response.error.code == "events_lost" {
+            return Ok(SubscriptionLine::EventsLost {
+                message: response.error.message,
+            });
+        }
         return Ok(SubscriptionLine::Error {
             code: response.error.code,
             message: response.error.message,

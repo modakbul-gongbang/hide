@@ -1,20 +1,20 @@
 {
   "name": "herdr",
-  "tag": "v0.9.1",
-  "version": "0.9.1",
+  "tag": "v0.9.3",
+  "version": "0.9.3",
   "platform": "macos-aarch64",
-  "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.1/herdr-macos-aarch64",
-  "sha256": "5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de",
+  "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.3/herdr-macos-aarch64",
+  "sha256": "5173a3e0ae42d5d1ab7ebfa5d5e6329f7c3d23f8e1a3677c7ce3231da2884157",
   "linux_x86_64": {
     "platform": "linux-x86_64",
-    "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.1/herdr-linux-x86_64",
-    "sha256": "2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7"
+    "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.3/herdr-linux-x86_64",
+    "sha256": "18a8dc65f1c2fa485884344356dea1cfd911c6f06cf46fa78e193f4087f4dba7"
   },
   "verification": "This file is the single source of the pin. scripts/fetch-herdr-runtime.sh downloads and verifies the asset against it for every app build and e2e run, and desktop/scripts/package.mjs ships that verified binary inside hide.app. linux_x86_64 is the same release's Linux asset, which only the Linux checks lane runs for the schema comparison; its digest is recorded here for the same reason. windows_x86_64 is the same release's Windows zip (herdr.exe and its ConPTY runtime): scripts/fetch-herdr-runtime.ps1 verifies and unpacks it for the Windows lane, which is the only place it runs. contracts/herdr-api.schema.json is the schema this binary reports. Change all of it with scripts/bump-herdr.sh <release-tag>, never by hand.",
   "repo": "herdrdev/herdr",
   "windows_x86_64": {
     "platform": "windows-x86_64",
-    "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.1/herdr-windows-x86_64.zip",
-    "sha256": "04ce380cac5af27bfcf75d0951ac49b7afe4c984aee8852985806d4f71f93a6e"
+    "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.3/herdr-windows-x86_64.zip",
+    "sha256": "c75b1fa49f7a3ba4b8b11789912a6147e4214a3b6fd3556d0f80076c8887d795"
   }
 }
