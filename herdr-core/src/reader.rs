@@ -142,6 +142,12 @@ where
 
     /// A bounded reader can cancel its batch, then join outside the runtime
     /// lock so no socket request survives its coordinator's shutdown.
+    /// Whether a read is running.
+    #[cfg(test)]
+    pub(crate) fn reading(&self) -> bool {
+        self.worker.is_some()
+    }
+
     pub(crate) fn join_pending(&mut self) {
         if let Some(worker) = self.worker.take()
             && worker.join().is_err()
