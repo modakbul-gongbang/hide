@@ -26,7 +26,7 @@ const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
 /// The deadline of a test that asks what a launch produced or left behind, not
 /// how fast it ran. It is the start wait `ready_number` gives the same child
 /// and only ends a child that never answers. A test that is about a deadline
-/// (`inherited_output_cannot_extend_capture_deadline`, the uncooperative
+/// (`a_running_child_cannot_extend_the_capture_deadline`, the uncooperative
 /// launch) states its own short one.
 const HANG_LIMIT: Duration = Duration::from_secs(30);
 // Test-only handoff: arm recovery before the short-lived parent exits.
@@ -68,7 +68,7 @@ fn child_role() {
         }
         "held_pipe" => {
             // The parent exits while its own group keeps the stdout pipe
-            // open. Capture must time out without joining a blocked reader.
+            // open.
             #[allow(clippy::zombie_processes)]
             let helper = role_command("sleep")
                 .stdout(Stdio::inherit())
@@ -146,11 +146,17 @@ fn child_role() {
             let _ = child.wait();
         }
         // An ordinary supervisor leaves both inherited pipes in its child.
-        "exit_with_pipes" | "exit_with_escaped_pipes" => {
+        // The escaped one's helper leaves the group (Unix; a job holds it on
+        // Windows), and once the helper has said all it says, the parent
+        // fills both pipes and exits.
+        "exit_with_pipes" | "fill_and_exit_with_escaped_pipes" => {
+            let fill = role == "fill_and_exit_with_escaped_pipes";
+            let path = PathBuf::from(std::env::var_os(PIPE_OWNER).unwrap());
             let mut command = Command::new(std::env::current_exe().unwrap());
-            #[cfg(unix)]
-            if role == "exit_with_escaped_pipes" {
+            if fill {
+                #[cfg(unix)]
                 std::os::unix::process::CommandExt::process_group(&mut command, 0);
+                command.env(READY_FILE, path.with_extension("helper"));
             }
             #[allow(clippy::zombie_processes)]
             let helper = command
@@ -158,7 +164,6 @@ fn child_role() {
                 .env(ROLE, "sleep")
                 .spawn()
                 .unwrap();
-            let path = PathBuf::from(std::env::var_os(PIPE_OWNER).unwrap());
             std::fs::write(
                 &path,
                 format!("{} {}", helper.id(), start_time(helper.id()).unwrap()),
@@ -169,8 +174,21 @@ fn child_role() {
                 assert!(started.elapsed() < Duration::from_secs(5));
                 thread::sleep(Duration::from_millis(10));
             }
-            println!("SPOKE out");
-            eprintln!("SPOKE err");
+            if fill {
+                while !path.with_extension("helper").exists() {
+                    assert!(started.elapsed() < Duration::from_secs(5));
+                    thread::sleep(Duration::from_millis(10));
+                }
+                let mut out = std::io::stdout();
+                out.write_all(filled("out").as_bytes()).unwrap();
+                out.flush().unwrap();
+                std::io::stderr()
+                    .write_all(filled("err").as_bytes())
+                    .unwrap();
+            } else {
+                println!("SPOKE out");
+                eprintln!("SPOKE err");
+            }
             std::process::exit(0);
         }
         // Says something on both outputs and exits with a code of its own.
@@ -374,36 +392,45 @@ fn capture_reports_the_callers_byte_limit_without_losing_cleanup() {
     }
 }
 
+/// The capture ends at the child's exit: the helper it left holding stdout is
+/// ended with its tree, not waited for.
 #[test]
-fn inherited_output_cannot_extend_capture_deadline() {
+fn a_capture_ends_the_helper_that_holds_its_output_at_the_exit() {
     let _serial = serial();
-    let started = Instant::now();
-    let deadline = started + Duration::from_millis(300);
+    let deadline = Instant::now() + HANG_LIMIT;
     let mut child = OwnedChild::spawn(&mut role_command("held_pipe")).unwrap();
-    let error = child.capture_until(deadline, 64 * 1024).unwrap_err();
-    assert!(matches!(error.kind, CaptureFailureKind::Deadline));
-    assert!(
-        started.elapsed() < Duration::from_millis(1850),
-        "a pipe reader extended the deadline"
-    );
-    let output = String::from_utf8(error.stdout).unwrap();
-    let helper = output
+    let output = child.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(output.status.success());
+    let helper = String::from_utf8(output.stdout)
+        .unwrap()
         .lines()
         .find_map(|line| {
             line.split_once("READY ")
                 .and_then(|(_, number)| number.trim().parse::<u32>().ok())
         })
         .expect("helper announced its pid");
+    assert!(!is_alive(helper), "the helper outlived the capture");
+}
+
+#[test]
+fn a_running_child_cannot_extend_the_capture_deadline() {
+    let _serial = serial();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(300);
+    let mut child = OwnedChild::spawn(&mut role_command("sleep")).unwrap();
+    let error = child.capture_until(deadline, 64 * 1024).unwrap_err();
+    assert!(matches!(error.kind, CaptureFailureKind::Deadline));
+    assert!(
+        started.elapsed() < Duration::from_millis(1850),
+        "a pipe reader extended the deadline"
+    );
     if error.cleanup.is_some() {
         // A timeout never asserts an exit it has not observed. The same
         // retained owner can reap after the prompt capture outcome.
         child.kill_tree().unwrap();
         child.wait().unwrap();
     }
-    assert!(
-        gone_within(helper, Duration::from_secs(5)),
-        "owned inherited-pipe helper survived"
-    );
+    assert!(child.try_wait().unwrap().is_some(), "the child survived");
 }
 
 #[cfg(unix)]
@@ -1138,20 +1165,43 @@ fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
     );
 }
 
-/// Unix cannot attribute a helper that escaped and was reparented before its
-/// walk, but that helper's inherited pipes must not make a deadline unlimited.
-#[cfg(unix)]
+/// What `fill_and_exit_with_escaped_pipes` writes on `stream` just before it
+/// exits: numbered lines just under the 16 KiB a macOS pipe starts with, so
+/// the pipe still holds more than one read takes when the exit is seen.
+fn filled(stream: &str) -> String {
+    (0..1500)
+        .map(|line| format!("{stream} {line:05}\n"))
+        .collect()
+}
+
+/// A write end held outside the run's tree never closes on the run's account:
+/// a helper that left the group and was reparented before the walk (Unix), or
+/// any child another thread starts while the run's pipes are being made
+/// (macOS). The run answers once its leader has exited and its tree has
+/// ended, with everything the leader wrote, read until the pipes are empty
+/// rather than once. On Windows the job ends the helper, and the same answer
+/// comes from the pipes' end.
 #[test]
-fn an_escaped_pipe_holder_cannot_extend_the_run_deadline() {
+fn a_pipe_holder_outside_the_tree_does_not_hold_the_answer() {
     let _serial = serial();
-    let (answer, completed, elapsed, _) =
-        inherited_pipe_run("exit_with_escaped_pipes", Duration::from_millis(500));
+    let (answer, answered, elapsed, _) =
+        inherited_pipe_run("fill_and_exit_with_escaped_pipes", HANG_LIMIT);
     assert!(
-        completed,
-        "pipe draining blocked even after the run deadline"
+        answered,
+        "the run waited for a write end outside its tree; elapsed {elapsed:?}"
     );
-    assert!(matches!(answer, Err(RunFailure::TimedOut)), "{answer:?}");
-    assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+    let finished = answer.unwrap();
+    assert_eq!(finished.code, Some(0));
+    assert!(
+        finished.stdout.ends_with(&filled("out")),
+        "stdout was cut: {} bytes",
+        finished.stdout.len()
+    );
+    assert!(
+        finished.stderr.ends_with(&filled("err")),
+        "stderr was cut: {} bytes",
+        finished.stderr.len()
+    );
 }
 
 /// What a child that must find the account's login is started with: the
