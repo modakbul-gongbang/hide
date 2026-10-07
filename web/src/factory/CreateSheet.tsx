@@ -12,7 +12,7 @@ import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import type { MergeMode, VerificationChoice } from "./commands";
 import { Refusal } from "./MyTurn";
-import { useFactoryRequest } from "./request";
+import { useFactoryRequest, type RequestState } from "./request";
 
 /** What `hide factory init` answers before `--confirm` (docs/factory.md, Creating a Factory). */
 export type InitPreview = {
@@ -75,6 +75,8 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
   const projects = useMemo(() => catalogWorkspaces(workspaces).filter((workspace) => !workspace.is_home && workspace.device_id === "local"), [workspaces]);
   const [project, setProject] = useState<string | null>(null);
   const [verification, setVerification] = useState<Verification | null>(null);
+  // Whether the verification is the sheet's own first pick rather than the person's.
+  const [preselected, setPreselected] = useState(false);
   const [mode, setMode] = useState<MergeMode>("auto");
   const probe = useFactoryRequest(actions);
   const create = useFactoryRequest(actions);
@@ -99,9 +101,16 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
     // The first answer preselects what the engine detected, the checks before the commands (B3).
     if (verification === null) {
       const first = next.candidates[0];
-      setVerification(first?.kind === "ci" ? { kind: "ci" } : first ? { kind: "commands", commands: next.candidates.filter((row) => row.kind === "verify").map((row) => row.value) } : { kind: "none" });
+      setVerification(first?.kind === "ci" ? { kind: "ci" } : detectedCommands(next));
+      setPreselected(true);
     }
   }, [probe.state, verification]);
+  useEffect(() => {
+    // A repository with no required checks still lists CI first; when the
+    // engine refuses the sheet's own CI pick for that, it picks the commands.
+    if (!preselected || verification?.kind !== "ci" || preview === null) return;
+    if (probe.state.phase === "refused" && probe.state.answer?.reason === "ci_checks_required") setVerification(detectedCommands(preview));
+  }, [probe.state, preselected, verification, preview]);
   useEffect(() => {
     if (create.state.phase !== "taken") return;
     const made = initFactory(create.state.answer as Record<string, unknown>);
@@ -118,7 +127,7 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
       <DialogBody className="flex flex-col gap-lg">
         <DialogDescription className="sr-only">{t("factory.create.title")}</DialogDescription>
         <Step title={t("factory.create.project")}>
-          <Select value={project ?? undefined} onValueChange={(value) => { setProject(value); setVerification(null); setPreview(null); }}>
+          <Select value={project ?? undefined} onValueChange={(value) => { setProject(value); setVerification(null); setPreselected(false); setPreview(null); }}>
             <SelectTrigger aria-label={t("factory.create.project")} data-factory-create-project="true">
               <SelectValue placeholder={t("factory.create.pickProject")} />
             </SelectTrigger>
@@ -139,9 +148,10 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
                 {t("factory.create.detecting")}
               </span>
             ) : preview ? (
-              <VerificationStep preview={preview} value={verification} onChange={setVerification} />
+              <VerificationStep preview={preview} value={verification} onChange={(value) => { setVerification(value); setPreselected(false); }} />
             ) : null}
             <Refusal state={probe.state} />
+            <InitFailure state={probe.state} />
           </Step>
         ) : null}
         {preview ? (
@@ -161,11 +171,7 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
         ) : null}
         {preview?.github ? <GithubStep plan={preview.github} /> : null}
         <Refusal state={create.state} />
-        {create.state.phase === "refused" && typeof (create.state.answer?.detail as { stage?: unknown } | undefined)?.stage === "string" ? (
-          <span className="text-caption text-muted-foreground" data-factory-create-stage="true">
-            {t("factory.create.failedStage", { stage: (create.state.answer!.detail as { stage: string }).stage })}
-          </span>
-        ) : null}
+        <InitFailure state={create.state} />
       </DialogBody>
       <DialogFooter>
         <Button variant="ghost" data-factory-create-cancel="true" onClick={onClose}>
@@ -185,6 +191,40 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+/** The verify commands the engine detected, or no verification when it found none. */
+function detectedCommands(preview: InitPreview): Verification {
+  const commands = preview.candidates.filter((row) => row.kind === "verify").map((row) => row.value);
+  return commands.length > 0 ? { kind: "commands", commands } : { kind: "none" };
+}
+
+const STAGE_LABEL: Partial<Record<string, "factory.create.stage.probe">> = { probe: "factory.create.stage.probe" };
+
+/**
+ * Where a failed project check stopped and what to do next (B5). The engine
+ * tells a logged-out `gh` from other failures only in its next action, which
+ * carries the command to run, so that sentence is shown as the engine wrote it.
+ */
+export function InitFailure({ state }: { state: RequestState }) {
+  const { t } = useInterfaceTranslation();
+  if (state.phase !== "refused" || state.answer?.reason !== "init_failed") return null;
+  const stage = (state.answer.detail as { stage?: unknown } | undefined)?.stage;
+  const next = state.answer.next_action;
+  const stageName = (code: string) => {
+    const key = STAGE_LABEL[code];
+    return key ? t(key) : code;
+  };
+  return (
+    <div className="flex flex-col gap-xxs pl-(--size-icon) text-caption text-muted-foreground">
+      {typeof stage === "string" ? <span data-factory-create-stage={stage}>{t("factory.create.failedStage", { stage: stageName(stage) })}</span> : null}
+      {next ? (
+        <span className="[overflow-wrap:anywhere]" data-factory-create-next="true">
+          {t("factory.create.nextAction", { action: next })}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

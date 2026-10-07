@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { transitiveReduction } from "../projectBoard";
 import type { CardView, FactoryView } from "./model";
-import { boardColumns, factoryGraph, taskChain } from "./view";
+import { boardColumns, factoryGraph, taskChain, workerPanes } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
@@ -54,5 +54,13 @@ describe("the Factory board", () => {
     expect(column!.groups[0]!.cards.map((value) => value.task)).toEqual(["T-2", "T-1"]);
     expect(column!.groups[0]!.folded.map((value) => value.task)).toEqual(["T-3"]);
     expect(boardColumns([view], "done")).toEqual([]);
+  });
+});
+
+describe("the Factory workers (B13)", () => {
+  it("are the panes the engine names on its cards, which the Overview leaves out", () => {
+    const view = factory([card("T-1", { worker_pane: "w1:p2" }), card("T-2")], []);
+    expect([...workerPanes({ my_turn: 0, factories: [view], inbox: [] })]).toEqual(["w1:p2"]);
+    expect(workerPanes(null).size).toBe(0);
   });
 });

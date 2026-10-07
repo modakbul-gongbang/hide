@@ -6,6 +6,8 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
 import { useFactoryTurnCount } from "./factory/hooks";
+import { REQUEST_ANSWER_TIMEOUT_MS } from "./factory/request";
+import { paneListed } from "./factory/secretary";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
@@ -221,12 +223,6 @@ export function Sidebar({ actions }: { actions: Actions }) {
 }
 
 /**
- * The Home row's `+` starts a terminal tab in the device's Home and answers
- * with its pane under the request id it sent; that pane is opened once it is
- * listed, and a refusal (a `~/hide` that is not Hide's, a busy core) is shown
- * under that Home row, where the operator opened it (PRD home-device-rail D-13, B21).
- */
-/**
  * The secretary's row (PRD software-factory-ui B23), once a Factory exists:
  * its agent's status mark while the core still lists its pane.
  */
@@ -243,15 +239,32 @@ function useSecretaryRow(actions: Actions) {
 /**
  * Carries a secretary start through (B23): the Factory's default runtime
  * once its config answers, then the Home agent's pane, which the core keeps
- * as the secretary and the page opens when it lists.
+ * as the secretary once a tab lists it, and the page opens. A refused or
+ * unanswered step ends the start without starting anything, into the
+ * diagnostic log, and the next press tries again.
  */
 function useSecretaryStart(actions: Actions) {
   const start = useUiStore((s) => s.secretaryStart);
   const answer = useShellStore((s) => (start?.phase === "config" ? (s.factory?.actions.find((row) => row.request_id === start.requestId)?.answer ?? null) : null));
   const operation = useShellStore((s) => s.rest?.task_operation);
   const error = useShellStore((s) => s.rest?.status?.last_error);
+  const listed = useShellStore((s) => (start?.phase === "listing" ? paneListed(s.rest, start.paneId) : false));
+  useEffect(() => {
+    if (start === null) return undefined;
+    const timer = window.setTimeout(() => {
+      if (useUiStore.getState().secretaryStart !== start) return;
+      useUiStore.getState().setSecretaryStart(null);
+      useShellStore.getState().noteDiagnostic(`factory secretary: no answer while ${start.phase}`);
+    }, REQUEST_ANSWER_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [start]);
   useEffect(() => {
     if (start?.phase !== "config" || answer === null) return;
+    if (!answer.ok) {
+      useUiStore.getState().setSecretaryStart(null);
+      useShellStore.getState().noteDiagnostic(`factory secretary: config refused (${answer.reason ?? "no reason"})`);
+      return;
+    }
     const runtime = (answer as { config?: { default_runtime?: string } }).config?.default_runtime;
     actions.startSecretary(runtime === "codex" ? "codex" : "claude");
   }, [start, answer, actions]);
@@ -259,15 +272,25 @@ function useSecretaryStart(actions: Actions) {
     if (start?.phase !== "start") return;
     const ui = useUiStore.getState();
     if (operation?.request_id === start.requestId && operation.pane_id && operation.phase !== "failed") {
-      ui.setSecretaryStart(null);
-      actions.factorySecretarySet(operation.pane_id);
+      ui.setSecretaryStart({ phase: "listing", paneId: operation.pane_id });
       ui.setFocusWhenListed(operation.pane_id);
       return;
     }
     if (error?.request_id === start.requestId || (operation?.request_id === start.requestId && operation.phase === "failed")) ui.setSecretaryStart(null);
   }, [start, operation, error, actions]);
+  useEffect(() => {
+    if (start?.phase !== "listing" || !listed) return;
+    useUiStore.getState().setSecretaryStart(null);
+    actions.factorySecretarySet(start.paneId);
+  }, [start, listed, actions]);
 }
 
+/**
+ * The Home row's `+` starts a terminal tab in the device's Home and answers
+ * with its pane under the request id it sent; that pane is opened once it is
+ * listed, and a refusal (a `~/hide` that is not Hide's, a busy core) is shown
+ * under that Home row, where the operator opened it (PRD home-device-rail D-13, B21).
+ */
 function useHomeStart() {
   const request = useUiStore((s) => s.homeStart);
   const operation = useShellStore((s) => s.rest?.task_operation);

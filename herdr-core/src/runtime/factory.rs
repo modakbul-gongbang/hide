@@ -106,14 +106,15 @@ impl Runtime {
                     "request_id": request_id,
                     "reason": reason,
                 }));
-                let next = if reason == "factory_busy" {
-                    "Try again in a moment"
+                // Spelled out so the screen's refusal labels can be held to them.
+                let refusal = if reason == "factory_busy" {
+                    hide_factory::Refusal::new("factory_busy", "Try again in a moment")
                 } else {
-                    "See the diagnostic log"
+                    hide_factory::Refusal::new("factory_unavailable", "See the diagnostic log")
                 };
                 self.factory_answered(ActionAnswer {
                     request_id,
-                    answer: hide_factory::Refusal::new(reason, next).to_json(),
+                    answer: refusal.to_json(),
                 });
                 true
             }

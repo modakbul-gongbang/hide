@@ -131,7 +131,6 @@ export function createActions(send: DispatchFn) {
   const diagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
   const ui = () => useUiStore.getState();
 
-  /** Remembers what was asked to come forward; `CenterScreen` shows it once it is in front. */
   /** A new secretary in this machine's Home (B23); its pane is recorded when the start answers (`useSecretaryStart`). */
   const startSecretary = (provider: "claude" | "codex") => {
     const requestId = remoteRequestId();
@@ -139,6 +138,7 @@ export function createActions(send: DispatchFn) {
     dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider, prompt: SECRETARY_PROMPT, request_id: requestId } });
   };
 
+  /** Remembers what was asked to come forward; `CenterScreen` shows it once it is in front. */
   const beginOpening = (target: OpenTarget) => {
     useUiStore.setState({ overviewOpen: false, overviewReturnFocus: ui().overviewOpen ? document.querySelector<HTMLElement>('[data-pane-view][data-focused="true"] .xterm-helper-textarea') : null, opening: { target, errorBefore: rest()?.status?.last_error?.occurred_at ?? null, failure: null } });
   };

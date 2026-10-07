@@ -23,4 +23,6 @@ export type SecretaryStart =
   /** Reading the Factory's default runtime. */
   | { phase: "config"; requestId: string }
   /** The Home agent was asked for; its pane answers on `requestId`. */
-  | { phase: "start"; requestId: string };
+  | { phase: "start"; requestId: string }
+  /** The pane answered; the core keeps it as the secretary once a tab lists it. */
+  | { phase: "listing"; paneId: string };

@@ -240,7 +240,8 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
             {sending ? t("factory.turn.sending") : label}
           </Button>
         ) : null}
-        {choice && choice.value === item.suggestion ? (
+        {/* What the engine's own pick does: its suggestion, or with none (a notice) its first choice. */}
+        {choice && choice.value === (item.suggestion || choices[0]?.value) ? (
           <span className="min-w-0 text-caption text-subtle-foreground [overflow-wrap:anywhere]" data-factory-result={item.result_code}>
             {resultText(item, t)}
           </span>

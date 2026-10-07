@@ -14,7 +14,9 @@ import { TooltipProvider } from "../components/ui/tooltip";
 import { useShellStore } from "../store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace } from "../ui";
 import type { DispatchFn } from "../ws";
+import { InitFailure } from "./CreateSheet";
 import { FactoryScreen } from "./FactoryScreen";
+import { REQUEST_ANSWER_TIMEOUT_MS } from "./request";
 import type { CardView, FactorySummary, FactoryView, InboxItem, TaskDetail, TaskState } from "./model";
 
 const NOW = Date.now();
@@ -115,4 +117,63 @@ it("draws no action for a blocked Task, which takes only an answer (B19)", async
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail("blocked", []) } }));
   expect(container.querySelector("[data-factory-task-state]")).not.toBeNull();
   expect(container.querySelector("[data-factory-actions]")).toBeNull();
+});
+
+const CONFIG = {
+  verification: { kind: "ci", checks: ["ci"] }, merge_mode: "manual", merge_method: "merge", quick_check: null, question_deadline_ms: 86_400_000, stall_ms: 1_800_000,
+  no_report_ms: 3_600_000, watch_interval_ms: 1_800_000, watch_daily_limit: 4, outside_read_ms: 120_000, cancel_keep_ms: 604_800_000, done_fold_ms: 259_200_000,
+  archive_fold_ms: 7_776_000_000, new_task_limit: 10, verify_failure_limit: 3, verify_timeout_ms: 3_600_000, disk_floor_bytes: 10_737_418_240, default_runtime: "claude",
+  harness: null, autonomy: [], autonomy_diff_limit: 400, recovery: [], risk_paths: [], checks: [], prd_in_issue: false, macos_notifications: false, worker_args: {},
+};
+
+/** Answers the settings tab's config read the way the engine does. */
+async function answerConfig(summary: FactorySummary, events: Parameters<DispatchFn>[0][]) {
+  const read = events.find((event) => (event as unknown as { kind: string; payload: { command: { verb: string } } }).payload?.command?.verb === "config") as unknown as { payload: { request_id: string } };
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: read.payload.request_id, answer: { ok: true, config: CONFIG, machine: { max_workers: 5 } } }] } }));
+}
+
+it("keeps Close disabled while the Running column holds a Task in any of its states, as the engine refuses then (B22)", async () => {
+  const waiting = factory({ columns: [{ column: "running", label: "running", cards: [card("T-1", "merge_waiting", { column: "running" })] }] });
+  const summary = { my_turn: 0, factories: [waiting], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings" });
+  await answerConfig(summary, events);
+  expect(container.querySelector<HTMLButtonElement>("[data-factory-close]")!.disabled).toBe(true);
+  const done = { my_turn: 0, factories: [factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done" })] }] })], inbox: [] };
+  await answerConfig(done, events);
+  expect(container.querySelector<HTMLButtonElement>("[data-factory-close]")!.disabled).toBe(false);
+});
+
+it("takes an answer that comes after the wait ran out, since the engine may still finish the work (B10)", async () => {
+  vi.useFakeTimers();
+  try {
+    const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
+    const sent = events.at(-1) as unknown as { payload: { request_id: string } };
+    await act(async () => vi.advanceTimersByTime(REQUEST_ANSWER_TIMEOUT_MS + 1));
+    expect(container.querySelector("[data-factory-refused]")!.getAttribute("data-factory-refused")).toBe("no_answer");
+    await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
+    expect(container.querySelector("[data-factory-refused]")).toBeNull();
+    expect(container.querySelector("[data-factory-send]")!.getAttribute("data-factory-send")).toBe("taken");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says what acknowledging a notice does, though a notice has no suggestion (B9)", async () => {
+  const notice: InboxItem = { ...MERGE, group: "notice", kind: "notice", question: "q-9", text: "무관한 발견", suggestion: "", choices: ["ok"], result_code: "acknowledge", gates: [] };
+  const { container } = await mount({ my_turn: 1, factories: [factory()], inbox: [notice] });
+  expect(container.querySelector("[data-factory-result]")!.getAttribute("data-factory-result")).toBe("acknowledge");
+  expect(container.querySelector("[data-factory-result]")!.textContent).toBe(english["factory.result.acknowledge"]);
+});
+
+it("shows where a project check failed and the engine's next action, a logged-out gh's included (B5)", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const state = { phase: "refused", answer: { ok: false, reason: "init_failed", next_action: "Run gh auth login, then retry", detail: { stage: "probe" } } } as const;
+  await act(async () => root!.render(<InitFailure state={state} />));
+  expect(container.querySelector("[data-factory-create-stage]")!.textContent).toBe(english["factory.create.failedStage"].replace("{{stage}}", english["factory.create.stage.probe"]));
+  expect(container.querySelector("[data-factory-create-next]")!.textContent).toContain("gh auth login");
 });

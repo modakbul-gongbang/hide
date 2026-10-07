@@ -1108,6 +1108,7 @@ Core owner: `herdr-core/src/factory/screen.rs`, `herdr-core/src/runtime/factory.
 The Factory screens draw the Software Factory engine ([factory.md](factory.md)) and change nothing it decides.
 Every count, name, state, order and reason on them is a field of the engine's `FactorySummary` or `TaskDetail`, and every action they offer is one stage-1 command the engine may refuse.
 A refusal keeps the thing that was acted on in place with the engine's next action on one line beneath it.
+An action the engine has not answered within 20 seconds reads as unanswered, says the Factory may still finish it, and still takes the engine's answer when it comes, because one `gh` call can outlast the wait.
 
 ### The Factory place
 
@@ -1116,7 +1117,8 @@ The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen; 
 With no open Factory the screen offers only '+ Factory 만들기'.
 Under the Factory row, once a Factory exists, is the secretary row: an ordinary agent tab in the core device's Home with the Factory's guide in its first prompt, which reads the board with `hide factory status` each time it answers, so closing the tab loses nothing.
 There is one secretary; the row and '비서에게 묻기' go to it, and when there is none they start one with the Factory's default runtime.
-The core remembers the secretary's pane in its UI state, so a restart keeps the row on the same pane while that pane is listed.
+The core remembers the secretary's pane in its UI state once a tab lists it, so a restart keeps the row on the same pane while that pane is listed.
+A start whose default-runtime read is refused, or that gets no answer within 20 seconds, starts nothing and goes to the diagnostic log; the next press tries again.
 
 ### The screen
 
@@ -1131,7 +1133,7 @@ Before the core's first summary arrives the screen draws its frame and no empty 
 
 내 차례 is one column of every Factory's person-facing items in the engine's order and under its groups: 답할 것, 머지 대기, 멈춤, 알림.
 The top item opens expanded with the engine's suggestion chosen and the send button focused, so ⏎ once answers.
-The send button names the answer, the line beside it the result the engine gave, the line under it the default action and the time left, and '자세히 →' opens the Task page.
+The send button names the answer, the line beside it the result the engine gave for its own pick (the suggestion, or a notice's first choice), the line under it the default action, the time cue at the item's right as on every item, and '자세히 →' opens the Task page.
 The other items are one line each: the id (the Task id before Ready, the issue number after), the title, the project and a time cue, with a question that blocks progress reading 'N일째 기다림' at the top.
 ↑ and ↓ move between items and open the one reached, a digit picks another choice, and ⏎ sends.
 While an answer is sent its button shows sending; when the engine takes it the item leaves and the next one opens.
@@ -1162,11 +1164,12 @@ An open question is answered only in 내 차례: '내 차례에서 답하기 →
 
 '+ Factory 만들기' asks three things: the project, the verification and the merge mode.
 The verification step shows the required checks and verify commands the engine detected for the project, with a loading mark while it detects, and the person picks the required checks, a set of verify commands, or none.
+The sheet first picks what the engine lists first, the required checks before the commands; when the engine refuses that first pick because the repository requires no checks, the sheet picks the detected commands instead, or none.
 The merge mode starts on auto; with no verification auto cannot be picked and says why in its place, and the Factory is made manual.
 A project with a GitHub remote shows, above the create button, the account, the repository and every GitHub read and write the engine will make; a project without one has no GitHub step.
-Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed step shows the engine's next action, and a project that already has a Factory opens it.
+Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed project check shows the step that failed and the engine's next action as the engine wrote it (`gh auth login` for a logged-out `gh`), and a project that already has a Factory opens it.
 The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision.
-'Factory 닫기' can be pressed only while no Task runs.
+'Factory 닫기' can be pressed only while the 실행 중 column is empty, a paused, verifying or merge-waiting Task included, because the engine refuses to close the Factory until then.
 
 ## Recent navigation
 
