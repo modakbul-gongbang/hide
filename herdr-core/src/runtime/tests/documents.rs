@@ -1721,7 +1721,7 @@ fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
     };
     assert_eq!(bound(DEVICE), Some(vec![Some(device_tab.clone())]));
     assert_eq!(
-        bound(workspace::LOCAL_DEVICE_ID),
+        bound(crate::node::TEST_NODE),
         Some(vec![Some(local_tab.clone())])
     );
     let dirty = |tab_id: &str| {

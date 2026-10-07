@@ -111,7 +111,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     let registration = workspace::registration(
         registered.to_str().unwrap(),
         "Nested",
-        workspace::LOCAL_DEVICE_ID,
+        crate::node::TEST_NODE,
     )
     .unwrap();
     let mut runtime = runtime();
@@ -399,7 +399,12 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
     let spaces = Runtime::session_spaces(&payload);
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
-        workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
+        workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
+            &[],
+            &spaces,
+            &no_worktrees(),
+        ),
         roots: workspace::root_index(&spaces),
     };
     let mut runtime = runtime();
@@ -470,7 +475,12 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
     let spaces = Runtime::session_spaces(&payload());
     let fresh = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
-        workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
+        workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
+            &[],
+            &spaces,
+            &no_worktrees(),
+        ),
         roots: workspace::root_index(&spaces),
     };
     let mut runtime = runtime();
@@ -484,7 +494,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
             id: "workspace:stale".to_owned(),
             label: "stale".to_owned(),
             path: cwd.clone(),
-            device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         }],
@@ -1066,7 +1076,7 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
         id: "workspace:partial".to_owned(),
         label: "Partial".to_owned(),
         path: partial_path.to_owned(),
-        device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -1115,7 +1125,8 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
 fn registered_context_runtime() -> (Runtime, WorkspaceRegistration) {
     let mut runtime = live_runtime();
     let registration =
-        workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
+        workspace::registration("/tmp/hide-context-alpha", "Alpha", crate::node::TEST_NODE)
+            .unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
     runtime.ingest_session(Ok(context_payload()));
     (runtime, registration)
@@ -1338,7 +1349,8 @@ fn removing_a_project_whose_creation_is_in_flight_is_refused() {
 fn removing_a_registration_with_panes_needs_a_live_connection() {
     let mut runtime = runtime();
     let registration =
-        workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
+        workspace::registration("/tmp/hide-context-alpha", "Alpha", crate::node::TEST_NODE)
+            .unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
     runtime.ingest_session(Ok(context_payload()));
 
@@ -1360,8 +1372,10 @@ fn removing_a_registration_with_panes_needs_a_live_connection() {
 #[test]
 fn pinning_a_registration_reorders_the_row_and_persists_the_flag() {
     let mut runtime = runtime();
-    let alpha = workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
-    let zeta = workspace::registration("/tmp/hide-context-zeta", "Zeta", "local").unwrap();
+    let alpha = workspace::registration("/tmp/hide-context-alpha", "Alpha", crate::node::TEST_NODE)
+        .unwrap();
+    let zeta =
+        workspace::registration("/tmp/hide-context-zeta", "Zeta", crate::node::TEST_NODE).unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![alpha.clone(), zeta.clone()];
     runtime.ingest_session(Ok(context_payload()));
     let ids = |runtime: &Runtime| {
@@ -1468,7 +1482,7 @@ fn pinning_an_unregistered_row_registers_and_pins_it_in_one_event() {
             id: alpha.id.clone(),
             label: alpha.label.clone(),
             path: alpha.path.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: true,
             home: false,
         }]
@@ -1565,8 +1579,12 @@ fn removing_registration_converges_without_git_or_repeat_publication() {
     let mut runtime = runtime();
     let folder = scratch_dir("hide-registration-empty-");
     let path = folder.path().to_path_buf();
-    let registration =
-        workspace::registration(path.to_str().unwrap(), "Empty project", "local").unwrap();
+    let registration = workspace::registration(
+        path.to_str().unwrap(),
+        "Empty project",
+        crate::node::TEST_NODE,
+    )
+    .unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
     runtime.rebuild_catalog();
     let event = serde_json::to_vec(&serde_json::json!({
@@ -2168,7 +2186,7 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
     let project_toggle = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "inactive_projects_toggle",
-        "payload": { "device_id": "local" }
+        "payload": { "device_id": crate::node::TEST_NODE }
     }))
     .unwrap();
 
@@ -2192,7 +2210,7 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
             .snapshot
             .ui_state
             .expanded_inactive_project_device_ids,
-        ["local"]
+        [crate::node::TEST_NODE]
     );
 
     assert!(runtime.dispatch_json(&checkout_toggle));
@@ -2230,7 +2248,8 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     }];
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-    runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces, &no_worktrees());
+    runtime.snapshot.navigator.workspaces =
+        workspace::build_catalog(&crate::node::test_node(), &[], &spaces, &no_worktrees());
     runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
     runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
     runtime.snapshot.navigator.root_path = Some(checkout_path.to_owned());
@@ -2255,6 +2274,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
@@ -2310,7 +2330,8 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
     // pane, not the Herdr workspace id, decides which layout is projected.
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
-    runtime.snapshot.navigator.workspaces = workspace::build_catalog(&[], &spaces, &no_worktrees());
+    runtime.snapshot.navigator.workspaces =
+        workspace::build_catalog(&crate::node::test_node(), &[], &spaces, &no_worktrees());
     runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
     runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
     runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id.clone());
@@ -2354,6 +2375,7 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
@@ -2406,12 +2428,17 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
         id: workspace::workspace_id_for_path(Path::new(checkout_path)),
         label: "Duplicate".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];
 
-    let catalog = workspace::build_catalog(&registrations, &spaces, &no_worktrees());
+    let catalog = workspace::build_catalog(
+        &crate::node::test_node(),
+        &registrations,
+        &spaces,
+        &no_worktrees(),
+    );
 
     // The registration is the row's identity; the Herdr workspace is
     // attached to it rather than replacing it.
@@ -2456,6 +2483,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
@@ -2515,7 +2543,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
         id: workspace_id.clone(),
         label: "Last pane".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -2595,7 +2623,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
         id: workspace_id.clone(),
         label: "Focused checkout".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -2969,7 +2997,7 @@ fn a_new_tab_goes_to_the_workspace_herdr_binds_to_the_checkout_not_where_its_tab
 #[test]
 fn a_plain_folder_tab_goes_to_its_marked_workspace_and_marks_a_new_one_when_the_mark_is_gone() {
     let path = owner_fixture("folder", false);
-    let mark = crate::checkout_owner::owner_mark(workspace::LOCAL_DEVICE_ID, &path);
+    let mark = crate::checkout_owner::owner_mark(crate::node::TEST_NODE, &path);
     let mut runtime = runtime();
     assert!(runtime.ingest_session(Ok(owner_payload(
         &path,
@@ -3526,7 +3554,8 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
         "home",
         linked.to_str().unwrap(),
     ]);
-    let registration = workspace::registration(repo.to_str().unwrap(), "Project", "local").unwrap();
+    let registration =
+        workspace::registration(repo.to_str().unwrap(), "Project", crate::node::TEST_NODE).unwrap();
     let main_id = workspace::checkout_id_for_path(&registration.id, &repo);
     let linked_id = workspace::checkout_id_for_path(&registration.id, &linked);
     let worktrees = crate::model::WorktreeCatalogSnapshot {
@@ -3555,7 +3584,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 schema_version: SCHEMA_VERSION,
                 home: None,
                 app_state_path: state_path.to_string_lossy().into_owned(),
-                machine_id: None,
+                node_id: crate::node::test_node(),
                 herdr_socket_path: None,
                 herdr_bin_path: None,
                 host_helper_dir: None,
@@ -3651,8 +3680,12 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
 fn primary_checkout_refuses_missing_plain_folder_and_remote_targets() {
     let dir = tempfile::tempdir().unwrap();
     let mut runtime = runtime();
-    let registration =
-        workspace::registration(dir.path().to_str().unwrap(), "Folder", "local").unwrap();
+    let registration = workspace::registration(
+        dir.path().to_str().unwrap(),
+        "Folder",
+        crate::node::TEST_NODE,
+    )
+    .unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
     runtime.rebuild_catalog();
     let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]

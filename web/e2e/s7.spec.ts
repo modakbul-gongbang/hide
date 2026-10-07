@@ -198,7 +198,7 @@ function viewEvents(stack: Stack): SentEvent[] {
 
 /** Every View action the page sent named the Workspace in front: this checkout on this machine (contract 4.1). */
 function expectFrontWorkspaceOnEveryViewEvent(stack: Stack): void {
-  for (const event of viewEvents(stack)) expect(event.payload.workspace).toEqual({ device_id: "local", path: stack.root });
+  for (const event of viewEvents(stack)) expect(event.payload.workspace).toEqual({ device_id: stack.daemon.node, path: stack.root });
 }
 
 test("a click previews in the last used area, a pin keeps a view, and a shown file is focused rather than opened again", async ({ page }) => {
@@ -1066,7 +1066,7 @@ test("a Workspace holds at most sixty-four views: opening one more is refused wi
       schema_version: 2,
       workspaces: [
         {
-          device_id: "local",
+          device_id: stack.daemon.node,
           path: stack.root,
           views: true,
           tool: "explorer",
@@ -1129,7 +1129,7 @@ function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
   const stored = JSON.parse(text, (key, value: unknown) => (key === "last_used_unix_ms" || key === "last_focused_unix_ms" ? undefined : value)) as {
     workspaces: StoredWorkspace[];
   };
-  return stored.workspaces.find((entry) => entry.device_id === "local" && entry.path === root) ?? null;
+  return stored.workspaces.find((entry) => entry.device_id === daemon.node && entry.path === root) ?? null;
 }
 
 test("a narrow body shows one column, File Views with one area and a way to the others, and stores none of it", async ({ page }) => {
@@ -1346,7 +1346,9 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     // An S6 (schema 1) file: its tabs become one area in their order, with
     // its active tab, preview and tools, and its Views only layout restarts
     // with File Views on; the next save writes schema 2 (B17, contract 1,
-    // PRD three-column-panel D-09).
+    // PRD three-column-panel D-09). It names this machine `local`, as a build
+    // of that time did, and the start converts that to the node id
+    // (core-host-node D-21).
     const v1 = {
       schema_version: 1,
       workspaces: [

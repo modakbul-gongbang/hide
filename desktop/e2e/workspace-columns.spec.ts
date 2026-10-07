@@ -9,7 +9,7 @@ import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
 import { countSent, enterWorkspace, keyboardFocus, rest, sendEvent, showExplorer } from "../../web/e2e/wire";
 import { deviceHome, proveDeviceHome, resetDeviceHome, stageBuild, writeSshConfig } from "./device-home";
-import { isolate, launchShell, test } from "./fixture";
+import { isolate, launchShell, nodeOf, test } from "./fixture";
 
 type Probe = {
   arm: (marker: string) => void;
@@ -588,7 +588,7 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     await expect(page.locator('[data-column="agents"]')).not.toBeVisible();
     await nativeCapture(app, page, "remote-columns-narrow-called-views");
     await bodyWidth(app, page, 1600);
-    await rail("local").click();
+    await rail(nodeOf(run.env)).click();
     await row("shared-columns").click();
     await expect(row("shared-columns")).toHaveAttribute("aria-current", "true");
     await expect(workspace).toHaveAttribute("data-file-views", "off");

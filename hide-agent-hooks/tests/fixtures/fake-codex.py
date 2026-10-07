@@ -133,6 +133,12 @@ with open(path("fake-cwd"), "w") as f:
 MODE = mode()
 if MODE == "no_server":
     sys.exit(1)
+if MODE == "hang":
+    # The child starts before any request, so a check that times out before
+    # `hooks/list` arrives (a slow start under load) still has one to stop.
+    child = subprocess.Popen(["sleep", "600"])
+    with open(path("fake-child-pid"), "w") as f:
+        f.write(str(child.pid))
 
 for raw in sys.stdin:
     raw = raw.strip()
@@ -156,9 +162,6 @@ for raw in sys.stdin:
         elif MODE == "invalid":
             error(rid, -32600, "Invalid request: missing field `cwds`")
         elif MODE == "hang":
-            child = subprocess.Popen(["sleep", "600"])
-            with open(path("fake-child-pid"), "w") as f:
-                f.write(str(child.pid))
             while True:
                 time.sleep(0.2)
         elif MODE == "flood":

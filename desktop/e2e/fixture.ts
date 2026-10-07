@@ -204,6 +204,11 @@ const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-backgroundi
  * window to the front itself, so it takes the keyboard while it runs;
  * `--grep-invert @needs-focus` leaves it out.
  */
+/** The core's own node id, as the state folder's `node.json` records it once its daemon has started. */
+export function nodeOf(env: Record<string, string>): string {
+  return (JSON.parse(fs.readFileSync(path.join(env.HIDE_STATE_DIR!, "node.json"), "utf8")) as { node: string }).node;
+}
+
 export const NEEDS_FOCUS = "@needs-focus";
 
 const FOCUS_GUARD = path.join(__dirname, "focus-guard.cjs");

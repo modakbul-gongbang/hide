@@ -744,7 +744,7 @@ mod tests {
             "reserved_name"
         );
         // A pane cannot register the Factory's own record either.
-        let factory = Actor::factory("f-1");
+        let factory = Actor::factory("f-1", crate::node::TEST_NODE);
         let mut owned = record("factory:f-1", "factory:f-1", None);
         owned.actor = factory.clone();
         let pane = record("pane-2", "native-pane-2", None).actor;

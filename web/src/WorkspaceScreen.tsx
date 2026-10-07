@@ -8,7 +8,7 @@ import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
 import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
-import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
+import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
@@ -485,7 +485,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
               {t("common.retry")}
             </Button>
           ) : null}
-          <Button variant="ghost" onClick={() => actions.focusDevice("local")} data-use-local-device="true">
+          <Button variant="ghost" onClick={() => actions.focusDevice(localDeviceId(useShellStore.getState().rest))} data-use-local-device="true">
             {t("panes.workspace.showThisMachine")}
           </Button>
         </div>

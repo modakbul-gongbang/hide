@@ -519,7 +519,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
             id: "workspace:local-other".to_owned(),
             label: "Local other".to_owned(),
             path: t.other.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         });
@@ -586,7 +586,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
     assert_eq!(rows(&runtime), vec![(t.main.clone(), false, false)]);
     let registrations = &runtime.snapshot.ui_state.workspace_registrations;
     assert_eq!(registrations.len(), 1);
-    assert_eq!(registrations[0].device_id, "local");
+    assert_eq!(registrations[0].device_id, crate::node::TEST_NODE);
     assert!(
         Path::new(&t.other).is_dir(),
         "removal never touches the folder"
@@ -929,7 +929,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         home: false,
     };
     runtime.snapshot.ui_state.workspace_registrations = vec![
-        registration("workspace:here", "local"),
+        registration("workspace:here", crate::node::TEST_NODE),
         registration(&format!("remote:{TARGET}:project:p1"), TARGET),
     ];
     runtime
@@ -964,7 +964,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
     };
     runtime.snapshot.ui_state.recent_checkouts = vec![
         recent(TARGET, &format!("remote:{TARGET}:checkout:w1")),
-        recent("local", "checkout:here"),
+        recent(crate::node::TEST_NODE, "checkout:here"),
     ];
     runtime.push_recent_closed(ClosedItem::File {
         key: "closed-device".to_owned(),

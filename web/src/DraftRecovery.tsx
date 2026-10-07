@@ -7,11 +7,12 @@
 
 import { useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, deleteBufferId, flushBuffer, identity, recoveryBuffers, tabBufferKey, type StoredBuffer } from "./buffers";
+import { adoptNodeDrafts, allBuffers, deleteBufferId, flushBuffer, identity, recoveryBuffers, tabBufferKey, type StoredBuffer } from "./buffers";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Hint } from "./components/ui/tooltip";
-import { catalogWorkspaces, frontCheckout, type SnapshotRest } from "./snapshot";
+import { frontDeviceId } from "./devices";
+import { catalogWorkspaces, frontCheckout, localDeviceId, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import type { TFunction } from "i18next";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -27,6 +28,7 @@ export async function refreshRecoveryDrafts(): Promise<void> {
     .map((tab) => tabBufferKey(host, state.rest, tab))
     .filter((key) => key !== null);
   await Promise.all(keys.map((key) => flushBuffer(key)));
+  if (host) await adoptNodeDrafts(host, localDeviceId(state.rest));
   const open = new Set(keys.map((key) => identity(key)));
   useShellStore.getState().setRecoveryDrafts(recoveryBuffers(await allBuffers(), open));
 }
@@ -45,14 +47,14 @@ export type DraftPlace =
  */
 export function draftPlace(draft: StoredBuffer, host: string | null, rest: SnapshotRest | null, t: TFunction<"translation">): DraftPlace {
   if (!draft.root) return { kind: "none", reason: t("documents.draftBeforeCheckout") };
-  const device = draft.device ?? "local";
+  const device = draft.device ?? localDeviceId(rest);
   if (draft.host !== null && draft.host !== host) return { kind: "none", reason: t("documents.draftOtherHost") };
   const checkout = catalogWorkspaces(rest)
-    .filter((workspace) => (workspace.device_id ?? "local") === device)
+    .filter((workspace) => workspace.device_id === device)
     .flatMap((workspace) => workspace.checkouts)
     .find((row) => row.path === draft.root);
   if (!checkout) return { kind: "none", reason: t("documents.draftCheckoutMissing", { path: draft.root, device: deviceLabel(rest, device, t) }) };
-  const focusedDevice = rest?.navigator?.focused_device_id ?? "local";
+  const focusedDevice = frontDeviceId(rest);
   if (focusedDevice !== device) return { kind: "device", device, label: deviceLabel(rest, device, t) };
   if (frontCheckout(rest)?.id !== checkout.id) {
     return { kind: "checkout", workspaceId: checkout.workspace_id, checkoutId: checkout.id, label: checkout.label };
@@ -61,14 +63,14 @@ export function draftPlace(draft: StoredBuffer, host: string | null, rest: Snaps
 }
 
 function deviceLabel(rest: SnapshotRest | null, device: string, t: TFunction<"translation">): string {
-  if (device === "local") return t("documents.thisMachine");
+  if (device === localDeviceId(rest)) return t("documents.thisMachine");
   return rest?.navigator?.devices?.find((row) => row.id === device)?.label ?? device;
 }
 
 function origin(draft: StoredBuffer, host: string | null, rest: SnapshotRest | null, t: TFunction<"translation">): string {
   if (draft.host === null) return t("documents.originUnverified");
   if (draft.host !== host) return t("documents.otherHost");
-  return deviceLabel(rest, draft.device ?? "local", t);
+  return deviceLabel(rest, draft.device ?? localDeviceId(rest), t);
 }
 
 function exportContents(draft: StoredBuffer) {

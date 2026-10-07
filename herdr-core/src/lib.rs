@@ -40,6 +40,8 @@ pub mod links;
 pub mod live;
 pub mod local_issues;
 mod model;
+pub mod node;
+pub mod node_migration;
 mod pane_reopen;
 mod persistence;
 pub mod pet;

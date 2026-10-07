@@ -259,11 +259,11 @@ impl Runtime {
         &mut self,
         device_id: &str,
     ) -> Result<Arc<dyn crate::host_access::HostChannel>, String> {
-        if device_id != workspace::LOCAL_DEVICE_ID && !self.device_hosts.contains_key(device_id) {
+        if device_id != self.node.as_str() && !self.device_hosts.contains_key(device_id) {
             self.start_device_host(device_id);
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
-            _ if device_id == workspace::LOCAL_DEVICE_ID => Ok(Arc::clone(&self.local_host)),
+            _ if device_id == self.node.as_str() => Ok(Arc::clone(&self.local_host)),
             Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
                 Ok(Arc::clone(host))
             }
@@ -1535,7 +1535,7 @@ impl Runtime {
         if let Some(device) = payload
             .device_id
             .clone()
-            .filter(|device| device != workspace::LOCAL_DEVICE_ID)
+            .filter(|device| device != self.node.as_str())
         {
             return self.remove_device_worktree(&device, payload);
         }
@@ -1750,7 +1750,7 @@ impl Runtime {
         crate::diagnostic!(serde_json::json!({
             "component": "worktree_removal",
             "kind": "close_requested",
-            "target": device.as_deref().unwrap_or(workspace::LOCAL_DEVICE_ID),
+            "target": device.as_deref().unwrap_or(self.node.as_str()),
             "id": id,
             "pane_count": pane_ids.len(),
         }));
@@ -1858,7 +1858,7 @@ impl Runtime {
         let refusal = match (registration_index, project) {
             (Some(index), _)
                 if self.snapshot.ui_state.workspace_registrations[index].device_id
-                    != workspace::LOCAL_DEVICE_ID =>
+                    != self.node.as_str() =>
             {
                 Some("remote_read_only")
             }
@@ -1960,7 +1960,7 @@ impl Runtime {
         }
         registration.pinned = payload.pinned;
         let device = registration.device_id.clone();
-        if device != workspace::LOCAL_DEVICE_ID {
+        if device != self.node.as_str() {
             // A device's rows are derived from its registrations, so the row
             // moves when its session is derived again.
             self.refresh_device_catalog(&device);
@@ -2018,7 +2018,7 @@ impl Runtime {
                 row.id == workspace_id && !row.registered && row.remote_target_id.is_none()
             })
         {
-            return Some(Ok(row_registration(row, workspace::LOCAL_DEVICE_ID)));
+            return Some(Ok(row_registration(row, self.node.as_str())));
         }
         self.snapshot.status.remote.iter().find_map(|status| {
             let row = status
@@ -2073,7 +2073,7 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .push(registration);
-        if device != workspace::LOCAL_DEVICE_ID {
+        if device != self.node.as_str() {
             self.refresh_device_catalog(&device);
         }
         for row in self
@@ -2142,7 +2142,7 @@ impl Runtime {
             );
             return true;
         }
-        let device = Some(owner).filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        let device = Some(owner).filter(|device| device != self.node.as_str());
         if !payload.close_descendant_pane_ids.is_empty() {
             // The operator's chosen descendants outside the project close
             // first; the removal starts only once they have (PRD
@@ -2224,7 +2224,7 @@ impl Runtime {
         crate::diagnostic!(serde_json::json!({
             "component": "registration", "kind": "remove.close_requested",
             "workspace_id": workspace_id, "pane_ids": pane_ids,
-            "target": device.as_deref().unwrap_or(workspace::LOCAL_DEVICE_ID),
+            "target": device.as_deref().unwrap_or(self.node.as_str()),
         }));
         let context = match device.as_deref() {
             Some(device) => self.device_worktree_target(device),
@@ -2261,7 +2261,7 @@ impl Runtime {
             .iter()
             .any(|row| row.id == workspace_id && !row.registered && row.remote_target_id.is_none())
         {
-            return Some(workspace::LOCAL_DEVICE_ID.to_owned());
+            return Some(self.node.as_str().to_owned());
         }
         self.snapshot.status.remote.iter().find_map(|status| {
             status
@@ -2327,7 +2327,7 @@ impl Runtime {
             .iter()
             // Only this machine's registrations: a device's project at the
             // same absolute path is another folder (B2).
-            .filter(|registration| registration.device_id == workspace::LOCAL_DEVICE_ID)
+            .filter(|registration| registration.device_id == self.node.as_str())
             .filter(|registration| self.workspace_removals_in_flight.contains(&registration.id))
             .find(|registration| Path::new(&registration.path) == requested)
             .map(|registration| registration.id.clone())
@@ -2345,8 +2345,7 @@ impl Runtime {
             .iter()
             // Creations in flight are this machine's folders only (B2).
             .filter(|registration| {
-                registration.id == workspace_id
-                    && registration.device_id == workspace::LOCAL_DEVICE_ID
+                registration.id == workspace_id && registration.device_id == self.node.as_str()
             })
             .any(|registration| {
                 self.workspace_creations_in_flight
@@ -2372,7 +2371,7 @@ impl Runtime {
             .iter()
             .find(|registration| registration.id == workspace_id)
             .map(|registration| registration.device_id.clone())
-            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+            .filter(|device| device != self.node.as_str());
         let registered = self
             .snapshot
             .ui_state
@@ -2399,7 +2398,7 @@ impl Runtime {
             .map(|checkout| checkout.id.clone())
             .collect();
         if let Some((device_id, path)) =
-            registered.filter(|(device, _)| device != workspace::LOCAL_DEVICE_ID)
+            registered.filter(|(device, _)| device != self.node.as_str())
         {
             checkout_ids.push(crate::device_catalog::checkout_id(&device_id, &path));
         }
@@ -2668,7 +2667,7 @@ impl Runtime {
             // row leaves the catalog.
             let device = removal_device
                 .clone()
-                .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned());
+                .unwrap_or_else(|| self.node.as_str().to_owned());
             let gone = self.catalog_checkout_ids_at(&device, &checkout_path);
             self.forget_recent_checkouts(|held| gone.contains(&held.checkout_id));
         }
@@ -3021,7 +3020,7 @@ impl Runtime {
         let device = payload
             .device_id
             .clone()
-            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+            .filter(|device| device != self.node.as_str());
         let listed = match device.as_deref() {
             Some(device) => self
                 .device_worktrees
@@ -3400,7 +3399,7 @@ impl Runtime {
             .device_id
             .clone()
             .filter(|device| !device.is_empty())
-            .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned());
+            .unwrap_or_else(|| self.node.as_str().to_owned());
         // A start names one place: a device's Home, or one of its checkouts.
         let checkout_path = match (payload.home, payload.checkout_path.clone()) {
             (true, None) => {
@@ -3417,7 +3416,7 @@ impl Runtime {
                 return true;
             }
         };
-        let local = device == workspace::LOCAL_DEVICE_ID;
+        let local = device == self.node.as_str();
         let found = if local {
             self.local_checkout_tab(&checkout_path)
         } else {
@@ -3560,7 +3559,7 @@ impl Runtime {
         Ok((
             project.path.clone(),
             checkout.next_tab_label.clone(),
-            tab_host(project, checkout, device),
+            tab_host(project, checkout, device, &self.node),
         ))
     }
 
@@ -3596,7 +3595,7 @@ impl Runtime {
             .checkouts
             .iter()
             .find(|checkout| checkout.id == checkout_id)?;
-        Some(tab_host(project, checkout, workspace::LOCAL_DEVICE_ID))
+        Some(tab_host(project, checkout, self.node.as_str(), &self.node))
     }
 
     pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {
@@ -3796,10 +3795,11 @@ pub(super) fn tab_host(
     project: &WorkspaceSnapshot,
     checkout: &crate::model::CheckoutSnapshot,
     device_id: &str,
+    node: &crate::node::NodeId,
 ) -> TabHost {
     match &checkout.owner_workspace_id {
         Some(owner) => TabHost::Workspace(owner.clone()),
-        None => TabHost::Open(owner_open(project, checkout, device_id)),
+        None => TabHost::Open(owner_open(project, checkout, device_id, node)),
     }
 }
 
@@ -3810,19 +3810,25 @@ pub(super) fn owner_open(
     project: &WorkspaceSnapshot,
     checkout: &crate::model::CheckoutSnapshot,
     device_id: &str,
+    node: &crate::node::NodeId,
 ) -> OwnerOpen {
     let label = if checkout.is_worktree {
         &checkout.label
     } else {
         &project.label
     };
-    OwnerOpen::for_checkout(
+    let owner = OwnerOpen::for_checkout(
         device_id,
         &checkout.path,
         &project.path,
         project.is_git,
         label,
-    )
+    );
+    if *node == device_id {
+        owner.on_node()
+    } else {
+        owner
+    }
 }
 
 /// Gives each checkout the one pull request that is its own work

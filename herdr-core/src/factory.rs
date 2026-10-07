@@ -1084,7 +1084,10 @@ impl WorkerRuntime for CoreWorkers {
             false => None,
         };
         let runtime = self.runtime()?;
-        let connector = guard(&runtime).delivery_connector("local");
+        let connector = {
+            let guard = guard(&runtime);
+            guard.delivery_connector(guard.node().as_str())
+        };
         drop(runtime);
         let connector = connector
             .ok_or_else(|| Failure::environment("worktree", EnvSignal::HerdrSocket, "no Herdr"))?;
@@ -1356,7 +1359,10 @@ impl Notifier for CoreNotifier {
         let Some(runtime) = lock(&self.runtime) else {
             return;
         };
-        let connector = guard(&runtime).delivery_connector("local");
+        let connector = {
+            let guard = guard(&runtime);
+            guard.delivery_connector(guard.node().as_str())
+        };
         drop(runtime);
         if let Some(connector) = connector {
             let _ = hide_herdr_client::request_small_response(

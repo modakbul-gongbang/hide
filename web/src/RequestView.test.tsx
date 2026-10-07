@@ -53,7 +53,7 @@ async function pathRow() {
   const context = async (cwd: string | null, path: string) => act(async () => {
     // The row and its request/reply remain the same objects throughout.
     const current = { ...checkout, path, tabs: [{ panes: [{ id: "pane", cwd }] }] } as unknown as Checkout;
-    useShellStore.setState({ connection: "live", rest: { navigator: { workspaces: [{ ...project, checkouts: [current] }] } } });
+    useShellStore.setState({ connection: "live", rest: { navigator: { devices: [{ id: "local", kind: "local" }], workspaces: [{ ...project, checkouts: [current] }] } } as never });
   });
   const answer = async (directory: string) => {
     const path = `${directory}/report.md`;

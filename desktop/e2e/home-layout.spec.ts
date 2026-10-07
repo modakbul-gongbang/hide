@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { stageBuild } from "./device-home";
-import { HIDE_CLI, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
+import { HIDE_CLI, isolate, nodeOf, relaunch, screenshot, shellPage, test } from "./fixture";
 import { herdrBinary, startHerdr } from "../../web/e2e/herdr-fixture";
 import { captureNativeWindow } from "./native-window";
 
@@ -85,9 +85,10 @@ test("the first connect of a new app moves the old layout into ~/.hide once", as
       const page = await shellPage(app);
       await page.locator("[data-open-settings]").click();
       await page.locator('[data-settings-tab="devices"]').click();
-      await page.locator('[data-device-menu="local"]').click();
-      await page.locator('[data-device-details="local"]').click();
-      await expect(page.locator('[data-kit-part="local:coordination_retirement:installed"]')).toBeVisible();
+      const movedNode = nodeOf({ HIDE_STATE_DIR: moved });
+      await page.locator(`[data-device-menu="${movedNode}"]`).click();
+      await page.locator(`[data-device-details="${movedNode}"]`).click();
+      await expect(page.locator(`[data-kit-part="${movedNode}:coordination_retirement:installed"]`)).toBeVisible();
       await screenshot(page, "home-layout-this-mac-kit");
       await captureNativeWindow(app, "coordination-retirement-native", { state: moved, home, socket: run.env.HERDR_SOCKET_PATH, retirement: "installed" });
     } finally {

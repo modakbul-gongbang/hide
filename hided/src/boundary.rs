@@ -37,6 +37,7 @@
 //! retain the checked path for UI identity, while actual file I/O uses opened
 //! checkout-root capabilities supplied from this boundary.
 
+use herdr_core::node::NodeId;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
@@ -286,6 +287,9 @@ pub struct Boundary {
     /// are another machine's paths: this boundary only admits the pair a
     /// device listing names, and the device's helper confines the work.
     device_roots: RwLock<Vec<DeviceRoot>>,
+    /// The node this boundary guards: a path an event names under this
+    /// device id, or under none, is one of this machine's paths.
+    node: NodeId,
 }
 
 /// A new project's folder as the `$HOME` line resolved it.
@@ -307,10 +311,17 @@ pub struct DeviceRoot {
 }
 
 impl Boundary {
+    /// This machine's boundary, for a test: the node is read from the
+    /// operating system, as the daemon reads it.
+    #[cfg(test)]
+    pub fn new(home: &Path) -> Result<Self, String> {
+        Self::for_node(home, NodeId::of_this_machine()?)
+    }
+
     /// Reads the boundary root once. Fails when `$HOME` does not resolve to a
     /// directory: a daemon without a boundary must not serve the registration
     /// flow at all.
-    pub fn new(home: &Path) -> Result<Self, String> {
+    pub fn for_node(home: &Path, node: NodeId) -> Result<Self, String> {
         // The short spelling (no `\\?\` on Windows), which is the one a
         // client sends and the snapshot carries.
         let real = hide_platform::fs::identity::canonical(home)
@@ -323,11 +334,23 @@ impl Boundary {
             home_as_given: home.to_path_buf(),
             roots: RwLock::new(Vec::new()),
             device_roots: RwLock::new(Vec::new()),
+            node,
         })
     }
 
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    /// The machine whose paths this boundary guards.
+    pub fn node(&self) -> &NodeId {
+        &self.node
+    }
+
+    /// Whether an event's `device_id` names this machine: the node id, or
+    /// none at all, the protocol's spelling of "the core's own machine".
+    pub fn names_this_node(&self, device_id: Option<&str>) -> bool {
+        device_id.is_none_or(|device| device.is_empty() || self.node == device)
     }
 
     /// Replaces the root set wholesale with the checkouts the core's latest

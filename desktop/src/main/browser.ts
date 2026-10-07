@@ -85,6 +85,8 @@ export class BrowserViews {
   private cdpObserved: { key: string; area: string; contents: number; url: string; title: string }[] = [];
   private readonly cdpLeases = new Map<number, CdpPage>();
   private attachmentEpoch: string | null = null;
+  /** The core's own node id as the shell last named it; its pages load this computer's loopback directly. */
+  private node: string | null = null;
   /** Positive core authority is independent of whether an area has pages. */
   private cdpScopes = new Map<string, number>();
   private cdpScopesRevision = 0;
@@ -205,6 +207,7 @@ export class BrowserViews {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
       const sync = parseSync(value);
       if (!sync) return this.log.event("browser.sync_invalid", {});
+      if (sync.node) this.node = sync.node;
       // UI owns this optional wire field. Its parser forwards it after the
       // shared contract lands; older shells have no replay epoch.
       const authority = sync as typeof sync & { attachment_epoch?: string; authorized_scopes?: { workspace: string; area_id: string; incarnation?: number }[] };
@@ -366,7 +369,7 @@ export class BrowserViews {
         continue;
       }
       if (!page) page = this.create(window, workspace ?? "", display);
-      else if (page.partition !== browserPartition(page.workspace, display.url)) {
+      else if (page.partition !== browserPartition(page.workspace, display.url, this.node)) {
         this.destroy(page, "replaced");
         page = this.create(window, workspace ?? "", display);
       } else if (display.load > page.applied) {
@@ -389,7 +392,7 @@ export class BrowserViews {
   }
 
   private create(window: BrowserWindow, workspace: string, display: BrowserPlacement): Page {
-    const partition = browserPartition(workspace, display.url);
+    const partition = browserPartition(workspace, display.url, this.node);
     const view = new WebContentsView({
       webPreferences: { session: this.sessionFor(partition), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
     });
@@ -456,7 +459,7 @@ export class BrowserViews {
       const outcome = !page
         ? partition === "persist:hide-browser-web" ? remoteRequest({ source_url: details.url, url: details.url }, details.url) : { cancel: true }
         : !page.route ? { cancel: true }
-        : page.workspace.startsWith("local\u0000") ? {}
+        : this.node !== null && page.workspace.startsWith(`${this.node}\u0000`) ? {}
         : remoteRequest(page.route, details.url);
       callback(outcome);
     });
@@ -486,7 +489,7 @@ export class BrowserViews {
       // spelling changes within that generation must not strand the load.
       if (this.pages.get(page.key) !== page || page.applied !== stamp || route.load !== stamp) return;
       if (!loadable(route.url)) throw new Error("Resolved page address cannot be loaded");
-      if (browserPartition(page.workspace, route.source_url) !== page.partition) throw new Error("Resolved page requires a different browser partition");
+      if (browserPartition(page.workspace, route.source_url, this.node) !== page.partition) throw new Error("Resolved page requires a different browser partition");
       page.route = route;
       return page.view.webContents.loadURL(route.url).catch((error: unknown) => {
         // did-fail-load reports it; a load a newer one replaced is not a failure.

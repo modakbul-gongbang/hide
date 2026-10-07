@@ -12,7 +12,7 @@ import { revealHost } from "./host";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
 import { useInterfaceTranslation } from "./i18n/client";
-import { editorTabFor, frontCheckout, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
+import { editorTabFor, frontCheckout, localDeviceId, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { commandLabel } from "./shortcutLabels";
@@ -94,7 +94,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     body: (display) => <DisplayBody key={display.id} display={display} workspace={workspace} actions={actions} />,
     empty: () => <AreaEmpty state="no-view" text={t("documents.view.empty")} />,
     floating: (display) => <>{displayMark(display)}<span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span></>,
-    menu: (id, geometry, sizes) => [{ id: "new_tab", label: t("panes.area.newTab"), unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id })],
+    menu: (id, geometry, sizes) => [{ id: "new_tab", label: t("panes.area.newTab"), unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id, node: localDeviceId(useShellStore.getState().rest) })],
     runMenu: (id, displayId) => id === "new_tab" ? actions.openBrowser("", workspace, locateDisplay(layout.root, displayId)?.area.id) : actions.runViewMenu(id as ViewMenuId, displayId),
     focus: actions.focusView,
     focusArea: actions.focusViewArea,
