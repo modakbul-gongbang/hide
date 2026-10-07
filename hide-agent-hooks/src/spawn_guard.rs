@@ -380,7 +380,12 @@ impl Lexer {
             self.at += 1;
             self.word.push(c);
             match c {
-                '<' if self.peek(0) == Some('<') && self.peek(1) != Some('<') => {
+                // `<<<` is a here-string: no body follows.
+                '<' if self.peek(0) == Some('<') && self.peek(1) == Some('<') => {
+                    self.word.push_str("<<");
+                    self.at += 2;
+                }
+                '<' if self.peek(0) == Some('<') => {
                     if let Some(heredoc) = self.nested_heredoc_start() {
                         heredocs.push(heredoc);
                     }
@@ -455,13 +460,25 @@ impl Lexer {
                 delimiter.push(c);
             }
         } else {
+            // The delimiter is the word a shell reads: quotes and backslashes in
+            // it are removed (`\EOF`, `E"OF"`).
             while let Some(c) = self.peek(0) {
                 if c.is_whitespace() || matches!(c, ')' | ';' | '|' | '&' | '<' | '>') {
                     break;
                 }
                 self.word.push(c);
                 self.at += 1;
-                delimiter.push(c);
+                match c {
+                    '\\' => {
+                        if let Some(escaped) = self.peek(0) {
+                            self.word.push(escaped);
+                            self.at += 1;
+                            delimiter.push(escaped);
+                        }
+                    }
+                    '\'' | '"' => {}
+                    other => delimiter.push(other),
+                }
             }
         }
         (!delimiter.is_empty()).then_some((delimiter, strip))
@@ -1179,12 +1196,7 @@ mod tests {
 
     #[test]
     fn text_a_shell_would_not_run_holds_no_launch() {
-        // A heredoc inside `$(...)` whose body has an early `)` and an odd quote
-        // reads as top-level lines to this lexer, but ends inside a quote: a
-        // shell runs none of it.
-        none(
-            "git commit -m \"$(cat <<'EOF'\nRefuse launches\n\nSteps: 1) open the 5\" screen\nherdr agent start x --kind claude --pane p\nEOF\n)\"",
-        );
+        // The backstop: text a shell reads as a syntax error runs none of it.
         for command in [
             "herdr agent start a --kind claude --pane \"p",
             "herdr agent start a --kind claude --pane 'p",
@@ -1193,6 +1205,24 @@ mod tests {
             "herdr agent start a --kind claude --pane p; echo \"unterminated",
         ] {
             none(command);
+        }
+    }
+
+    #[test]
+    fn a_heredoc_body_inside_a_substitution_is_text_whatever_it_holds() {
+        // A commit message whose heredoc body has an early `)`, an odd quote and
+        // a line that is itself a launch.
+        none(
+            "git commit -m \"$(cat <<'EOF'\nRefuse launches\n\nSteps: 1) open the 5\" screen\nherdr agent start x --kind claude --pane p\nEOF\n)\"",
+        );
+        // The delimiter is the word a shell reads, and a here-string opens no body,
+        // also in a substitution that spans lines.
+        for command in [
+            "herdr agent start a --kind claude --pane p -- \"$(cat <<\\EOF\nit's\nEOF\n)\"",
+            "herdr agent start a --kind claude --pane p -- \"$(cat <<E\"O\"F\nit's\nEOF\n)\"",
+            "herdr agent start a --kind claude --pane p -- \"$(\ntr a-z A-Z <<< 'x'\necho \"it's\"\n)\"",
+        ] {
+            assert_eq!(found(command).kind, "claude", "{command}");
         }
     }
 

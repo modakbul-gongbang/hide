@@ -37,18 +37,22 @@ fn fake(dir: &Path, name: &str, role: &str) -> PathBuf {
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
         // macOS assesses the first exec of a file it has not run before, which
-        // measured 175 ms for a two-line script on a quiet machine and grows
-        // with the machine's other work. A test that launches the script
-        // inside the supervisor's two-second acceptance window would then
-        // race that assessment, so it is paid here, outside any window.
-        let warmed = Command::new(&script)
-            .env(FAKE_WARM, "1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .unwrap();
-        assert!(warmed.success(), "the fake helper's warm-up run failed");
+        // measured 175 ms for a two-line script. A test that launches the
+        // script inside the supervisor's two-second acceptance window would
+        // race that assessment, so it is paid here, outside any window. Not on
+        // Linux, where running a file this process just wrote can fail with
+        // "text file busy" and there is no assessment to pay.
+        #[cfg(target_os = "macos")]
+        {
+            let warmed = Command::new(&script)
+                .env(FAKE_WARM, "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(warmed.success(), "the fake helper's warm-up run failed");
+        }
         script
     };
     #[cfg(windows)]
