@@ -10,7 +10,7 @@ use super::{
     CREATED_AFTER_MS, CREATED_BEFORE_MS, DAY_MS, FileState, IssueSource, LinkedIssue, LinkedParent,
     LinkedSession, OPEN_EXCEPTION_MS, PANEL_SESSION_LIMIT, PaneFact, ParentFact, ProjectFacts,
     ProjectLinkSummary, SESSION_PR_LIMIT, STORE_PAGE_LIMIT, SUMMARY_SESSION_LIMIT, SessionPrChip,
-    SessionRole, within,
+    SessionRole, WorktreeFact, within,
 };
 use hide_session::ConversationCheckpoint;
 use hide_session::links::ReadAnswer;
@@ -60,6 +60,10 @@ CREATE TABLE cursors(device TEXT NOT NULL, path TEXT NOT NULL, agent TEXT NOT NU
     subagent INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(device, path));
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
+
+/// A session joined to a pull request: its role, its request, and whether
+/// it worked on the pull request's branch rather than only printing it.
+type Member = (SessionRow, SessionRole, Option<String>, bool);
 
 /// The file `pane` in `session_branches`: a span a Hide pane's place said.
 const PANE_FILE: &str = "pane";
@@ -1098,7 +1102,7 @@ impl LinkStore {
                 }
             }
         }
-        let mut members: Vec<(SessionRow, SessionRole, Option<String>)> = Vec::new();
+        let mut members: Vec<Member> = Vec::new();
         let keys = printed
             .keys()
             .chain(worked.keys())
@@ -1131,7 +1135,7 @@ impl LinkStore {
                 let printed_request = printed.get(&key).and_then(|(_, request)| request.clone());
                 (SessionRole::Worked, branch_request.or(printed_request))
             };
-            members.push((session, role, request));
+            members.push((session, role, request, worked.contains_key(&key)));
         }
         self.lines(members, pr.number, local_device)
     }
@@ -1140,23 +1144,22 @@ impl LinkStore {
     /// newest first, with their parent and file state.
     fn lines(
         &self,
-        members: Vec<(SessionRow, SessionRole, Option<String>)>,
+        members: Vec<Member>,
         pr: u64,
         local_device: Option<&str>,
     ) -> Result<Vec<LinkedSession>, String> {
-        let mut groups: BTreeMap<SessionKey, Vec<(SessionRow, SessionRole, Option<String>)>> =
-            BTreeMap::new();
+        let mut groups: BTreeMap<SessionKey, Vec<Member>> = BTreeMap::new();
         for member in members {
             let root = self.chain_root(&member.0)?;
             groups.entry(root).or_default().push(member);
         }
         let mut lines = Vec::new();
         for (_, mut group) in groups {
-            group.sort_by_key(|(session, _, _)| session.started_at.unwrap_or(0));
+            group.sort_by_key(|(session, _, _, _)| session.started_at.unwrap_or(0));
             let last = &group[group.len() - 1].0;
             let role = if group
                 .iter()
-                .any(|(_, role, _)| *role == SessionRole::Created)
+                .any(|(_, role, _, _)| *role == SessionRole::Created)
             {
                 SessionRole::Created
             } else {
@@ -1165,8 +1168,8 @@ impl LinkStore {
             let request = group
                 .iter()
                 .rev()
-                .find(|(_, member_role, request)| *member_role == role && request.is_some())
-                .and_then(|(_, _, request)| request.clone());
+                .find(|(_, member_role, request, _)| *member_role == role && request.is_some())
+                .and_then(|(_, _, request, _)| request.clone());
             let file = match (last.path.as_deref(), local_device) {
                 (None, _) => FileState::Unknown,
                 (Some(_), _) if last.file_gone => FileState::Missing,
@@ -1185,14 +1188,14 @@ impl LinkStore {
                 id: last.key.id.clone(),
                 ids: group
                     .iter()
-                    .map(|(session, _, _)| session.key.id.clone())
+                    .map(|(session, _, _, _)| session.key.id.clone())
                     .collect(),
                 device_id: last.key.device.clone(),
                 role,
                 pr,
                 request,
-                started_at_unix_ms: group.iter().filter_map(|(s, _, _)| s.started_at).min(),
-                ended_at_unix_ms: group.iter().filter_map(|(s, _, _)| s.ended_at).max(),
+                started_at_unix_ms: group.iter().filter_map(|(s, _, _, _)| s.started_at).min(),
+                ended_at_unix_ms: group.iter().filter_map(|(s, _, _, _)| s.ended_at).max(),
                 path: last
                     .path
                     .clone()
@@ -1200,6 +1203,7 @@ impl LinkStore {
                 cwd: last.cwd.clone(),
                 file,
                 parent,
+                on_branch: group.iter().any(|(_, _, _, on_branch)| *on_branch),
             });
         }
         lines.sort_by(|left, right| {
@@ -1470,8 +1474,9 @@ impl LinkStore {
         } else {
             SessionRole::Worked
         };
+        let on_branch = prs.iter().any(|(_, line)| line.on_branch);
         let line = self
-            .lines(vec![(session, role, request)], 0, local_device)?
+            .lines(vec![(session, role, request, on_branch)], 0, local_device)?
             .remove(0);
         Ok(Some((line, prs)))
     }
@@ -1488,14 +1493,22 @@ impl LinkStore {
             .map_err(failed)
     }
 
-    /// A project's counts and chips (D-45).
-    pub fn summary(&self, project: &str) -> Result<ProjectLinkSummary, String> {
+    /// A project's counts and chips (D-45), and which of its `checkouts`
+    /// (the ones it has now) hold work that landed.
+    pub fn summary(
+        &self,
+        project: &str,
+        checkouts: &[WorktreeFact],
+    ) -> Result<ProjectLinkSummary, String> {
         let mut summary = ProjectLinkSummary::default();
         let Some(row) = self.project(project)? else {
             return Ok(summary);
         };
         let mut by_pr: BTreeMap<u64, Vec<(String, String, String)>> = BTreeMap::new();
         let mut chips: BTreeMap<String, BTreeSet<SessionPrChip>> = BTreeMap::new();
+        // Per checkout: whether a pull request its sessions worked on merged,
+        // and whether one is still open.
+        let mut work: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
         for pr in self.candidate_prs(project)? {
             let lines = self.pr_lines(&row, &pr, None)?;
             if lines.is_empty() {
@@ -1508,6 +1521,33 @@ impl LinkStore {
                         number: pr.number,
                         created: line.role == SessionRole::Created,
                     });
+                }
+                // Only work counts: a session that made the pull request or
+                // worked on its branch, not one that printed its address.
+                if line.role != SessionRole::Created && !line.on_branch {
+                    continue;
+                }
+                // A checkout's sessions are the ones that started in it since
+                // it was added, so a worktree made again at a used path
+                // inherits nothing, and one whose age is not read yet has
+                // none. On a branch it weighs only that branch's pull
+                // requests, so switching to a new branch starts clean.
+                let checkout = line
+                    .cwd
+                    .as_deref()
+                    .filter(|_| line.device_id == row.device)
+                    .and_then(|cwd| deepest_checkout(checkouts, cwd))
+                    .filter(|checkout| {
+                        checkout.created_at_unix_ms.is_some_and(|added| {
+                            line.started_at_unix_ms
+                                .is_some_and(|started| started >= added)
+                        })
+                    })
+                    .filter(|checkout| checkout.branch.as_ref().is_none_or(|b| *b == pr.branch));
+                if let Some(checkout) = checkout {
+                    let (merged, open) = work.entry(checkout.path.as_str()).or_default();
+                    *merged |= pr.merged_at.is_some();
+                    *open |= pr.end().is_none();
                 }
             }
             by_pr.insert(
@@ -1558,8 +1598,22 @@ impl LinkStore {
                 (id, chips)
             })
             .collect();
+        summary.landed = work
+            .into_iter()
+            .filter(|(_, (merged, open))| *merged && !*open)
+            .map(|(checkout, _)| checkout.to_owned())
+            .collect();
         Ok(summary)
     }
+}
+
+/// The checkout a session in `cwd` worked in: the deepest one holding it, so
+/// a worktree inside another checkout keeps its own sessions.
+fn deepest_checkout<'a>(checkouts: &'a [WorktreeFact], cwd: &str) -> Option<&'a WorktreeFact> {
+    checkouts
+        .iter()
+        .filter(|checkout| within(cwd, &checkout.path))
+        .max_by_key(|checkout| checkout.path.trim_end_matches('/').len())
 }
 
 fn migrate(connection: &Connection) -> Result<(), OpenFailure> {

@@ -77,6 +77,7 @@ function checkout(name: string, options: Options = {}): Checkout {
     has_panes: false,
     agent_summary: { working: options.working ?? 0 } as Checkout["agent_summary"],
     worktree: { is_main: options.main ?? false, merged: options.merged ?? null, disk } as Checkout["worktree"],
+    landed: options.merged ?? false,
     pull_request: null,
     tabs: [],
     active_tab_id: null,

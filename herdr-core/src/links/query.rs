@@ -288,6 +288,7 @@ mod tests {
             worktrees: vec![WorktreeFact {
                 path: format!("{root}/feat"),
                 branch: Some("feat".into()),
+                created_at_unix_ms: None,
             }],
             prs,
             prs_read: true,

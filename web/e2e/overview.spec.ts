@@ -70,7 +70,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
  * first read fails and its second succeeds (B16). Only the read-only calls
  * the core makes are answered.
  */
-function fakeGh(dir: string): string {
+function fakeGh(dir: string, shippedHead: string): string {
   const bin = path.join(dir, "gh-bin");
   fs.mkdirSync(bin, { recursive: true });
   const label = (name: string, color: string) => ({ id: `LA_${name}`, name, description: "", color });
@@ -93,7 +93,10 @@ function fakeGh(dir: string): string {
     updatedAt: "2026-09-27T00:00:00Z",
     closingIssuesReferences: closes.map((issue) => ({ url: `https://github.com/acme/repo/issues/${issue}` })),
   });
-  const pulls = JSON.stringify([pr(11, "prd/reviewing", "리뷰 이슈 구현", [4], "REVIEW_REQUIRED"), pr(12, "prd/loose-pr", "이슈 없는 정리", [], null)]);
+  // The shipped worktree's pull request merged at the commit the worktree
+  // still holds: that, not Git's ancestry alone, is what lands its work.
+  const shipped = { ...pr(13, "prd/shipped", "머지된 작업", [], null), state: "MERGED", mergedAt: "2026-09-26T00:00:00Z", headRefOid: shippedHead };
+  const pulls = JSON.stringify([pr(11, "prd/reviewing", "리뷰 이슈 구현", [4], "REVIEW_REQUIRED"), pr(12, "prd/loose-pr", "이슈 없는 정리", [], null), shipped]);
   const comment = (login: string, day: number, body: string) => ({ author: { login }, createdAt: `2026-09-${day}T00:00:00Z`, body });
   const detail = JSON.stringify({
     body: "## 배경\n\n출처를 **어댑터**로 나눈다.\n\n- GitHub\n- Local",
@@ -285,7 +288,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     fs.mkdirSync(quiet);
     await workspaceAt(herdr, quiet, null);
 
-    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}${path.delimiter}${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root, execFileSync("git", ["rev-parse", "prd/shipped"], { cwd: repo, encoding: "utf8" }).trim())}${path.delimiter}${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await open(page, daemon);
