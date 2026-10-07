@@ -61,6 +61,13 @@ impl Letter {
             || (self.state == State::Acknowledged && self.hook_confirmed == Some(false))
     }
 
+    /// Whether the delivery deadline passed while the letter still waits for
+    /// intake; `Ledger::expire` ends that wait.
+    pub(crate) fn intake_overdue(&self, now: u64) -> bool {
+        self.awaiting_intake()
+            && now.saturating_sub(self.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
+    }
+
     pub(crate) fn attempts(&self) -> u8 {
         // Legacy successes have an unknown total. Do not infer spare attempts
         // from the old boolean and repeat an already unbounded external effect.
@@ -194,14 +201,24 @@ impl Ledger {
     pub fn expire(&mut self, now: u64) -> bool {
         let mut changed = self.cleanup(now);
         for letter in &mut self.letters {
-            if letter.state == State::Pending
-                && now.saturating_sub(letter.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
-            {
+            if !letter.intake_overdue(now) {
+                continue;
+            }
+            if letter.state == State::Pending {
                 letter.state = State::Undelivered;
                 letter.waiting_answer = false;
                 letter.finished_at_unix_ms = Some(now);
-                changed = true;
+            } else {
+                // Acknowledged without a receipt by a build before the
+                // acknowledgement was the receipt. Its intake is no longer
+                // awaited: the hook stops handing it over and it stops
+                // counting as open, while an awaited reply keeps it open.
+                letter.hook_confirmed = None;
+                if !letter.open() {
+                    letter.finished_at_unix_ms.get_or_insert(now);
+                }
             }
+            changed = true;
         }
         changed
     }
@@ -496,12 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn actual_hook_receipt_survives_durable_ack_reload_and_replay_without_closing_new_watch() {
+    fn acknowledgement_receipt_survives_durable_reload_and_replay_without_closing_new_watch() {
         use super::super::{mailbox, watch};
-        let fixtures =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/runs/delivery-receipt-tests");
-        std::fs::create_dir_all(&fixtures).unwrap();
-        let root = tempfile::tempdir_in(fixtures).unwrap();
+        let root = tempfile::tempdir().unwrap();
         let path = root.path().join("ledger.json");
         let mut ledger = letter();
         ledger.letters[0].kind = "report".into();
@@ -510,6 +524,7 @@ mod tests {
         let parent = ledger.letters[0].recipient.clone();
         let id = ledger.letters[0].id.clone();
         watch::start(&mut ledger, &parent, &child, 2).unwrap();
+        let intake = mailbox::pull(&ledger, &parent).unwrap();
         mailbox::apply(
             &mut ledger,
             &parent,
@@ -520,27 +535,6 @@ mod tests {
         .unwrap();
         save(&path, &ledger).unwrap();
         let mut restored = load(&path).unwrap();
-        assert_eq!(
-            mailbox::pull(&restored, &parent).unwrap().ids.as_slice(),
-            std::slice::from_ref(&id)
-        );
-        let shown = mailbox::apply(
-            &mut restored,
-            &parent,
-            None,
-            &mailbox::Command::Show { id: id.clone() },
-            4,
-        )
-        .unwrap();
-        assert_eq!(shown["state"], "acknowledged");
-        assert_eq!(shown["hook_confirmed"], false);
-        assert_eq!(restored.watches.len(), 1);
-        let confirm = mailbox::Command::Confirm {
-            ids: vec![id.clone()],
-        };
-        mailbox::apply(&mut restored, &parent, None, &confirm, 5).unwrap();
-        save(&path, &restored).unwrap();
-        let mut restored = load(&path).unwrap();
         assert!(restored.watches.is_empty());
         assert!(mailbox::pull(&restored, &parent).unwrap().ids.is_empty());
         let shown = mailbox::apply(
@@ -548,16 +542,17 @@ mod tests {
             &parent,
             None,
             &mailbox::Command::Show { id },
-            6,
+            4,
         )
         .unwrap();
         assert_eq!(shown["state"], "acknowledged");
         assert_eq!(shown["hook_confirmed"], true);
-        watch::start(&mut restored, &parent, &child, 7).unwrap();
+        watch::start(&mut restored, &parent, &child, 5).unwrap();
         save(&path, &restored).unwrap();
         let mut restored = load(&path).unwrap();
         let before = restored.clone();
-        mailbox::apply(&mut restored, &parent, None, &confirm, 8).unwrap();
+        let confirm = mailbox::Command::Confirm { ids: intake.ids };
+        mailbox::apply(&mut restored, &parent, None, &confirm, 6).unwrap();
         save(&path, &restored).unwrap();
         assert_eq!(load(&path).unwrap(), before);
     }
