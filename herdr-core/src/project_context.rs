@@ -115,8 +115,7 @@ fn checkout_has_live_exception(
     checkout: &CheckoutSnapshot,
     focused_checkout_id: Option<&str>,
 ) -> bool {
-    checkout.agent_summary.working > 0
-        || checkout.agent_summary.needs_you > 0
+    crate::agent_state::checkout_has_active_agents(&checkout.agent_summary)
         || checkout.dirty
         || checkout
             .unpushed

@@ -593,7 +593,7 @@ The projection and push regression tests remain in `hided/src/mobile/{projection
 Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
 Requests exclude a delegated row only when its parent belongs to that scope, and publish their ordered groups and counts separately from physical and Overview totals.
 Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
-The scope cache compares owned agent rows, device connection facts and checkout membership and marks; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
+The scope cache compares owned agent rows, device connection facts and checkout membership and summaries; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
 The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.
 
 `agent_state/tally/lineage.rs` projects the list headings, direct-child membership, folded checkout badges and checkout trees with their two card representatives.
@@ -622,3 +622,12 @@ Device scopes publish the current listed rows by source index, preserving duplic
 The overall scope concatenates connected listings; a disconnected device keeps its catalog places but marks them unavailable to the live sidebar.
 The PR board publishes its turn/fixing/blocked counts and the review/draft/finished-agent breakdown, including the existing precedence of a finished agent over draft status.
 The scope ownership/disconnect and PR-board tests above assert these values.
+
+The command palette reads `tally/relations.rs` groups and row depths for the selected agent, including its in-checkout ancestors, outside parent and descendants in other checkouts.
+It translates their tags and resolves PR/issue labels without rebuilding lineage membership.
+The relation fixture in `runtime::tests::agent_scopes` covers both the parent caption and the cross-checkout child group.
+
+`turn.rs::AgentUse` and `tally/cleanup.rs` retain checkout-removal use counts, including the last known busy descendants on disconnected devices.
+Their unknown-state and per-ancestor counting rules remain distinct from live close-sheet consequences.
+The existing cleanup tests in `runtime::tests::lineage` continue to exercise the public runtime entrypoint.
+Delegated-tab placement, active-agent project context, request descendant-question counts and the cleanup row's working indicator also read module-owned answers.

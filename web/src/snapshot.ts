@@ -26,7 +26,7 @@ export type AgentState = {
   search_tone: "failed" | "attention" | "working" | "done" | "muted";
   subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
   link: "working" | "question" | "idle"; link_rank: 0 | 1 | 2;
-  verb: RequestVerb; request_todo: boolean; request_since: number | null;
+  verb: RequestVerb; request_todo: boolean; descendant_asking: number; request_since: number | null;
 };
 
 export type AgentRow = {

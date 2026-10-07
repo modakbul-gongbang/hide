@@ -38,6 +38,7 @@ export function legacyAgentRow(agent: Input): AgentRow {
     search_tone: chip.kind === "error" ? "failed" : chip.kind === "warning" ? "attention" : chip.kind === "working" ? "working" : chip.kind === "success" ? "done" : "muted",
     subtree: agent.requires_close_status_check ? "unknown" : agent.demand && agent.demand !== "none" ? "waiting" : agent.activity === "working" ? "working" : agent.unread && agent.symbol === "✓" ? "unread" : "quiet",
     link: asking ? "question" : working ? "working" : "idle",
+    descendant_asking: (counts?.question ?? 0) + (counts?.approval ?? 0),
     verb, request_todo: todo, request_since: todo ? agent.request?.verb_since_unix_ms ?? null : agent.changed_at_unix_ms ?? null,
   } } as AgentRow;
 }

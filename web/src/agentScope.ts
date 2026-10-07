@@ -2,6 +2,8 @@ import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest 
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentScope = {
+  has_working: boolean;
+  relations: Record<string, { project_id: string; checkout_id: string; rows: { pane_id: string; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
   listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];
   places: Record<string, { project_id: string; checkout_id: string; kind: "home" | "folder" | "checkout" }>;
   places_live: boolean;

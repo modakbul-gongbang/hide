@@ -62,6 +62,7 @@
       "search_tone": "muted",
       "subtree": "quiet",
       "link": "idle",
+      "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
       "request_since": null
@@ -95,6 +96,7 @@
       "search_tone": "working",
       "subtree": "working",
       "link": "working",
+      "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
       "request_since": null
@@ -128,6 +130,7 @@
       "search_tone": "working",
       "subtree": "working",
       "link": "working",
+      "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
       "request_since": null
@@ -161,6 +164,7 @@
       "search_tone": "muted",
       "subtree": "quiet",
       "link": "idle",
+      "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
       "request_since": null
@@ -194,6 +198,7 @@
       "search_tone": "muted",
       "subtree": "quiet",
       "link": "working",
+      "descendant_asking": 1,
       "verb": "working",
       "request_todo": false,
       "request_since": null
@@ -234,6 +239,7 @@
       "search_tone": "attention",
       "subtree": "waiting",
       "link": "question",
+      "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
       "request_since": null
@@ -267,6 +273,7 @@
       "search_tone": "working",
       "subtree": "working",
       "link": "working",
+      "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
       "request_since": null
@@ -307,6 +314,7 @@
       "search_tone": "attention",
       "subtree": "waiting",
       "link": "question",
+      "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
       "request_since": null
@@ -340,6 +348,7 @@
       "search_tone": "done",
       "subtree": "quiet",
       "link": "idle",
+      "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
       "request_since": null
@@ -373,6 +382,7 @@
       "search_tone": "working",
       "subtree": "working",
       "link": "working",
+      "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
       "request_since": null

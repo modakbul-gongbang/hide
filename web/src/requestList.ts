@@ -261,7 +261,7 @@ export function childrenSummary(row: RequestRow, t: TFunction<"translation">): {
   if (total === 0) return null;
   const counts = row.lens.agent.descendant_counts;
   const working = counts?.working ?? 0;
-  const asking = (counts?.question ?? 0) + (counts?.approval ?? 0);
+  const asking = row.lens.agent.state.descendant_asking;
   return { text: [t("requests.children", { count: total }), working > 0 ? t("requests.workingChildren", { count: working }) : null].filter(Boolean).join(" · "), asking };
 }
 

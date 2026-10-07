@@ -694,3 +694,21 @@ pub(crate) fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
 pub(crate) fn agent_completed(agent: &SessionAgentPayload) -> bool {
     agent.agent_status.as_deref() == Some("done")
 }
+
+/// A tab holding only delegated agent children stays out of the operator strip.
+/// Ordinary terminal panes do not turn it back into an operator-owned tab.
+pub(crate) fn tab_is_delegated(
+    panes: &[crate::model::PaneSnapshot],
+    agents: &[SidebarAgentSnapshot],
+) -> bool {
+    let mut holds_an_agent = false;
+    let mut all_delegated = true;
+    for pane in panes {
+        let Some(agent) = agents.iter().find(|a| a.pane_id == pane.id) else {
+            continue;
+        };
+        holds_an_agent = true;
+        all_delegated &= agent.delegated;
+    }
+    holds_an_agent && all_delegated
+}

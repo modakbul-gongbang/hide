@@ -20,7 +20,7 @@ import {
   type SearchEntry,
 } from "./search";
 import { checkoutPlaces } from "./navigation";
-import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
+import type { Checkout, SnapshotRest, Workspace } from "./snapshot";
 
 /** One checkout's group: its head and the rows under it, in the order they are drawn. */
 export type RelationGroup = { head: SearchEntry; rows: SearchEntry[] };
@@ -34,22 +34,6 @@ export type RelationTarget =
   | { kind: "pr"; workspaceId: string; number: number }
   | { kind: "issue"; taskKey: string };
 
-/** The checkout a pane sits in, with its project, in one device's catalog. */
-function checkoutOfPane(scope: SearchDevice, paneId: string): { workspace: Workspace; checkout: Checkout } | null {
-  for (const workspace of scope.allWorkspaces) {
-    for (const checkout of workspace.checkouts) {
-      if (checkout.tabs.some((tab) => tab.panes.some((pane) => pane.id === paneId))) return { workspace, checkout };
-    }
-  }
-  return null;
-}
-
-function paneSet(checkout: Checkout): Set<string> {
-  const ids = new Set<string>();
-  for (const tab of checkout.tabs) for (const pane of tab.panes) ids.add(pane.id);
-  return ids;
-}
-
 /** The issues a checkout works on or its pull request closes, as the project's own task rows. */
 function checkoutIssues(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, t: TFunction<"translation">): SearchEntry[] {
   const keys = [checkout.task_key, ...(checkout.closes_task_keys ?? [])].filter((key): key is string => Boolean(key));
@@ -62,82 +46,9 @@ function checkoutIssues(scope: SearchDevice, workspace: Workspace, checkout: Che
   return issues;
 }
 
-type Lineage = { byPane: Map<string, AgentRow>; here: Set<string> };
-
-/** The agents of `agent`'s lineage that sit in this checkout, as rows: ancestors in it, the agent, its descendants in it. */
-function lineageRows(scope: SearchDevice, lineage: Lineage, agent: AgentRow, places: Map<string, string>, front: string, tagHere: boolean, t: TFunction<"translation">): SearchEntry[] {
-  const chain: AgentRow[] = [];
-  let top = agent;
-  const seen = new Set<string>([agent.pane_id]);
-  for (;;) {
-    const parentId = top.lineage_parent_pane_id;
-    const parent = parentId ? lineage.byPane.get(parentId) : undefined;
-    if (!parent || seen.has(parent.pane_id) || !lineage.here.has(parent.pane_id)) break;
-    seen.add(parent.pane_id);
-    chain.unshift(parent);
-    top = parent;
-  }
-  const rows: SearchEntry[] = [];
-  const row = (row: AgentRow, depth: number, tag?: SearchEntry["tag"]): SearchEntry => ({ ...agentEntry(scope, row, places.get(row.pane_id) ?? null, front, t), depth, ...(tag ? { tag } : {}) });
-  chain.forEach((ancestor, depth) => rows.push(row(ancestor, depth)));
-  const anchorDepth = chain.length;
-  rows.push(row(agent, anchorDepth, tagHere ? "here" : undefined));
-  // The parent in another checkout is one line under the agent, named with its branch and state.
-  const outside = (top.lineage_parent_pane_id ? lineage.byPane.get(top.lineage_parent_pane_id) : undefined);
-  if (outside && !lineage.here.has(outside.pane_id)) {
-    const place = places.get(outside.pane_id) ?? null;
-    rows.push({ ...agentEntry(scope, outside, place, front, t), depth: anchorDepth + 1, tag: "parent" });
-  }
-  const walk = (parent: AgentRow, depth: number) => {
-    for (const childId of parent.lineage_child_pane_ids ?? []) {
-      const child = lineage.byPane.get(childId);
-      if (!child || seen.has(child.pane_id) || !lineage.here.has(child.pane_id)) continue;
-      seen.add(child.pane_id);
-      rows.push(row(child, depth));
-      walk(child, depth + 1);
-    }
-  };
-  walk(agent, anchorDepth + 1);
-  return rows;
-}
-
-/** Descendants of `agent`, anywhere in the device's agents, in lineage order. */
-function descendantsOf(agent: AgentRow, byPane: Map<string, AgentRow>): AgentRow[] {
-  const found: AgentRow[] = [];
-  const seen = new Set<string>([agent.pane_id]);
-  const walk = (parent: AgentRow) => {
-    for (const childId of parent.lineage_child_pane_ids ?? []) {
-      const child = byPane.get(childId);
-      if (!child || seen.has(child.pane_id)) continue;
-      seen.add(child.pane_id);
-      found.push(child);
-      walk(child);
-    }
-  };
-  walk(agent);
-  return found;
-}
-
 function group(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, rows: SearchEntry[], t: TFunction<"translation">): RelationGroup {
   const pr = checkout.pull_request ? pullRequestEntry(scope, workspace, checkout.pull_request, front, t) : null;
   return { head: checkoutEntry(scope, workspace, checkout, front, true), rows: pr ? [pr, ...rows] : rows };
-}
-
-/** The group of a checkout the agent was delegated work in: the descendants there, each naming its parent. */
-function delegatedGroup(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, lineage: Lineage, descendants: AgentRow[], places: Map<string, string>, t: TFunction<"translation">): RelationGroup {
-  const inside = paneSet(checkout);
-  const rows = descendants
-    .filter((agent) => inside.has(agent.pane_id))
-    .map((agent) => {
-      const parent = agent.lineage_parent_pane_id ? lineage.byPane.get(agent.lineage_parent_pane_id) : undefined;
-      const entry = agentEntry(scope, agent, places.get(agent.pane_id) ?? null, front, t);
-      return {
-        ...entry,
-        depth: parent && inside.has(parent.pane_id) ? 1 : 0,
-        subtitle: parent && !inside.has(parent.pane_id) ? `↑ ${parent.identity_label} · ${entry.subtitle}` : entry.subtitle,
-      };
-    });
-  return group(scope, workspace, checkout, front, rows, t);
 }
 
 /**
@@ -156,23 +67,29 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, t
     for (const scope of scopes) {
       const agent = scope.agents.find((row) => row.pane_id === target.paneId);
       if (!agent) continue;
-      const placed = checkoutOfPane(scope, agent.pane_id);
-      if (!placed) return null;
+      const projected = scope.agentScope?.relations[agent.pane_id];
+      if (!projected) return null;
       const places = checkoutPlaces(scope.allWorkspaces);
       const byPane = new Map(scope.agents.map((row) => [row.pane_id, row]));
-      const lineage: Lineage = { byPane, here: paneSet(placed.checkout) };
-      const own = group(scope, placed.workspace, placed.checkout, front, lineageRows(scope, lineage, agent, places, front, anchor, t), t);
-      const groups = [own];
-      const delegated = descendantsOf(agent, byPane);
-      for (const workspace of scope.allWorkspaces) {
-        for (const checkout of workspace.checkouts) {
-          if (checkout.id === placed.checkout.id) continue;
-          const inside = paneSet(checkout);
-          if (!delegated.some((child) => inside.has(child.pane_id))) continue;
-          groups.push(delegatedGroup(scope, workspace, checkout, front, lineage, delegated, places, t));
-        }
-      }
-      return { issues: checkoutIssues(scope, placed.workspace, placed.checkout, front, t), groups };
+      const groups = projected.map((value) => {
+        const workspace = scope.allWorkspaces.find((p) => p.id === value.project_id);
+        const checkout = workspace?.checkouts.find((c) => c.id === value.checkout_id);
+        if (!workspace || !checkout) throw new Error("Missing core relation place");
+        const rows = value.rows.map((row) => {
+          const agent = byPane.get(row.pane_id);
+          if (!agent) throw new Error(`Missing relation agent: ${row.pane_id}`);
+          const entry = agentEntry(scope, agent, places.get(row.pane_id) ?? null, front, t);
+          const parent = row.caption_parent ? byPane.get(row.caption_parent) : null;
+          if (parent === undefined) throw new Error(`Missing relation parent: ${row.caption_parent}`);
+          const tag = row.tag === "here" && !anchor ? null : row.tag;
+          return { ...entry, depth: row.depth, ...(tag ? { tag } : {}), ...(parent ? { subtitle: `↑ ${parent.identity_label} · ${entry.subtitle}` } : {}) };
+        });
+        return group(scope, workspace, checkout, front, rows, t);
+      });
+      const first = projected[0]!;
+      const workspace = scope.allWorkspaces.find((p) => p.id === first.project_id)!;
+      const checkout = workspace.checkouts.find((c) => c.id === first.checkout_id)!;
+      return { issues: checkoutIssues(scope, workspace, checkout, front, t), groups };
     }
     return null;
   }

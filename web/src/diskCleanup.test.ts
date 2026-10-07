@@ -66,7 +66,7 @@ function checkout(name: string, options: Options = {}): Checkout {
     : options.unavailable
       ? { total_bytes: null, unavailable_reason: "limit" }
       : { total_bytes: total, unavailable_reason: null, layers: layers(build, deps, options.other ?? 0) };
-  return { agent_scope: emptyScope(),
+  return { agent_scope: { ...emptyScope(), has_working: (options.working ?? 0) > 0 },
     id: name,
     workspace_id: "p",
     label: name,

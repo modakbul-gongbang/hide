@@ -1,8 +1,11 @@
 //! Scope totals, marks and representative ordering.
-pub mod scope;
-pub(crate) mod lineage;
+mod cleanup;
+pub(crate) use cleanup::cleanup_facts;
 mod close;
 mod graph;
+pub(crate) mod lineage;
+mod relations;
+pub mod scope;
 use super::axes::*;
 use super::turn::*;
 use crate::model::SidebarAgentSnapshot;
@@ -684,3 +687,16 @@ pub mod phone {
 
 #[cfg(test)]
 mod scope_tests;
+
+impl crate::model::DescendantCountsSnapshot {
+    /// Whether any drawn count is above zero, so a row with descendants that
+    /// are all merely ready wears no badge rather than an empty one.
+    pub fn any_drawn(&self) -> bool {
+        self.error + self.approval + self.question + self.working + self.done > 0
+    }
+}
+
+/// Existing inactive-checkout exception, independent of Git and focus policy.
+pub(crate) fn checkout_has_active_agents(summary: &crate::model::CheckoutAgentSummary) -> bool {
+    summary.working > 0 || summary.needs_you > 0
+}

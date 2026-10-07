@@ -1,3 +1,4 @@
+import { legacyRelations } from "./legacyRelations";
 import { legacyGraphScope } from "./legacyGraphScope";
 import * as beforeClose from "./legacyClose";
 import * as drawClose from "../src/close";
@@ -20,7 +21,7 @@ import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, req
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { listed: [], places: {}, places_live: false, graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent)): AgentScope {
@@ -76,6 +77,7 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
     const physical = agents.filter((agent) => (checkout.tabs ?? []).some((tab) => tab.panes.some((p) => p.id === agent.pane_id)));
     const value = legacyPhysicalScope(physical);
     value.marks = checkout.agent_summary?.marks ?? emptyScope().marks;
+    value.has_working = (checkout.agent_summary?.working ?? 0) > 0;
     value.badge_total = legacyBadgeTotal(checkout);
     value.tree = legacyTree(trees.get(checkout.id) ?? []);
     value.global_tree = value.tree;
@@ -173,10 +175,12 @@ export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest
     scope.places_live = live;
   };
   assignPlaces(projects, local, true);
+  local.relations = legacyRelations(projects, agents.map((a) => a.state ? a : legacyAgentRow(a)));
   for (const remote of remotes) {
     const scope = deviceScopes.get(remote.target_id)!;
     scope.listed = remote.state === "connected" ? listed(remote.session?.agents ?? [], remote.target_id, rest.navigator?.devices?.find((d) => d.id === remote.target_id)?.label ?? remote.target_id, true) : [];
     assignPlaces(remote.session?.workspaces ?? [], scope, remote.state === "connected");
+    scope.relations = legacyRelations(remote.session?.workspaces ?? [], (remote.session?.agents ?? []).map((a) => a.state ? a : legacyAgentRow(a)));
   }
   const overall = legacyPhysicalScope(liveRows);
   overall.listed = [...local.listed, ...remotes.flatMap((r) => deviceScopes.get(r.target_id)!.listed)];

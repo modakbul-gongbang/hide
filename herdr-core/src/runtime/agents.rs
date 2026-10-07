@@ -1165,16 +1165,7 @@ impl Runtime {
             .flat_map(|workspace| workspace.checkouts.iter_mut())
             .flat_map(|checkout| checkout.tabs.iter_mut())
         {
-            let mut holds_an_agent = false;
-            let mut all_delegated = true;
-            for pane in &tab.panes {
-                let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane.id) else {
-                    continue;
-                };
-                holds_an_agent = true;
-                all_delegated &= agent.delegated;
-            }
-            let delegated = holds_an_agent && all_delegated;
+            let delegated = crate::agent_state::tab_is_delegated(&tab.panes, &agents);
             if tab.delegated != delegated {
                 tab.delegated = delegated;
                 delegated_tabs_changed = true;

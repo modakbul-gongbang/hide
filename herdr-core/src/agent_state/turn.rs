@@ -2,6 +2,34 @@
 use super::axes::*;
 use super::tally::RowMark;
 
+/// What one agent is doing as far as removing its checkout is concerned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AgentUse {
+    /// Stopped: finished a turn or idle. Its pane may close.
+    Quiet,
+    Working,
+    /// Waiting on the operator: a question, an approval or a blocked prompt.
+    Waiting,
+    Unknown,
+}
+
+impl AgentUse {
+    /// From the status model's axes (`docs/status-model.md`): a demand or a
+    /// blocked prompt is waiting whatever else is reported, and an activity
+    /// other than `working` or `stopped` is not claimed to be idle.
+    pub(crate) fn of(demand: &str, blocked: bool, activity: &str) -> Self {
+        if demand != "none" || blocked {
+            Self::Waiting
+        } else {
+            match activity {
+                "working" => Self::Working,
+                "stopped" => Self::Quiet,
+                _ => Self::Unknown,
+            }
+        }
+    }
+}
+
 /// Semantic tone; a shell chooses its existing color token and opacity.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Tone {
@@ -50,6 +78,7 @@ pub struct RowState {
     pub link_rank: u8,
     pub verb: RequestVerb,
     pub request_todo: bool,
+    pub descendant_asking: u32,
     pub request_since: Option<u64>,
 }
 
@@ -223,6 +252,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         },
         verb,
         request_todo,
+        descendant_asking: agent.descendant_counts.question + agent.descendant_counts.approval,
         request_since: if request_todo {
             agent
                 .request

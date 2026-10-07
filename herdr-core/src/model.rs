@@ -1948,14 +1948,6 @@ pub struct DescendantCountsSnapshot {
     pub unknown: u32,
 }
 
-impl DescendantCountsSnapshot {
-    /// Whether any drawn count is above zero, so a row with descendants that
-    /// are all merely ready wears no badge rather than an empty one.
-    pub fn any_drawn(&self) -> bool {
-        self.error + self.approval + self.question + self.working + self.done > 0
-    }
-}
-
 /// One thing a descendant is doing that its ancestors are told about: an
 /// outstanding demand, or a completion.
 ///

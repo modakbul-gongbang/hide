@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 // ⌘K's data (PRD cmdk-navigation): the snapshot rows the palette finds by
 // name or #number and the entries it draws for what is in front. The entries,
 // the fuzzy score, the number-first ranking and the grouping are pure
@@ -145,7 +146,7 @@ export function openUrlEntry(query: string, unavailable: string | null, t: TFunc
 
 
 /** What ⌘K reads from one device: its label, its agents and its projects (not its Home, which the device entry stands for). */
-export type SearchDevice = { device: Device; agents: AgentRow[]; workspaces: Workspace[]; allWorkspaces: Workspace[]; local: boolean };
+export type SearchDevice = { agentScope: AgentScope | undefined; device: Device; agents: AgentRow[]; workspaces: Workspace[]; allWorkspaces: Workspace[]; local: boolean };
 
 /** This machine and each connected device, in the rail's order; a device that is not connected has no current agents or projects to find. */
 export function searchDevices(rest: SnapshotRest): SearchDevice[] {
@@ -155,12 +156,12 @@ export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   for (const device of devices) {
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];
-      rows.push({ device, agents: rest.navigator?.agents ?? [], workspaces: projectsOf(all), allWorkspaces: all, local: true });
+      rows.push({ agentScope: rest.navigator?.devices?.find((d) => d.id === device.id)?.agent_scope ?? rest.navigator?.agent_scope, device, agents: rest.navigator?.agents ?? [], workspaces: projectsOf(all), allWorkspaces: all, local: true });
       continue;
     }
     const status = rest.status?.remote?.find((row) => row.target_id === device.id);
     const session = status?.state === "connected" ? status.session : null;
-    rows.push({ device, agents: session?.agents ?? [], workspaces: projectsOf(session?.workspaces ?? []), allWorkspaces: session?.workspaces ?? [], local: false });
+    rows.push({ agentScope: device.agent_scope, device, agents: session?.agents ?? [], workspaces: projectsOf(session?.workspaces ?? []), allWorkspaces: session?.workspaces ?? [], local: false });
   }
   return rows;
 }

@@ -20,6 +20,8 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     agents[1].state.graph_rank = 3;
     agents[1].symbol = "○".into();
     agents[1].lineage_parent_pane_id = Some("root".into());
+    agents[0].lineage_child_pane_ids = vec!["child".into()];
+    agents[1].lineage_child_pane_ids = vec!["leaf".into()];
     let mut leaf = agents[1].clone();
     leaf.pane_id = "leaf".into();
     leaf.symbol = "✓".into();
@@ -49,6 +51,26 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     assert_eq!(graph.tucked[graph.variants[8]]["root"]["done"], 1);
     assert_eq!(graph.tucked[graph.variants[12]]["child"]["done"], 1);
     assert!(graph.tucked[graph.variants[15]].is_empty());
+    let relations = &runtime.snapshot.navigator.devices[0].agent_scope.relations;
+    assert_eq!(
+        relations["root"]
+            .iter()
+            .map(|g| g.checkout_id.as_str())
+            .collect::<Vec<_>>(),
+        ["main", "child", "leaf"]
+    );
+    assert_eq!(
+        relations["root"][1].rows[0].caption_parent.as_deref(),
+        Some("root")
+    );
+    assert_eq!(
+        relations["child"][0]
+            .rows
+            .iter()
+            .map(|r| (r.pane_id.as_str(), r.depth, r.tag))
+            .collect::<Vec<_>>(),
+        [("child", 0, Some("here")), ("root", 1, Some("parent"))]
+    );
     assert!(!runtime.refresh_agent_scopes());
     runtime.snapshot.navigator.workspaces[0].checkouts[2].landed = false;
     assert!(

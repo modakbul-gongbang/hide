@@ -1,5 +1,7 @@
 {
   "overall": {
+    "has_working": false,
+    "relations": {},
     "listed": [
       {
         "pane_id": "p-parent",
@@ -370,6 +372,69 @@
     }
   },
   "device": {
+    "has_working": false,
+    "relations": {
+      "p-parent": [
+        {
+          "project_id": "w1",
+          "checkout_id": "c-main",
+          "rows": [
+            {
+              "pane_id": "p-parent",
+              "depth": 0,
+              "tag": "here",
+              "caption_parent": null
+            }
+          ]
+        },
+        {
+          "project_id": "w1",
+          "checkout_id": "c-sand",
+          "rows": [
+            {
+              "pane_id": "p-child",
+              "depth": 0,
+              "tag": null,
+              "caption_parent": "p-parent"
+            }
+          ]
+        }
+      ],
+      "p-child": [
+        {
+          "project_id": "w1",
+          "checkout_id": "c-sand",
+          "rows": [
+            {
+              "pane_id": "p-child",
+              "depth": 0,
+              "tag": "here",
+              "caption_parent": null
+            },
+            {
+              "pane_id": "p-parent",
+              "depth": 1,
+              "tag": "parent",
+              "caption_parent": null
+            }
+          ]
+        }
+      ],
+      "p-dag": [
+        {
+          "project_id": "w1",
+          "checkout_id": "c-main",
+          "rows": [
+            {
+              "pane_id": "p-dag",
+              "depth": 0,
+              "tag": "here",
+              "caption_parent": null
+            }
+          ]
+        }
+      ]
+    },
     "listed": [
       {
         "pane_id": "p-parent",
@@ -691,6 +756,8 @@
     }
   },
   "project": {
+    "has_working": false,
+    "relations": {},
     "listed": [],
     "places": {
       "p-parent": {
@@ -997,6 +1064,8 @@
   },
   "checkouts": {
     "c-main": {
+      "has_working": false,
+      "relations": {},
       "listed": [],
       "places": {},
       "places_live": false,
@@ -1200,6 +1269,8 @@
       }
     },
     "c-sand": {
+      "has_working": false,
+      "relations": {},
       "listed": [],
       "places": {},
       "places_live": false,

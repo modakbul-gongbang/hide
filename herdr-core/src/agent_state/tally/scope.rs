@@ -114,6 +114,8 @@ pub struct Raised {
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub has_working: bool,
+    pub relations: BTreeMap<String, Vec<super::relations::Group>>,
     pub listed: Vec<Listed>,
     pub places: BTreeMap<String, Place>,
     pub places_live: bool,
@@ -471,7 +473,7 @@ struct PlaceInput {
     checkout_labels: Vec<(String, Option<String>, Option<u32>)>,
     checkouts: Vec<(
         String,
-        MarkCountsSnapshot,
+        crate::model::CheckoutAgentSummary,
         Vec<(Option<String>, Vec<super::close::PaneInput>)>,
     )>,
 }
@@ -616,7 +618,7 @@ impl Cache {
                         .map(|c| {
                             (
                                 c.id.clone(),
-                                c.agent_summary.marks,
+                                c.agent_summary.clone(),
                                 c.tabs
                                     .iter()
                                     .map(|t| {
@@ -734,6 +736,7 @@ impl Cache {
                     let value = checkouts
                         .get_mut(&(project.device_id.clone(), checkout.id.clone()))
                         .expect("checkout scope just inserted");
+                    value.has_working = checkout.agent_summary.working > 0;
                     value.badge_total = checkout.agent_summary.needs_you
                         + checkout.agent_summary.done
                         + checkout.agent_summary.working
@@ -820,6 +823,7 @@ impl Cache {
                 .collect();
             overall_listed.extend(device_scope.listed.iter().cloned());
             device_scope.places_live = device.connected;
+            device_scope.relations = super::relations::project(&device.projects, &device.agents);
             for project in &device.projects {
                 let folder = !project.is_git && project.checkouts.len() == 1;
                 for checkout in &project.checkouts {
