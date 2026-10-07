@@ -25,12 +25,27 @@
                         }
                     },
                     "required": [
-                        "device_id",
-                        "kind",
+                        "pane_id",
                         "name",
-                        "pane_id"
+                        "kind",
+                        "device_id",
+                        "session"
                     ],
                     "type": "object"
+                },
+                "Connection": {
+                    "enum": [
+                        "connected",
+                        "disconnected"
+                    ],
+                    "type": "string"
+                },
+                "Runtime": {
+                    "enum": [
+                        "running",
+                        "ended"
+                    ],
+                    "type": "string"
                 },
                 "Watch": {
                     "properties": {
@@ -90,14 +105,17 @@
                         }
                     },
                     "required": [
-                        "activity_failures",
                         "id",
-                        "last_activity_at_unix_ms",
-                        "last_status",
                         "parent",
-                        "status_changed_at_unix_ms",
                         "target",
-                        "warning_count"
+                        "last_activity_at_unix_ms",
+                        "first_warning_at_unix_ms",
+                        "warning_count",
+                        "activity_failures",
+                        "last_status",
+                        "last_state_change_seq",
+                        "status_changed_at_unix_ms",
+                        "generation"
                     ],
                     "type": "object"
                 }
@@ -105,8 +123,7 @@
             "description": "One registered agent, as `hide agent show`, `register`, `end` and `spawn` answer it.",
             "properties": {
                 "connection": {
-                    "description": "`connected` or `disconnected`.",
-                    "type": "string"
+                    "$ref": "#/definitions/Connection"
                 },
                 "hostScope": {
                     "type": "string"
@@ -142,8 +159,7 @@
                     "type": "boolean"
                 },
                 "runtime": {
-                    "description": "`running` or `ended`.",
-                    "type": "string"
+                    "$ref": "#/definitions/Runtime"
                 },
                 "session": {
                     "type": "string"
@@ -161,16 +177,19 @@
                 }
             },
             "required": [
-                "connection",
-                "hostScope",
                 "id",
-                "instance",
-                "machine",
                 "name",
+                "machine",
+                "hostScope",
+                "session",
+                "instance",
                 "pane",
-                "registered",
+                "parent",
+                "project",
                 "runtime",
-                "session"
+                "connection",
+                "registered",
+                "watch"
             ],
             "title": "AgentView",
             "type": "object"
@@ -200,10 +219,11 @@
                         }
                     },
                     "required": [
-                        "device_id",
-                        "kind",
+                        "pane_id",
                         "name",
-                        "pane_id"
+                        "kind",
+                        "device_id",
+                        "session"
                     ],
                     "type": "object"
                 },
@@ -211,8 +231,7 @@
                     "description": "One registered agent, as `hide agent show`, `register`, `end` and `spawn` answer it.",
                     "properties": {
                         "connection": {
-                            "description": "`connected` or `disconnected`.",
-                            "type": "string"
+                            "$ref": "#/definitions/Connection"
                         },
                         "hostScope": {
                             "type": "string"
@@ -248,8 +267,7 @@
                             "type": "boolean"
                         },
                         "runtime": {
-                            "description": "`running` or `ended`.",
-                            "type": "string"
+                            "$ref": "#/definitions/Runtime"
                         },
                         "session": {
                             "type": "string"
@@ -267,18 +285,35 @@
                         }
                     },
                     "required": [
-                        "connection",
-                        "hostScope",
                         "id",
-                        "instance",
-                        "machine",
                         "name",
+                        "machine",
+                        "hostScope",
+                        "session",
+                        "instance",
                         "pane",
-                        "registered",
+                        "parent",
+                        "project",
                         "runtime",
-                        "session"
+                        "connection",
+                        "registered",
+                        "watch"
                     ],
                     "type": "object"
+                },
+                "Connection": {
+                    "enum": [
+                        "connected",
+                        "disconnected"
+                    ],
+                    "type": "string"
+                },
+                "Runtime": {
+                    "enum": [
+                        "running",
+                        "ended"
+                    ],
+                    "type": "string"
                 },
                 "Watch": {
                     "properties": {
@@ -338,14 +373,17 @@
                         }
                     },
                     "required": [
-                        "activity_failures",
                         "id",
-                        "last_activity_at_unix_ms",
-                        "last_status",
                         "parent",
-                        "status_changed_at_unix_ms",
                         "target",
-                        "warning_count"
+                        "last_activity_at_unix_ms",
+                        "first_warning_at_unix_ms",
+                        "warning_count",
+                        "activity_failures",
+                        "last_status",
+                        "last_state_change_seq",
+                        "status_changed_at_unix_ms",
+                        "generation"
                     ],
                     "type": "object"
                 }
@@ -380,9 +418,9 @@
                 }
             },
             "required": [
+                "registered",
                 "name",
-                "pane",
-                "registered"
+                "pane"
             ],
             "title": "RegisterCheck",
             "type": "object"
@@ -429,10 +467,11 @@
                         }
                     },
                     "required": [
-                        "device_id",
-                        "kind",
+                        "pane_id",
                         "name",
-                        "pane_id"
+                        "kind",
+                        "device_id",
+                        "session"
                     ],
                     "type": "object"
                 },
@@ -530,17 +569,23 @@
                         }
                     },
                     "required": [
-                        "bell_errors",
-                        "bell_sent",
-                        "body",
-                        "created_at_unix_ms",
                         "id",
                         "intent",
-                        "kind",
-                        "recipient",
                         "sender",
+                        "recipient",
+                        "kind",
+                        "body",
                         "state",
-                        "waiting_answer"
+                        "hook_confirmed",
+                        "waiting_answer",
+                        "reply_to",
+                        "created_at_unix_ms",
+                        "finished_at_unix_ms",
+                        "bell_errors",
+                        "bell_sent",
+                        "bell_attempts",
+                        "human_notified",
+                        "watch_warning"
                     ],
                     "type": "object"
                 },
@@ -577,9 +622,10 @@
                         }
                     },
                     "required": [
+                        "target",
                         "activity_at_unix_ms",
                         "ordinal",
-                        "target"
+                        "parent_notified"
                     ],
                     "type": "object"
                 }
@@ -641,10 +687,11 @@
                         }
                     },
                     "required": [
-                        "device_id",
-                        "kind",
+                        "pane_id",
                         "name",
-                        "pane_id"
+                        "kind",
+                        "device_id",
+                        "session"
                     ],
                     "type": "object"
                 },
@@ -681,9 +728,10 @@
                         }
                     },
                     "required": [
+                        "target",
                         "activity_at_unix_ms",
                         "ordinal",
-                        "target"
+                        "parent_notified"
                     ],
                     "type": "object"
                 }
@@ -773,17 +821,23 @@
                 }
             },
             "required": [
-                "bell_errors",
-                "bell_sent",
-                "body",
-                "created_at_unix_ms",
                 "id",
                 "intent",
-                "kind",
-                "recipient",
                 "sender",
+                "recipient",
+                "kind",
+                "body",
                 "state",
-                "waiting_answer"
+                "hook_confirmed",
+                "waiting_answer",
+                "reply_to",
+                "created_at_unix_ms",
+                "finished_at_unix_ms",
+                "bell_errors",
+                "bell_sent",
+                "bell_attempts",
+                "human_notified",
+                "watch_warning"
             ],
             "title": "Letter",
             "type": "object"
@@ -827,10 +881,11 @@
                         }
                     },
                     "required": [
-                        "device_id",
-                        "kind",
+                        "pane_id",
                         "name",
-                        "pane_id"
+                        "kind",
+                        "device_id",
+                        "session"
                     ],
                     "type": "object"
                 }
@@ -892,14 +947,17 @@
                 }
             },
             "required": [
-                "activity_failures",
                 "id",
-                "last_activity_at_unix_ms",
-                "last_status",
                 "parent",
-                "status_changed_at_unix_ms",
                 "target",
-                "warning_count"
+                "last_activity_at_unix_ms",
+                "first_warning_at_unix_ms",
+                "warning_count",
+                "activity_failures",
+                "last_status",
+                "last_state_change_seq",
+                "status_changed_at_unix_ms",
+                "generation"
             ],
             "title": "Watch",
             "type": "object"
@@ -929,10 +987,11 @@
                         }
                     },
                     "required": [
-                        "device_id",
-                        "kind",
+                        "pane_id",
                         "name",
-                        "pane_id"
+                        "kind",
+                        "device_id",
+                        "session"
                     ],
                     "type": "object"
                 },
@@ -994,14 +1053,17 @@
                         }
                     },
                     "required": [
-                        "activity_failures",
                         "id",
-                        "last_activity_at_unix_ms",
-                        "last_status",
                         "parent",
-                        "status_changed_at_unix_ms",
                         "target",
-                        "warning_count"
+                        "last_activity_at_unix_ms",
+                        "first_warning_at_unix_ms",
+                        "warning_count",
+                        "activity_failures",
+                        "last_status",
+                        "last_state_change_seq",
+                        "status_changed_at_unix_ms",
+                        "generation"
                     ],
                     "type": "object"
                 }
@@ -1139,6 +1201,31 @@
                     "requires": [],
                     "value": null
                 }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "agent"
+            ],
+            "arguments": [],
+            "command": "agent show here",
+            "options": [
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "refusals": [
+                "pane_capability_required",
+                "caller_identity_conflict",
+                "participant_unavailable",
+                "participant_ended",
+                "participant_session_changed",
+                "ambiguous_participant"
             ],
             "repeats_at_most": null,
             "rest": null
@@ -1552,7 +1639,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:a5cdbdeee5b72d64827fa4f98c2b7f6b867a6d514850240d0e74f4656b711a05",
+    "digest": "sha256:fc44824071732f5194c6497aa81e8df46a0aeea384ab824edde65f8cb3ccc36f",
     "envelopes": {
         "agent": {
             "answer": "value",

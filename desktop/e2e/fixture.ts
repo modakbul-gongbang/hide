@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { bundledExecutable, linkBundle } from "../../web/e2e/bundled-app";
 import { aiSettingsFile } from "../../web/e2e/hided-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
@@ -33,6 +34,11 @@ export type Isolated = {
 };
 
 /**
+ * The app's `hide` is the worker's app bundle of the debug build
+ * (`web/e2e/bundled-app.ts`), so the daemon it starts runs the install kit
+ * into the private HOME as a packaged one does. The HOME carries an empty kit
+ * record (`seedKitRecord`), as a Mac the kit has run on.
+ *
  * A Herdr fixture with its `root` also lends the daemon its `claude`, which
  * is the label provider the fixture's transcripts are answered by, and those
  * transcripts; without one the daemon finds whatever `claude` PATH has, on a
@@ -45,6 +51,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   let env: Record<string, string>;
   try {
     fs.mkdirSync(path.join(home, "projects"), { recursive: true });
+    seedKitRecord(home);
     if (herdr.root) {
       linkFixtureTranscripts({ root: herdr.root }, home);
       // Hide AI asks no model until an agent is chosen (PRD settings-cleanup B47), and this app has
@@ -61,7 +68,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       HIDE_DESKTOP_USER_DATA_DIR: path.join(root, "user-data"),
       // The words the host draws follow the system when no language was chosen; the run must not depend on the machine.
       HIDE_DESKTOP_SYSTEM_LANGUAGE: "en-US",
-      HIDE_CLI_PATH: HIDE_CLI,
+      HIDE_CLI_PATH: bundledExecutable("hide"),
       HIDED_UI_DIR: path.join(REPO, "web", "dist"),
       HERDR_SOCKET_PATH: herdr.socket,
       HERDR_BIN_PATH: herdr.bin,
@@ -131,6 +138,21 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   owner.cleanup = cleanup;
   isolations.set(home, owner);
   return { root, env, hide, daemonPid, allowHostUncaught: (part) => { allowed.push(part); }, cleanup };
+}
+
+/**
+ * An empty kit record, so this HOME reads as a machine the kit has run on. A
+ * machine with no record is held for the first-run agent choice, a dialog over
+ * the whole shell that takes the rest of the page out of the accessibility tree,
+ * and gets no hook until the operator answers it. A spec about the first run
+ * removes `~/.hide/kit/installed.json`; the dialog itself is covered by the web
+ * `agent-onboarding` spec, a component test, the core's decision tests and the
+ * hide-kit hold tests.
+ */
+export function seedKitRecord(home: string): void {
+  const dir = path.join(home, ".hide", "kit");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "installed.json"), `${JSON.stringify({ format: 1, installed: [] })}\n`);
 }
 
 /**
@@ -297,6 +319,8 @@ async function start(appDir: string, env: Record<string, string>, executablePath
     if (child.exitCode !== null || child.signalCode !== null) owner.candidates.delete(child);
   }
   if (owner.candidates.size + owner.launching >= MAX_CANDIDATES_PER_HOME) throw new Error(`desktop fixture has ${MAX_CANDIDATES_PER_HOME} live or launching candidates; close an owned candidate before launching another`);
+  // The bundle is linked when an app is about to run its `hide`, so a fixture that launches nothing needs no build.
+  if (env.HIDE_CLI_PATH === bundledExecutable("hide")) linkBundle();
   const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
   owner.launching++;
   try {
