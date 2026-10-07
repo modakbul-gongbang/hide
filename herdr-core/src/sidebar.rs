@@ -15,10 +15,61 @@ pub struct SessionTabFocus {
     pub creation: bool,
 }
 
+/// How many tab moves are kept on each side: the replica's latest Herdr
+/// moves and the core's sent, unanswered tab requests. One value, so any
+/// burst the request list can hold is one the moves can answer.
+pub(crate) const TAB_FOCUS_LIMIT: usize = 16;
+
+/// The tabs Herdr focused, one `tab_focused` event each, in the order it
+/// applied them. A session folds several events into one state, and a state
+/// that ends on t2 cannot say whether Herdr went t2 or t2, t3, t2; the moves
+/// can. Only the latest `TAB_FOCUS_LIMIT` are kept; `applied` counts all of
+/// this replica's, so a reader that consumed `n` knows which are new and
+/// whether any it has not seen were dropped.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionTabMoves {
+    pub generation: u64,
+    pub applied: u64,
+    pub recent: std::collections::VecDeque<String>,
+}
+
+impl SessionTabMoves {
+    pub(crate) fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn record(&mut self, tab_id: String) {
+        self.applied += 1;
+        self.recent.push_back(tab_id);
+        if self.recent.len() > TAB_FOCUS_LIMIT {
+            self.recent.pop_front();
+        }
+    }
+
+    /// The moves after the first `consumed` of `generation`, oldest first;
+    /// `None` when that generation is gone or some of them were dropped.
+    pub(crate) fn since(
+        &self,
+        generation: u64,
+        consumed: u64,
+    ) -> Option<impl Iterator<Item = &String>> {
+        let unseen = usize::try_from(self.applied.checked_sub(consumed)?).ok()?;
+        (generation == self.generation && unseen <= self.recent.len())
+            .then(|| self.recent.iter().skip(self.recent.len() - unseen))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
     #[serde(skip)]
     pub tab_focus: Option<SessionTabFocus>,
+    /// Herdr's tab moves, present on a session the event replica published.
+    /// A snapshot read on its own has no place in Herdr's event order.
+    #[serde(skip)]
+    pub tab_moves: Option<SessionTabMoves>,
     #[serde(default)]
     pub focused_pane_id: Option<String>,
     /// The Herdr workspace that holds Herdr's keyboard. Its active tab is the

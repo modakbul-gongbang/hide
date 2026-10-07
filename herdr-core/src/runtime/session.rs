@@ -631,7 +631,7 @@ impl Runtime {
             }
         }
         self.report_unresolved_active_tabs(unresolved_active_tabs);
-        self.reconcile_visible_tabs(&mut workspaces, &herdr_tabs);
+        self.reconcile_visible_tabs(&mut workspaces, &herdr_tabs, payload.tab_moves.as_ref());
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
@@ -1223,6 +1223,7 @@ impl Runtime {
         &mut self,
         workspaces: &mut [WorkspaceSnapshot],
         herdr: &HerdrTabView,
+        herdr_moves: Option<&crate::sidebar::SessionTabMoves>,
     ) {
         let mut followed: Vec<(String, String, String)> = Vec::new();
         let mut follow_pane: Option<String> = None;
@@ -1242,7 +1243,8 @@ impl Runtime {
         self.herdr_focused_tab_seen = herdr.focused_tab_id.clone();
         // Herdr's moves since the last session answer Hide's requests in
         // the order they were sent; a focus move among them is not followed.
-        let answered = self.take_tab_focus_answers(herdr, herdr_focus_moved);
+        let answered = self.take_tab_focus_answers(herdr, herdr_moves, herdr_focus_moved);
+        let asks = self.tab_asks();
         let focus_answered = herdr_focus_moved
             && herdr
                 .focused_tab_id
@@ -1396,7 +1398,7 @@ impl Runtime {
                             && (workspace.device_id != workspace::LOCAL_DEVICE_ID
                                 || self.workspace_views.is_none()
                                 || answered.iter().any(|request| request.tab_id == *tab_id)
-                                || self.tab_move_asked(tab_id)
+                                || asks.asked(tab_id)
                                 || (herdr.focus_event.as_ref().is_some_and(|event| !event.creation))
                                 || (herdr.focus_event.is_none() && self.snapshot.navigator.workspaces.iter().any(|previous| {
                                     previous.checkouts.iter().any(|previous| {
@@ -1408,8 +1410,8 @@ impl Runtime {
                                 })))
                     })
                     .map(str::to_owned);
-                let pending_tab = self.newest_tab_ask_in(&checkout.id);
-                let outstanding = self.tab_moves_outstanding(&checkout.id);
+                let pending_tab = asks.newest_in(&checkout.id).map(str::to_owned);
+                let outstanding = asks.outstanding_in(&checkout.id);
                 // The tab holding the selected pane, when it is in this
                 // checkout. With no tab of its own yet, Hide shows the tab the
                 // keyboard is in rather than one Herdr remembers, so a restore
@@ -3176,7 +3178,7 @@ impl Runtime {
         // that was already on its way.
         let previous_focus = self.snapshot.focused.pane_id.clone();
         let pending_pane = self.pending_pane_focus.clone();
-        let arriving_confirms_pending_tab = self.tab_move_asked(&arriving_tab_id);
+        let arriving_confirms_pending_tab = self.tab_asks().asked(&arriving_tab_id);
         let mut adopt_focus = match pending_pane.as_ref() {
             _ if self.pane_focus_in_flight.is_some() => false,
             Some(pending)
