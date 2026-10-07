@@ -347,6 +347,34 @@ fn run_coordinator(
                     }
                 }
             }
+            if subscription.is_some()
+                && let Some(current) = replica.as_mut()
+            {
+                match reread_pane_cwds(&context, current) {
+                    Ok(true) => {
+                        if !publish_replica(
+                            &context,
+                            current,
+                            &mut catalog_cache,
+                            &mut purpose_mirror,
+                            &mut labels,
+                        ) {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        log_sync_failure(&context, "pane_cwd_read.failed", Some(current), &error);
+                        stop_subscription(&mut subscription);
+                        if !publish_failure(&context, error) {
+                            return;
+                        }
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    }
+                }
+            }
         }
 
         // With no window attached only label work runs; these readers feed
@@ -788,15 +816,36 @@ fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
 }
 
 /// Reads the cwd of every pane an event announced and Herdr has not
-/// confirmed, once each, and returns whether the published projection
-/// changed. It runs right after the event that announced the pane, before
-/// that pane can publish: its tab waits for the layout event that follows.
+/// answered for yet, and returns whether the published projection changed.
+/// It runs right after the event that announced the pane, before that pane
+/// can publish: its tab waits for the layout event that follows.
 fn confirm_pane_cwds(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
 ) -> Result<bool, SessionFetchError> {
+    let panes = replica.panes_awaiting_cwd();
+    read_pane_cwds(context, replica, panes)
+}
+
+/// Reads again, on an operation tick, every pane whose last answer did not
+/// repeat the one before it, and returns whether the published projection
+/// changed. Herdr sends no event when a pane's cwd settles, so the tick is
+/// the only moment that can see it.
+fn reread_pane_cwds(
+    context: &SessionSyncContext,
+    replica: &mut SessionReplica,
+) -> Result<bool, SessionFetchError> {
+    let panes = replica.take_cwd_rereads();
+    read_pane_cwds(context, replica, panes)
+}
+
+fn read_pane_cwds(
+    context: &SessionSyncContext,
+    replica: &mut SessionReplica,
+    panes: Vec<String>,
+) -> Result<bool, SessionFetchError> {
     let mut corrected = false;
-    for pane_id in replica.panes_awaiting_cwd() {
+    for pane_id in panes {
         let cwd = fetch_pane_cwd(context, &pane_id)?;
         if replica.confirm_pane_cwd(&pane_id, cwd) {
             crate::diagnostic!(json!({
@@ -2095,6 +2144,30 @@ mod pane_cwd_confirmation_tests {
         )
     }
 
+    /// A Herdr whose `pane.get` answers each of `cwds` in turn, then the
+    /// last one for good.
+    fn herdr_answering(cwds: &'static [&'static str]) -> FakeHerdr {
+        let mut answers = cwds.iter();
+        let mut last = cwds[0];
+        FakeHerdr::start("pane-cwd-moving", move |method, params| match method {
+            "pane.get" => {
+                last = answers.next().copied().unwrap_or(last);
+                let pane_id = params["pane_id"].as_str().expect("pane.get names a pane");
+                json!({"type": "pane_info", "pane": {
+                    "pane_id": pane_id, "terminal_id": "fixture-terminal",
+                    "workspace_id": "w1", "tab_id": "w1:t2", "focused": false,
+                    "agent_status": "idle", "revision": 1, "cwd": last
+                }})
+            }
+            other => panic!("unexpected {other}"),
+        })
+    }
+
+    /// One operation tick of the coordinator, as far as pane cwds go.
+    fn tick(context: &SessionSyncContext, replica: &mut SessionReplica) {
+        reread_pane_cwds(context, replica).expect("cwd read succeeds");
+    }
+
     /// Applies one event the way the coordinator's event path does.
     fn apply(context: &SessionSyncContext, replica: &mut SessionReplica, next: ReplicaEvent) {
         replica
@@ -2154,8 +2227,58 @@ mod pane_cwd_confirmation_tests {
         assert_eq!(
             herdr.calls(),
             [("pane.get".to_owned(), json!({"pane_id": "w1:p2"}))],
-            "one read confirms the pane, and later events read nothing"
+            "later events read nothing; only a tick reads the pane again"
         );
+    }
+
+    /// Herdr 0.9.1 can answer a new pane's cwd with a folder above the one
+    /// it was created in while the machine is loaded (seen on CI as the
+    /// fixture's parent, issue 699), and it sends no event when the answer
+    /// settles, so the pane waits until two answers in a row agree.
+    #[test]
+    fn a_pane_cwd_settles_when_two_answers_in_a_row_agree() {
+        const ROOT: &str = "/tmp/hde-root";
+        const FIXTURE: &str = "/tmp/hde-root/fixture";
+        // (cwd the event carries, what each read answers, cwd published, reads)
+        let rows: [(&str, &'static [&'static str], &str, usize); 4] = [
+            ("/tmp", &[ROOT, FIXTURE, FIXTURE], FIXTURE, 3),
+            (FIXTURE, &[FIXTURE], FIXTURE, 1),
+            ("/tmp", &[FIXTURE, FIXTURE], FIXTURE, 2),
+            // Never settles: the eighth answer is taken and nothing reads again.
+            (
+                "/tmp",
+                &[ROOT, FIXTURE, ROOT, FIXTURE, ROOT, FIXTURE, ROOT, FIXTURE],
+                FIXTURE,
+                8,
+            ),
+        ];
+        for (born_in, answers, settled, reads) in rows {
+            let herdr = herdr_answering(answers);
+            let context = context_for(&herdr);
+            let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+
+            create_tab(&context, &mut replica, born_in);
+            tick(&context, &mut replica);
+            assert_eq!(
+                herdr.methods().len(),
+                1,
+                "a tick that follows the event's read at once does not read again"
+            );
+            for _ in 0..20 {
+                tick(&context, &mut replica);
+            }
+
+            assert_eq!(
+                projected_cwd(&replica, "w1:p2").as_deref(),
+                Some(settled),
+                "announced {born_in}, then read {answers:?}"
+            );
+            assert_eq!(
+                herdr.methods().len(),
+                reads,
+                "announced {born_in}, then read {answers:?}"
+            );
+        }
     }
 
     #[test]

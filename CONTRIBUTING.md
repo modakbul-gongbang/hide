@@ -184,7 +184,8 @@ The writer adds only missing assets to its exact verified draft and never delete
 A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
 A package checksum or headless daemon smoke check does not provide that native evidence.
 The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.
-`package.yml` also runs on a pull request that changes what goes into a package (`desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows) and keeps the packages for a week as the run's artifacts; it is not part of `verify`, because a check that runs on some pull requests only cannot be required.
+`package.yml` also runs as `pr.yml`'s `package` lane on a pull request that changes what goes into a package (`PACKAGE_PATHS` in `scripts/ci-plan.py`: `desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows).
+There it also builds the macOS archive and runs the packaged app's own specs on it, keeps the packages for a week as the run's artifacts, and `verify` requires it like any planned lane.
 
 ## Bundled Herdr runtime
 

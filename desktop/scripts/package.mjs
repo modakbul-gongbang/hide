@@ -104,7 +104,11 @@ for (const entry of fs.readdirSync(out)) {
 // Release hided embeds web/dist, so the web shell is built first; the cargo
 // wrapper reuses the machine's toolchain and keeps output in this worktree.
 pnpm(["--dir", "web", "build"]);
-run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit" });
+// The binaries report the version the app ships and the commit it was built
+// from (`hide version`); a package that cannot name its commit is refused.
+const commit = run("git", ["rev-parse", "HEAD"]);
+if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`the package's commit could not be read (got '${commit}')`);
+run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit", env: { ...process.env, HIDE_VERSION: version, HIDE_COMMIT: commit } });
 const herdr = system.herdr();
 
 const release = path.join(repo, "target", "release");

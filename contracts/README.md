@@ -37,3 +37,13 @@ The web shell (`web/src/snapshot.ts`) types these fields with TypeScript, which 
 Neither is the View area layout inside `workspace_view`: a split's `axis` (`row`, `column`), a display's `kind` (`file`, `diff`, `browser`), and a display's `state` (`open`, `opening`, `waiting`, `unavailable`).
 Neither is `ui_state.theme` (`system`, `light`, `dark`); the web shell reads a value it does not know as Dark rather than failing.
 List an enum here, with a Rust-side pin and a reading-side check for it, in the change that adds one.
+
+# hide CLI contract
+
+`hide-cli.json` is what `hide contract --json` exports: the commands other tools call (`hide agent`, `request`, `inbox`, `watch`), their options, and the JSON Schema of each answer ([docs/delivery.md](../docs/delivery.md#the-contract-a-calling-tool-checks)).
+The build is the writer; `hided/src/cli_contract.rs`'s `the_committed_contract_is_the_exported_one` fails until this file matches what it exports.
+Regenerate it after a change to those commands, and review the diff as the change callers see:
+
+```sh
+target/debug/hide contract --json | python3 -m json.tool > contracts/hide-cli.json
+```

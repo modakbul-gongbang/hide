@@ -38,7 +38,7 @@ It clears inherited `HERDR_*` and needs no server; the full zsh contract check d
 The schema digest is canonical JSON (sorted keys, UTF-8, two-space indentation and a trailing newline).
 A configured nightly matrix proves no executed job, native input or package launch by itself.
 Record the actual head, attempt, job URLs, failures and skips; a package smoke with a private HOME or simulated hook does not prove a physical IME, an operator PATH or a real agent session.
-The macOS nightly package lane extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
+The macOS package job (nightly, and a pull request's `package` lane) extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
 The Windows/Linux package lanes check the real archive's headless daemon/kit behavior; their actual GUI and physical input still need device evidence.
 
 `hide-platform/tests/process.rs` exercises `run_to_end` with a real parent that starts a same-group helper inheriting both outputs and exits 0.
