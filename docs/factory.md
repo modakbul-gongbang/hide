@@ -180,7 +180,7 @@ Each open Factory is a code-owned recipient named `factory:<factory id>` in the 
 - A pane may send to `factory:<id>` and may name it as a watch observer, and it can address the Factory by that name only. A pane or agent can never register under a name or pane that starts with `factory:`.
 - The engine reads its letters from the ledger on each tick, up to 16 at a time, applies each once, and confirms it. A request or block letter also gets a reply carrying the engine's JSON answer. No composer input or doorbell is involved.
 - The letter's sender must be a live worker of that Factory, or the letter is refused with `sender_not_a_worker` and logged.
-- A worker's CLI report is a typed body `{"factory": <command>}` sent under an intent made from the pane and the body, so a retry applies once. A harness that follows the letter protocol only is read as a question (a `request` or `block` letter becomes a blocking question with a 24 hour deadline, taking a `Recommendation:`, `Suggestion:`, `추천:` or `제안:` line as the suggestion) or as a completion (a `report` letter becomes `done`).
+- A worker's CLI report is a typed body `{"factory": <command>}` sent under an intent made from the pane, the Task's current state time and the body, so a retry in the same state applies once and the same report after the Task moved (a `done` again once verification sent it back) is a new letter. A harness that follows the letter protocol only is read as a question (a `request` or `block` letter becomes a blocking question with a 24 hour deadline, taking a `Recommendation:`, `Suggestion:`, `추천:` or `제안:` line as the suggestion) or as a completion (a `report` letter becomes `done`).
 - A watch whose observer is the Factory warns after the Factory's `stall_minutes` (30 by default) instead of 20; the host hands each open Factory's window to the watch readings, so a change applies at the next reading. The engine turns the first warning into a stalled stop; it does not wait for the second warning or for the human notice, which the ledger skips for a code-owned recipient.
 - The Factory writes to a worker with `report` letters, and starts a watch on the worker again each time it does, because a report to its parent ends the sender's watch.
 
@@ -238,6 +238,8 @@ The review sees only the card, its attachment, the repository's file names and g
 Adding again with `--task <id>` or the same issue updates the same Task and reviews it again; the same content changes nothing.
 A re-add on a Task that already runs does not rewrite its card: it adds a scope-change question that a person approves or rejects.
 A re-add adds dependencies but never drops one the review or a person added, so a producer that resends the card it knows changes nothing; removing a dependency is a person's `dep remove`.
+A re-add that leaves out criteria, out-of-scope items, open decisions or external waits keeps the card's.
+`dep add` names a Task of the same Factory as the Task it changes, and a watch warning names a Task of the Factory it watched; a warning naming none is only logged.
 The producer's open decisions become intake questions, and a Task is Ready only when the review is done and no question besides a notice is open.
 Ready creates the issue: a GitHub Task gets an issue labelled `factory` whose body carries a hidden Task marker, the goal, the criteria and the out-of-scope items, and a local Task gets an `L-<number>`.
 A Task added from an existing issue gets the label instead.
@@ -260,7 +262,8 @@ A drift question keeps the Task in `verifying`, does not wake the worker, and ho
 A judgment that cannot run is never skipped and never read as a pass.
 A failed review marks the Task and puts a retry-or-cancel question in the inbox, and `add` answers `pending`.
 While Hide AI is off or no agent is chosen to run it, every judgment fails as `disabled`, and the question says to turn it on in Settings › Hide AI.
-A failed drift or check sends the Task to `merge_waiting` for a person.
+A failed drift or check sends the Task to `merge_waiting` for a person, and so does a check that answers `pass: false` with nothing to ask or flag, or one that cannot read the Task's diff.
+A judgment that answers after its Task was cancelled, taken outside or finished is dropped and logged as `judgment.dropped`.
 A failed watch or diagnosis changes no Task and is logged.
 
 The Factory has its own judgment queue on its own router (see [AI_PROVIDERS.md](AI_PROVIDERS.md#the-factorys-judgments)): one request in flight, intake reviews before every other judgment, and 16 waiting judgments per Factory.
@@ -341,6 +344,7 @@ A red result breaks main and stops auto merge; manual merges still run.
 While main is broken an `auto` Task that passed verification waits in `verifying` without merge-tree or quick-check reads, unless a person's gate sends it to `merge_waiting`; main is read again every 30 seconds.
 If the broken commit is among the Factory's own merges since the last green, the Factory finds the first failing one, asking again for runs that were skipped or cancelled, and reverts that merge alone.
 On GitHub the revert is a pull request from `factory/revert-<task id>`, which the Factory force-pushes, checks and merges with `--merge`; locally it is a revert commit made in `factory-main` and fast-forwarded into the primary checkout, only while that checkout is on the default branch and clean, as for a Task merge.
+A revert that conflicts is aborted in `factory-main`, so that worktree stays usable for main verification and the next revert.
 A revert whose verification passes is merged on its own, and the original Task becomes `relanding`: it runs again in the same worktree and session on the latest main, with a new pull request.
 When the failing commit is not the Factory's, nothing is reverted: the Factory drafts a fix Task for a person to confirm and stops auto merge.
 Auto merge resumes when the head of main verifies green again.
@@ -358,7 +362,7 @@ A held issue missing from that list is looked up by number, at most 20 per read 
 | A pull request the Factory did not open closes a Task's issue, and it is open | A pull request one of the Factory's own Tasks opened never counts, whatever its worker wrote; the decisions a worker records sit in a code block in its pull request body, so a "Fixes #N" there stays text. GitHub can still close another Task's issue from a closing keyword a worker put in a commit message or in a card it proposed, when that merge lands; the other Task is then cancelled and kept for revive. A pull request from a fork counts only once it is merged, since anyone can open one. Otherwise the Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
 | That pull request merges | The Task is `done`, and a dependent Task's predecessor counts as merged. A stopped worker's worktree still waits out its keep period. |
 | The issue closes with no pull request, or the `factory` label is removed | The Task is cancelled with a notice, kept for the keep period. |
-| A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. |
+| A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. The body is compared with the one the Factory wrote, ignoring line endings and surrounding space, so the first edit counts. |
 | A person labels an issue the Factory does not hold | A new Task is drafted from the issue, and a person confirms its card in the inbox before it is Ready. The body is not edited. |
 | A finished Task's issue reopens | A notice only. |
 | A push to main the Factory did not make | Main verification runs; while its checks are still running the head is read again every 30 seconds, and a red result takes the outside-push path above. |
@@ -412,7 +416,7 @@ An autonomy Task is reviewed like any other, may not propose Tasks, and gates to
 
 An environment problem is not a Task's failure and is never counted against it.
 
-- **Before a start.** Starts hold while free disk at the first waiting Task's project is under `disk_floor_gb` (20 by default), or while macOS reports critical memory pressure. Warn pressure starts normally, and other systems report normal. The held Tasks show the reason and are checked again after a minute.
+- **Before a start.** Starts hold while free disk at the first waiting Task's project is under `disk_floor_gb` (20 by default), or while macOS reports critical memory pressure. Warn pressure starts normally, and other systems report normal. The held Tasks show the reason and are checked again after a minute or when a worker stops; without a hold the machine is read only on a tick where a start can happen, so a backlog waiting on full slots is not read every tick.
 - **At a failure.** Only a structured signal makes a failure the environment's: no space left on the device, exit 137, a GitHub 401, 403, 429 or 5xx answer, a network error, or a Herdr connection error. The adapters read the GitHub and git signals from the command's exit code and its stderr text. Everything else is the Task's. A runtime's usage limit comes from the core's provider usage rows (the toolbar's Weekly Usage reader): a main row or bucket at 100 percent with a reset ahead parks that runtime until the reset, new starts of an unpinned Task use the other runtime, and a worker that ends its turn without a report while its runtime is limited waits for a slot instead of stopping. The rows refresh every 5 minutes only while a window shows them, so a daemon with no window open learns of a limit late.
 - **Code handles each signal first.** Disk full holds starts and removes the worktrees of finished Tasks and cancelled Tasks past their keep period. Out-of-memory and Herdr connection errors send the Task back to `waiting`. A rate-limit, server or network error backs the read off as above. A 401 or 403 puts a notice in the inbox once, naming `gh auth login` or `gh auth refresh -s <scope>`, and the Factory does not perform that action or retry it.
 - **Cascade.** Three different Tasks failing the same check or command within 30 minutes are read as the environment: each failure is taken back, the Tasks go to `waiting`, and new starts halt for 30 minutes.
