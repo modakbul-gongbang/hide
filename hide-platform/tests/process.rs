@@ -1165,6 +1165,48 @@ fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
     );
 }
 
+/// A stopped child has not ended: the run waits for it to its deadline, and
+/// ends it there, rather than reading the stop as an exit.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by the run
+fn a_stopped_child_is_not_a_finished_one() {
+    let _serial = serial();
+    let folder = tempfile::tempdir().unwrap();
+    let ready = folder.path().join("ready");
+    let mut command = role_command("sleep");
+    command.env(READY_FILE, &ready);
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let (answer, stopped) = thread::scope(|scope| {
+        let stopper = scope.spawn(|| {
+            loop {
+                if let Ok(pid) = std::fs::read_to_string(&ready) {
+                    let pid: u32 = pid.parse().unwrap();
+                    // SAFETY: `kill` takes plain integers; the pid is the
+                    // child this run started, announced while it runs.
+                    assert_eq!(unsafe { libc::kill(pid as libc::pid_t, libc::SIGSTOP) }, 0);
+                    return Some(pid);
+                }
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let answer = run_to_end(
+            &mut command,
+            Duration::from_secs(5),
+            &std::sync::atomic::AtomicBool::new(false),
+        );
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        (answer, stopper.join().unwrap())
+    });
+    assert!(matches!(answer, Err(RunFailure::TimedOut)), "{answer:?}");
+    if let Some(child) = stopped {
+        assert!(!is_alive(child), "the stopped child outlived the call");
+    }
+}
+
 /// What `fill_and_exit_with_escaped_pipes` writes on `stream` just before it
 /// exits: numbered lines just under the 16 KiB a macOS pipe starts with, so
 /// the pipe still holds more than one read takes when the exit is seen.

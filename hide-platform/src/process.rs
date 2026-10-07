@@ -1275,11 +1275,18 @@ mod sys {
         {
             return Err(io::Error::last_os_error());
         }
+        // macOS also answers for a stopped child, `WEXITED` alone or not, and
+        // a stopped child has not ended: only an exit, a kill or a core dump
+        // is the end `waitpid` can then reap.
+        let ended = matches!(
+            info.si_code,
+            libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+        );
         #[cfg(target_os = "macos")]
-        return Ok(info.si_pid != 0);
+        return Ok(info.si_pid != 0 && ended);
         #[cfg(target_os = "linux")]
         // SAFETY: waitid initialized siginfo_t above.
-        return Ok(unsafe { info.si_pid() } != 0);
+        return Ok(unsafe { info.si_pid() } != 0 && ended);
     }
 
     /// The highest descriptor the fallback marks; one above it stays
