@@ -147,6 +147,8 @@ The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and checks their registration through the candidate `hide workspace info` from their actual shells.
 It never opens a renderer or controls the installed app.
 Native agents keep the operator HOME for existing login.
+Supported per-command config roots use bounded private copies of existing authentication, with source/version provenance in each provider row.
+Private copies have mode 0600, never update the account's login, and disappear with the probe checkout.
 Authenticated probing currently requires macOS `sandbox-exec`; a real write/socket denial self-test must pass before a provider starts.
 Unsupported hosts fail closed.
 `--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
@@ -168,7 +170,8 @@ Unexpected or concurrent configuration changes are preserved and fail the run; o
 Only the test lane's exclusively owned disposable HOME permits attributed restoration.
 
 Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.
-The preparation prompt and helper output contain no marker, and the native sandbox denies reading the controller's marker receipt.
+The controller generates the marker after the earlier prompt and holds it only in memory; it writes no helper or marker receipt for the agent to read.
+The native sandbox denies other-process argument inspection and private mailbox storage access; its exact candidate capability and claim files remain available for ordinary `hide inbox`.
 Typed text, hook installation, a tool's output and transport arrival alone are insufficient.
 Unknown native conversation formats, permission holds and unavailable integration remain unknown delivery.
 No unavailable CLI or unauthenticated account is a safety PASS; the table retains its login instruction without attempting login.

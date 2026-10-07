@@ -4,6 +4,7 @@ Darwin layouts follow sys/proc_info.h in the installed SDK. Linux uses proc(5).
 """
 
 import ctypes
+import errno
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ class Process:
     birth: int
     rss: int
     zombie: bool
+    uid: int
 
 
 class BsdInfo(ctypes.Structure):
@@ -60,7 +62,7 @@ def snapshot() -> dict[int, Process]:
             result[pid] = Process(pid, info.ppid, info.pgid,
                                   info.sec * 1_000_000 + info.usec,
                                   task.resident if read == ctypes.sizeof(task) else -1,
-                                  info.status == 5)
+                                  info.status == 5, info.uid)
     elif sys.platform.startswith("linux"):
         with os.scandir("/proc") as entries:
             for index, entry in enumerate(entries):
@@ -75,7 +77,7 @@ def snapshot() -> dict[int, Process]:
                     result[pid] = Process(pid, int(fields[1]), int(fields[2]),
                                           int(fields[19]),
                                           int(fields[21]) * os.sysconf("SC_PAGE_SIZE"),
-                                          fields[0] == "Z")
+                                          fields[0] == "Z", os.stat(entry.path).st_uid)
                 except (FileNotFoundError, ProcessLookupError, PermissionError):
                     continue
     else:
@@ -92,3 +94,36 @@ def descendants(table: dict[int, Process], root: int) -> dict[int, Process]:
         if added <= selected:
             return {pid: table[pid] for pid in selected if pid in table}
         selected |= added
+
+
+def marked_descendants(table: dict[int, Process], marker: str, earliest: int) -> dict[int, Process]:
+    """Find same-run Darwin orphans by inherited owner token, never argv logs.
+
+    The marker is installed before the native child exists, survives ordinary
+    double-fork/setsid daemonization, and is not present in concurrent work.
+    Intentionally hostile code that clears its environment is outside this
+    trusted-CLI ownership mechanism; the write guard still applies to it.
+    """
+    library = ctypes.CDLL(None, use_errno=True)
+    library.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+                               ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                               ctypes.c_void_p, ctypes.c_size_t]
+    expected = ("HIDE_LIVE_CHECK_OWNER=" + marker).encode()
+    result = {}
+    for pid, process in table.items():
+        if process.uid != os.getuid() or process.birth < earliest or process.zombie:
+            continue
+        mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2, pid (installed SDK).
+        size = ctypes.c_size_t(1024 * 1024)
+        buffer = ctypes.create_string_buffer(size.value)
+        if library.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0):
+            error = ctypes.get_errno()
+            if error == errno.ESRCH:
+                continue
+            current = snapshot().get(pid)
+            if current is None or current.birth != process.birth or current.zombie:
+                continue
+            raise RuntimeError("owned_process_arguments_unavailable_" + str(error))
+        if expected in buffer.raw[:size.value].split(b"\0"):
+            result[pid] = process
+    return result

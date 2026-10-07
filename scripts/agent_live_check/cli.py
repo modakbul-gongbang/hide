@@ -5,15 +5,17 @@ import datetime
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import shutil
 import signal
 import sys
+import tempfile
 import time
 
 from .contracts import SCENES, recipes, source_contract
+from .authentication import AuthenticationRequired, require_no_login
 from .delivery import measure as measure_delivery
+from .overlay import prepare as prepare_overlay
 from .processes import OwnedProcesses, ProcessError
 from .protection import ConfigGuard, ProtectionError, beneath, private_directory, stamp, write_private
 from .report import save
@@ -108,11 +110,11 @@ def main(argv=None):
         histories = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["histories"]))
         guard = ConfigGuard(run / "configuration-backup", known, roots, histories=histories,
                             exclusive_root=agent_home if args.fixture_bin else None)
-        sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, histories)
+        sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, histories, runtime.state)
+        runtime.sandbox = sandbox
         if sandbox:
-            outside = runtime.short / "guard-outside"
-            private_directory(outside)
-            sandbox.verify(owner, {**clean_env(), "TMPDIR": str(run / "agent-tmp")}, outside)
+            with tempfile.TemporaryDirectory(prefix="acl-guard-", dir="/tmp") as outside:
+                sandbox.verify(owner, {**clean_env(), "TMPDIR": str(run / "agent-tmp")}, Path(outside).resolve())
         # Only the candidate CLI is reachable as `hide` in a probe workspace.
         write_private(runtime.bin / "hide", ("#!/bin/sh\nexec " + shlex.quote(str(runtime.hide)) + ' "$@"\n').encode())
         (runtime.bin / "hide").chmod(0o700)
@@ -129,7 +131,18 @@ def main(argv=None):
                 provider["skipped"] = "not_installed"
             else:
                 launch = wrapper(runtime, recipe, Path(executable), sandbox)
-                metadata_env = {**clean_env(), "HOME": str(agent_home), "TMPDIR": str(run / "agent-tmp")}
+                overlay = prepare_overlay(recipe, runtime.probe, agent_home) if not args.fixture_bin else {
+                    "env": {}, "copies": [], "settings": [], "session_root": None}
+                provider["private_configuration"] = {key: value for key, value in overlay.items()
+                                                      if key in ("copies", "provenance")}
+                if recipe["kind"] == "codex" and overlay["session_root"]:
+                    private_directory(overlay["session_root"])
+                    link = runtime.home / ".codex/sessions"
+                    if link.is_symlink():
+                        link.unlink()
+                    link.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    link.symlink_to(overlay["session_root"], target_is_directory=True)
+                metadata_env = {**clean_env(), **overlay["env"], "HOME": str(agent_home), "TMPDIR": str(run / "agent-tmp")}
                 code, version, err = owner.run([str(launch), "--version"], env=metadata_env, check=False)
                 provider["version"] = version.strip()[:256]
                 if code:
@@ -140,7 +153,7 @@ def main(argv=None):
                         workspace = None
                         evidence = run / (recipe["id"] + "-" + scene + ".json")
                         try:
-                            workspace, pane, cwd = runtime.new_workspace(recipe, scene, agent_home, launch)
+                            workspace, pane, cwd = runtime.new_workspace(recipe, scene, agent_home, launch, overlay)
                             history = cwd / "history"
                             private_directory(history)
                             mcp = cwd / "live-mcp.json"
@@ -149,16 +162,15 @@ def main(argv=None):
                             values = dict(model=recipe["model"], sockets=str(runtime.short),
                                           history=str(history), mcp=str(mcp))
                             native_args = [value.format_map(values) for value in recipe["argv"]]
-                            runtime.command(["agent", "start", "live-" + recipe["id"] + "-" + scene,
-                                             "--kind", recipe["kind"], "--pane", pane, "--timeout", "3000",
-                                             "--", *native_args], check=False, seconds=8)
+                            code, output, err = runtime.command(["agent", "start", "live-" + recipe["id"] + "-" + scene,
+                                             "--kind", recipe["kind"], "--pane", pane, "--timeout", "5000",
+                                             "--", *native_args], check=False, seconds=10)
+                            if code:
+                                write_private(run / (recipe["id"] + "-" + scene + "-start-error.json"),
+                                              json.dumps({"exit_code": code, "stdout": output, "stderr": err}).encode())
+                                raise ProcessError("agent_start_refused_" + str(code))
                             startup_screen = runtime.screen(pane)
-                            if re.search(r"Authentication required|not logged in|Please (?:log|sign) in",
-                                         startup_screen, flags=re.IGNORECASE):
-                                provider["skipped"] = "not_authenticated"
-                                write_private(evidence, json.dumps({"screen": startup_screen,
-                                              "reason": "not_authenticated_no_login_attempted"}).encode())
-                                break
+                            require_no_login(startup_screen)
                             native = runtime.agent(pane)
                             session = native.get("agent_session") if native else None
                             if session and session.get("source") == "herdr:" + recipe["kind"]:
@@ -166,10 +178,16 @@ def main(argv=None):
                                     "source": session["source"], "herdr_version": runtime.expected_version,
                                     "binary_sha256": report["herdr"]["sha256"]}
                             provider["scenes"].append(observe(runtime, pane, recipe, scene, contract["bell"],
-                                                               agent_home, args.scene_seconds, evidence, cwd))
+                                                               agent_home, args.scene_seconds, evidence, cwd, overlay))
                             if scene == "rest" and provider["scenes"][-1]["arrival"] == "reached":
                                 provider["delivery"] = measure_delivery(runtime, pane, recipe, agent_home,
-                                                                        cwd, contract["bell"], args.scene_seconds)
+                                                                        cwd, contract["bell"], args.scene_seconds, overlay)
+                        except AuthenticationRequired:
+                            provider["skipped"] = "not_authenticated"
+                            if not evidence.exists():
+                                write_private(evidence, json.dumps({"screen": runtime.screen(pane),
+                                              "reason": "not_authenticated_no_login_attempted"}).encode())
+                            break
                         except ProcessError as error:
                             if owner.cancelled.is_set():
                                 raise
@@ -181,8 +199,10 @@ def main(argv=None):
                             if workspace:
                                 runtime.close_workspace(workspace)
             if provider.get("skipped"):
-                provider["scenes"] = [{"scene": scene, "arrival": "skipped", "status": "unknown",
-                                       "effect": "not_tested", "reason": provider["skipped"]} for scene in SCENES]
+                observed = {row["scene"] for row in provider["scenes"]}
+                provider["scenes"].extend({"scene": scene, "arrival": "skipped", "status": "unknown",
+                                         "effect": "not_tested", "reason": provider["skipped"]}
+                                        for scene in SCENES if scene not in observed)
             report["resources"] = owner.usage()
     except Exception as error:
         report["failures"].append({"type": type(error).__name__, "reason": str(error)})

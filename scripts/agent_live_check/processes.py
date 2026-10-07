@@ -4,6 +4,7 @@ import ctypes
 import os
 from pathlib import Path
 import selectors
+import secrets
 import signal
 import subprocess
 import sys
@@ -11,9 +12,9 @@ import threading
 import time
 
 if __package__:
-    from .process_table import descendants, snapshot
+    from .process_table import descendants, marked_descendants, snapshot
 else:
-    from process_table import descendants, snapshot
+    from process_table import descendants, marked_descendants, snapshot
 
 MAX_CHILDREN = 16
 MAX_DESCENDANTS = 128
@@ -98,9 +99,11 @@ class OwnedProcesses:
                 raise ProcessError(f"command_exit_{code}")
             return code, *(bytes(value).decode("utf-8", errors="replace") for value in output)
         finally:
-            self.end(child)
-            child.stdout.close()
-            child.stderr.close()
+            try:
+                self.end(child)
+            finally:
+                child.stdout.close()
+                child.stderr.close()
 
     def end(self, child):
         writer = self.children.pop(child, None)
@@ -173,12 +176,17 @@ def guard(reader: int, argv: list[str]) -> int:
     child = None
     observed = {}
     failed = False
+    marker = secrets.token_hex(32)
+    earliest = snapshot()[os.getpid()].birth
     deadline = time.monotonic() + RUN_SECONDS
     try:
-        child = owner.spawn(argv, env=dict(os.environ), stdin=None, stdout=None,
+        child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker}, stdin=None, stdout=None,
                             stderr=None, _guarded=False)
         while not cancelled.is_set():
-            current = descendants(snapshot(), os.getpid())
+            table = snapshot()
+            current = descendants(table, os.getpid())
+            if sys.platform == "darwin":
+                current.update(marked_descendants(table, marker, earliest))
             current.pop(os.getpid(), None)
             observed.update(current)
             if (any(p.rss < 0 and not p.zombie for p in current.values())
@@ -192,15 +200,22 @@ def guard(reader: int, argv: list[str]) -> int:
             if child.poll() is not None:
                 break
             cancelled.wait(POLL_SECONDS)
-    except BaseException:
+    except BaseException as error:
+        sys.stderr.write("guardian_failure:" + type(error).__name__ + ":" + str(error) + "\n")
         failed = True
     finally:
         try:
-            current = descendants(snapshot(), os.getpid())
+            table = snapshot()
+            current = descendants(table, os.getpid())
+            if sys.platform == "darwin":
+                current.update(marked_descendants(table, marker, earliest))
             current.pop(os.getpid(), None)
             observed.update(current)
             for signum in (signal.SIGCONT, signal.SIGTERM, signal.SIGKILL):
                 table = snapshot()
+                if sys.platform == "darwin":
+                    observed.update(marked_descendants(table, marker, earliest))
+                observed.pop(os.getpid(), None)
                 for pid, identity in observed.items():
                     actual = table.get(pid)
                     if actual and actual.birth == identity.birth and not actual.zombie:
@@ -224,7 +239,8 @@ def guard(reader: int, argv: list[str]) -> int:
                     failed = True
                     break
                 time.sleep(POLL_SECONDS)
-        except BaseException:
+        except BaseException as error:
+            sys.stderr.write("guardian_cleanup_failure:" + type(error).__name__ + ":" + str(error) + "\n")
             failed = True
     return 125 if failed else (child.returncode if child is not None else 125)
 

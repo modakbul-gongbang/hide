@@ -6,13 +6,15 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import sys
 import tempfile
 import threading
 import time
 import urllib.request
 
 from .processes import MAX_OUTPUT, OwnedProcesses, ProcessError
-from .protection import ProtectionError, private_directory, validate_isolation, write_private
+from .authentication import require_no_login
+from .protection import ProtectionError, beneath, private_directory, validate_isolation, write_private
 
 
 def clean_env() -> dict[str, str]:
@@ -77,6 +79,8 @@ class Runtime:
         self.hide = checkout / "target/debug/hide"
         self.servers = []
         self.workspaces = set()
+        self.pane_credentials = {}
+        self.sandbox = None
         self.started = False
         self.configuration = {}
         try:
@@ -112,7 +116,7 @@ class Runtime:
                                "HIDE_KEEP_ALIVE": "1", "HIDED_UI_DIR": str(checkout / "web/dist")}
             # hided observes native session identity using its usual reader.
             # These read-only references do not change the operator's trees.
-            for relative in (".claude/projects", ".codex/sessions"):
+            for relative in (() if fixture_bin else (".claude/projects", ".codex/sessions")):
                 source = operator / relative
                 if source.is_dir():
                     destination = self.home / relative
@@ -134,7 +138,7 @@ class Runtime:
     def json(self, args):
         _, out, _ = self.command(args)
         value = json.loads(out)
-        if not value.get("ok") or not isinstance(value.get("result"), dict):
+        if "error" in value or not isinstance(value.get("result"), dict):
             raise ProcessError("herdr_refused_request")
         return value["result"]
 
@@ -158,8 +162,8 @@ class Runtime:
         _, version, _ = self.command(["--version"])
         if version.strip().split()[-1] != self.expected_version:
             raise ProtectionError("herdr_version_mismatch")
-        self.owner.run(["/bin/bash", str(self.checkout / "scripts/check-herdr-contract.sh"),
-                        "--herdr-bin", str(self.herdr_bin), "--schema-only"],
+        self.owner.run([sys.executable, str(self.checkout / "scripts/check-herdr-schema.py"),
+                        "--herdr-bin", str(self.herdr_bin)],
                        env=self.env, cwd=self.checkout)
         self.resident(self.herdr_bin, ["server"], self.env, "herdr")
         self.started = True
@@ -179,12 +183,12 @@ class Runtime:
             except OSError:
                 return False
         self.wait(health, 20)
-        manifests = self.json(["server", "agent-manifests"])
+        manifests = self.json(["server", "agent-manifests", "--json"])
         return {"version": version.strip(), "sha256": hashlib.sha256(self.herdr_bin.read_bytes()).hexdigest(),
                 "manifests": manifests["manifests"], "last_result": manifests.get("last_result"),
                 "hided_sha256": hashlib.sha256(self.hided.read_bytes()).hexdigest()}
 
-    def new_workspace(self, recipe: dict, scene: str, agent_home: Path, wrapper: Path):
+    def new_workspace(self, recipe: dict, scene: str, agent_home: Path, wrapper: Path, overlay: dict):
         cwd = self.probe / (recipe["id"] + "-" + scene)
         private_directory(cwd)
         git_env = {**self.env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
@@ -202,6 +206,7 @@ class Runtime:
                        "PATH": os.pathsep.join((str(wrapper.parent), str(self.bin), os.environ.get("PATH", ""))),
                        "TMPDIR": str(self.run / "agent-tmp"),
                        "HIDE_LIVE_CHECK_SCENE": scene}
+        environment.update(overlay["env"])
         args = ["workspace", "create", "--cwd", str(cwd), "--label", "Local bell check", "--no-focus"]
         for key, value in environment.items():
             args.extend(["--env", f"{key}={value}"])
@@ -223,6 +228,28 @@ class Runtime:
                 raise ProcessError("run_cancelled")
         if not registered:
             raise ProcessError("private_checkout_not_registered")
+        # Real candidate attestation of this owned pane, not a copied native
+        # identity or an operator credential. Keep the reference in memory.
+        name = recipe["id"] + "-" + scene + "-bootstrap"
+        code, output = self.pane_command(pane, [str(self.hide), "workspace", "bootstrap"], name)
+        answer = json.loads(output)
+        reference = Path(answer.get("reference", ""))
+        if code or not answer.get("ok") or not beneath(reference, self.state / "pane-capabilities"):
+            raise ProtectionError("private_pane_bootstrap_refused")
+        self.pane_credentials[pane] = reference
+        (self.run / (name + ".out")).unlink()
+        if self.sandbox:
+            self.sandbox.allow_reference(reference)
+        # An issued reference is inherited by the measured CLI and its normal
+        # hooks. Only the actual pane's shell receives it, before native start.
+        reference_input = self.run / (name + ".reference-input")
+        ready = self.run / (name + ".reference-ready")
+        write_private(reference_input, (str(reference) + "\n").encode())
+        self.send(pane, "IFS= read -r HIDE_CAP_REF < " + shlex.quote(str(reference_input)) +
+                  "; export HIDE_CAP_REF; : > " + shlex.quote(str(ready)))
+        self.wait(lambda: ready.exists(), 5)
+        reference_input.unlink()
+        ready.unlink()
         return workspace, pane, cwd
 
     def screen(self, pane):
@@ -233,7 +260,21 @@ class Runtime:
         return next((agent for agent in agents if agent["pane_id"] == pane), None)
 
     def send(self, pane, text):
+        require_no_login(self.screen(pane))
         self.command(["pane", "run", pane, text])
+
+    def send_letter(self, pane, intent, body):
+        if pane not in self.pane_credentials:
+            raise ProtectionError("unowned_letter_recipient")
+        environment = {**self.daemon_env, "HERDR_PANE_ID": pane,
+                       "HIDE_CAP_REF": str(self.pane_credentials[pane])}
+        _, output, _ = self.owner.run([str(self.hide), "request", "send", pane,
+                                      "--intent", intent, "--kind", "report", "--body", body],
+                                     env=environment)
+        answer = json.loads(output)
+        if answer.get("ok") is not True or not isinstance(answer.get("result", {}).get("id"), str):
+            raise ProcessError("private_mailbox_send_refused")
+        return answer["result"]["id"]
 
     def close_workspace(self, workspace):
         if workspace not in self.workspaces:

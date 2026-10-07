@@ -7,6 +7,14 @@ import path from "node:path";
 import { herdrBinary } from "./herdr-fixture";
 import { copyFixtureShim } from "./shims/build";
 
+test("live check guards preserve bytes, refuse aliases, and end detached children", () => {
+  test.skip(process.platform === "win32", "The local measurement runs on Unix hosts");
+  const result = spawnSync("python3", ["-m", "unittest", "discover", "-s", "../scripts/tests", "-p", "test_agent_live_*.py"],
+    { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+  expect(result.error, result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+
 test("live check retains the full scene matrix and rejects unsafe picker or plan input", async () => {
   test.skip(process.platform === "win32", "Native measurement's process guardian supports Unix hosts");
   test.setTimeout(240_000);

@@ -114,6 +114,26 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_short_lived_parent_cannot_leave_detached_child(self):
+        with tempfile.TemporaryDirectory(prefix="agent-detach-") as name:
+            receipt = Path(name) / "child.pid"
+            script = ("import os,time; from pathlib import Path; "
+                      "pid=os.fork(); "
+                      "\nif pid: raise SystemExit(0)"
+                      "\nos.setsid()"
+                      "\nif os.fork(): raise SystemExit(0)"
+                      "\nos.close(1); os.close(2)"
+                      f"\nPath({str(receipt)!r}).write_text(str(os.getpid()))"
+                      "\ntime.sleep(5)")
+            with OwnedProcesses() as owner:
+                code, _, _ = owner.run([sys.executable, "-c", script], env=dict(os.environ))
+                self.assertEqual(code, 0)
+            # A missing receipt means the kernel tracked and stopped the leaf
+            # before it ran. A live receipt must name an already ended process.
+            if receipt.exists():
+                item = snapshot().get(int(receipt.read_text()))
+                self.assertTrue(item is None or item.zombie, "detached child survived confirmed cleanup")
+
     def test_finite_command_and_repeated_units_leave_no_child(self):
         with OwnedProcesses() as owner:
             for _ in range(20):
@@ -168,6 +188,43 @@ class ProcessProtection(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "darwin", "authenticated write guard is macOS-only")
 class NativeWriteProtection(unittest.TestCase):
+    def test_other_process_control_arguments_and_mailbox_storage_are_denied(self):
+        with tempfile.TemporaryDirectory(prefix="acl-", dir="/tmp") as name:
+            root = Path(name).resolve()
+            run, sockets, home = [root / key for key in ("run", "sockets", "operator")]
+            for path in (run, sockets, home):
+                path.mkdir(mode=0o700)
+            state = run / "state"
+            caps = state / "pane-capabilities"
+            caps.mkdir(parents=True, mode=0o700)
+            reference = caps / "own.json"
+            reference.write_text("fixture-reference")
+            reference.chmod(0o600)
+            mailbox = state / "mailbox.json"
+            mailbox.write_text("fresh-test-marker")
+            guard = WriteSandbox(run, sockets, home, [])
+            guard.allow_reference(reference)
+            with OwnedProcesses() as owner:
+                standin = owner.spawn([sys.executable, "-c", "import time; time.sleep(5)", "fixture-process-marker"],
+                                     env=dict(os.environ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                program = ("import ctypes,errno,os; from pathlib import Path"
+                           f"\nassert Path({str(reference)!r}).read_text() == 'fixture-reference'"
+                           f"\nPath({str(reference.with_suffix('.claimed'))!r}).write_text('claim')"
+                           f"\ntry: Path({str(mailbox)!r}).read_text()"
+                           "\nexcept PermissionError: pass"
+                           "\nelse: raise SystemExit(31)"
+                           f"\ntry: os.kill({standin.pid}, 0)"
+                           "\nexcept PermissionError: pass"
+                           "\nelse: raise SystemExit(32)"
+                           "\nlib=ctypes.CDLL(None,use_errno=True)"
+                           f"\nmib=(ctypes.c_int*3)(1,49,{standin.pid})"
+                           "\nsize=ctypes.c_size_t(1024*1024); data=ctypes.create_string_buffer(size.value)"
+                           "\nassert lib.sysctl(mib,3,data,ctypes.byref(size),None,0) == -1"
+                           "\nassert ctypes.get_errno() == errno.EPERM"
+                           "\nprint('all-denials-enforced')")
+                code, output, error = owner.run(guard.command([sys.executable, "-c", program]), env=dict(os.environ), check=False)
+                self.assertEqual((code, output.strip()), (0, "all-denials-enforced"), error)
+
     def test_real_sandbox_blocks_outside_writes_and_other_unix_sockets(self):
         with tempfile.TemporaryDirectory(prefix="acl-", dir="/tmp") as name:
             root = Path(name).resolve()

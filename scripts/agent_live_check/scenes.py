@@ -6,6 +6,7 @@ import re
 import time
 
 from .conversation import bell_turn, messages
+from .authentication import AuthenticationRequired, require_no_login
 from .processes import ProcessError
 from .protection import ProtectionError, write_private
 
@@ -16,13 +17,13 @@ def matches(pattern: str, screen: str, bell: str) -> bool:
                           flags=re.MULTILINE | re.IGNORECASE))
 
 
-def transcript(home: Path, kind: str, session: dict | None) -> Path | None:
+def transcript(home: Path, kind: str, session: dict | None, session_root: Path | None = None) -> Path | None:
     if not session or session.get("kind") != "id" or session.get("source") != "herdr:" + kind:
         return None
     identity = session.get("value", "")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", identity):
         raise ProtectionError("invalid_native_session_identity")
-    root = home / (".codex/sessions" if kind == "codex" else ".claude/projects")
+    root = session_root or home / (".codex/sessions" if kind == "codex" else ".claude/projects")
     if kind not in ("codex", "claude") or not root.is_dir():
         return None
     pending, count, found = [root], 0, []
@@ -43,7 +44,7 @@ def transcript(home: Path, kind: str, session: dict | None) -> Path | None:
 
 
 def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
-            home: Path, seconds: float, evidence: Path, cwd: Path) -> dict:
+            home: Path, seconds: float, evidence: Path, cwd: Path, overlay: dict) -> dict:
     data = recipe["scenes"][scene]
     row = {"scene": scene, "arrival": "unreached", "status": "unknown",
            "effect": "not_tested", "reason": "scene_not_observed", "evidence": evidence.name}
@@ -55,6 +56,7 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
             runtime.send(pane, data["send"])
         while time.monotonic() < deadline:
             screen = runtime.screen(pane)
+            require_no_login(screen)
             agent = runtime.agent(pane)
             if agent and matches(data["arrived"], screen, bell):
                 before = {"screen": screen, "agent": agent}
@@ -76,8 +78,10 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         # The deliberate unguarded input is the experiment; agent.prompt would
         # refuse the very menus this tool needs to measure.
         session = before["agent"].get("agent_session")
-        file = transcript(home, recipe["kind"], session)
+        file = transcript(home, recipe["kind"], session, overlay["session_root"])
         previous = messages(file, recipe["kind"]) if file else []
+        from .protection import stamp
+        configuration = {path: stamp(path) for path in overlay["settings"]}
         existing_probes = {path.name for path in cwd.glob("probe-*.txt")}
         runtime.send(pane, bell)
         deadline = time.monotonic() + seconds
@@ -85,8 +89,12 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         reason = "no_positive_effect_evidence"
         while time.monotonic() < deadline:
             screen = runtime.screen(pane)
+            require_no_login(screen)
             agent = runtime.agent(pane)
             samples = [samples[0], {"phase": "after", "screen": screen, "agent": agent}]
+            if any(stamp(path) != original for path, original in configuration.items()):
+                effect, reason = "settings_write", "private_settings_or_trust_changed_after_bell"
+                break
             if agent and session and agent.get("agent_session") != session:
                 effect, reason = "resumed_session", "native_session_identity_changed"
                 break
@@ -116,5 +124,8 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
             effect, reason = "unsent_draft", "bell_remains_in_composer_at_deadline"
         row.update(effect=effect, reason=reason)
         return row
+    except AuthenticationRequired:
+        row.update(arrival="skipped", effect="not_tested", reason="not_authenticated_no_login_attempted")
+        raise
     finally:
         write_private(evidence, (json.dumps({"observation": row, "samples": samples}, indent=2) + "\n").encode())

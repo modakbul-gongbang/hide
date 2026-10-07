@@ -14,6 +14,8 @@ from agent_live_check.protection import ProtectionError
 from agent_live_check.report import exit_code, save, verdict
 from agent_live_check.runtime import Runtime
 from agent_live_check.processes import OwnedProcesses
+from agent_live_check.authentication import AuthenticationRequired
+from agent_live_check.scenes import matches, observe
 
 
 def safe_agent():
@@ -24,6 +26,32 @@ def safe_agent():
 
 
 class MeasurementResults(unittest.TestCase):
+    def test_question_requires_a_menu_row_and_rejects_echo_or_prose(self):
+        checkout = Path(__file__).resolve().parents[2]
+        data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])
+        for recipe in data.values():
+            question = recipe["scenes"]["question"]
+            self.assertFalse(matches(question["arrived"], question["send"], "bell"))
+            self.assertFalse(matches(question["arrived"], "One option is to continue.", "bell"))
+            self.assertTrue(matches(question["arrived"], "1. One\n2. Two\n", "bell"))
+
+    def test_login_appearing_immediately_before_bell_receives_no_input(self):
+        with tempfile.TemporaryDirectory() as name, OwnedProcesses() as owner:
+            runtime = Runtime.__new__(Runtime)
+            runtime.owner = owner
+            screens = iter(["❯ ", "Sign in to continue"])
+            runtime.screen = lambda pane: next(screens)
+            runtime.agent = lambda pane: {"agent_status": "idle"}
+            submitted = []
+            runtime.command = lambda args: submitted.append(args)
+            recipe = {"kind": "claude", "scenes": {"rest": {"send": "", "arrived": "❯", "draft": "", "no_match": "", "unsafe": ""}}}
+            evidence = Path(name) / "login.json"
+            with self.assertRaises(AuthenticationRequired):
+                observe(runtime, "owned-pane", recipe, "rest", "bell", Path(name), 1, evidence,
+                        Path(name), {"session_root": None, "settings": []})
+            self.assertEqual(submitted, [])
+            self.assertEqual(json.loads(evidence.read_text())["observation"]["arrival"], "skipped")
+
     def test_all_current_adapters_have_both_pickers_and_every_required_scene(self):
         checkout = Path(__file__).resolve().parents[2]
         contract = source_contract(checkout)
