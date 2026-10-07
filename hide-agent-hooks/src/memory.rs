@@ -186,7 +186,10 @@ where
             RetrievalQuery::prompt(&project.id, text, excluded)
                 .with_path_context(canonical_path_context(&project, &cwd).to_string_lossy())
         }
-        HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return base(),
+        HookEvent::SubagentStart
+        | HookEvent::SubagentStop
+        | HookEvent::Stop
+        | HookEvent::PreToolUse => return base(),
     };
     if expired() {
         return HookMemoryResult {

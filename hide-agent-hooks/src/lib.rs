@@ -28,6 +28,7 @@ pub mod install;
 pub mod memory;
 pub mod report;
 pub mod runtime;
+pub mod spawn_guard;
 
 pub use counters::PaneCounters;
 pub use diagnosis::{
