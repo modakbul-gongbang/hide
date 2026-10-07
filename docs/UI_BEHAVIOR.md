@@ -320,6 +320,8 @@ The pane menu offers Sleep agent on a local agent pane that is awake, disabled w
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
 The sidebar's Agents tab groups the device in front's current agents under Needs You, Done, Working, and Seen, and leaves an empty group out; no row names its device, since the whole list is that device's, and a device that is not connected lists nothing it only last reported (the Palette still names a remote row's device).
+A Codex agent whose plan waits for approval ("Implement this plan?"), which Herdr reads as `done`, is drawn as an approval: in Needs You with the `!` mark and the request view's `answer` verb, as a prompt Herdr reports `blocked` is, and it stays there after it is read until Codex's next turn starts (docs/status-model.md, Where each axis comes from).
+It is drawn from the session file only for the agent's current Herdr state; a wait not read for that state is not drawn, and a letter the doorbell holds for it is never named on screen (docs/delivery.md).
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
 In the desktop app ⌥1 to ⌥9 open the first to ninth row the list draws, top to bottom across the groups, exactly as clicking that row does; the order is the list's whether or not the sidebar shows it, a folded child takes no number, and a number with no row does nothing.
