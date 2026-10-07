@@ -135,7 +135,7 @@ jobs:
     # stops the shards, and the lane reports the failure.
     if: ${{ !cancelled() && contains(fromJSON('["success","skipped"]'), needs.build.result) }}
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 150
     defaults:
       run:
         shell: bash
@@ -267,13 +267,15 @@ jobs:
             python3 scripts/web-e2e-shard.py check --shard "$SHARD" "$list" "$RUNNER_TEMP/web-e2e-shard-list.txt"
             args+=(--test-list "$shard_file")
           fi
-          bash scripts/verify-web.sh web e2e "${args[@]}"
+          # TEMP evidence run (do not merge): every CPU busy, the delete tests repeated.
+          for i in $(seq "$(nproc)"); do (while :; do :; done) & done
+          bash scripts/verify-web.sh web e2e "${args[@]}" --repeat-each 40 --retries 0
       - name: Report flaky tests
         # A test that failed and passed its retry becomes an issue with a
         # seven-day deadline, or a comment on the issue that tracks it. A
         # report that fails to file is a warning, not a failed lane.
         id: flaky
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -287,7 +289,7 @@ jobs:
         # is on the step's stdout. A screen assertion alone cannot say which
         # side moved. A flaky run keeps them too: its first attempt failed,
         # and its issue has no other evidence of why.
-        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}

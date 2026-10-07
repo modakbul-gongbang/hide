@@ -281,6 +281,15 @@ pub fn describe(
     base_override: Option<&str>,
 ) -> WorktreeFacts {
     let path = listed.path.to_string_lossy().into_owned();
+    eprintln!("{}", serde_json::json!({"kind": "temp.describe", "phase": "start", "path": path, "at_ms": temp_now_ms()}));
+    let temp_path = path.clone();
+    struct TempEnd(String);
+    impl Drop for TempEnd {
+        fn drop(&mut self) {
+            eprintln!("{}", serde_json::json!({"kind": "temp.describe", "phase": "end", "path": self.0, "at_ms": temp_now_ms()}));
+        }
+    }
+    let _temp_end = TempEnd(temp_path);
     if !listed.path.exists() {
         // Nothing can be counted against a path that is not there, and
         // reporting zeros would read as a clean checkout rather than a gone
@@ -1337,7 +1346,10 @@ fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option
         .ok()?
         .as_nanos();
     let entry = trash.join(format!("{nanos}-{}-{id}", std::process::id()));
+    eprintln!("{}", serde_json::json!({"kind": "temp.set_aside_attempt", "checkout": checkout, "at_ms": temp_now_ms()}));
     if let Err(error) = std::fs::rename(checkout, &entry) {
+        #[cfg(windows)]
+        temp_record_cwds(checkout);
         // Git removes the folder in place from here; record why the cheap
         // path was not taken, since the removal's own result will not.
         let attempt = entry
@@ -1359,6 +1371,64 @@ fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option
         return None;
     }
     Some(SetAside { entry, admin })
+}
+
+/// TEMP evidence for issue 707 (do not merge).
+fn temp_now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0)
+}
+
+/// TEMP evidence for issue 707 (do not merge): at the refusal, the processes
+/// working inside the folder and every child of this process.
+#[cfg(windows)]
+fn temp_record_cwds(checkout: &Path) {
+    let started = std::time::Instant::now();
+    let spell = |path: &Path| {
+        path.to_string_lossy()
+            .to_lowercase()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_owned()
+    };
+    let folder = spell(checkout);
+    let me = std::process::id();
+    let table = hide_platform::process::temp_process_cwds();
+    let describe = |(pid, parent, name, cwd): &(u32, u32, String, Option<PathBuf>)| {
+        serde_json::json!({"pid": pid, "parent": parent, "name": name, "cwd": cwd})
+    };
+    let inside: Vec<_> = table
+        .iter()
+        .filter(|(_, _, _, cwd)| {
+            cwd.as_deref().is_some_and(|cwd| {
+                let cwd = spell(cwd);
+                cwd == folder || cwd.starts_with(&format!("{folder}\\"))
+            })
+        })
+        .map(describe)
+        .collect();
+    let children: Vec<_> = table.iter().filter(|(_, parent, _, _)| *parent == me).map(describe).collect();
+    let git: Vec<_> = table
+        .iter()
+        .filter(|(_, _, name, _)| name.eq_ignore_ascii_case("git.exe"))
+        .map(describe)
+        .collect();
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "kind": "temp.set_aside_cwds",
+            "checkout": checkout,
+            "at_ms": temp_now_ms(),
+            "self_pid": me,
+            "scan_ms": started.elapsed().as_millis() as u64,
+            "processes": table.len(),
+            "inside": inside,
+            "self_children": children,
+            "git": git,
+        })
+    );
 }
 
 /// The one scan for holders that may run at a time (see [`record_holders`]).
