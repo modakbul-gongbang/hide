@@ -132,6 +132,8 @@ enum WorkerResult {
         from_start: bool,
         /// The read began at the conversation's start.
         from_beginning: bool,
+        /// Herdr's `state_change_seq` the read was asked under.
+        state_change_seq: Option<u64>,
         result: Box<Result<LabelTranscript, ReadFailure>>,
     },
     Analysis(AnalysisOutcome),
@@ -162,6 +164,7 @@ struct ReadJob {
     generation: u64,
     reference: String,
     from_start: bool,
+    state_change_seq: Option<u64>,
     request: LabelTranscriptRequest,
 }
 
@@ -334,12 +337,17 @@ impl LabelWorker {
                     // A restart resumes where it stopped: an unchanged pane
                     // whose position belongs to its current reference is
                     // not read until something moves (B10).
+                    // An agent whose read reports its turns is read again
+                    // unless its wait was read for this very state, so a
+                    // record from before turns were read is not trusted.
                     let resumable = !fresh
                         && !seq_moved
                         && !status_moved
                         && reference_token.is_some()
                         && record.read_reference == reference_token
-                        && record.checkpoint.is_some();
+                        && record.checkpoint.is_some()
+                        && (!agent.reports_turns()
+                            || record.turns_seq == Some(record.state_change_seq));
                     self.next_generation += 1;
                     self.panes.insert(
                         observed.pane_id.clone(),
@@ -529,12 +537,13 @@ impl LabelWorker {
                     reference,
                     from_start,
                     from_beginning,
+                    state_change_seq,
                     result,
                 } => self.handle_read(
                     &pane,
                     generation,
                     &reference,
-                    (from_start, from_beginning),
+                    (from_start, from_beginning, state_change_seq),
                     *result,
                     (now, now_unix_ms),
                 ),
@@ -654,11 +663,15 @@ impl LabelWorker {
             .filter(|_| same_file)
             .map(|record| record.facts.subagents.clone())
             .unwrap_or_default();
+        let turns = record
+            .filter(|_| same_file)
+            .and_then(|record| record.turns.clone());
         let job = ReadJob {
             pane: id.clone(),
             generation: pane.generation,
             reference,
             from_start: !pane.events_loaded || checkpoint.is_none(),
+            state_change_seq: record.map(|record| record.state_change_seq),
             request: LabelTranscriptRequest {
                 agent: pane.agent,
                 reference_kind: kind,
@@ -666,6 +679,7 @@ impl LabelWorker {
                 cwd: pane.cwd.clone(),
                 checkpoint,
                 subagents,
+                turns,
             },
         };
         self.read_in_flight = Some(id);
@@ -706,7 +720,7 @@ impl LabelWorker {
         pane_id: &str,
         generation: u64,
         reference: &str,
-        (from_start, from_beginning): (bool, bool),
+        (from_start, from_beginning, asked_seq): (bool, bool, Option<u64>),
         result: Result<LabelTranscript, ReadFailure>,
         (now, now_unix_ms): (Instant, u64),
     ) -> bool {
@@ -786,6 +800,12 @@ impl LabelWorker {
             record.anchor = transcript.anchor.clone();
         }
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
+        // The wait is bound to the state the read was asked under, and known
+        // only once the backlog is read (D-06).
+        let waited = record.turn_read();
+        record.turns = transcript.turns.clone();
+        record.turns_seq = asked_seq.filter(|_| !transcript.has_more);
+        changed |= record.turn_read() != waited;
         self.dirty = true;
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         if verdicts_forgotten {
@@ -1160,6 +1180,7 @@ impl Reader {
                             reference: job.reference,
                             from_start: job.from_start,
                             from_beginning: job.request.checkpoint.is_none(),
+                            state_change_seq: job.state_change_seq,
                             result: Box::new(result),
                         })
                         .is_err()

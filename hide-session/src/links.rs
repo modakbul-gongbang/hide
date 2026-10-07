@@ -634,6 +634,7 @@ fn read_opencode(home: &std::path::Path, request: &ReadRequest, answer: &mut Rea
         cwd: None,
         checkpoint: request.checkpoint.clone(),
         subagents: Default::default(),
+        turns: None,
     };
     let transcript = match crate::opencode::read(home, &label) {
         Ok(transcript) => transcript,
