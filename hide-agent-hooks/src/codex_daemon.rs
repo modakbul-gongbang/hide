@@ -38,6 +38,12 @@ const DEADLINE: Duration = Duration::from_secs(5);
 /// daemon has let its clients go and exited.
 const STOP_DEADLINE: Duration = Duration::from_secs(30);
 
+/// Where a running daemon keeps its control socket, under the account's
+/// `CODEX_HOME`. This is Codex 0.160's observed layout, not a documented
+/// contract: `daemon version` names this path when it cannot connect, the
+/// link appears with `daemon start` and goes with `daemon stop`.
+const CONTROL_SOCKET: &str = "app-server-control/app-server-control.sock";
+
 /// What Codex on one machine says about its shared daemon.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DaemonSetting {
@@ -113,8 +119,10 @@ pub fn turn_off(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<(), Swit
 
 /// `codex app-server daemon version` answers `"status":"running"` with exit 0
 /// while a daemon serves its control socket, and fails when none does; it
-/// never starts one. An exit-0 answer Hide cannot read is an error, never a
-/// daemon that is down.
+/// never starts one. A failure counts as no daemon only while the control
+/// socket is gone ([`CONTROL_SOCKET`]); a failure with the socket still there
+/// is an error, as is an exit-0 answer Hide cannot read, never a daemon that
+/// is down (engineering rule 4).
 pub fn daemon_running(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<bool, String> {
     daemon_answer(codex, home, stop).map(|answer| answer.is_none())
 }
@@ -130,7 +138,15 @@ fn daemon_answer(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Option<
         stop,
     )?;
     if !finished.succeeded() {
-        return Ok(Some(failed(codex, "app-server daemon version", &finished)));
+        let answer = failed(codex, "app-server daemon version", &finished);
+        let socket = home.join(".codex").join(CONTROL_SOCKET);
+        return match std::fs::symlink_metadata(&socket) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(answer)),
+            _ => Err(format!(
+                "{answer}, while the daemon's control socket {} is still there",
+                socket.display()
+            )),
+        };
     }
     match parse_daemon_status(&finished.stdout) {
         Some(true) => Ok(None),
@@ -512,6 +528,36 @@ mod tests {
                 .filter(|call| call.ends_with("daemon stop"))
                 .count(),
             1
+        );
+    }
+
+    /// A failed `daemon version` is no daemon only once the control socket is
+    /// gone; with the socket still there it is a failure and nothing is
+    /// stopped, so the turn-off never answers done over a daemon that runs.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_version_with_the_control_socket_still_there_is_not_a_daemon_that_is_down() {
+        let quitting = AtomicBool::new(false);
+        let (home, codex) = fake_daemon();
+        assert_eq!(daemon_running(&codex, home.path(), &quitting), Ok(false));
+        assert!(matches!(
+            stop(&codex, home.path(), &quitting),
+            Ok(Stopped::AlreadyStopped { .. })
+        ));
+
+        let socket = home.path().join(".codex").join(CONTROL_SOCKET);
+        std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(home.path().join("gone"), &socket).unwrap();
+        let unknown = daemon_running(&codex, home.path(), &quitting).unwrap_err();
+        assert!(unknown.contains("exited with code 1"), "{unknown}");
+        assert!(unknown.contains("control socket"), "{unknown}");
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("control socket"), "{failure}");
+        assert!(
+            !calls(home.path())
+                .iter()
+                .any(|call| call.ends_with("daemon stop")),
+            "nothing is stopped while Hide cannot tell"
         );
     }
 

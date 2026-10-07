@@ -1345,6 +1345,39 @@ fn the_report_says_whether_a_daemon_still_answers() {
     assert_eq!(status(&fixture.target).codex_daemon_running, None);
 }
 
+/// A daemon Hide cannot ask while its control socket is still there is
+/// unknown, never down: the read says nothing about it and logs why, and the
+/// turn-off answers stop_failed with autostart off and nothing stopped.
+#[test]
+fn a_daemon_that_cannot_be_asked_while_its_socket_is_there_is_never_read_as_down() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    let socket = fixture
+        .home()
+        .join(".codex/app-server-control/app-server-control.sock");
+    std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+    std::fs::write(&socket, "").unwrap();
+
+    let report = status(&fixture.target);
+    assert_eq!(report.codex_daemon_running, None);
+    assert!(
+        report
+            .codex_daemon_unreadable
+            .as_deref()
+            .is_some_and(|reason| reason.contains("control socket")),
+        "{report:?}"
+    );
+
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+    let Some(CodexDaemonOff::Failed { reason, detail }) = report.codex_daemon_off else {
+        panic!("not stop_failed: {:?}", report.codex_daemon_off);
+    };
+    assert_eq!(reason, CodexDaemonOffFailure::StopFailed);
+    assert!(detail.contains("exited with code 1"), "{detail}");
+    assert_eq!(fixture.daemon_setting(), "false");
+    assert_eq!(fixture.daemon_stops(), 0);
+}
+
 #[test]
 fn a_refused_request_leaves_the_setting_and_names_a_code() {
     let mut fixture = Fixture::new();
