@@ -1464,7 +1464,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
     let completed = agent_completed(&agent);
-    let blocked = agent.agent_status.as_deref() == Some("blocked");
+    let blocked = agent.agent_status.as_deref() == Some("blocked") || awaiting_operator(&agent);
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
             agent
@@ -1803,11 +1803,23 @@ fn derive_read_state(
 fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
     if agent.label.as_ref().is_some_and(|label| label.question) {
         AgentDemand::Question
-    } else if agent.agent_status.as_deref() == Some("blocked") {
+    } else if agent.agent_status.as_deref() == Some("blocked") || awaiting_operator(agent) {
         AgentDemand::Approval
     } else {
         AgentDemand::None
     }
+}
+
+/// The agent's session says its plan waits for the operator's approval in
+/// its current Herdr state, a prompt Herdr reports as `done` (PRD
+/// codex-plan-approval-hold D-05). It is an approval like Herdr's `blocked`
+/// and holds the row the same way; a wait not read for the current state is
+/// not shown.
+fn awaiting_operator(agent: &SessionAgentPayload) -> bool {
+    agent
+        .facts
+        .as_ref()
+        .is_some_and(|facts| facts.awaiting_operator)
 }
 
 /// The activity axis. A state Herdr does not name is reported as unknown

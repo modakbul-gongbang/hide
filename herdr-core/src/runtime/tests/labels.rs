@@ -317,3 +317,111 @@ fn running_checks_are_read_again_once_a_minute_only_while_the_view_is_shown() {
     runtime.reread_pending_checks(start + std::time::Duration::from_secs(400));
     assert_eq!(generation(&runtime), Some(1), "the view was left");
 }
+
+/// A fresh projection with one Codex agent on `SESSION` at `status` and
+/// Herdr state `seq`.
+fn codex_projection(status: &str, seq: u64) -> SessionSnapshotPayload {
+    let mut payload = projection(SESSION);
+    for agent in &mut payload.agents {
+        if agent.pane_id.as_deref() == Some(PANE) {
+            agent.agent = Some("codex".to_owned());
+            agent.agent_status = Some(status.to_owned());
+            agent.state_change_seq = Some(seq);
+        }
+    }
+    payload
+}
+
+/// The overlay a label worker publishes once it has read, under Herdr state
+/// `seq`, a Codex session whose plan turn finished with a plan.
+fn plan_waiting_overlay(seq: u64) -> LabelOverlay {
+    use hide_session::turns::{TurnMark, TurnTracker};
+    let mut turns = TurnTracker::default();
+    let turn = Some("turn-1".to_owned());
+    turns.fold(
+        0,
+        &TurnMark::Started {
+            turn: turn.clone(),
+            plan: true,
+        },
+    );
+    turns.fold(10, &TurnMark::Plan { turn: turn.clone() });
+    turns.fold(20, &TurnMark::Completed { turn });
+    let record = PaneRecord {
+        owner: hide_session::label_reference_token("codex", "id", SESSION),
+        facts: operator_asked("계획을 세워줘"),
+        turns: Some(turns),
+        turns_seq: Some(seq),
+        ..PaneRecord::default()
+    };
+    LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
+}
+
+/// PRD codex-plan-approval-hold B1, B2, B5, D-05: a Codex plan waiting for
+/// approval, read for the agent's current state, is an approval in Needs You
+/// that stays there after the row is read; once Herdr's state moves past the
+/// read, the row is what Herdr says again.
+#[test]
+fn a_codex_plan_waiting_for_approval_is_an_approval_that_stays_in_needs_you() {
+    let mut runtime = runtime();
+    runtime.set_label_overlay(plan_waiting_overlay(4));
+    runtime.ingest_session(Ok(codex_projection("done", 4)));
+    let waiting = row(&runtime);
+    assert_eq!(waiting["demand"], "approval");
+    assert_eq!(waiting["group"], "needs_you");
+    assert_eq!(waiting["request"]["verb"], "answer");
+
+    let open = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "overview_open_result",
+        "payload": {"pane_id": PANE},
+    }))
+    .unwrap();
+    runtime.dispatch_json(&open);
+    let read = row(&runtime);
+    assert_eq!(read["unread"], false);
+    assert_eq!(read["group"], "needs_you", "{read}");
+
+    // The operator approved: Herdr's next state was not read as waiting.
+    runtime.ingest_session(Ok(codex_projection("working", 5)));
+    assert_eq!(row(&runtime)["demand"], "none");
+    assert_eq!(row(&runtime)["group"], "working");
+    runtime.ingest_session(Ok(codex_projection("done", 6)));
+    assert_eq!(row(&runtime)["demand"], "none");
+    assert_eq!(row(&runtime)["group"], "done");
+}
+
+/// The Enter that approves a waiting plan is the operator's: Codex writes
+/// the next turn's message ("Implement the plan.") from it, so it is kept
+/// as a submit, unlike an Enter at a prompt Herdr reports.
+#[test]
+fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
+    let mut runtime = runtime();
+    let services = std::sync::Arc::new(
+        crate::labels::LabelServices::start(
+            None,
+            None,
+            std::sync::Weak::new(),
+            &crate::node::test_node(),
+            std::sync::Arc::new(hide_node::Local::of_process()),
+        )
+        .unwrap(),
+    );
+    runtime.install_label_services(std::sync::Arc::clone(&services));
+    runtime.set_label_overlay(plan_waiting_overlay(4));
+    runtime.ingest_session(Ok(codex_projection("done", 4)));
+    assert_eq!(row(&runtime)["blocked"], true);
+    runtime.dispatch_json(
+        &serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "key",
+            "payload": {"pane_id": PANE, "bytes_base64": crate::live::encode_base64(b"\r")},
+        }))
+        .unwrap(),
+    );
+    assert_eq!(
+        services
+            .input
+            .submits(crate::labels::store::LOCAL_TARGET, PANE)
+            .len(),
+        1
+    );
+}
