@@ -621,6 +621,33 @@ fn slots_go_by_priority_then_age_across_factories() {
     tick_until(&mut h, &f1, &old, TaskState::Running);
 }
 
+#[test]
+fn a_dependency_names_a_task_of_the_same_factory() {
+    let mut h = Bench::new(false);
+    let f1 = h.factory(true);
+    let f2 = h.factory_at("/work/other", true);
+    h.world().hold_judgments = true;
+    let a = h.add("A", &[])["task"]["id"].as_str().unwrap().to_owned();
+    let b = h.add("B", &[])["task"]["id"].as_str().unwrap().to_owned();
+    let other = h.op(Command::Add {
+        project: Some("/work/other".into()),
+        task: None,
+        issue: None,
+        card: card("Elsewhere", &[]),
+        producer_pane: None,
+    });
+    // Both Factories have a Task with A's id.
+    assert_eq!(other["task"]["id"].as_str(), Some(a.as_str()), "{other}");
+    let added = h.op(Command::Dep {
+        task: format!("{f1}/{b}"),
+        on: a.clone(),
+        remove: false,
+    });
+    assert_eq!(added["ok"], true, "{added}");
+    assert_eq!(h.task(&f1, &b).card.depends_on, vec![a.clone()]);
+    assert!(h.task(&f2, &a).card.depends_on.is_empty());
+}
+
 // ------------------------------------------------------------- worker reports
 
 #[test]

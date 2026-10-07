@@ -998,6 +998,20 @@ impl Engine {
 
     /// A Task by its id (`T-3`), issue (`#412`, `L-12`) or `factory/T-3`.
     fn resolve(&self, role: &Role, reference: &str) -> Result<(String, String), Refusal> {
+        let within = match role {
+            Role::Worker { factory, .. } => Some(factory.as_str()),
+            _ => None,
+        };
+        self.resolve_within(within, reference)
+    }
+
+    /// A Task reference, inside `factory` when one is given: a dependency or
+    /// a watch warning names a Task of its own Factory.
+    fn resolve_within(
+        &self,
+        factory: Option<&str>,
+        reference: &str,
+    ) -> Result<(String, String), Refusal> {
         let reference = reference.trim();
         let mut found = Vec::new();
         for task in self.all_tasks() {
@@ -1011,7 +1025,7 @@ impl Engine {
                 found.push((task.factory.clone(), task.id.clone()));
             }
         }
-        if let Role::Worker { factory, .. } = role {
+        if let Some(factory) = factory {
             found.retain(|(f, _)| f == factory);
         }
         match found.as_slice() {
@@ -4096,7 +4110,7 @@ impl Engine {
                 "A worker changes only its own Task",
             ));
         }
-        let (_, on_id) = self.resolve(role, on)?;
+        let (_, on_id) = self.resolve_within(Some(&factory), on)?;
         let current = self
             .task(&factory, &id)
             .cloned()
@@ -5961,11 +5975,23 @@ impl Engine {
                 self.record(factory_id, None, "watch.capped", json!({}));
                 continue;
             }
-            let anchor = warning
-                .task
-                .clone()
-                .and_then(|t| self.resolve(&Role::Engine, &t).ok().map(|(_, id)| id))
-                .or_else(|| self.tasks_of(factory_id).last().map(|t| t.id.clone()));
+            let anchor = match &warning.task {
+                // A warning about a Task this Factory does not have is about
+                // nothing a person can act on here.
+                Some(reference) => match self.resolve_within(Some(factory_id), reference) {
+                    Ok((_, id)) => Some(id),
+                    Err(_) => {
+                        self.record(
+                            factory_id,
+                            None,
+                            "watch.logged",
+                            json!({"unresolved": true}),
+                        );
+                        continue;
+                    }
+                },
+                None => self.tasks_of(factory_id).last().map(|t| t.id.clone()),
+            };
             let Some(anchor) = anchor else { continue };
             // The board was read before the judgment answered; a Task that
             // moved since is no longer what the warning describes.

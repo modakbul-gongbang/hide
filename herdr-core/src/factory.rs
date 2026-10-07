@@ -518,6 +518,16 @@ fn publish_recipients(engine: Option<&Engine>, runtime: &Weak<Mutex<Runtime>>) {
 /// Runs one command with the caller's role (D-33). A worker's report travels
 /// as a ledger letter from its own pane, so a harness that only speaks the
 /// letter protocol lands on the same path (B25).
+/// The delivery intent of a worker's report. A retry of the same report in
+/// the same Task state is one letter; the same words after the Task moved
+/// (a `done` again once verification sent it back) are a new report.
+fn report_intent(pane: &str, epoch: u64, body: &str) -> String {
+    format!(
+        "factory-{}",
+        &hide_factory::store::sha256_hex(format!("{pane}\n{epoch}\n{body}").as_bytes())[..24]
+    )
+}
+
 /// The `hide` program beside the running daemon (the app bundle's
 /// Resources, or a build's target folder).
 fn hide_program() -> Option<String> {
@@ -596,14 +606,15 @@ fn handle(
         Command::Done { .. } => Some("report"),
         _ => None,
     };
-    let (Role::Worker { factory, .. }, Some(kind), Some(pane)) = (&role, kind, &caller.pane) else {
+    let (Role::Worker { factory, task }, Some(kind), Some(pane)) = (&role, kind, &caller.pane)
+    else {
         return engine.command(&role, command);
     };
     let body = json!({"factory": command}).to_string();
-    let intent = format!(
-        "factory-{}",
-        &hide_factory::store::sha256_hex(format!("{pane}\n{body}").as_bytes())[..24]
-    );
+    let epoch = engine
+        .task(factory, task)
+        .map_or(0, |task| task.state_since);
+    let intent = report_intent(pane, epoch, &body);
     let letter = (|| {
         let runtime = lock(runtime).ok_or("delivery_unavailable")?;
         let prepared = guard(&runtime).factory_worker_letter(
@@ -1551,6 +1562,25 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn the_same_report_after_the_task_moved_is_a_new_letter() {
+        let body = r#"{"factory":{"done":{}}}"#;
+        assert_eq!(
+            report_intent("w1:p1", 10, body),
+            report_intent("w1:p1", 10, body),
+            "a retry in the same state is one letter"
+        );
+        assert_ne!(
+            report_intent("w1:p1", 10, body),
+            report_intent("w1:p1", 20, body),
+            "done again after verification sent the Task back"
+        );
+        assert_ne!(
+            report_intent("w1:p1", 10, body),
+            report_intent("w2:p1", 10, body)
+        );
+    }
 
     fn request(task: &str, resume: Option<WorkerRef>) -> WorkerSpawn {
         WorkerSpawn {
