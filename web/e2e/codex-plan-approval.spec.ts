@@ -48,6 +48,23 @@ function planWaiting(cwd: string): string {
     + event("task_complete", "turn-1", { last_agent_message: null });
 }
 
+/** The session read the daemon keeps for the pane: its Herdr state and the last turn it folded. */
+function turnRead(daemon: Daemon, pane: string): { seq?: number; mode?: string } {
+  type Stored = { turns_seq?: number; turns?: { last?: { mode?: string } } };
+  try {
+    const file = JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "labels.json"), "utf8")) as { targets?: Record<string, Record<string, Stored>> };
+    const record = Object.values(file.targets ?? {}).map((panes) => panes[pane]).find(Boolean);
+    return { seq: record?.turns_seq, mode: record?.turns?.last?.mode };
+  } catch {
+    return {};
+  }
+}
+
+function seqOf(herdr: HerdrFixture, pane: string): number {
+  type Agent = { pane_id: string; state_change_seq: number };
+  return (herdr.run(["agent", "list"]) as { result: { agents: Agent[] } }).result.agents.find((agent) => agent.pane_id === pane)!.state_change_seq;
+}
+
 /** Draws a screen Herdr reads as Codex working, or, with no spinner, unknown. */
 async function moveState(herdr: HerdrFixture, pane: string, state: "working" | "unknown"): Promise<void> {
   type Agent = { pane_id: string; agent_status: string; state_change_seq: number };
@@ -106,6 +123,11 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     await moveState(herdr, pane, "working");
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${pane}"]`)).toBeVisible({ timeout: 20_000 });
     await moveState(herdr, pane, "unknown");
+    // A state not read yet shows no wait either, so the row's absence counts
+    // only once the read for this state has folded the approving turn.
+    const current = seqOf(herdr, pane);
+    await expect.poll(() => turnRead(daemon!, pane), { message: "the session is read for the current state", timeout: 20_000 }).toEqual({ seq: current, mode: "other" });
+    await expect(row).toBeVisible();
     await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${pane}"]`)).toHaveCount(0);
     await screenshot(page, "codex-plan-approval-approved");
   } finally {
