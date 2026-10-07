@@ -298,11 +298,48 @@ impl GitWatch {
     /// or a watch restarted after a gap) mark every watched project, because
     /// any of them may have changed. A watch that ended is started again
     /// after [`GIT_WATCH_RETRY`].
+    ///
+    /// The replacement is drained before the watch it replaces, so a change
+    /// the old watch reports between the two drains is still read, and the
+    /// old watch goes only after a pass in which its replacement was
+    /// already watching, so a change it reports just after the replacement
+    /// starts is read too.
     fn collect(&mut self) {
         let now = Instant::now();
         let mut changed = Vec::new();
+        let mut every = false;
+        let mut ended = None;
+        let covered = self
+            .subscription
+            .as_ref()
+            .is_some_and(|subscription| subscription.watching);
+        if let Some(subscription) = self.subscription.as_mut() {
+            while let Ok(report) = subscription.reports.try_recv() {
+                match report {
+                    Ok(GitWatchReport::Watching { unwatched }) => {
+                        subscription.watching = true;
+                        for (common, message) in unwatched {
+                            crate::diagnostic!(serde_json::json!({
+                                "component": "worktrees", "kind": "git_watch.project_failed",
+                                "common_dir": common, "message": message
+                            }));
+                        }
+                    }
+                    Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
+                    Ok(GitWatchReport::Overflow { reason }) => {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "worktrees", "kind": "git_watch.overflow",
+                            "message": reason, "projects": self.registered.len()
+                        }));
+                        every = true;
+                    }
+                    Ok(GitWatchReport::Quiet) => {}
+                    Err(reason) => ended = Some(reason),
+                }
+            }
+        }
         if let Some(outgoing) = self.outgoing.as_mut() {
-            let mut ended = false;
+            let mut gone = false;
             while let Ok(report) = outgoing.reports.try_recv() {
                 match report {
                     Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
@@ -316,10 +353,10 @@ impl GitWatch {
                         self.owes_reread = true;
                     }
                     Ok(_) => {}
-                    Err(_) => ended = true,
+                    Err(_) => gone = true,
                 }
             }
-            if ended {
+            if gone {
                 crate::diagnostic!(serde_json::json!({
                     "component": "worktrees", "kind": "git_watch.ended", "replaced": true
                 }));
@@ -327,37 +364,14 @@ impl GitWatch {
                 self.owes_reread = true;
             }
         }
-        let Some(subscription) = self.subscription.as_mut() else {
-            self.mark(&changed, now);
-            return;
-        };
-        let mut ended = None;
-        let mut every = false;
-        while let Ok(report) = subscription.reports.try_recv() {
-            match report {
-                Ok(GitWatchReport::Watching { unwatched }) => {
-                    subscription.watching = true;
-                    every |= std::mem::take(&mut self.owes_reread);
-                    for (common, message) in unwatched {
-                        crate::diagnostic!(serde_json::json!({
-                            "component": "worktrees", "kind": "git_watch.project_failed",
-                            "common_dir": common, "message": message
-                        }));
-                    }
-                }
-                Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
-                Ok(GitWatchReport::Overflow { reason }) => {
-                    crate::diagnostic!(serde_json::json!({
-                        "component": "worktrees", "kind": "git_watch.overflow",
-                        "message": reason, "projects": self.registered.len()
-                    }));
-                    every = true;
-                }
-                Ok(GitWatchReport::Quiet) => {}
-                Err(reason) => ended = Some(reason),
-            }
+        if self
+            .subscription
+            .as_ref()
+            .is_some_and(|subscription| subscription.watching)
+        {
+            every |= std::mem::take(&mut self.owes_reread);
         }
-        if subscription.watching {
+        if covered {
             self.outgoing = None;
         }
         self.mark(&changed, now);
@@ -1184,8 +1198,36 @@ mod tests {
         );
         driver.watch.pending.clear();
         driver.report(&second, watching());
+        assert!(driver.watch.pending.is_empty());
+        driver.watch.collect();
         assert!(driver.watch.outgoing.is_none());
         assert!(driver.watch.pending.is_empty());
+    }
+
+    /// The old watch is still read for one pass after its replacement says
+    /// it is watching, so a change it reports just then is not dropped with
+    /// it.
+    #[test]
+    fn a_change_the_old_watch_reports_as_its_replacement_starts_is_kept() {
+        let mut driver = Driver::new();
+        let first = driver.next_watch(&["/a"]);
+        driver.watch.reconcile(&projects(&["/a"]));
+        driver.report(&first, watching());
+        let second = driver.next_watch(&["/a", "/b"]);
+        driver.watch.reconcile(&projects(&["/a", "/b"]));
+        driver.report(&second, watching());
+        assert!(driver.watch.pending.is_empty());
+        driver.report(
+            &first,
+            GitWatchReport::Changed {
+                common_dirs: vec!["/a/.git".to_owned()],
+            },
+        );
+        assert_eq!(
+            driver.watch.pending.keys().cloned().collect::<Vec<_>>(),
+            vec![PathBuf::from("/a")]
+        );
+        assert!(driver.watch.outgoing.is_none());
     }
 }
 
