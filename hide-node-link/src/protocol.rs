@@ -415,6 +415,13 @@ pub enum Call {
     ProjectSessions {
         project: hide_project::ProjectIdentity,
     },
+    /// Watches the Git facts of each repository whose common directory is in
+    /// `common_dirs`, at most `worktrees::GIT_WATCH_LIMIT`, reporting
+    /// `worktrees::GitWatchReport` at least once a second until the caller
+    /// answers a report with false; the call then answers nothing.
+    GitWatch {
+        common_dirs: Vec<String>,
+    },
     /// The session file's size and modification time (`sessions::SessionStat`).
     SessionStat {
         path: String,

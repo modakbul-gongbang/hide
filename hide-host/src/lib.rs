@@ -23,6 +23,7 @@ mod executable_fixture;
 pub mod gh;
 pub mod git;
 pub mod git_command;
+pub mod git_watch;
 pub mod home;
 pub mod index;
 pub mod kit;

@@ -524,52 +524,65 @@ fn next_answer(
     }
 }
 
-/// Writes a ref no read looks at and returns every Git fact the reader's
-/// watch reported before it. The watch queues paths in the order the system
-/// reported them, so a change made before the sentinel is either already
-/// pending in the reader or queued ahead of the sentinel: once the sentinel
-/// arrives, an empty answer means nothing else happened before it. The
-/// sentinel is written straight into `refs`, a folder the watch saw from its
-/// start: on Linux a file made in a folder the watch has not yet heard of can
-/// be reported as that folder alone (`hide_platform::watch`).
+/// Writes a ref in `sentinel`, a second repository the reader watches with
+/// `repo`, and returns every project the watch reported changed before it.
+/// The node reports changed repositories in the order the system reported
+/// their paths, so a change made in `repo` before the sentinel is either
+/// already pending in the reader or reported no later than the sentinel:
+/// once the sentinel arrives, an empty answer means nothing else happened
+/// before it. The sentinel is written straight into `refs`, a folder the
+/// watch saw from its start: on Linux a file made in a folder the watch has
+/// not yet heard of can be reported as that folder alone
+/// (`hide_platform::watch`).
 fn changes_before_sentinel(
-    repo: &Repository,
+    sentinel: &Repository,
     reader: &mut WorktreeReader,
     name: &str,
 ) -> Vec<PathBuf> {
+    use hide_node_link::worktrees::GitWatchReport;
     let mut before: Vec<PathBuf> = reader.git_watch.pending.keys().cloned().collect();
+    let sentinel_common = reader.git_watch.registered[&sentinel.0].clone();
+    let subscription = reader
+        .git_watch
+        .subscription
+        .as_mut()
+        .expect("the Git watch started");
+    let next = |subscription: &mut crate::worktrees::GitSubscription| match subscription
+        .reports
+        .recv_timeout(Duration::from_secs(15))
+    {
+        Ok(Ok(report)) => report,
+        Ok(Err(reason)) => panic!("the Git watch ended: {reason}"),
+        Err(_) => panic!("the sentinel {name} never reached the watch"),
+    };
+    while !subscription.watching {
+        if let GitWatchReport::Watching { unwatched } = next(subscription) {
+            assert_eq!(unwatched, Vec::new());
+            subscription.watching = true;
+        }
+    }
     git(
-        &repo.0,
+        &sentinel.0,
         &["update-ref", &format!("refs/sentinel-{name}"), "HEAD"],
     )
     .unwrap();
-    let (_, changes) = reader
-        .git_watch
-        .watch
-        .as_ref()
-        .expect("the Git watch started");
-    let sentinel = Path::new("refs").join(format!("sentinel-{name}"));
     loop {
-        match changes.recv_timeout(Duration::from_secs(15)) {
-            Some(Change::Path { path, .. }) => {
-                let relative = reader
-                    .git_watch
-                    .roots
-                    .keys()
-                    .find_map(|common| path.strip_prefix(common).ok())
-                    .unwrap_or(&path)
-                    .to_path_buf();
-                if relative == sentinel {
+        match next(subscription) {
+            GitWatchReport::Changed { common_dirs } => {
+                let mut arrived = false;
+                for common in common_dirs {
+                    if Path::new(&common) == sentinel_common {
+                        arrived = true;
+                    } else {
+                        before.extend(reader.git_watch.roots[Path::new(&common)].iter().cloned());
+                    }
+                }
+                if arrived {
                     return before;
                 }
-                // The sentinel's own writes: the folder it is written in,
-                // and the lock file git writes it through.
-                if !sentinel.starts_with(&relative) && relative != sentinel.with_extension("lock") {
-                    before.push(relative);
-                }
             }
-            Some(Change::Overflow { reason, .. }) => panic!("the watch lost changes: {reason}"),
-            None => panic!("the sentinel {name} never reached the watch"),
+            GitWatchReport::Overflow { reason } => panic!("the watch lost changes: {reason}"),
+            GitWatchReport::Watching { .. } | GitWatchReport::Quiet => {}
         }
     }
 }
@@ -580,14 +593,16 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     std::fs::write(repo.0.join("tracked"), "original").unwrap();
     git(&repo.0, &["add", "tracked"]).unwrap();
     git(&repo.0, &["commit", "-m", "tracked"]).unwrap();
+    let sentinel = Repository::new();
     let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
+    let project = |root: &Path| WorktreeProjectRequest {
+        root_path: root.to_path_buf(),
+        bases: BTreeMap::new(),
+        base_override: None,
+        generation: 0,
+    };
     let mut request = WorktreeRequest {
-        projects: vec![WorktreeProjectRequest {
-            root_path: repo.0.clone(),
-            bases: BTreeMap::new(),
-            base_override: None,
-            generation: 0,
-        }],
+        projects: vec![project(&repo.0), project(&sentinel.0)],
         generation: 0,
         removals: 0,
     };
@@ -597,7 +612,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     // The read's own Git calls must not wake the watch, or an idle project
     // would read itself again on every debounce.
     assert_eq!(
-        changes_before_sentinel(&repo, &mut reader, "idle"),
+        changes_before_sentinel(&sentinel, &mut reader, "idle"),
         Vec::<PathBuf>::new(),
         "the reader's own read changed a Git fact"
     );
@@ -605,7 +620,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     assert_eq!(git_call_count(&listed, "status"), status_before);
     std::fs::write(repo.0.join("tracked"), "changed contents").unwrap();
     assert_eq!(
-        changes_before_sentinel(&repo, &mut reader, "edit"),
+        changes_before_sentinel(&sentinel, &mut reader, "edit"),
         Vec::<PathBuf>::new(),
         "a working tree edit reached the Git watch"
     );

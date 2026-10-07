@@ -458,6 +458,17 @@ pub fn handle_with_progress(
                 &mut |report| serde_json::to_value(report).map_or(true, &mut *progress),
             ))
         }
+        Call::GitWatch { common_dirs } => {
+            let common_dirs = common_dirs
+                .iter()
+                .map(|dir| absolute(dir))
+                .collect::<HostResult<Vec<_>>>()?;
+            to_value(crate::git_watch::watch(
+                &common_dirs,
+                &env.stop,
+                &mut |report| serde_json::to_value(report).is_ok_and(&mut *progress),
+            )?)
+        }
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
         }

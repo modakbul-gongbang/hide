@@ -138,3 +138,35 @@ pub fn locked_removal_reason(name: &str, reason: &str) -> String {
         "Worktree {name} is locked: {detail}. Unlock it with git worktree unlock before deleting, then refresh its Git state."
     )
 }
+
+/// The most repositories one Git watch follows: the worktree reader's cap.
+pub const GIT_WATCH_LIMIT: usize = 64;
+
+/// What a Git watch reports while it runs (`Call::GitWatch`), at least once a
+/// second so its caller can end it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "report", rename_all = "snake_case")]
+pub enum GitWatchReport {
+    /// The watch began; each common directory it could not watch, with why.
+    Watching { unwatched: Vec<(String, String)> },
+    /// A Git fact changed in each of these common directories.
+    Changed { common_dirs: Vec<String> },
+    /// Changes were lost: anything in any watched repository may have changed.
+    Overflow { reason: String },
+    /// Nothing changed since the last report.
+    Quiet,
+}
+
+/// Whether `relative`, a path under a repository's common directory, names
+/// one of the Git facts the worktree reader reads: the head, the index, the
+/// refs and the worktrees' own folders. Object writes during a fetch or a gc
+/// are not.
+pub fn git_fact_path(relative: &std::path::Path) -> bool {
+    relative.as_os_str().is_empty()
+        || matches!(
+            relative.to_str(),
+            Some("HEAD" | "index" | "packed-refs" | "FETCH_HEAD")
+        )
+        || relative.starts_with("refs")
+        || relative.starts_with("worktrees")
+}

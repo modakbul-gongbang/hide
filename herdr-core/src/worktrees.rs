@@ -12,7 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use hide_platform::watch::{Change, Changes, Watcher};
+use hide_node_link::cleanup::RepositoryDirs;
+use hide_node_link::protocol::Call;
+use hide_node_link::worktrees::{GIT_WATCH_LIMIT, GitWatchReport};
 
 use crate::model::{
     ProjectWorktreesSnapshot, UnpushedSnapshot, WorktreeCatalogSnapshot,
@@ -83,18 +85,29 @@ type ObservedRequest = (u64, u64, Vec<ProjectObservation>);
 /// contributes no project entry at all.
 type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>);
 
-const GIT_WATCH_CAP: usize = 64;
 const GIT_WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
+/// How long a Git watch that ended is left before it is started again.
+const GIT_WATCH_RETRY: Duration = Duration::from_secs(30);
+/// A Git watch runs until it is stopped; this only bounds a node that never
+/// answers at all.
+const GIT_WATCH_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+/// One repository lookup on the node while the watched set changes.
+const REPOSITORY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// One OS watcher for the local repositories in this reader. The coordinator
-/// drains its bounded queue on each wake, keeps only the projects whose Git
-/// facts changed, and lets its existing background reader do the Git work
-/// once a project has been quiet for [`GIT_WATCH_DEBOUNCE`].
+/// One Git watch on the node that holds the repositories, over every
+/// project's common directory (`Call::GitWatch`). The coordinator drains its
+/// reports on each wake, keeps only the projects whose Git facts changed,
+/// and lets its existing background reader do the Git work once a project
+/// has been quiet for [`GIT_WATCH_DEBOUNCE`]. A change of the watched set
+/// starts a new watch and ends the old one.
 /// The Explorer watcher in hided polls only the selected checkout's visible
 /// directories, so it cannot observe every registered project's Git refs
 /// without idle polling and another daemon-to-core event path.
 struct GitWatch {
-    watch: Option<(Watcher, Changes)>,
+    node: std::sync::Arc<dyn crate::node_access::NodeLink>,
+    subscription: Option<GitSubscription>,
+    /// When a watch that ended is started again.
+    retry_at: Option<Instant>,
     /// Each watched Git common directory and the projects that share it.
     roots: BTreeMap<PathBuf, Vec<PathBuf>>,
     /// Projects whose Git facts changed, with the last time they did.
@@ -103,22 +116,70 @@ struct GitWatch {
     requested_roots: Vec<PathBuf>,
 }
 
-impl GitWatch {
-    fn new() -> Self {
-        // Only Git's facts reach the queue: object writes during a fetch or
-        // a gc are dropped where the system reports them, so they neither
-        // fill the queue nor overflow it into a re-read of every project.
-        let watch = match Watcher::keeping(git_fact_path) {
-            Ok(watch) => Some(watch),
+/// A running `Call::GitWatch` and its reports. Dropping it stops the watch,
+/// which ends on the node within one report.
+struct GitSubscription {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reports: std::sync::mpsc::Receiver<Result<GitWatchReport, String>>,
+    /// The node has said it is watching; a change before that may be missed.
+    watching: bool,
+}
+
+impl GitSubscription {
+    fn start(
+        node: &std::sync::Arc<dyn crate::node_access::NodeLink>,
+        common_dirs: Vec<String>,
+    ) -> Option<Self> {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (sender, reports) = std::sync::mpsc::channel();
+        let node = std::sync::Arc::clone(node);
+        let stopped = std::sync::Arc::clone(&stop);
+        let started = std::thread::Builder::new()
+            .name("hide-git-watch".to_owned())
+            .spawn(move || {
+                let ended = crate::node_access::call_as_with_progress::<(), GitWatchReport>(
+                    node.as_ref(),
+                    Call::GitWatch { common_dirs },
+                    GIT_WATCH_TIMEOUT,
+                    |report| {
+                        !stopped.load(std::sync::atomic::Ordering::Relaxed)
+                            && sender.send(Ok(report)).is_ok()
+                    },
+                );
+                let reason = match ended {
+                    Ok(()) => "the Git watch ended".to_owned(),
+                    Err(error) => error.to_string(),
+                };
+                let _ = sender.send(Err(reason));
+            });
+        match started {
+            Ok(_) => Some(Self {
+                stop,
+                reports,
+                watching: false,
+            }),
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({
                     "component": "worktrees", "kind": "git_watch.start_failed", "message": error.to_string()
                 }));
                 None
             }
-        };
+        }
+    }
+}
+
+impl Drop for GitSubscription {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl GitWatch {
+    fn new(node: std::sync::Arc<dyn crate::node_access::NodeLink>) -> Self {
         Self {
-            watch,
+            node,
+            subscription: None,
+            retry_at: None,
             roots: BTreeMap::new(),
             pending: BTreeMap::new(),
             registered: BTreeMap::new(),
@@ -131,90 +192,115 @@ impl GitWatch {
             .iter()
             .map(|project| project.root_path.clone())
             .collect();
-        if requested_roots == self.requested_roots {
+        let restart_due = self.subscription.is_none()
+            && !self.registered.is_empty()
+            && self.retry_at.is_none_or(|at| at <= Instant::now());
+        if requested_roots == self.requested_roots && !restart_due {
             return;
         }
         self.requested_roots = requested_roots;
         let desired: BTreeMap<PathBuf, PathBuf> = projects
             .iter()
-            .take(GIT_WATCH_CAP)
+            .take(GIT_WATCH_LIMIT)
             .filter_map(|project| {
-                crate::git_dir::discover(&project.root_path)
-                    .map(|repository| (project.root_path.clone(), repository.common_dir))
+                crate::node_access::call_as::<Option<RepositoryDirs>>(
+                    self.node.as_ref(),
+                    Call::Repository {
+                        path: project.root_path.to_string_lossy().into_owned(),
+                    },
+                    REPOSITORY_TIMEOUT,
+                )
+                .ok()
+                .flatten()
+                .map(|repository| {
+                    (
+                        project.root_path.clone(),
+                        PathBuf::from(repository.common_dir),
+                    )
+                })
             })
             .collect();
-        if projects.len() > GIT_WATCH_CAP {
+        if projects.len() > GIT_WATCH_LIMIT {
             crate::diagnostic!(serde_json::json!({
                 "component": "worktrees", "kind": "git_watch.over_budget",
-                "projects": projects.len(), "cap": GIT_WATCH_CAP
+                "projects": projects.len(), "cap": GIT_WATCH_LIMIT
             }));
-        }
-        let Some((watcher, _)) = self.watch.as_mut() else {
-            return;
-        };
-        if desired == self.registered {
-            return;
         }
         let desired_common: BTreeSet<_> = desired.values().cloned().collect();
         let previous_common: BTreeSet<_> = self.registered.values().cloned().collect();
-        for common in previous_common.difference(&desired_common) {
-            let _ = watcher.unwatch(common);
-        }
-        let mut registered = BTreeMap::new();
-        for (project, common) in desired {
-            if !previous_common.contains(&common)
-                && let Err(error) = watcher.watch(&common)
-            {
-                crate::diagnostic!(serde_json::json!({
-                    "component": "worktrees", "kind": "git_watch.project_failed",
-                    "project": project, "message": error.to_string()
-                }));
-                continue;
+        if desired_common != previous_common || restart_due {
+            self.subscription = None;
+            if !desired_common.is_empty() {
+                self.subscription = GitSubscription::start(
+                    &self.node,
+                    desired_common
+                        .iter()
+                        .map(|common| common.to_string_lossy().into_owned())
+                        .collect(),
+                );
             }
-            registered.insert(project, common);
+            self.retry_at = None;
         }
         let mut roots = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
-        for (project, common) in &registered {
+        for (project, common) in &desired {
             roots
                 .entry(common.clone())
                 .or_default()
                 .push(project.clone());
         }
         self.roots = roots;
-        self.registered = registered;
+        self.registered = desired;
         self.pending
             .retain(|project, _| self.registered.contains_key(project));
     }
 
-    /// Moves what the watcher reported into `pending`: a changed Git fact
-    /// marks the projects of its repository, and lost reports (an overflow,
-    /// or a watch the system ended) mark every watched project, because any
-    /// of them may have changed.
+    /// Moves what the watch reported into `pending`: a changed Git fact
+    /// marks the projects of its repository, and lost reports (an overflow)
+    /// mark every watched project, because any of them may have changed. A
+    /// watch that ended is started again after [`GIT_WATCH_RETRY`].
     fn collect(&mut self) {
-        let Some((_, changes)) = self.watch.as_ref() else {
+        let Some(subscription) = self.subscription.as_mut() else {
             return;
         };
-        while let Some(change) = changes.try_recv() {
-            match change {
-                Change::Path { path, at } => {
-                    for (common, projects) in &self.roots {
-                        if path.strip_prefix(common).is_ok_and(git_fact_path) {
-                            for project in projects {
-                                self.pending.insert(project.clone(), at);
-                            }
+        let now = Instant::now();
+        let mut ended = None;
+        while let Ok(report) = subscription.reports.try_recv() {
+            match report {
+                Ok(GitWatchReport::Watching { unwatched }) => {
+                    subscription.watching = true;
+                    for (common, message) in unwatched {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "worktrees", "kind": "git_watch.project_failed",
+                            "common_dir": common, "message": message
+                        }));
+                    }
+                }
+                Ok(GitWatchReport::Changed { common_dirs }) => {
+                    for common in common_dirs {
+                        for project in self.roots.get(Path::new(&common)).into_iter().flatten() {
+                            self.pending.insert(project.clone(), now);
                         }
                     }
                 }
-                Change::Overflow { reason, at } => {
+                Ok(GitWatchReport::Overflow { reason }) => {
                     crate::diagnostic!(serde_json::json!({
                         "component": "worktrees", "kind": "git_watch.overflow",
                         "message": reason, "projects": self.registered.len()
                     }));
                     for project in self.registered.keys() {
-                        self.pending.insert(project.clone(), at);
+                        self.pending.insert(project.clone(), now);
                     }
                 }
+                Ok(GitWatchReport::Quiet) => {}
+                Err(reason) => ended = Some(reason),
             }
+        }
+        if let Some(reason) = ended {
+            crate::diagnostic!(serde_json::json!({
+                "component": "worktrees", "kind": "git_watch.ended", "message": reason
+            }));
+            self.subscription = None;
+            self.retry_at = Some(now + GIT_WATCH_RETRY);
         }
     }
 
@@ -239,16 +325,6 @@ impl GitWatch {
     }
 }
 
-fn git_fact_path(relative: &Path) -> bool {
-    relative.as_os_str().is_empty()
-        || matches!(
-            relative.to_str(),
-            Some("HEAD" | "index" | "packed-refs" | "FETCH_HEAD")
-        )
-        || relative.starts_with("refs")
-        || relative.starts_with("worktrees")
-}
-
 pub struct WorktreeReader {
     inner: BackgroundRead<ObservedRequest, (ObservedRequest, Vec<ProjectAnswer>)>,
     git_watch: GitWatch,
@@ -258,12 +334,13 @@ pub struct WorktreeReader {
 impl WorktreeReader {
     /// Reads the repositories of the node `node` links to.
     pub fn new(node: std::sync::Arc<dyn crate::node_access::NodeLink>) -> Self {
+        let git_watch = GitWatch::new(std::sync::Arc::clone(&node));
         Self {
             inner: BackgroundRead::on_change(Duration::ZERO, {
                 let cache = std::sync::Mutex::new(ProjectCache::new());
                 move |request: &ObservedRequest| read_observed(node.as_ref(), &cache, request)
             }),
-            git_watch: GitWatch::new(),
+            git_watch,
             git_generations: BTreeMap::new(),
         }
     }
