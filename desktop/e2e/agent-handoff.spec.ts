@@ -22,6 +22,9 @@ test("handoff roots have provenance without delegation or a focus change in eith
   try {
     execFileSync("git", ["init", "-b", "main", repo], { env: run.env, timeout: 20_000 });
     execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Fixture"], { env: run.env, timeout: 20_000 });
+    const existingCheckout = path.join(herdr.root, "existing-checkout");
+    execFileSync("git", ["-C", repo, "worktree", "add", "-b", "existing-task", existingCheckout], { env: run.env, timeout: 20_000 });
+    execFileSync(herdr.bin, ["worktree", "open", "--cwd", repo, "--path", existingCheckout, "--no-focus"], { env: herdr.env, timeout: 20_000 });
     const provider = installSpawnProvider(herdr, run.root);
     execFileSync(herdr.bin, ["workspace", "report-metadata", herdr.workspace, "--source", "hide", "--token", "purpose=Spawn handoff fixture"], { env: herdr.env, timeout: 20_000 });
     await waitForSpawnShell(herdr, parent);
@@ -41,18 +44,24 @@ test("handoff roots have provenance without delegation or a focus change in eith
     await keyboard.focus();
     await expect.poll(() => herdrHasFocus(herdr, parent)).toBe(true);
     const roots: SpawnedAgent[] = [];
-    for (const [name, branch] of [["handoff-existing", "main"], ["handoff-new", "handoff-task"]]) {
+    for (const [name, branch] of [["handoff-existing", "existing-task"], ["handoff-new", "handoff-task"]]) {
       const root = await command(["agent", "spawn", "--name", name!, "--intent", name!, "--kind", "claude", "--repo", repo, "--branch", branch!]);
       expect(root.parent).toBeNull();
       expect(root.origin).toBe(registered.id);
       expect(root.watch).toBeNull();
       expect(root.pane).not.toBe(parent);
+      expect(root.pane.split(":")[0]).not.toBe(parent.split(":")[0]);
       expect(agents().find((agent) => agent.pane_id === root.pane)?.tokens?.parent_pane).toBeUndefined();
       await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
       await expect(keyboard).toBeFocused();
       expect(herdrHasFocus(herdr, parent)).toBe(true);
       const shown = await command(["agent", "show", root.id]);
       expect(shown).toMatchObject({ parent: null, origin: registered.id, watch: null });
+      const child = agents().find((agent) => agent.pane_id === root.pane)!;
+      for (const check of [[], ["--check"]]) {
+        const reply = await nativeSpawnCommand(herdr, provider, root.pane, HIDE_CLI, ["agent", "register", "--host-scope", herdr.socket, "--session", child.agent_session!.value, "--instance", child.terminal_id, "--name", name!, "--pane", root.pane, ...check], run.env, response);
+        expect(reply).toMatchObject({ id: root.id, parent: null, origin: registered.id });
+      }
       roots.push(root);
     }
     await page.locator('[data-sidebar-mode="agents"]').click();
@@ -70,7 +79,7 @@ test("handoff roots have provenance without delegation or a focus change in eith
     await captureNativeWindow(app, "agent-handoff-roots-native", facts);
     await openCurrentProjectOverview(page, "fixture");
     await page.locator('[data-lens-tile-button="agents"]').click();
-    await page.locator("[data-graph-search]").fill("handoff");
+    for (const status of ["turn", "working", "resting"]) await page.locator(`[data-graph-chip="${status}"]`).click();
     for (const root of roots) await expect(page.locator(`[data-graph-row="${root.pane}"]`)).toHaveAttribute("data-depth", "0");
     await expect(page.locator(`[data-graph-row="${parent}"]`)).toHaveAttribute("data-depth", "0");
     await expect(page.locator("[data-graph-edge]")).toHaveCount(0);

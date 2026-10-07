@@ -228,10 +228,12 @@ Choose responsibility when creating the agent; it cannot be transferred afterwar
 With `--parent here` or the caller's own id, the agent is delegated: its parent owns the work, lineage is written immediately and an automatic watch starts.
 Without `--parent`, the work is handed off to the operator: the agent is an independent root, has no lineage edge to the spawner and starts no automatic watch.
 Both modes create a separate tab, in an existing checkout or a new worktree, without changing the current screen or keyboard focus.
+The no-focus request applies to opening the checkout's owner workspace as well as creating its tab; interactive workspace and tab creation keep their focus behavior.
 `hide agent spawn --help` explains the modes without contacting a daemon; the removed `--no-watch` flag is refused before any effects.
 
 Every `AgentView` includes `origin`, the spawner id for either mode and null for ordinary roots.
 Delegation derives origin from parent; handoff stores origin separately, and it grants no parent, subtree-close or end authority.
+A handed-off agent's identical self-registration or `--check` preserves its id and stored origin, without taking an origin input or changing responsibility.
 A handed-off agent can end its own registration; its spawner cannot end it and receives `parent_authority_required`.
 Ordinary letters and explicit watches remain available between independent agents.
 The sidebar, graph, ancestor unread state, descendant badges and waiting-on-descendants rule read only responsibility through parent.

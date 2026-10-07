@@ -731,12 +731,13 @@ pub(crate) fn empty_params() -> Value {
 pub(crate) fn workspace_create_with_env_params(
     cwd: &str,
     label: &str,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<Value, String> {
     params(req::WorkspaceCreateParams {
         cwd: Some(herdr_param(cwd)),
         label: Some(label.into()),
-        focus: true,
+        focus,
         env: env.into_iter().collect(),
         source_workspace_id: None,
     })
@@ -800,11 +801,15 @@ pub(crate) fn workspace_issue_params(
 /// worktree: Herdr answers with the workspace it already binds to that
 /// checkout, or binds or opens one (`already_open`). It carries no label,
 /// because Herdr applies one to a workspace that was already open too.
-pub(crate) fn worktree_open_params(path: &str, repository_root: &str) -> Result<Value, String> {
+pub(crate) fn worktree_open_params(
+    path: &str,
+    repository_root: &str,
+    focus: bool,
+) -> Result<Value, String> {
     params(req::WorktreeOpenParams {
         branch: None,
         cwd: Some(herdr_param(repository_root)),
-        focus: true,
+        focus,
         label: None,
         path: Some(herdr_param(path)),
         trust_repository: None,
