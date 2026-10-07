@@ -828,6 +828,81 @@ pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    /// The state a retired coordinator must leave exactly as its owner left it.
+    pub(crate) fn coordinator_memory(runtime: &Runtime) -> serde_json::Value {
+        let panes = runtime
+            .delivery_panes
+            .iter()
+            .map(|(device, read)| {
+                let panes = read
+                    .panes
+                    .as_ref()
+                    .map(|panes| panes.iter().collect::<std::collections::BTreeSet<_>>());
+                (
+                    device,
+                    json!({"scope": read.host_scope, "floor": read.floor, "panes": panes}),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let observations = runtime
+            .delivery_observations
+            .iter()
+            .map(|(pane, observed)| {
+                (
+                    pane,
+                    json!({
+                        "actor": observed.actor, "raw_pane": observed.raw_pane_id,
+                        "status": observed.status, "sequence": observed.state_change_seq,
+                        "changed": observed.status_changed_at_unix_ms,
+                        "input": observed.last_input_at_unix_ms,
+                        "submit": observed.last_submit_at_unix_ms,
+                        "working": observed.entered_working_at_unix_ms,
+                        "scope": observed.host_scope, "turn": format!("{:?}", observed.turn),
+                        "session": observed.session.as_ref().map(|session| json!({
+                            "kind": session.reference_kind, "value": session.reference_value,
+                            "cwd": session.cwd,
+                        })),
+                    }),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let gone = runtime
+            .registrations_gone
+            .iter()
+            .map(|(id, reason)| (id, reason.reason()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        json!({
+            "panes": panes, "observations": observations, "gone": gone,
+            "overflow": runtime.delivery_overflow.iter().collect::<std::collections::BTreeSet<_>>(),
+            "connected": runtime.delivery_connected.iter().collect::<std::collections::BTreeSet<_>>(),
+            "remote": runtime.snapshot.status.remote,
+            "raw_sessions": runtime.device_raw_sessions.iter().collect::<std::collections::BTreeMap<_, _>>(),
+            "generations": runtime.remote_connection_generations.iter().collect::<std::collections::BTreeMap<_, _>>(),
+        })
+    }
+
+    pub(crate) fn coordinator_bootstrap(
+        runtime: &mut Runtime,
+        device: &str,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+    ) {
+        let control = runtime
+            .remote_controls
+            .get(device)
+            .expect("installed owner");
+        assert!(Arc::ptr_eq(&control.api_connector(), connector));
+        let status = runtime
+            .snapshot
+            .status
+            .remote
+            .iter_mut()
+            .find(|status| status.target_id == device)
+            .expect("registered device status");
+        status.state = "not_connected".into();
+        status.message = None;
+        assert!(status.session.is_none());
+    }
+
     pub(crate) fn fixture(
         root: &std::path::Path,
     ) -> (Arc<Mutex<Runtime>>, Actor, Observation, PathBuf) {
