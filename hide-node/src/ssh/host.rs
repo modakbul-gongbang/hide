@@ -585,13 +585,6 @@ impl RemoteHost {
                     }
                 }
                 Ok(Delivery::Answer(Ok(raw))) => return Ok(LinkAnswer::Raw(raw)),
-                // The node had no worker or queue place for it: nothing
-                // started, as a full gate here, so a caller asks again alike.
-                Ok(Delivery::Answer(Err(error)))
-                    if error.code == hide_node_link::ErrorCode::Busy =>
-                {
-                    return Err(LinkError::Busy);
-                }
                 Ok(Delivery::Answer(Err(error))) => return Err(LinkError::Refused(error)),
                 Ok(Delivery::Overflow) => {
                     self.cancel(id);
