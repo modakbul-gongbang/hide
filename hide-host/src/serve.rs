@@ -54,6 +54,10 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                         _ => return,
                     };
                     let outcome = match request.call {
+                        call if !call.answered_by_device() => Err(HostError::new(
+                            ErrorCode::Unsupported,
+                            "A device does not answer this request; the core's own node does",
+                        )),
                         Call::PanesStart { herdr_socket } => match bridges {
                             Ok(bridges) => panes
                                 .start(scope, output, bridges, &herdr_socket)
@@ -815,5 +819,49 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("the helper kept running after its channel closed");
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// What the helper writes, kept for the test to read.
+    #[derive(Clone, Default)]
+    struct Kept(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Kept {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A device refuses, unrun, what acts with the operator's logins or is
+    /// the Factory's, and still answers its own work on the same channel.
+    #[test]
+    fn a_device_refuses_the_core_machine_s_requests_unrun() {
+        let requests = [
+            r#"{"id":1,"op":"gh","cwd":null,"args":["auth","status"]}"#,
+            r#"{"id":2,"op":"factory","call":{"factory":"hide_program"}}"#,
+            r#"{"id":3,"op":"codex_credentials","codex_home":"/"}"#,
+            r#"{"id":4,"op":"hello"}"#,
+        ];
+        let input = requests.join("\n") + "\n";
+        let kept = Kept::default();
+        serve(io::Cursor::new(input.into_bytes()), kept.clone()).unwrap();
+        let written = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+        let mut answers: Vec<Response> = written
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        answers.sort_by_key(|answer| answer.id);
+        assert_eq!(answers.len(), 4, "{written}");
+        for answer in &answers[..3] {
+            match &answer.outcome {
+                Outcome::Error(error) => assert_eq!(error.code, ErrorCode::Unsupported),
+                other => panic!("request {} was answered: {other:?}", answer.id),
+            }
+        }
+        assert!(matches!(answers[3].outcome, Outcome::Ok(_)));
     }
 }

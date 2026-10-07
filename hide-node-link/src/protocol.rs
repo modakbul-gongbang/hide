@@ -499,6 +499,90 @@ pub enum Call {
     },
 }
 
+impl Call {
+    /// Whether a device's node answers this request. A device answers the
+    /// work on its own files, repositories, sessions, processes, kit and
+    /// panes; what acts with the operator's own logins (GitHub, the AI
+    /// providers and their usage), the files the operator picked on this
+    /// machine, and the Software Factory's work (D-01) are the core's own
+    /// node's, and a device refuses them unrun. The match names every
+    /// request, so a new one is decided here before it compiles.
+    pub fn answered_by_device(&self) -> bool {
+        match self {
+            Self::Hello
+            | Self::RootOpen { .. }
+            | Self::List { .. }
+            | Self::Stamps { .. }
+            | Self::Bytes { .. }
+            | Self::Index { .. }
+            | Self::OpenDocument { .. }
+            | Self::Revision { .. }
+            | Self::Save { .. }
+            | Self::Create { .. }
+            | Self::Rename { .. }
+            | Self::Move { .. }
+            | Self::Trash { .. }
+            | Self::Changes { .. }
+            | Self::Project { .. }
+            | Self::Worktrees { .. }
+            | Self::BranchCheck { .. }
+            | Self::Directory { .. }
+            | Self::Registrable { .. }
+            | Self::HomeSync { .. }
+            | Self::WorktreeRemove { .. }
+            | Self::WorktreeRemovalCheck { .. }
+            | Self::Kit { .. }
+            | Self::HookDiagnosis
+            | Self::WorktreesRegistered { .. }
+            | Self::IgnoredRepository { .. }
+            | Self::ProjectCreate { .. }
+            | Self::PathFacts { .. }
+            | Self::RealPaths { .. }
+            | Self::Repository { .. }
+            | Self::JudgeFolders { .. }
+            | Self::SetAsideFolder { .. }
+            | Self::WorktreeRemoveClean { .. }
+            | Self::DrainTrash { .. }
+            | Self::RepositoryClone { .. }
+            | Self::Git { .. }
+            | Self::TerminateGroup { .. }
+            | Self::AgentInstalled { .. }
+            | Self::ProcessStarts { .. }
+            | Self::DiskUsage { .. }
+            | Self::ListeningPorts
+            | Self::VolumeFree { .. }
+            | Self::LabelTranscript { .. }
+            | Self::SessionActivity { .. }
+            | Self::LinkFiles { .. }
+            | Self::LinkRead { .. }
+            | Self::SessionIndexRead { .. }
+            | Self::SessionStamps { .. }
+            | Self::ProjectSessions { .. }
+            | Self::GitWatch { .. }
+            | Self::SessionStat { .. }
+            | Self::SessionChunk { .. }
+            | Self::SessionText { .. }
+            | Self::PanesStart { .. }
+            | Self::PaneProofAnswer { .. }
+            | Self::PaneInspect { .. }
+            | Self::StreamWrite { .. }
+            | Self::StreamClose { .. } => true,
+            Self::AiAvailability { .. }
+            | Self::AiModels { .. }
+            | Self::AiExecute { .. }
+            | Self::AiMeasurement { .. }
+            | Self::AiRestart { .. }
+            | Self::AiRelease { .. }
+            | Self::CodexCredentials { .. }
+            | Self::CodexSessionUsage { .. }
+            | Self::ClaudeUsageText { .. }
+            | Self::Gh { .. }
+            | Self::ReadAttachments { .. }
+            | Self::Factory { .. } => false,
+        }
+    }
+}
+
 /// What a `kit` request does. `apply` and `reinstall` answer a
 /// `hide_kit::KitReport`, `status` answers one without changing anything, and
 /// `remove` answers a [`KitRemoved`].
