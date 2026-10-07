@@ -34,7 +34,7 @@ hide request send parent-name --kind report --intent task-complete-1 --body 'The
 ```
 
 The recipient can acknowledge or reply; the sender can cancel.
-Acknowledgement marks a letter as manually checked without changing its durable `hook_confirmed` intake receipt; a reply separately closes the original request's answer wait.
+Acknowledgement is the recipient's receipt for every agent kind: only the recipient's own pane and native session can acknowledge (`hide request ack` from a pane-bound caller is the only path, with no operator or helper path), so it records `hook_confirmed: true` and ends a matching report watch; a reply separately closes the original request's answer wait.
 Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
@@ -99,7 +99,7 @@ A crash or changed pane after reservation may consume an attempt while leaving t
 Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 
 The `UserPromptSubmit` hook of a bell target reads the submitted prompt from its input payload and asks for letters in one of two ways.
-When the prompt is exactly the bell (`hide inbox --hook --bell`), it pulls the oldest pending letters and newly acknowledged letters with `hook_confirmed: false`, which remain open for capacity and retention, emits their context, flushes stdout, then confirms those IDs.
+When the prompt is exactly the bell (`hide inbox --hook --bell`), it pulls the pending letters, oldest first, and after them the letters an earlier build acknowledged without a receipt (`hook_confirmed: false`), which the store's expiry pass before every request drops once their deadline passes, so such a backlog never displaces the letter the bell rang for; it emits their context, flushes stdout, then confirms those IDs.
 For any other prompt, the operator's own included (`hide inbox --hook`), it adds at most one line, `Hide 편지 N통 대기 중, 이 턴이 끝난 뒤 전달`, counting the letters a bell will still bring, and confirms nothing; the prompt text is never changed and no letter body reaches an operator's turn.
 A letter whose three bells are spent stays pending for `hide inbox` and expires undelivered.
 A payload that is truncated, unreadable or not read within 0.5 seconds counts as an operator prompt.
@@ -108,7 +108,7 @@ The session id is not a secret, so this guards against accidents and not against
 A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and an id longer than 256 bytes or holding a control character is refused before it is hashed.
 A device kit older than the local app sends `hide inbox --hook` without `--bell`, so its bell turn gets only the count line and the letter stays pending until the kit is updated; keep the kit and the app on the same build.
 A prompt hook that runs inside an agent with no prompt hook of its own (Grok or OpenCode loading Claude Code's hook) receives nothing and confirms nothing.
-An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does for the others.
+An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt, as it is for an agent with one: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does.
 Transport arrival and the doorbell alone do not confirm intake.
 Interruption before confirmation can repeat the same letter ID; confirmed letters do not appear again in hook context.
 The hook emits at most five letters and 8 KiB of context, with a remaining-count line and `hide inbox` guidance when more are pending.
@@ -165,12 +165,13 @@ Capacity errors retain existing letters and watches.
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Intent retention and finished-letter cleanup | 30 days; open letters remain |
-| Open / retained letters | 1024 / 5000 |
+| Open / retained letters | 1024 / 5000; a letter is open while it awaits intake or a reply |
 | Watches | 32 |
 | Letter body / ledger file | 16 KiB / 16 MiB |
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |
 
-Automatic expiry and doorbells apply only to `pending` letters, while watch clocks remain distinct.
+Automatic doorbells apply only to `pending` letters, and the deadline turns only a `pending` letter `undelivered`, while watch clocks remain distinct.
+A letter an earlier build acknowledged without a receipt stops awaiting intake at the same 60-minute deadline, on the store's first pass after it (within a second of startup for an existing backlog): the hook no longer hands it over, its receipt reads `null` like the legacy acknowledged records below, and it no longer counts against the open-letter limit unless it still awaits a reply.
 Legacy records with missing or null `hook_confirmed` prove intake only in `delivered` state; older `acknowledged` records remain unknown, excluded from pull and subject to their previous closed-state retention rules unless still awaiting a reply.
 There is no transition to `expired` in this contract; an undelivered letter uses the existing human notification paths without creating another letter or UI banner.
 First-warning time and count persist across daemon restarts; activity resets both.
@@ -205,7 +206,7 @@ A tick also performs one bounded ledger encoding and bounded per-watch admission
 A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.
 A done target remains watched until exit, explicit stop or a completion report.
-The first actual post-flush confirmation records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`, even after acknowledgement, cancellation or the delivery deadline; replay after restart preserves a watch explicitly started after that receipt.
+The first receipt, an acknowledgement or the actual post-flush confirmation, records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`; a confirmation still does after cancellation or the delivery deadline, and replay after restart preserves a watch explicitly started after that receipt.
 A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
 
 ## The code-owned recipient `factory:<id>`
@@ -230,6 +231,12 @@ A completed spawn stores a durable receipt for its parent and intent, so retries
 Only incomplete intents resume their recorded creation and registration steps; starting a new watch after completion requires explicit `hide watch start`.
 Remote starts use Hide's existing device start path.
 The unsupported reconciliation/resume/session flags and relay, escalate, graph and events commands are absent.
+
+A registration ends when Herdr no longer has its pane, so its name and the watches on it do not outlive the pane; the ended record stays in the ledger, like one `hide agent end` ended, and still counts against the 2048-registration limit.
+The core reads that from its own session sync of the host's Herdr, never from a separate poll: a pane the in-sync replica listed and then stops listing was closed by Herdr or moved to another tab, which gives it a new id and already ends the watches on it, and a pane missing from the fresh `session.snapshot` of a connect is gone for every registration made before that snapshot was asked for, which is how registrations left by panes that closed while no Hide was running end on the first connect.
+Nothing ends on uncertainty: a stream that lost events, a Herdr live handoff or restart and an unreachable Herdr publish no read until a fresh snapshot replaces it, a disconnected device publishes none, a sleeping or resumed agent keeps its pane, a registration on another Herdr socket of the same machine is not judged by this one's read, and a registration made after the snapshot was asked for waits until a read lists its pane.
+The delivery store ends it with the watches on it, as `hide agent end` does, and logs `agent.ended` once with the agent id, machine, pane and reason (`pane_left` or `pane_absent`); nothing reaches the screen.
+Removing a device retires its cached pane read and rejects late reads from its retired coordinator; removal does not prove its panes gone or end any registration or watch.
 
 An agent that starts another through Herdr directly (`herdr agent start`, or `herdr pane run`/`send-text` of an agent's program) gets no registered parent, no lineage line and no watch, and nobody is woken when that child stops.
 So the Claude Code and Codex hook has a `PreToolUse` spawn guard that refuses such a call in a pane of a registered checkout and hands back the `hide agent spawn --parent here ...` command to use instead ([agent-hooks.md](agent-hooks.md#the-spawn-guard) owns what it parses, how it decides, and what it does when the daemon is unreachable).
