@@ -22,8 +22,7 @@ use std::time::{Duration, Instant};
 
 use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
-use hide_herdr_client::{LocalSocketConnector, request_with_connector};
-use hide_host::pane_peer::{descends_from, process_cwd, process_start};
+use hide_node::pane_proof::{PaneIdentity, caller_directory, descends_from, process_start};
 use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -40,12 +39,8 @@ const CAPABILITY_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry";
 pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
-const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_BOOTSTRAPS: usize = 8;
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
-/// The longest bootstrap socket path the record may hold: a short `/tmp`
-/// path on Unix, the account's temporary folder on Windows.
-const BOOTSTRAP_RECORD_CAP: u64 = 1024;
 
 /// How a capability was bound to its caller, and what its validation rechecks.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -575,10 +570,7 @@ pub fn attest_checkout(
     if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("invalid_nonce");
     }
-    let cwd = process_cwd(peer).ok_or("caller_unavailable")?;
-    let canonical =
-        hide_platform::fs::identity::canonical(&cwd).map_err(|_| "caller_unavailable")?;
-    let path = hide_platform::path::to_wire(&canonical).map_err(|_| "caller_unavailable")?;
+    let path = caller_directory(peer)?;
     let caller_id = checkout_caller_id(nonce, &path);
     let context = core
         .workspace_query(core.node().as_str(), &caller_id, Query::Info)
@@ -620,7 +612,7 @@ pub fn attest_remote(
     core: &CoreHandle,
     device_id: &str,
     source_pane_id: &str,
-    identity: &hide_host::pane_peer::PaneIdentity,
+    identity: &PaneIdentity,
 ) -> Result<Attestation, &'static str> {
     if device_id.is_empty() || source_pane_id.is_empty() || source_pane_id.len() > 256 {
         return Err("invalid_request");
@@ -662,36 +654,7 @@ fn inspect_pane(
     herdr_socket: &Path,
     core: &CoreHandle,
 ) -> Result<Attestation, &'static str> {
-    let connector = LocalSocketConnector::new(herdr_socket);
-    let value = request_with_connector(
-        &connector,
-        "pane.process_info",
-        json!({"pane_id": pane_id}),
-        HERDR_TIMEOUT,
-    )
-    .map_err(|_| "pane_unavailable")?;
-    let shell = value
-        .pointer("/process_info/shell_pid")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or("pane_unavailable")?;
-    if shell > i32::MAX as u64 {
-        return Err("pane_unavailable");
-    }
-    let shell_pid = shell as i32;
-    let shell_started = process_start(shell_pid).ok_or("pane_unavailable")?;
-    let pane = request_with_connector(
-        &connector,
-        "pane.get",
-        json!({"pane_id": pane_id}),
-        HERDR_TIMEOUT,
-    )
-    .map_err(|_| "pane_unavailable")?;
-    let terminal_id = pane
-        .pointer("/pane/terminal_id")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or("pane_unavailable")?
-        .to_owned();
+    let identity = hide_node::pane_proof::inspect(herdr_socket, pane_id)?;
     let context = core
         .workspace_query(core.node().as_str(), pane_id, Query::Info)
         .map_err(|_| "pane_not_connected")?;
@@ -699,101 +662,20 @@ fn inspect_pane(
         pane_id: pane_id.to_owned(),
         context: context.context,
         binding: Binding::Pane {
-            terminal_id,
-            shell_pid,
-            shell_started,
+            terminal_id: identity.terminal_id,
+            shell_pid: identity.shell_pid,
+            shell_started: identity.shell_started,
         },
     })
 }
 
-/// The listener a pane's process asks for a capability on: a Unix socket or
-/// a named pipe, whose system reports the caller's pid.
-pub type BootstrapListener = hide_platform::ipc::LocalListener;
+pub use hide_node::pane_proof::{
+    BootstrapListener, bootstrap_socket_path, bootstrap_socket_record,
+};
 
-/// Where the bootstrap's private folder goes. A Unix socket path is limited
-/// to about a hundred bytes, so a short folder under `/tmp` there, whose
-/// random name another user cannot reserve; a pipe name has no such limit,
-/// so the account's own temporary folder on Windows.
-fn bootstrap_parent() -> PathBuf {
-    if cfg!(windows) {
-        std::env::temp_dir()
-    } else {
-        PathBuf::from("/tmp")
-    }
-}
-
+/// Binds the bootstrap socket on this machine and records it in `state_dir`.
 pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
-    let parent = bootstrap_parent();
-    let directory = (0..8)
-        .find_map(|_| {
-            let candidate = parent.join(format!("hide-pane-{}", &new_token()[..24]));
-            match private::create_dir(&candidate) {
-                Ok(()) => Some(Ok(candidate)),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
-                Err(error) => Some(Err(error.to_string())),
-            }
-        })
-        .unwrap_or_else(|| Err("pane bootstrap directory collision limit".to_owned()))?;
-    let path = directory.join("b.sock");
-    let result = (|| {
-        let listener = BootstrapListener::bind(&path).map_err(|error| error.to_string())?;
-        private::restrict_to_owner(&path).map_err(|error| error.to_string())?;
-        let record = bootstrap_socket_record(state_dir);
-        let staging = record.with_extension(format!("{}.tmp", &new_token()[..16]));
-        let mut file = private::create_new_file(&staging).map_err(|error| error.to_string())?;
-        let published = (|| {
-            let text = path.to_str().ok_or("pane bootstrap path is not text")?;
-            file.write_all(text.as_bytes())
-                .map_err(|error| error.to_string())?;
-            file.sync_all().map_err(|error| error.to_string())?;
-            fs::rename(&staging, &record).map_err(|error| error.to_string())
-        })();
-        if published.is_err() {
-            let _ = fs::remove_file(staging);
-        }
-        published?;
-        Ok((listener, path.clone()))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(&directory);
-    }
-    result
-}
-
-pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
-    state_dir.join("pane-capabilities/bootstrap-socket")
-}
-
-/// The bootstrap socket the running daemon published, trusted only when the
-/// record and the folder the socket sits in are this account's own and
-/// private.
-pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
-    let record = bootstrap_socket_record(state_dir);
-    let file = private::open_own_file(&record, false).map_err(|_| "hide_unavailable".to_owned())?;
-    let metadata = file.metadata().map_err(|_| "hide_unavailable".to_owned())?;
-    if !private::is_private(&record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
-        return Err("invalid_bootstrap_socket_record".to_owned());
-    }
-    let mut bytes = Vec::new();
-    file.take(BOOTSTRAP_RECORD_CAP)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
-    let path = PathBuf::from(
-        String::from_utf8(bytes).map_err(|_| "invalid_bootstrap_socket_record".to_owned())?,
-    );
-    let directory = path.parent().ok_or("invalid_bootstrap_socket_record")?;
-    let metadata = fs::symlink_metadata(directory)
-        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
-    if !path.is_absolute()
-        || !metadata.is_dir()
-        || metadata.file_type().is_symlink()
-        || !private::owned_by_current_user(directory).unwrap_or(false)
-        || !private::is_private(directory).unwrap_or(false)
-    {
-        return Err("invalid_bootstrap_socket_record".to_owned());
-    }
-    Ok(path)
+    hide_node::pane_proof::bind(state_dir, new_token)
 }
 
 /// Answers bootstrap requests until `shutdown`. The listener accepts on a
@@ -1191,14 +1073,6 @@ mod tests {
 
     // Windows cannot read a process's working directory (`cwd_of`).
     #[cfg(unix)]
-    #[test]
-    fn process_cwd_reads_the_callers_working_directory() {
-        let expected = std::env::current_dir().unwrap().canonicalize().unwrap();
-        let cwd = process_cwd(std::process::id() as i32).unwrap();
-        assert_eq!(cwd.canonicalize().unwrap(), expected);
-        assert!(process_cwd(i32::MAX).is_none());
-    }
-
     fn checkout_attestation(nonce: &str, checkout: &str) -> Attestation {
         Attestation {
             pane_id: checkout_caller_id(nonce, checkout),

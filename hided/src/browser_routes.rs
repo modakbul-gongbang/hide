@@ -25,7 +25,7 @@ use tokio::sync::{Mutex, Notify, Semaphore, oneshot, watch};
 use crate::browser_assets::{self, Asset};
 use crate::core::CoreHandle;
 use crate::state_file::new_token;
-use hide_host::pane_peer::process_start;
+use hide_node::pane_proof::process_start;
 
 const MAX_ROUTES: usize = 12;
 const MAX_ROUTE_BUILDS: usize = 4;

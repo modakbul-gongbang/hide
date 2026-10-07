@@ -18,6 +18,7 @@ use hide_node_link::protocol::Call;
 use hide_node_link::{LinkAnswer, LinkError, NodeLink};
 
 pub mod opener;
+pub mod pane_proof;
 
 /// The machine this process runs on, answered in place, for the account
 /// home it was given.
