@@ -22,7 +22,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::host;
@@ -80,14 +80,21 @@ fn startup_stamps(home: &Path) -> StartupStamps {
         .collect()
 }
 
-/// What the login shell answered for one shell and home, with the startup
-/// files it was read under and when it was asked.
+/// What the login shell answered, with the startup files it was read under
+/// and when it was asked.
 struct ShellAnswer {
-    shell: PathBuf,
-    home: PathBuf,
     stamps: StartupStamps,
     path: Option<OsString>,
     asked: Instant,
+}
+
+/// The place one shell and home keep their answer. Its lock is held across
+/// the ask, so callers for the same pair wait for one shell, while a caller
+/// for another home is never held behind it.
+struct Slot {
+    shell: PathBuf,
+    home: PathBuf,
+    answer: Mutex<Option<ShellAnswer>>,
 }
 
 /// How many shell and home pairs are remembered. A process runs as one
@@ -105,27 +112,47 @@ const REMEMBERED: usize = 8;
 /// without its folders meanwhile; the failure is logged, since there is
 /// nothing on screen the operator could do about it (design rule 13).
 ///
-/// The cache is locked across the ask, so callers that arrive cold together
-/// wait for the one shell and read its answer instead of starting one each.
-/// A caller waits at most the deadline for that, and a caller whose `stop`
-/// is raised while it is the one asking ends the shell and leaves nothing
-/// remembered.
+/// A shell and home pair has its own lock, held across the ask, so callers
+/// for the same pair that arrive cold together wait for the one shell and
+/// read its answer instead of starting one each, and a caller for another
+/// home never waits behind it. A caller waits at most the deadline for that,
+/// and a caller whose `stop` is raised while it is the one asking ends the
+/// shell and leaves nothing remembered.
 pub fn login_shell_path(
     home: &Path,
     login_shell: Option<&Path>,
     stop: &AtomicBool,
 ) -> Option<OsString> {
-    static ANSWERS: Mutex<Vec<ShellAnswer>> = Mutex::new(Vec::new());
+    static SLOTS: Mutex<Vec<Arc<Slot>>> = Mutex::new(Vec::new());
     let shell = login_shell?;
-    let mut answers = ANSWERS.lock().unwrap_or_else(PoisonError::into_inner);
+    let slot = {
+        let mut slots = SLOTS.lock().unwrap_or_else(PoisonError::into_inner);
+        match slots
+            .iter()
+            .find(|slot| slot.shell == shell && slot.home == home)
+        {
+            Some(slot) => Arc::clone(slot),
+            None => {
+                if slots.len() >= REMEMBERED {
+                    slots.remove(0);
+                }
+                let slot = Arc::new(Slot {
+                    shell: shell.to_path_buf(),
+                    home: home.to_path_buf(),
+                    answer: Mutex::new(None),
+                });
+                slots.push(Arc::clone(&slot));
+                slot
+            }
+        }
+    };
+    let mut answer = slot.answer.lock().unwrap_or_else(PoisonError::into_inner);
     let stamps = startup_stamps(home);
-    if let Some(answer) = answers
-        .iter()
-        .find(|answer| answer.shell == shell && answer.home == home)
-        && answer.stamps == stamps
-        && (answer.path.is_some() || answer.asked.elapsed() < UNREAD_RETRY)
+    if let Some(known) = answer.as_ref()
+        && known.stamps == stamps
+        && (known.path.is_some() || known.asked.elapsed() < UNREAD_RETRY)
     {
-        return answer.path.clone();
+        return known.path.clone();
     }
     let asked = Instant::now();
     let path = match crate::host::login_shell_path(shell, home, LOGIN_SHELL_DEADLINE, stop) {
@@ -143,13 +170,7 @@ pub fn login_shell_path(
             None
         }
     };
-    answers.retain(|answer| answer.shell != shell || answer.home != home);
-    if answers.len() >= REMEMBERED {
-        answers.remove(0);
-    }
-    answers.push(ShellAnswer {
-        shell: shell.to_path_buf(),
-        home: home.to_path_buf(),
+    *answer = Some(ShellAnswer {
         stamps,
         path: path.clone(),
         asked,
