@@ -1,4 +1,4 @@
-import { emptyScope } from "../test/legacyAgentScope";
+import { emptyScope, legacyProject } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Agents graph (PRD agents-graph-view): columns, bands, rows, folds,
 // filters and the lines' routes. The expected answers are the PRD's
@@ -124,10 +124,11 @@ function child(pane: string, parent: string, extra: Partial<AgentRow> = {}): Age
 }
 
 function one(project: Workspace, agents: AgentRow[]): BoardProject[] {
-  return [{ workspace: project, agents, device: null }];
+  return [{ workspace: legacyProject(project, agents), agents, device: null }];
 }
 
 function graph(projects: BoardProject[], options: Partial<{ scope: "project" | "all"; openFolds: string[]; selectedBox: string | null; filter: GraphFilter }> = {}): GraphBoard {
+  projects = projects.map((p) => ({ ...p, workspace: legacyProject(p.workspace, p.agents) }));
   return buildGraph(projects, scopeAgents(projects), { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, ...options, geometry: GEOMETRY });
 }
 

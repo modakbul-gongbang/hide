@@ -611,3 +611,8 @@ The device scope also carries raised sections (five Needs You rows and three Don
 The first unknown target still takes priority over confirmation; a subtree sheet includes every target while counting only descendants outside it.
 The shell chooses the current target and translates the published states; runtime close enforcement is unchanged.
 `runtime::tests::agent_scopes::close_consequences_keep_unknown_priority_and_outside_descendant_counts` pins these rules and pane-only invalidation.
+
+`agent_state/tally/graph.rs` publishes graph membership, row priority, project attention, cleanup/resting folds and the marks tucked under visible ancestors.
+The three fold toggles and project/all selection have sixteen combinations, with identical badge maps shared in the snapshot.
+The renderer selects a combination, filters text and draws geometry; a filtered box reads the first remaining row in core priority order.
+`runtime::tests::agent_scopes::graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor` pins nested hidden marks and Git-only fold invalidation.

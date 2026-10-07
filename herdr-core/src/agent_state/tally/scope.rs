@@ -114,6 +114,7 @@ pub struct Raised {
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub graph: super::graph::Graph,
     pub closes: BTreeMap<String, super::close::Consequence>,
     pub prs: crate::agent_state::work::board::Board,
     pub raised: Vec<Raised>,
@@ -438,6 +439,10 @@ pub(super) fn scope(
 
 #[derive(Clone, Debug, PartialEq)]
 struct PlaceInput {
+    graph_facts: (
+        bool,
+        Vec<(bool, bool, bool, Option<crate::model::PullRequestBadge>)>,
+    ),
     device: String,
     project: String,
     home: bool,
@@ -544,6 +549,20 @@ impl Cache {
                 .iter()
                 .flat_map(|d| &d.projects)
                 .map(|p| PlaceInput {
+                    graph_facts: (
+                        p.is_git,
+                        p.checkouts
+                            .iter()
+                            .map(|c| {
+                                (
+                                    c.is_primary,
+                                    c.landed,
+                                    c.worktree.as_ref().is_some_and(|w| w.missing),
+                                    c.pull_request.as_ref().map(|p| p.badge.clone()),
+                                )
+                            })
+                            .collect(),
+                    ),
                     device: p.device_id.clone(),
                     project: p.id.clone(),
                     home: p.is_home,
@@ -654,11 +673,13 @@ impl Cache {
                         project_marks(&[project]),
                     ),
                 );
-                projects
+                let projected = projects
                     .get_mut(&(project.device_id.clone(), project.id.clone()))
-                    .expect("project scope inserted")
-                    .prs =
+                    .expect("project scope inserted");
+                projected.prs =
                     crate::agent_state::work::board::project(project, &device.agents, &trees);
+                projected.graph =
+                    super::graph::project(project, &projected.members, &device.agents);
                 for checkout in &project.checkouts {
                     let pane_ids: HashSet<_> = checkout
                         .tabs

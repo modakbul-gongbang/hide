@@ -2,6 +2,7 @@
 pub mod scope;
 pub(crate) mod lineage;
 mod close;
+mod graph;
 use super::axes::*;
 use super::turn::*;
 use crate::model::SidebarAgentSnapshot;

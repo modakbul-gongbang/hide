@@ -274,7 +274,7 @@ export function createActions(send: DispatchFn) {
    * pane or tab lives on, and the close goes there as `remote_control`; a
    * local close is the core's own `close_pane`/`close_tab`.
    */
-  const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, _agents: AgentRow[]) => {
+  const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null) => {
     const consequence = closeScope(rest(), panes.map((p) => p.id));
     const decision = closeDecision(consequence);
     if (decision.action === "status_unknown") {
@@ -829,14 +829,14 @@ export function createActions(send: DispatchFn) {
         if (!host) return;
         const tab = host.view?.checkout.tabs.find((row) => row.id === (tabId ?? host.view?.tab?.id));
         if (!tab?.id) return diagnostic("close_tab: no visible remote tab");
-        requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
+        requestClose("tab", tab.id, tab.panes, host.targetId);
         return;
       }
       const here = current();
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");
       const tab = here.checkout.tabs.find((row) => row.id === id);
-      requestClose("tab", id, tab?.panes ?? [], null, useShellStore.getState().agents);
+      requestClose("tab", id, tab?.panes ?? [], null);
     };
 
   const agentLayout = (action: { action: string } & Record<string, unknown>) => {
@@ -1425,7 +1425,7 @@ export function createActions(send: DispatchFn) {
         ui().setNotice({ text: translate("shell.deviceNotConnected", { device: label, command: translate("shell.command.closeTab") }), refreshable: false });
         return;
       }
-      requestClose("tab", tab.id, tab.panes, targetId, targetId ? (status?.session?.agents ?? []) : useShellStore.getState().agents);
+      requestClose("tab", tab.id, tab.panes, targetId);
     },
 
     /** Puts text on the clipboard; a refused write is the log's, not a notice (design principle 13). */
@@ -1635,14 +1635,14 @@ export function createActions(send: DispatchFn) {
         if (!host) return;
         const pane = host.view?.tab?.panes.find((row) => row.id === id);
         if (!id || !pane) return diagnostic("close_pane: no focused remote pane");
-        requestClose("pane", id, [pane], host.targetId, host.agents);
+        requestClose("pane", id, [pane], host.targetId);
         return;
       }
       const here = current();
       if (!here || !id) return diagnostic("close_pane: no focused pane");
       const pane = here.checkout.tabs.flatMap((tab) => tab.panes).find((row) => row.id === id);
       if (!pane) return diagnostic("close_pane: the pane is no longer visible");
-      requestClose("pane", id, [pane], null, useShellStore.getState().agents);
+      requestClose("pane", id, [pane], null);
     },
 
     /**

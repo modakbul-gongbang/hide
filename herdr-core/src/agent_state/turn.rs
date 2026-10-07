@@ -41,10 +41,13 @@ pub struct RowState {
     pub bucket: &'static str,
     pub attention_rank: u8,
     pub graph_rank: u8,
+    pub graph_chip: &'static str,
+    pub graph_resting: bool,
     pub edge: &'static str,
     pub search_tone: &'static str,
     pub subtree: &'static str,
     pub link: &'static str,
+    pub link_rank: u8,
     pub verb: RequestVerb,
     pub request_todo: bool,
     pub request_since: Option<u64>,
@@ -171,6 +174,12 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         } else {
             3
         },
+        graph_chip: match bucket {
+            "turn" => "turn",
+            "resting" => "resting",
+            _ => "working",
+        },
+        graph_resting: !asking && bucket != "turn" && bucket != "working" && !waits_on_children,
         edge: if asking {
             "ask"
         } else if activity == "working" {
@@ -204,6 +213,13 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "working"
         } else {
             "idle"
+        },
+        link_rank: if asking {
+            0
+        } else if working {
+            1
+        } else {
+            2
         },
         verb,
         request_todo,

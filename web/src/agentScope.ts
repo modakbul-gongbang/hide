@@ -2,6 +2,7 @@ import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest 
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentScope = {
+  graph: AgentGraphScope;
   closes: Record<string, CloseScope>;
   raised: { group: "needs_you" | "done"; shown: string[]; more: string[] }[];
   owners: Record<string, string>;
@@ -77,4 +78,12 @@ export type CloseSubtree = {
   counts: { working: number; waiting: number; unread: number; unknown: number };
   unknown: boolean;
   target_unknown: boolean;
+};
+
+export type AgentGraphScope = {
+  attention: 0 | 1 | 2 | 3 | 4;
+  recency: string;
+  checkouts: Record<string, { primary: boolean; cleanup: "merged" | "missing" | null; fold: "empty" | "cleanup" | "resting" | null; members: string[]; rank: 0 | 1 | 2 | 3 | 4; resting: boolean }>;
+  variants: number[];
+  tucked: Record<string, Partial<Record<"error" | "approval" | "question" | "working" | "done" | "idle", number>>>[];
 };

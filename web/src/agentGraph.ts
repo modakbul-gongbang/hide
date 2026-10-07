@@ -9,7 +9,7 @@
 import type { BadgeCounts } from "./agentRow";
 import type { MessageKey } from "./i18n/catalogs";
 import { rowLine } from "./agentRow";
-import { cleanupOf, type AgentBucket, type Cleanup, type LensAgent } from "./overviewLens";
+import { type Cleanup, type LensAgent } from "./overviewLens";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, Tab, Task, Workspace } from "./snapshot";
 import { primaryCheckout } from "./workspaceManage";
@@ -63,11 +63,6 @@ export function graphFilterActive(filter: GraphFilter): boolean {
   return filter.chips.length > 0 || filter.query.trim() !== "" || filter.device !== null;
 }
 
-/** The chip a bucket belongs to (D-35). */
-function chipOfBucket(bucket: AgentBucket): StatusChip {
-  return bucket === "turn" ? "turn" : bucket === "resting" ? "resting" : "working";
-}
-
 /** A number with its hash sign and without it name one number, so a search is read without the sign. */
 function searchTerm(query: string): string {
   return query.trim().toLowerCase().replace(/^#/, "");
@@ -80,7 +75,7 @@ function numberOf(id: string | null | undefined): string | null {
 }
 
 export function matchesFilter(value: LensAgent, filter: GraphFilter): boolean {
-  if (filter.chips.length > 0 && !filter.chips.includes(chipOfBucket(value.bucket))) return false;
+  if (filter.chips.length > 0 && !filter.chips.includes(value.agent.state.graph_chip)) return false;
   if (filter.device !== null && (value.device ?? THIS_DEVICE) !== filter.device) return false;
   const term = searchTerm(filter.query);
   if (term === "") return true;
@@ -131,12 +126,6 @@ export function edgeKindOf(child: AgentRow): EdgeKind {
 /** The second line a row draws, a question in warning, only while the agent asks (D-27). */
 export function askingLine(agent: AgentRow): string | null {
   return isAsking(agent) ? (rowLine(agent)?.text ?? null) : null;
-}
-
-const MARK_STATE: Record<string, keyof BadgeCounts> = { "×": "error", "!": "approval", "?": "question", "●": "working", "✓": "done", "○": "idle" };
-
-function byAttentionThenActivity(a: LensAgent, b: LensAgent): number {
-  return attentionOf(a) - attentionOf(b) || (b.agent.last_activity ?? "").localeCompare(a.agent.last_activity ?? "");
 }
 
 function latest(values: readonly LensAgent[]): string {
@@ -275,7 +264,7 @@ export function buildGraph(projects: readonly BoardProject[], agents: readonly L
 
 function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean): ProjectGraph | null {
   const { geometry: g } = options;
-  const primaryId = primaryCheckout(workspace)?.id ?? null;
+  const state = workspace.agent_scope.graph;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
   const byPane = new Map(members.map((value) => [value.agent.pane_id, value]));
 
@@ -290,18 +279,19 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     }
   }
 
-  const byCheckout = new Map<string, LensAgent[]>();
-  for (const value of members) push(byCheckout, value.checkout.id, value);
-
   const candidates = new Map<string, Candidate>();
   const folded: Record<FoldKind, Candidate[]> = { empty: [], cleanup: [], resting: [] };
   const foldOf = new Map<string, FoldKind>();
   const drawn: Candidate[] = [];
   for (const checkout of workspace.checkouts) {
-    const primary = checkout.id === primaryId;
-    const cleanup = cleanupOf(workspace, checkout);
-    const own = (byCheckout.get(checkout.id) ?? []).slice().sort(byAttentionThenActivity);
-    const rank = own.length === 0 ? 4 : attentionOf(own[0]!);
+    const facts = state.checkouts[checkout.id];
+    if (!facts) throw new Error(`Missing graph checkout: ${checkout.id}`);
+    const { primary, cleanup, rank } = facts;
+    const own = facts.members.map((id) => {
+      const value = byPane.get(id);
+      if (!value) throw new Error(`Missing graph member: ${id}`);
+      return value;
+    });
     const candidate: Candidate = { checkout, primary, cleanup, members: kept ? own.filter((value) => kept.has(value.agent.pane_id)) : own, rank };
     candidates.set(checkout.id, candidate);
     if (filtering) {
@@ -309,9 +299,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
       if (candidate.members.length > 0) drawn.push(candidate);
       continue;
     }
-    const resting = own.every((value) => attentionOf(value) === 3);
-    const alwaysDrawn = primary && options.scope === "project";
-    const kind: FoldKind | null = alwaysDrawn ? null : cleanup && resting ? "cleanup" : own.length === 0 ? "empty" : resting ? "resting" : null;
+    const kind = primary && options.scope === "project" ? null : facts.fold;
     if (kind === null) drawn.push(candidate);
     else {
       folded[kind].push(candidate);
@@ -347,26 +335,24 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
       x: 0,
       y: 0,
       height: 2 * g.boxBorder + g.headHeight + inner + g.boxPadBottom,
-      resting: rows.every((row) => row.attention === 3),
+      resting: entry.members[0]?.agent.state.graph_resting ?? true,
       dim: rows.length > 0 && rows.every((row) => row.dim),
     };
-    return { box, best: rows.length === 0 ? 4 : (Math.min(...rows.map((row) => row.attention)) as Attention), recent: latest(entry.members) };
+    return { box, best: entry.members[0]?.agent.state.graph_rank ?? 4, recent: latest(entry.members) };
   });
 
-  // A folded box's agents are counted on the nearest drawn ancestor, as the sidebar badges its folded descendants (B22).
+  // Fold toggles select a bounded core projection; the shell never adds marks.
   if (!filtering) {
-    for (const value of members) {
-      if (shownIds.has(value.checkout.id)) continue;
-      let ancestor = value.agent.lineage_parent_pane_id ? byPane.get(value.agent.lineage_parent_pane_id) : undefined;
-      const seen = new Set<string>();
-      while (ancestor && !rowOf.has(ancestor.agent.pane_id) && !seen.has(ancestor.agent.pane_id)) {
-        seen.add(ancestor.agent.pane_id);
-        ancestor = ancestor.agent.lineage_parent_pane_id ? byPane.get(ancestor.agent.lineage_parent_pane_id) : undefined;
-      }
-      const row = ancestor ? rowOf.get(ancestor.agent.pane_id) : undefined;
-      const state = MARK_STATE[value.agent.symbol];
-      if (!row || !state) continue;
-      row.tucked = { ...row.tucked, [state]: (row.tucked?.[state] ?? 0) + 1 };
+    const selector = (options.scope === "project" ? 8 : 0)
+      | (opened.has(foldId("empty", workspace.id)) ? 1 : 0)
+      | (opened.has(foldId("cleanup", workspace.id)) ? 2 : 0)
+      | (opened.has(foldId("resting", workspace.id)) ? 4 : 0);
+    const badges = state.tucked[state.variants[selector]!];
+    if (!badges) throw new Error("Missing graph fold projection");
+    for (const [id, counts] of Object.entries(badges)) {
+      const row = rowOf.get(id);
+      if (!row) throw new Error(`Missing graph badge row: ${id}`);
+      row.tucked = counts;
     }
   }
 
@@ -382,7 +368,6 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     height = Math.max(height, box.y + box.height);
   }
   if (boxes.length === 0 && foldList.length === 0) return null;
-  const everyone = members.map((value) => attentionOf(value));
   return {
     project: workspace,
     device,
@@ -393,8 +378,8 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     rows: rowOf,
     width: boxes.length === 0 ? 0 : width + g.pad,
     height: boxes.length === 0 ? 0 : height + g.pad,
-    attention: everyone.length === 0 ? 4 : (Math.min(...everyone) as Attention),
-    recency: latest(members),
+    attention: state.attention,
+    recency: state.recency,
   };
 }
 

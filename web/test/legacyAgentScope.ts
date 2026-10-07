@@ -1,3 +1,4 @@
+import { legacyGraphScope } from "./legacyGraphScope";
 import * as beforeClose from "./legacyClose";
 import * as drawClose from "../src/close";
 import type { CloseScope, CloseSubtree } from "../src/agentScope";
@@ -19,7 +20,7 @@ import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, req
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { closes: {}, raised: [], owners: {}, badge_total: 0, prs: { rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent)): AgentScope {
@@ -49,6 +50,7 @@ export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[]
 }
 
 export function legacyProject<T extends Workspace>(project: T, agents: readonly AgentRow[]): T {
+  agents = agents.map((agent) => agent.state ? agent : legacyAgentRow(agent));
   const owners = new Map<string, Checkout>();
   for (const checkout of project.checkouts) for (const tab of checkout.tabs ?? []) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
   const seen = new Set<string>();
@@ -78,6 +80,7 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
     return { ...checkout, agent_scope: value };
   });
   const prs = beforeBuildPrs({ workspace: treeProject, agents: [...agents], device: null }, 0);
+  scope.graph = legacyGraphScope(project, scope.members, agents);
   scope.prs = { rows: prs.groups.flatMap((g) => g.rows).map((r) => ({ number: r.number, checkout_id: r.checkout?.id ?? null, agents: r.agents.map((a) => a.pane_id), lineage: r.lineage.map((a) => ({ pane_id: a.agent.pane_id, depth: a.depth })), needs_look: r.needsLook, group: r.group, issue: r.issue ? { key: r.issue.key, label: r.issue.label, url: r.issue.url, task_key: r.issue.task?.key ?? null } : null })), groups: prs.groups.map((g) => ({ group: g.group, numbers: g.rows.map((r) => r.number) })), open: (project.pull_requests ?? []).filter((p) => p.badge !== "merged").length };
   return { ...project, checkouts, agent_scope: scope };
 }

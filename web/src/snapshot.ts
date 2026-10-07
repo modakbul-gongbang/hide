@@ -21,11 +21,11 @@ export type AgentState = {
   line: { text: string; mode: "request" | "news" | "quiet"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
-  attention_rank: number; graph_rank: 0 | 1 | 2 | 3;
+  attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
   edge: "ask" | "flow" | "wait" | "rest";
   search_tone: "failed" | "attention" | "working" | "done" | "muted";
   subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
-  link: "working" | "question" | "idle";
+  link: "working" | "question" | "idle"; link_rank: 0 | 1 | 2;
   verb: RequestVerb; request_todo: boolean; request_since: number | null;
 };
 

@@ -260,6 +260,8 @@ Its scope projection also carries list sections and checkout trees; the web reso
 The `agent_scope` projection carries physical totals, Overview membership and request membership as separate values because their existing screen rules differ.
 `agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
 Existing close targets also carry `tally/close.rs` consequences: confirmation priority, stop-work rows, and outside-descendant rows and counts.
+`tally/graph.rs` supplies graph attention, ordered membership, fold classes and tucked marks for the fixed sixteen fold/scope combinations, deduplicating equal maps.
+Text search and pixel geometry stay in the web; filters select from the core's priority order without deriving a new status.
 The cache includes pane close flags and labels so a pane-only change refreshes an open sheet; it adds no close action or runtime enforcement path.
 Catalog rebuilding restores cached scope fields before equality checks so an unchanged source does not create a publication merely by constructing new project objects.
 `sidebar.rs` retains payload and snapshot assembly, `request_view.rs` retains request block assembly and timestamp persistence, and `pet.rs` selects a pose from the local summary.

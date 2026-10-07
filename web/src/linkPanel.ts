@@ -16,8 +16,6 @@ function liveState(agent: AgentRow): LiveState {
   return { kind: agent.state.link, agent };
 }
 
-const LIVE_ORDER: Record<LiveState["kind"], number> = { question: 0, working: 1, idle: 2 };
-
 /**
  * The lines in the order the section draws them (B6, B18): asking and working
  * sessions first, then every other line newest first as the record keeps them.
@@ -30,8 +28,8 @@ export function sessionLines(sessions: readonly LinkedSession[], agents: readonl
     const agent = [...line.ids, line.id].map((id) => bySession.get(id)).find(Boolean);
     return { line, live: agent ? liveState(agent) : null };
   });
-  const active = lines.filter((entry) => entry.live && entry.live.kind !== "idle").sort((a, b) => LIVE_ORDER[a.live!.kind] - LIVE_ORDER[b.live!.kind]);
-  return [...active, ...lines.filter((entry) => !entry.live || entry.live.kind === "idle")];
+  // A missing live row shares the record-order tier supplied for idle rows.
+  return lines.sort((a, b) => (a.live?.agent.state.link_rank ?? 2) - (b.live?.agent.state.link_rank ?? 2));
 }
 
 /** Six lines or more fold to the newest five (B16). */

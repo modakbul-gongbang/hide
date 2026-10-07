@@ -13,6 +13,54 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
 }
 
 #[test]
+fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
+    let mut runtime = runtime();
+    let mut agents = rows();
+    agents[0].state.graph_rank = 1;
+    agents[1].state.graph_rank = 3;
+    agents[1].symbol = "○".into();
+    agents[1].lineage_parent_pane_id = Some("root".into());
+    let mut leaf = agents[1].clone();
+    leaf.pane_id = "leaf".into();
+    leaf.symbol = "✓".into();
+    leaf.lineage_parent_pane_id = Some("child".into());
+    agents.push(leaf);
+    runtime.snapshot.navigator.agents = agents;
+    let mut main = checkout(
+        "project",
+        "main",
+        "/fixture",
+        Some(pane("root", "/fixture")),
+    );
+    main.is_primary = true;
+    let child = checkout("project", "child", "/child", Some(pane("child", "/child")));
+    let mut leaf = checkout("project", "leaf", "/leaf", Some(pane("leaf", "/leaf")));
+    leaf.is_worktree = true;
+    leaf.landed = true;
+    let mut project = workspace("project", "Project", "/fixture", vec![main, child, leaf]);
+    project.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![project];
+    assert!(runtime.refresh_agent_scopes());
+    let graph = &runtime.snapshot.navigator.workspaces[0].agent_scope.graph;
+    assert_eq!(graph.attention, 1);
+    assert_eq!(graph.checkouts["child"].fold, Some("resting"));
+    assert_eq!(graph.checkouts["leaf"].fold, Some("cleanup"));
+    assert_eq!(graph.tucked[graph.variants[8]]["root"]["idle"], 1);
+    assert_eq!(graph.tucked[graph.variants[8]]["root"]["done"], 1);
+    assert_eq!(graph.tucked[graph.variants[12]]["child"]["done"], 1);
+    assert!(graph.tucked[graph.variants[15]].is_empty());
+    assert!(!runtime.refresh_agent_scopes());
+    runtime.snapshot.navigator.workspaces[0].checkouts[2].landed = false;
+    assert!(
+        runtime.refresh_agent_scopes(),
+        "Git-only cleanup changes invalidate folds"
+    );
+    let graph = &runtime.snapshot.navigator.workspaces[0].agent_scope.graph;
+    assert_eq!(graph.checkouts["leaf"].fold, Some("resting"));
+    assert!(graph.tucked[graph.variants[12]].is_empty());
+}
+
+#[test]
 fn close_consequences_keep_unknown_priority_and_outside_descendant_counts() {
     let mut runtime = runtime();
     let mut agents = rows();
