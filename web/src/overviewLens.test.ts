@@ -1,3 +1,5 @@
+import { emptyScope } from "../test/legacyAgentScope";
+import { agentsTile, scopeAgents } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Overview's lenses (PRD overview-lenses-tiles-agents): the tiles'
 // values, the checkout lanes' order, columns and folds, the lineage rows,
@@ -6,7 +8,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { ageWords, agentsTile, bucketOf, issuesTile, prsTile, scopeAgents, sessionsTile, startOfDay } from "./overviewLens";
+import { ageWords, bucketOf, issuesTile, prsTile, sessionsTile, startOfDay } from "./overviewLens";
 import { buildTasks, type BoardProject, type PrBoard, type PrRow } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, PullRequest, SessionRow, Task, Workspace } from "./snapshot";
 
@@ -18,7 +20,7 @@ const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 function checkout(id: string, options: { primary?: boolean; panes?: string[]; merged?: boolean; missing?: boolean; pr?: PullRequest; task?: string; changed?: number; ahead?: number } = {}): Checkout {
   const primary = options.primary ?? false;
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: "project",
     label: id,
@@ -42,7 +44,7 @@ function checkout(id: string, options: { primary?: boolean; panes?: string[]; me
 }
 
 function workspace(checkouts: Checkout[], options: { id?: string; tasks?: Task[]; reading?: boolean; failure?: string } = {}): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id: options.id ?? "project",
     label: options.id ?? "Project",
     path: "/fixture",

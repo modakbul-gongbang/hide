@@ -16,6 +16,10 @@ use crate::request_view::{self, RowPlace};
 const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Runtime {
+    pub(super) fn refresh_agent_scopes(&mut self) -> bool {
+        self.agent_scope_cache.refresh(&mut self.snapshot)
+    }
+
     /// Lays the block on this Mac's rows, whose pull requests come from
     /// their checkout's branch and their session. `live_panes` is Herdr's
     /// pane topology when the caller has one; only then do the verb records
@@ -146,7 +150,7 @@ impl Runtime {
                 changed = true;
             }
         }
-        changed
+        changed | self.refresh_agent_scopes()
     }
 
     /// A window began or stopped showing the request view.

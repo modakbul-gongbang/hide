@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
 import { createInterfaceI18n } from "./i18n/instance";
@@ -36,14 +37,14 @@ function legacy(root: string, path: string): StoredBuffer {
 }
 
 function rest(focusedDevice = "local"): SnapshotRest {
-  const checkout = (workspace: string, id: string, path: string) => ({ id, workspace_id: workspace, label: id, path, tabs: [], strip: [] });
+  const checkout = (workspace: string, id: string, path: string) => ({ agent_scope: emptyScope(), id, workspace_id: workspace, label: id, path, tabs: [], strip: [] });
   return {
     navigator: {
       focused_device_id: focusedDevice,
       focused_workspace_id: "w-local",
       focused_checkout_id: "c-local",
       devices: [{ id: "local", label: "This Mac", kind: "local" }, { id: "studio", label: "Studio", kind: "remote" }],
-      workspaces: [{ id: "w-local", device_id: "local", checkouts: [checkout("w-local", "c-local", "/repo")] }],
+      workspaces: [{ agent_scope: emptyScope(), id: "w-local", device_id: "local", checkouts: [checkout("w-local", "c-local", "/repo")] }],
     },
     status: {
       remote: [
@@ -51,7 +52,7 @@ function rest(focusedDevice = "local"): SnapshotRest {
           target_id: "studio",
           state: "connected",
           session: {
-            workspaces: [{ id: "remote:studio:project:p", device_id: "studio", checkouts: [checkout("remote:studio:project:p", "remote:studio:checkout:w1", "/repo")] }],
+            workspaces: [{ agent_scope: emptyScope(), id: "remote:studio:project:p", device_id: "studio", checkouts: [checkout("remote:studio:project:p", "remote:studio:checkout:w1", "/repo")] }],
             focused_workspace_id: "remote:studio:project:p",
             focused_checkout_id: "remote:studio:checkout:w1",
           },

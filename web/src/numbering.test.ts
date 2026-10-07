@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
@@ -8,7 +9,7 @@ import { projectRows } from "./projects";
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
 function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff" }[] = []): Checkout {
-  return {
+  return { agent_scope: emptyScope(),
     id: "c1",
     workspace_id: "w1",
     strip: [
@@ -104,7 +105,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
 
   it("shows each agent's Agents-list number once in Projects: its raised row, else its own checkout's row", () => {
     const checkout = (id: string, panes: string[]) => ({ id, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] });
-    const workspaces = [{ id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
+    const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
     const listed = [agent("ask", { group: "needs_you" }), agent("parent"), agent("child")].map((row) => ({ agent: row, device: null }));
     const rows = projectRows(workspaces, [], listed);
     const numbered = new Map([[1, "ask"], [2, "parent"], [3, "child"]] as const);
@@ -122,7 +123,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
 
   it("leaves a raised agent folded past its section's cap numbered on its tree row until the section opens", () => {
     const panes = ["d1", "d2", "d3", "d4"];
-    const workspaces = [{ id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
+    const workspaces = [{ agent_scope: emptyScope(), id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
     const listed = panes.map((pane) => ({ agent: agent(pane, { group: "done" }), device: null }));
     const numbered = new Map([[4, "d4"]] as const);
     const folded = projectListNumbers(numbered, projectRows(workspaces, [], listed), workspaces);

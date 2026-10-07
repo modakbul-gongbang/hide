@@ -1,3 +1,4 @@
+import { deviceScope } from "./agentScope";
 import { useInterfaceTranslation } from "./i18n/client";
 import { CircleDotIcon, FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -12,7 +13,7 @@ import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
 import { lensHandlers } from "./OverviewLenses";
-import { agentsTile, scopeAgents } from "./overviewLens";
+import { scopeAgents } from "./overviewLens";
 import { RequestView } from "./RequestView";
 import { requestRows } from "./requestList";
 import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
@@ -70,8 +71,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
+  const agentScope = deviceScope(rest, deviceId);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
-  const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
+  const rows = useMemo(() => agentScope ? requestRows(lensAgents, projects.flatMap((project) => project.agents), agentScope) : [], [lensAgents, projects, agentScope]);
   // The request view's expanded rows and fold, this screen's own page state.
   const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
   const onRequestLens = useCallback((patch: Partial<RequestLens>) => useUiStore.getState().setMainRequestLens(patch), []);
@@ -120,8 +122,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
   };
   // The Agents tab keeps the count of agents whose turn it is, as a project's Agents tab does;
   // the 요청 tab the rows to answer, as a project's 요청 tab does.
-  const waiting = agentsTile(lensAgents, { state: "ready" }, t).badge?.count ?? 0;
-  const answering = rows.filter((row) => row.verb === "answer").length;
+  const waiting = agentScope?.buckets.turn ?? 0;
+  const answering = agentScope?.requests.answer ?? 0;
   const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => {
       setView("tasks");
@@ -205,7 +207,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
         ))
       ) : null}
       {view === "requests" ? (
-        <RequestView rows={rows} scope="all" lens={requestLens} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
+        <RequestView agentScope={agentScope} rows={rows} scope="all" lens={requestLens} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
       ) : view === "tasks" ? (
         <IssuesView
           board={tasks}

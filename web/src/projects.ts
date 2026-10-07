@@ -145,13 +145,7 @@ export function folderCheckout(workspace: Workspace): Checkout | null {
  * status badge).
  */
 export function projectMarks(workspace: Workspace): MarkCounts {
-  const total: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 };
-  for (const checkout of workspace.checkouts) {
-    const marks = checkout.agent_summary?.marks;
-    if (!marks) continue;
-    for (const state of Object.keys(total) as (keyof MarkCounts)[]) total[state] += marks[state];
-  }
-  return total;
+  return workspace.agent_scope.marks;
 }
 
 /** The glyph a pull request draws: its lifecycle, with a draft keeping its own shape while it is open or under review. */

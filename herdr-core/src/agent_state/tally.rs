@@ -1,4 +1,5 @@
 //! Scope totals, marks and representative ordering.
+pub mod scope;
 use super::axes::*;
 use super::turn::*;
 use crate::model::SidebarAgentSnapshot;
@@ -677,3 +678,6 @@ pub mod phone {
         }
     }
 }
+
+#[cfg(test)]
+mod scope_tests;

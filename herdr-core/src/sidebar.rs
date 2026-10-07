@@ -862,6 +862,7 @@ mod tests {
             PullRequestChecks, PullRequestSnapshot, WorkspaceSnapshot,
         };
         let mut checkout = CheckoutSnapshot {
+            agent_scope: Default::default(),
             id: "checkout".into(),
             agent_summary: crate::model::CheckoutAgentSummary {
                 representative_pane_id: Some("pane".into()),
@@ -888,6 +889,7 @@ mod tests {
             ..Default::default()
         };
         let workspace = |checkout| WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),
@@ -963,6 +965,7 @@ mod tests {
             AgentStatusCode, CheckoutSnapshot, PaneSnapshot, TabSnapshot, WorkspaceSnapshot,
         };
         let checkout = |id: &str, panes: &[&str]| CheckoutSnapshot {
+            agent_scope: Default::default(),
             id: id.to_owned(),
             tabs: vec![TabSnapshot {
                 agent: None,
@@ -998,6 +1001,7 @@ mod tests {
             ..Default::default()
         };
         let mut workspaces = vec![WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),

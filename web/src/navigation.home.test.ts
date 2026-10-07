@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { agentPlaces, agentSections, allAgents, allProjectsCount, boardProjects, deviceListedAgents, mainSections } from "./navigation";
@@ -10,7 +11,7 @@ function agent(paneId: string, group: string): AgentRow {
 }
 
 function workspace(id: string, deviceId: string, extra: Partial<Workspace> = {}, panes: string[] = []): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id,
     label: id,
     path: `/${id}`,
@@ -19,7 +20,7 @@ function workspace(id: string, deviceId: string, extra: Partial<Workspace> = {},
     temporary: false,
     pinned: false,
     inactive_checkouts: { expanded: false, checkout_ids: [] },
-    checkouts: [{ id: `${id}:c`, workspace_id: id, label: "main", path: `/${id}`, tabs: [{ id: `${id}:t`, panes: panes.map((pane) => ({ id: pane })) }] }],
+    checkouts: [{ agent_scope: emptyScope(), id: `${id}:c`, workspace_id: id, label: "main", path: `/${id}`, tabs: [{ id: `${id}:t`, panes: panes.map((pane) => ({ id: pane })) }] }],
     ...extra,
   } as unknown as Workspace;
 }

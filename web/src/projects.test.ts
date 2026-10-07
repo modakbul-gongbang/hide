@@ -1,6 +1,7 @@
+import { emptyScope, legacyProject } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, checkoutPresentation, projectMarks as drawProjectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
@@ -8,7 +9,7 @@ const t = initializeInterfaceI18n("en").t;
 const tKo = initializeInterfaceI18n("ko").t;
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id,
     label: id,
     path: `/h/${id}`,
@@ -148,7 +149,7 @@ describe("checkoutPresentation", () => {
   const pr = (extra: Partial<PullRequest> = {}): PullRequest => ({ number: 155, title: "Browser display", url: "", badge: "open", review: null, is_draft: false, ...extra });
   const project = workspace("repo", { path: "/h/repo", is_git: true });
   const checkout = (extra: Partial<Checkout> = {}): Checkout =>
-    ({
+    ({ agent_scope: emptyScope(),
       id: "c",
       workspace_id: "w",
       label: "feature",
@@ -231,7 +232,7 @@ describe("checkoutCard", () => {
     marks: { ...NO_MARKS, ...marks },
   });
   const checkout = (extra: Partial<Checkout> = {}): Checkout =>
-    ({
+    ({ agent_scope: emptyScope(),
       id: "c",
       workspace_id: "w",
       label: "feature",
@@ -375,7 +376,7 @@ describe("sidebar row activation", () => {
       { id: "first", exists: true }, { id: "primary", exists: true, is_primary: true },
       { id: "recent", exists: true }, { id: "missing", exists: false },
     ] as Checkout[];
-    const project = workspace("repo", { device_id: "mini", checkouts });
+    const project = workspace("repo", { agent_scope: emptyScope(), device_id: "mini", checkouts });
     const visit = (device_id: string, checkout_id: string) => ({ device_id, checkout_id, project_name: "repo", branch: checkout_id, device_name: device_id });
     expect(projectCheckout(project, [visit("local", "first"), visit("mini", "missing"), visit("mini", "recent")])?.id).toBe("recent");
     expect(projectCheckout(project)?.id).toBe("primary");
@@ -390,7 +391,7 @@ describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
   const read = (extra: Partial<Checkout> = {}) =>
     checkoutPresentation(
       project,
-      {
+      { agent_scope: emptyScope(),
         id: "c",
         workspace_id: "w",
         label: "feature",
@@ -428,3 +429,5 @@ describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
     expect(checkoutNameParts("trailing/")).toEqual({ prefix: "", rest: "trailing/" });
   });
 });
+
+const projectMarks: typeof drawProjectMarks = (workspace) => drawProjectMarks(legacyProject(workspace, []));

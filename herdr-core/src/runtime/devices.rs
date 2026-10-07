@@ -285,6 +285,7 @@ impl Runtime {
         }
         self.snapshot.navigator.devices = devices;
         self.refresh_device_snapshots();
+        self.refresh_agent_scopes();
     }
 
     /// A fresh connection attempt for a registered device that is not

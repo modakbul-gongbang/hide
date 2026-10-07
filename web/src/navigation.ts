@@ -238,7 +238,7 @@ function deviceAvailability(device: Device, status: RemoteStatus | undefined): D
   return { state: "ready" };
 }
 
-function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean, checkoutsTrusted = trusted): ProjectEntry {
+function entryOf(workspace: Workspace, _agents: AgentRow[], trusted: boolean, checkoutsTrusted = trusted): ProjectEntry {
   return {
     id: workspace.id,
     label: workspace.label,
@@ -247,7 +247,7 @@ function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean, che
     pinned: workspace.pinned,
     workspace,
     workspaceCount: checkoutsTrusted ? workspace.checkouts.length : null,
-    counts: trusted ? groupCounts(projectAgents(workspace, agents)) : null,
+    counts: trusted ? workspace.agent_scope.groups : null,
   };
 }
 

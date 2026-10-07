@@ -495,6 +495,7 @@ pub struct PetOriginSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NavigatorSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub root_path: Option<String>,
     /// The focused local checkout's History scope. A registered subfolder may
     /// be narrower than the Git checkout used by Explorer and editor tabs.
@@ -592,6 +593,7 @@ impl ProviderUsageSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeviceSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub id: String,
     pub label: String,
     pub kind: String,
@@ -1164,6 +1166,7 @@ pub struct AgentSleepActionSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub home_issues: crate::issues::ProjectIssuesSnapshot,
     /// The project's tasks in the source-neutral shape the web reads
     /// (`tasks.rs`); `home_issues` stays as older readers read it.
@@ -1348,6 +1351,7 @@ pub struct CheckoutPurposeSnapshot {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
+    pub agent_scope: crate::agent_state::Scope,
     pub issue: Option<crate::issues::IssueLinkSnapshot>,
     /// The key of the task in its project's `tasks` this checkout works on.
     pub task_key: Option<String>,
@@ -4313,6 +4317,7 @@ impl Snapshot {
             schema_version: SCHEMA_VERSION,
             delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
+                agent_scope: Default::default(),
                 root_path: None,
                 changes_root_path: None,
                 focused_device_id: None,

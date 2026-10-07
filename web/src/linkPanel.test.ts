@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { foldLines, requestTurn, resumeBlock, resumeCheckout, sameIssue, sessionLines, spanText, viewBlock } from "./linkPanel";
@@ -52,8 +53,8 @@ describe("the sessions section", () => {
 
   it("resumes in the deepest checkout holding the line's folder on its device, else on the PR's branch", () => {
     const workspaces = [
-      { id: "w", device_id: "local", checkouts: [checkout("/repo", { branch: "main" }), checkout("/repo/task"), checkout("/repo/gone", { exists: false, branch: "gone" })] },
-      { id: "m", device_id: "mini", checkouts: [checkout("/srv/repo", { branch: "4-task" })] },
+      { agent_scope: emptyScope(), id: "w", device_id: "local", checkouts: [checkout("/repo", { branch: "main" }), checkout("/repo/task"), checkout("/repo/gone", { exists: false, branch: "gone" })] },
+      { agent_scope: emptyScope(), id: "m", device_id: "mini", checkouts: [checkout("/srv/repo", { branch: "4-task" })] },
     ] as Workspace[];
     expect(resumeCheckout(line("a", { cwd: "/repo/task/web" }), workspaces, null, "local")?.path).toBe("/repo/task");
     expect(resumeCheckout(line("a", { cwd: "/repo/taskforce" }), workspaces, null, "local")?.path).toBe("/repo");

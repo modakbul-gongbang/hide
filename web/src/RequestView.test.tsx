@@ -1,3 +1,5 @@
+import { emptyScope } from "../test/legacyAgentScope";
+import { requestScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
@@ -34,8 +36,8 @@ async function pathRow() {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  const checkout = { id: "main", workspace_id: "project", path: "/checkout", exists: true, label: "main", branch: "main", tabs: [] } as unknown as Checkout;
-  const project: Workspace = { id: "project", label: "Studio", path: "/checkout", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
+  const checkout = { agent_scope: emptyScope(), id: "main", workspace_id: "project", path: "/checkout", exists: true, label: "main", branch: "main", tabs: [] } as unknown as Checkout;
+  const project: Workspace = { agent_scope: emptyScope(), id: "project", label: "Studio", path: "/checkout", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
   const agent: AgentRow = legacyAgentRow({ id: "agent", pane_id: "pane", identity_label: "결과물", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
     request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: "[report](./report.md) https://example.test/result", cut: false, at_unix_ms: 0 }, pull_requests: [] } });
   const row: RequestRow = { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
@@ -69,7 +71,7 @@ async function pathRow() {
     await act(async () => chip()!.click());
     return events.filter((event) => event.kind === "reveal_path").at(-1);
   };
-  const render = async () => act(async () => root.render(<TooltipProvider><RequestView rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {} })} actions={actions} /></TooltipProvider>));
+  const render = async () => act(async () => root.render(<TooltipProvider><RequestView agentScope={requestScope([row])} rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {} })} actions={actions} /></TooltipProvider>));
   const cleanup = async () => {
     await act(async () => root.unmount());
     container.remove();
@@ -138,15 +140,15 @@ it("keeps twenty unchanged rows asleep, but renders changed facts and uses curre
   document.body.append(container);
   const root = createRoot(container);
   const checkout = { id: "main", label: "main", branch: "main", tabs: [] } as unknown as Checkout;
-  const project: Workspace = { id: "project", label: "Studio", path: "/fixture", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
+  const project: Workspace = { agent_scope: emptyScope(), id: "project", label: "Studio", path: "/fixture", device_id: "local", registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };
   const rows: RequestRow[] = Array.from({ length: 20 }, (_, index) => {
     const agent: AgentRow = legacyAgentRow({ id: `a${index}`, pane_id: `a${index}`, identity_label: `결과물 ${index}`, agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
       request: { verb: "working", verb_since_unix_ms: 0, request: null, later_by: null, reply: { text: `진행 ${index}`, cut: false, at_unix_ms: 0 }, pull_requests: [] } });
     return { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
   });
   const actions = createActions(() => true);
-  let props: RequestViewProps = { rows, scope: "all", lens: NO_REQUEST_LENS, onLens: vi.fn(), handlers: lensHandlers(actions, { openIssue: vi.fn(), toggleFold: vi.fn() }), actions };
-  const render = async () => act(async () => root.render(<TooltipProvider><RequestView {...props} /></TooltipProvider>));
+  let props: RequestViewProps = { agentScope: requestScope(rows), rows, scope: "all", lens: NO_REQUEST_LENS, onLens: vi.fn(), handlers: lensHandlers(actions, { openIssue: vi.fn(), toggleFold: vi.fn() }), actions };
+  const render = async () => act(async () => root.render(<TooltipProvider><RequestView {...props} agentScope={requestScope(props.rows)} /></TooltipProvider>));
   try {
     observation.rows = 0;
     await render();

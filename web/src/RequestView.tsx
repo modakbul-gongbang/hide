@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, LinkIcon, SquareArrowOutUpRightIcon, SquareTerminalIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Actions } from "./actions";
@@ -53,6 +54,7 @@ import type { RequestLens } from "./ui";
 
 export type RequestViewProps = {
   rows: readonly RequestRow[];
+  agentScope: AgentScope | null;
   scope: "project" | "all";
   lens: RequestLens;
   onLens: (patch: Partial<RequestLens>) => void;
@@ -62,9 +64,9 @@ export type RequestViewProps = {
   onNewAgent?: () => void;
 };
 
-export const RequestView = memo(function RequestView({ rows, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
+export const RequestView = memo(function RequestView({ rows, agentScope, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
   const { t } = useInterfaceTranslation();
-  const groups = useMemo(() => requestGroups(rows), [rows]);
+  const groups = useMemo(() => agentScope ? requestGroups(rows, agentScope) : [], [rows, agentScope]);
   // While a window shows the view, the core re-reads running checks (D-32).
   // A hidden page is not showing it, and a reconnect is a new connection
   // whose demand starts empty, so the demand is declared each time the page

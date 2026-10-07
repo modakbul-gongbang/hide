@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { EditorDocumentSnapshot } from "./snapshot";
@@ -139,7 +140,7 @@ describe("snapshot merge", () => {
   });
 
   it("keeps untouched workspace rows by reference across a delta", () => {
-    const workspace = {
+    const workspace = { agent_scope: emptyScope(),
       id: "w1",
       label: "hide",
       path: "/h/hide",

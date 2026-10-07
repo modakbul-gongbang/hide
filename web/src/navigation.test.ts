@@ -1,9 +1,10 @@
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import { createInterfaceI18n } from "./i18n/instance";
-import { agentGroupTitle, agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
+import { agentGroupTitle, agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections as drawMainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
-const project = (id: string, device: string, pinned = false) => ({
+const project = (id: string, device: string, pinned = false) => ({ agent_scope: emptyScope(),
   id,
   label: id,
   path: `/${id}`,
@@ -215,3 +216,5 @@ describe("an open from Main or an Overview", () => {
     expect(openingProgress(rest("c1", 9), opening)).toBe("Herdr refused");
   });
 });
+
+const mainSections: typeof drawMainSections = (rest, agents, device) => drawMainSections(rest ? legacyRest(rest, agents) : null, agents, device);

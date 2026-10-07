@@ -1111,7 +1111,7 @@ impl Runtime {
             &mut self.snapshot.navigator,
             &self.snapshot.ui_state,
             unix_milliseconds(),
-        )
+        ) | self.refresh_agent_scopes()
     }
 
     /// Drops the conversation choice of every pane that is no longer an

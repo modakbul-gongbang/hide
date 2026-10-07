@@ -1629,6 +1629,7 @@ pub struct Runtime {
     next_explorer_operation_id: u64,
     explorer_queue: VecDeque<WaitingExplorerChange>,
     delta: snapshot_delta::DeltaState,
+    agent_scope_cache: crate::agent_state::ScopeCache,
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
     workspace_views: Option<WorkspaceViewStore>,
@@ -2042,6 +2043,7 @@ impl Runtime {
             next_explorer_operation_id: 0,
             explorer_queue: VecDeque::new(),
             delta: snapshot_delta::DeltaState::default(),
+            agent_scope_cache: crate::agent_state::ScopeCache::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),
             browser_pages: HashMap::new(),
@@ -2051,6 +2053,7 @@ impl Runtime {
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();
         runtime.refresh_pet();
+        runtime.refresh_agent_scopes();
         if shortcuts_imported {
             runtime.persist_ui_state();
         }

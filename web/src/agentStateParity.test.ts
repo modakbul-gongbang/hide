@@ -1,3 +1,5 @@
+import { emptyScope } from "../test/legacyAgentScope";
+import { agentsTile, scopeAgents, requestRows, requestGroups, requestsTile } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // Frozen surface values before consolidating status ownership in the core.
 // A delegated question and a read question intentionally count differently
@@ -5,8 +7,8 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 import { expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { agentTree, groupCounts } from "./navigation";
-import { agentsTile, scopeAgents } from "./overviewLens";
-import { requestGroups, requestRows, requestsTile } from "./requestList";
+
+
 import type { AgentRow, RequestVerb, Workspace } from "./snapshot";
 
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
@@ -26,7 +28,7 @@ it("preserves physical counts, root headings and scope-dependent request exclusi
     row("done", "done", "result", { unread: true }),
     row("unknown", "seen", "idle", { activity: "unknown" }),
   ];
-  const workspace = (id: string, panes: string[]) => ({
+  const workspace = (id: string, panes: string[]) => ({ agent_scope: emptyScope(),
     id, label: id, device_id: "local", checkouts: [{ id: `${id}-checkout`,
       tabs: [{ panes: panes.map((id) => ({ id })) }] }],
   }) as Workspace;

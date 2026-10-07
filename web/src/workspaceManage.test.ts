@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentStatusCode, Checkout, TaskOperation, Workspace } from "./snapshot";
@@ -18,7 +19,7 @@ const purposeCountLabel = (text: string) => manage.purposeCountLabel(text, t);
 const purposeScope = (device: string | null, branch: string | null) => manage.purposeScope(device, branch, t);
 const remotePurposeProblem = (workspace: Workspace, remote: Parameters<typeof manage.remotePurposeProblem>[1]) => manage.remotePurposeProblem(workspace, remote, t);
 
-const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
+const workspace = (patch: Partial<Workspace> = {}): Workspace => ({ agent_scope: emptyScope(),
   id: "w1",
   label: "hide",
   path: "/Users/example/hide",
@@ -33,7 +34,7 @@ const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   ...patch,
 });
 
-const checkout = (patch: Partial<Checkout> = {}): Checkout => ({
+const checkout = (patch: Partial<Checkout> = {}): Checkout => ({ agent_scope: emptyScope(),
   id: "c1",
   workspace_id: "w1",
   label: "feature",
@@ -211,7 +212,7 @@ describe("row menus", () => {
       ["set_primary", "Not available for a checkout on another device."],
       ["reveal_external", "Only for files and folders on this computer."],
     ]);
-    const project = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
+    const project = projectMenu(workspace({ agent_scope: emptyScope(), device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
     expect(project.filter((item) => item.unavailable !== null).map((item) => item.id)).toEqual(["reveal_external"]);
   });
 

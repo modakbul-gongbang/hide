@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 // The request view (PRD overview-request-view) as pure functions over the
 // snapshot: which rows it draws, in which group and order, the Requests tile,
 // and the words each row's lines say. The verb is the core's (D-07); this
@@ -27,7 +28,6 @@ export const VERB_LABEL: Record<RequestVerb, MessageKey> = {
   idle: "requests.verb.idle",
 };
 
-const VERB_ORDER: readonly RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 
 /** One row of the view: an agent with its verb, and the live descendants it speaks for (D-30). */
 export type RequestRow = {
@@ -39,32 +39,24 @@ export type RequestRow = {
 
 export type RequestGroup = { verb: RequestVerb; rows: RequestRow[] };
 
-/** A row the core has not laid a block on yet reads from its group: working while it works, else resting. */
-function verbOf(agent: AgentRow): RequestVerb {
-  return agent.state.verb;
-}
-
 /**
  * The rows the view draws: one per agent (D-01, D-46), except a delegated
  * child whose parent is in the same scope, which its parent's row speaks for
  * (D-30). A child whose parent is gone, or outside the scope, is a row of its
  * own. `all` is every agent of the scope's devices, for the descendants.
  */
-export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[]): RequestRow[] {
-  const inScope = new Set(agents.map((value) => value.agent.pane_id));
+export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[], scope: AgentScope): RequestRow[] {
   const byPane = new Map(all.map((agent) => [agent.pane_id, agent]));
-  const rows: RequestRow[] = [];
-  for (const lens of agents) {
-    const { agent } = lens;
-    if (agent.delegated && agent.lineage_parent_pane_id && inScope.has(agent.lineage_parent_pane_id)) continue;
-    // Deepest first from the core; the expanded row reads nearest first.
-    const children = (agent.close_descendant_pane_ids ?? [])
-      .map((pane) => byPane.get(pane))
-      .filter((child): child is AgentRow => child !== undefined)
-      .reverse();
-    rows.push({ lens, verb: verbOf(agent), children });
-  }
-  return rows;
+  return scope.requests.rows.map((row) => {
+    const lens = agents[row.member];
+    if (!lens) throw new Error("Request scope references a missing member");
+    const children = row.children.map((id) => {
+      const child = byPane.get(id);
+      if (!child) throw new Error(`Request scope references a missing descendant: ${id}`);
+      return child;
+    });
+    return { lens, verb: lens.agent.state.verb, children };
+  });
 }
 
 /**
@@ -72,14 +64,12 @@ export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow
  * puts the row that has waited longest first (D-40); the others put the most
  * recent activity first.
  */
-export function requestGroups(rows: readonly RequestRow[]): RequestGroup[] {
-  const since = (row: RequestRow) => row.lens.agent.request?.verb_since_unix_ms ?? Number.MAX_SAFE_INTEGER;
-  const activity = (row: RequestRow) => row.lens.agent.last_activity ?? "";
-  return VERB_ORDER.map((verb) => {
-    const members = rows.filter((row) => row.verb === verb);
-    members.sort(TODO_VERBS.includes(verb) ? (a, b) => since(a) - since(b) : (a, b) => activity(b).localeCompare(activity(a)));
-    return { verb, rows: members };
-  }).filter((group) => group.rows.length > 0);
+export function requestGroups(rows: readonly RequestRow[], scope: AgentScope): RequestGroup[] {
+  return scope.requests.groups.map((group) => ({ verb: group.verb, rows: group.rows.map((index) => {
+    const row = rows[index];
+    if (!row) throw new Error("Request group references a missing row");
+    return row;
+  }) }));
 }
 
 /** When a row's time counts from: the verb's start in a to-do group, else the last activity (D-40, B50). */
@@ -92,11 +82,11 @@ export function rowSince(row: RequestRow): number | null {
  * number, the ones to answer as the yellow badge, and a bar of the to-do
  * verbs. Zero is drawn as zero; a device that has not answered has no count.
  */
-export function requestsTile(rows: readonly RequestRow[], availability: DeviceAvailability, t: TFunction<"translation">): Tile {
+export function requestsTile(scope: AgentScope, availability: DeviceAvailability, t: TFunction<"translation">): Tile {
   const known = availability.state === "ready";
-  const count = (verb: RequestVerb) => rows.filter((row) => row.verb === verb).length;
-  const todo = TODO_VERBS.reduce((sum, verb) => sum + count(verb), 0);
-  const answer = count("answer");
+  const count = (verb: RequestVerb) => scope.requests.counts[verb];
+  const todo = scope.requests.todo;
+  const answer = scope.requests.answer;
   return {
     id: "requests",
     label: t("requests.title"),

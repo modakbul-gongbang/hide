@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Agents graph (PRD agents-graph-view): columns, bands, rows, folds,
 // filters and the lines' routes. The expected answers are the PRD's
@@ -25,7 +26,7 @@ import {
   type GraphGeometry,
   type ProjectGraph,
 } from "./agentGraph";
-import { scopeAgents } from "./overviewLens";
+import { scopeAgents } from "../test/legacyAgentScope";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
@@ -52,7 +53,7 @@ type CheckoutOptions = { primary?: boolean; tabs?: string[][]; merged?: boolean;
 function checkout(id: string, options: CheckoutOptions = {}): Checkout {
   const primary = options.primary ?? false;
   const tabs = options.tabs ?? [];
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: "project",
     label: id,
@@ -77,7 +78,7 @@ function checkout(id: string, options: CheckoutOptions = {}): Checkout {
 }
 
 function workspace(checkouts: Checkout[], id = "project", tasks: Task[] = []): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id,
     label: id,
     path: `/fixture/${id}`,

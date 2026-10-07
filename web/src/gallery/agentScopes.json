@@ -1,0 +1,1649 @@
+{
+  "presets": [
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "tn1",
+        "a1",
+        "a1c1",
+        "a1c2",
+        "a2",
+        "a2c1",
+        "a2c2",
+        "a3",
+        "q1",
+        "q2",
+        "e1"
+      ],
+      "total": 11,
+      "overview_total": 11,
+      "roots": [
+        "tn1",
+        "a1",
+        "a2",
+        "a3",
+        "q1",
+        "q2",
+        "e1"
+      ],
+      "groups": {
+        "needs_you": 2,
+        "done": 1,
+        "working": 6,
+        "seen": 2
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "tn1",
+          "project_id": "team-notes",
+          "checkout_id": "team-notes:folder"
+        },
+        {
+          "pane_id": "a1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a1c1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:inactive-0"
+        },
+        {
+          "pane_id": "a1c2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2c1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2c2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a3",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "q1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:155"
+        },
+        {
+          "pane_id": "q2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:154"
+        },
+        {
+          "pane_id": "e1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:electron"
+        }
+      ],
+      "buckets": {
+        "turn": 3,
+        "working": 5,
+        "delegating": 1,
+        "resting": 2
+      },
+      "turns": {
+        "question": 2,
+        "approval": 0,
+        "error": 0,
+        "done": 1
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          },
+          {
+            "member": 1,
+            "children": []
+          },
+          {
+            "member": 4,
+            "children": []
+          },
+          {
+            "member": 7,
+            "children": []
+          },
+          {
+            "member": 8,
+            "children": []
+          },
+          {
+            "member": 9,
+            "children": []
+          },
+          {
+            "member": 10,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "working",
+            "rows": [
+              1,
+              2,
+              6
+            ]
+          },
+          {
+            "verb": "idle",
+            "rows": [
+              0,
+              3,
+              4,
+              5
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 3,
+          "waiting": 0,
+          "idle": 4
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "tn1"
+      ],
+      "total": 1,
+      "overview_total": 1,
+      "roots": [
+        "tn1"
+      ],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 1
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "tn1",
+          "project_id": "team-notes",
+          "checkout_id": "team-notes:folder"
+        }
+      ],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 1
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "idle",
+            "rows": [
+              0
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 1
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "a1",
+        "a1c1",
+        "a1c2",
+        "a2",
+        "a2c1",
+        "a2c2",
+        "a3",
+        "q1",
+        "q2",
+        "e1"
+      ],
+      "total": 10,
+      "overview_total": 10,
+      "roots": [
+        "a1",
+        "a2",
+        "a3",
+        "q1",
+        "q2",
+        "e1"
+      ],
+      "groups": {
+        "needs_you": 2,
+        "done": 1,
+        "working": 6,
+        "seen": 1
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 3,
+        "working": 5,
+        "done": 1,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "a1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a1c1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:inactive-0"
+        },
+        {
+          "pane_id": "a1c2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2c1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2c2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a3",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "q1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:155"
+        },
+        {
+          "pane_id": "q2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:154"
+        },
+        {
+          "pane_id": "e1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:electron"
+        }
+      ],
+      "buckets": {
+        "turn": 3,
+        "working": 5,
+        "delegating": 1,
+        "resting": 1
+      },
+      "turns": {
+        "question": 2,
+        "approval": 0,
+        "error": 0,
+        "done": 1
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          },
+          {
+            "member": 3,
+            "children": []
+          },
+          {
+            "member": 6,
+            "children": []
+          },
+          {
+            "member": 7,
+            "children": []
+          },
+          {
+            "member": 8,
+            "children": []
+          },
+          {
+            "member": 9,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "working",
+            "rows": [
+              0,
+              1,
+              5
+            ]
+          },
+          {
+            "verb": "idle",
+            "rows": [
+              2,
+              3,
+              4
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 3,
+          "waiting": 0,
+          "idle": 3
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 2,
+        "working": 3,
+        "done": 0,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 1,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 1,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 1,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 1,
+        "done": 1,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "tn1",
+        "a1",
+        "a1c1",
+        "a1c2",
+        "a2",
+        "a2c1",
+        "a2c2",
+        "a3",
+        "q1",
+        "q2",
+        "e1",
+        "h1",
+        "h2"
+      ],
+      "total": 13,
+      "overview_total": 11,
+      "roots": [
+        "tn1",
+        "a1",
+        "a2",
+        "a3",
+        "q1",
+        "q2",
+        "e1",
+        "h1",
+        "h2"
+      ],
+      "groups": {
+        "needs_you": 3,
+        "done": 1,
+        "working": 6,
+        "seen": 3
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "tn1",
+          "project_id": "team-notes",
+          "checkout_id": "team-notes:folder"
+        },
+        {
+          "pane_id": "a1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a1c1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:inactive-0"
+        },
+        {
+          "pane_id": "a1c2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2c1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a2c2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "a3",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:main"
+        },
+        {
+          "pane_id": "q1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:155"
+        },
+        {
+          "pane_id": "q2",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:154"
+        },
+        {
+          "pane_id": "e1",
+          "project_id": "herdr-ide",
+          "checkout_id": "herdr-ide:electron"
+        }
+      ],
+      "buckets": {
+        "turn": 3,
+        "working": 5,
+        "delegating": 1,
+        "resting": 2
+      },
+      "turns": {
+        "question": 2,
+        "approval": 0,
+        "error": 0,
+        "done": 1
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          },
+          {
+            "member": 1,
+            "children": []
+          },
+          {
+            "member": 4,
+            "children": []
+          },
+          {
+            "member": 7,
+            "children": []
+          },
+          {
+            "member": 8,
+            "children": []
+          },
+          {
+            "member": 9,
+            "children": []
+          },
+          {
+            "member": 10,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "working",
+            "rows": [
+              1,
+              2,
+              6
+            ]
+          },
+          {
+            "verb": "idle",
+            "rows": [
+              0,
+              3,
+              4,
+              5
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 3,
+          "waiting": 0,
+          "idle": 4
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "remote:mini:pane:1",
+        "remote:mini:pane:2"
+      ],
+      "total": 2,
+      "overview_total": 2,
+      "roots": [
+        "remote:mini:pane:1",
+        "remote:mini:pane:2"
+      ],
+      "groups": {
+        "needs_you": 1,
+        "done": 0,
+        "working": 1,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "remote:mini:pane:1",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:pane:2",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        }
+      ],
+      "buckets": {
+        "turn": 1,
+        "working": 1,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 1,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          },
+          {
+            "member": 1,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "working",
+            "rows": [
+              1
+            ]
+          },
+          {
+            "verb": "idle",
+            "rows": [
+              0
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 1,
+          "waiting": 0,
+          "idle": 1
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "h1",
+        "h2"
+      ],
+      "total": 2,
+      "overview_total": 2,
+      "roots": [
+        "h1",
+        "h2"
+      ],
+      "groups": {
+        "needs_you": 1,
+        "done": 0,
+        "working": 0,
+        "seen": 1
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 1,
+        "working": 0,
+        "done": 0,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "h1",
+          "project_id": "home",
+          "checkout_id": "home:folder"
+        },
+        {
+          "pane_id": "h2",
+          "project_id": "home",
+          "checkout_id": "home:folder"
+        }
+      ],
+      "buckets": {
+        "turn": 1,
+        "working": 0,
+        "delegating": 0,
+        "resting": 1
+      },
+      "turns": {
+        "question": 1,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          },
+          {
+            "member": 1,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "idle",
+            "rows": [
+              0,
+              1
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 2
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [],
+      "total": 0,
+      "overview_total": 0,
+      "roots": [],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 1,
+        "working": 0,
+        "done": 0,
+        "idle": 1
+      },
+      "sections": [],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    {
+      "pane_ids": [
+        "remote:mini:pane:1",
+        "remote:mini:pane:2",
+        "remote:mini:busy:0",
+        "remote:mini:busy:1",
+        "remote:mini:busy:2",
+        "remote:mini:busy:3",
+        "remote:mini:busy:4",
+        "remote:mini:busy:5",
+        "remote:mini:busy:6",
+        "remote:mini:busy:7",
+        "remote:mini:busy:8",
+        "remote:mini:busy:9",
+        "remote:mini:busy:10",
+        "remote:mini:done:1",
+        "remote:mini:working:2"
+      ],
+      "total": 15,
+      "overview_total": 15,
+      "roots": [
+        "remote:mini:pane:1",
+        "remote:mini:pane:2",
+        "remote:mini:busy:0",
+        "remote:mini:busy:1",
+        "remote:mini:busy:2",
+        "remote:mini:busy:3",
+        "remote:mini:busy:4",
+        "remote:mini:busy:5",
+        "remote:mini:busy:6",
+        "remote:mini:busy:7",
+        "remote:mini:busy:8",
+        "remote:mini:busy:9",
+        "remote:mini:busy:10",
+        "remote:mini:done:1",
+        "remote:mini:working:2"
+      ],
+      "groups": {
+        "needs_you": 12,
+        "done": 1,
+        "working": 2,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [],
+      "members": [
+        {
+          "pane_id": "remote:mini:pane:1",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:pane:2",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:0",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:1",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:2",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:3",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:4",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:5",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:6",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:7",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:8",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:9",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:busy:10",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:done:1",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        },
+        {
+          "pane_id": "remote:mini:working:2",
+          "project_id": "remote:mini:workspace:web",
+          "checkout_id": "remote:mini:workspace:web:main"
+        }
+      ],
+      "buckets": {
+        "turn": 13,
+        "working": 2,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 12,
+        "approval": 0,
+        "error": 0,
+        "done": 1
+      },
+      "requests": {
+        "rows": [
+          {
+            "member": 0,
+            "children": []
+          },
+          {
+            "member": 1,
+            "children": []
+          },
+          {
+            "member": 2,
+            "children": []
+          },
+          {
+            "member": 3,
+            "children": []
+          },
+          {
+            "member": 4,
+            "children": []
+          },
+          {
+            "member": 5,
+            "children": []
+          },
+          {
+            "member": 6,
+            "children": []
+          },
+          {
+            "member": 7,
+            "children": []
+          },
+          {
+            "member": 8,
+            "children": []
+          },
+          {
+            "member": 9,
+            "children": []
+          },
+          {
+            "member": 10,
+            "children": []
+          },
+          {
+            "member": 11,
+            "children": []
+          },
+          {
+            "member": 12,
+            "children": []
+          },
+          {
+            "member": 13,
+            "children": []
+          },
+          {
+            "member": 14,
+            "children": []
+          }
+        ],
+        "groups": [
+          {
+            "verb": "working",
+            "rows": [
+              1,
+              14
+            ]
+          },
+          {
+            "verb": "idle",
+            "rows": [
+              0,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        ],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 2,
+          "waiting": 0,
+          "idle": 13
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    }
+  ],
+  "snapshots": {
+    "reference:one": {
+      "device:local": 1,
+      "project:local:team-notes": 2,
+      "checkout:local:team-notes:folder": 3,
+      "project:local:herdr-ide": 4,
+      "checkout:local:herdr-ide:main": 5,
+      "checkout:local:herdr-ide:155": 6,
+      "checkout:local:herdr-ide:154": 7,
+      "checkout:local:herdr-ide:electron": 8,
+      "checkout:local:herdr-ide:ux": 0,
+      "checkout:local:herdr-ide:fix": 0,
+      "checkout:local:herdr-ide:legacy": 0,
+      "checkout:local:herdr-ide:inactive-0": 8,
+      "checkout:local:herdr-ide:inactive-1": 0,
+      "checkout:local:herdr-ide:inactive-2": 0,
+      "checkout:local:herdr-ide:inactive-3": 0,
+      "checkout:local:herdr-ide:inactive-4": 0,
+      "checkout:local:herdr-ide:inactive-5": 0,
+      "checkout:local:herdr-ide:inactive-6": 0,
+      "checkout:local:herdr-ide:inactive-7": 0,
+      "checkout:local:herdr-ide:inactive-8": 0,
+      "checkout:local:herdr-ide:inactive-9": 0,
+      "checkout:local:herdr-ide:inactive-10": 0,
+      "checkout:local:herdr-ide:inactive-11": 0,
+      "checkout:local:herdr-ide:inactive-12": 0,
+      "checkout:local:herdr-ide:inactive-13": 0,
+      "project:local:sasu": 9,
+      "checkout:local:sasu:main": 9,
+      "project:local:old-prototype": 0,
+      "checkout:local:old-prototype:main": 0,
+      "project:local:dotfiles": 0,
+      "checkout:local:dotfiles:main": 0,
+      "project:local:research-notes": 0,
+      "checkout:local:research-notes:main": 0
+    },
+    "reference:two": {
+      "device:local": 10,
+      "device:mini": 11,
+      "device:build-box": 0,
+      "project:local:team-notes": 2,
+      "checkout:local:team-notes:folder": 3,
+      "project:local:herdr-ide": 4,
+      "checkout:local:herdr-ide:main": 5,
+      "checkout:local:herdr-ide:155": 6,
+      "checkout:local:herdr-ide:154": 7,
+      "checkout:local:herdr-ide:electron": 8,
+      "checkout:local:herdr-ide:ux": 0,
+      "checkout:local:herdr-ide:fix": 0,
+      "checkout:local:herdr-ide:legacy": 0,
+      "checkout:local:herdr-ide:inactive-0": 8,
+      "checkout:local:herdr-ide:inactive-1": 0,
+      "checkout:local:herdr-ide:inactive-2": 0,
+      "checkout:local:herdr-ide:inactive-3": 0,
+      "checkout:local:herdr-ide:inactive-4": 0,
+      "checkout:local:herdr-ide:inactive-5": 0,
+      "checkout:local:herdr-ide:inactive-6": 0,
+      "checkout:local:herdr-ide:inactive-7": 0,
+      "checkout:local:herdr-ide:inactive-8": 0,
+      "checkout:local:herdr-ide:inactive-9": 0,
+      "checkout:local:herdr-ide:inactive-10": 0,
+      "checkout:local:herdr-ide:inactive-11": 0,
+      "checkout:local:herdr-ide:inactive-12": 0,
+      "checkout:local:herdr-ide:inactive-13": 0,
+      "project:local:sasu": 9,
+      "checkout:local:sasu:main": 9,
+      "project:local:old-prototype": 0,
+      "checkout:local:old-prototype:main": 0,
+      "project:local:dotfiles": 0,
+      "checkout:local:dotfiles:main": 0,
+      "project:local:research-notes": 0,
+      "checkout:local:research-notes:main": 0,
+      "project:local:home": 12,
+      "checkout:local:home:folder": 13,
+      "project:mini:remote:mini:workspace:web": 11,
+      "checkout:mini:remote:mini:workspace:web:main": 0,
+      "project:mini:remote:mini:workspace:home": 0,
+      "checkout:mini:remote:mini:workspace:home:main": 0
+    },
+    "reference:busy": {
+      "device:local": 10,
+      "device:mini": 14,
+      "device:build-box": 0,
+      "project:local:team-notes": 2,
+      "checkout:local:team-notes:folder": 3,
+      "project:local:herdr-ide": 4,
+      "checkout:local:herdr-ide:main": 5,
+      "checkout:local:herdr-ide:155": 6,
+      "checkout:local:herdr-ide:154": 7,
+      "checkout:local:herdr-ide:electron": 8,
+      "checkout:local:herdr-ide:ux": 0,
+      "checkout:local:herdr-ide:fix": 0,
+      "checkout:local:herdr-ide:legacy": 0,
+      "checkout:local:herdr-ide:inactive-0": 8,
+      "checkout:local:herdr-ide:inactive-1": 0,
+      "checkout:local:herdr-ide:inactive-2": 0,
+      "checkout:local:herdr-ide:inactive-3": 0,
+      "checkout:local:herdr-ide:inactive-4": 0,
+      "checkout:local:herdr-ide:inactive-5": 0,
+      "checkout:local:herdr-ide:inactive-6": 0,
+      "checkout:local:herdr-ide:inactive-7": 0,
+      "checkout:local:herdr-ide:inactive-8": 0,
+      "checkout:local:herdr-ide:inactive-9": 0,
+      "checkout:local:herdr-ide:inactive-10": 0,
+      "checkout:local:herdr-ide:inactive-11": 0,
+      "checkout:local:herdr-ide:inactive-12": 0,
+      "checkout:local:herdr-ide:inactive-13": 0,
+      "project:local:sasu": 9,
+      "checkout:local:sasu:main": 9,
+      "project:local:old-prototype": 0,
+      "checkout:local:old-prototype:main": 0,
+      "project:local:dotfiles": 0,
+      "checkout:local:dotfiles:main": 0,
+      "project:local:research-notes": 0,
+      "checkout:local:research-notes:main": 0,
+      "project:local:home": 12,
+      "checkout:local:home:folder": 13,
+      "project:mini:remote:mini:workspace:web": 14,
+      "checkout:mini:remote:mini:workspace:web:main": 0,
+      "project:mini:remote:mini:workspace:home": 0,
+      "checkout:mini:remote:mini:workspace:home:main": 0
+    },
+    "long:one": {
+      "device:local": 1,
+      "project:local:team-notes": 2,
+      "checkout:local:team-notes:folder": 3,
+      "project:local:herdr-ide": 4,
+      "checkout:local:herdr-ide:main": 5,
+      "checkout:local:herdr-ide:155": 6,
+      "checkout:local:herdr-ide:154": 7,
+      "checkout:local:herdr-ide:electron": 8,
+      "checkout:local:herdr-ide:ux": 0,
+      "checkout:local:herdr-ide:fix": 0,
+      "checkout:local:herdr-ide:legacy": 0,
+      "checkout:local:herdr-ide:inactive-0": 8,
+      "checkout:local:herdr-ide:inactive-1": 0,
+      "checkout:local:herdr-ide:inactive-2": 0,
+      "checkout:local:herdr-ide:inactive-3": 0,
+      "checkout:local:herdr-ide:inactive-4": 0,
+      "checkout:local:herdr-ide:inactive-5": 0,
+      "checkout:local:herdr-ide:inactive-6": 0,
+      "checkout:local:herdr-ide:inactive-7": 0,
+      "checkout:local:herdr-ide:inactive-8": 0,
+      "checkout:local:herdr-ide:inactive-9": 0,
+      "checkout:local:herdr-ide:inactive-10": 0,
+      "checkout:local:herdr-ide:inactive-11": 0,
+      "checkout:local:herdr-ide:inactive-12": 0,
+      "checkout:local:herdr-ide:inactive-13": 0,
+      "project:local:sasu": 9,
+      "checkout:local:sasu:main": 9,
+      "project:local:old-prototype": 0,
+      "checkout:local:old-prototype:main": 0,
+      "project:local:dotfiles": 0,
+      "checkout:local:dotfiles:main": 0,
+      "project:local:research-notes": 0,
+      "checkout:local:research-notes:main": 0
+    },
+    "long:two": {
+      "device:local": 10,
+      "device:mini": 11,
+      "device:build-box": 0,
+      "project:local:team-notes": 2,
+      "checkout:local:team-notes:folder": 3,
+      "project:local:herdr-ide": 4,
+      "checkout:local:herdr-ide:main": 5,
+      "checkout:local:herdr-ide:155": 6,
+      "checkout:local:herdr-ide:154": 7,
+      "checkout:local:herdr-ide:electron": 8,
+      "checkout:local:herdr-ide:ux": 0,
+      "checkout:local:herdr-ide:fix": 0,
+      "checkout:local:herdr-ide:legacy": 0,
+      "checkout:local:herdr-ide:inactive-0": 8,
+      "checkout:local:herdr-ide:inactive-1": 0,
+      "checkout:local:herdr-ide:inactive-2": 0,
+      "checkout:local:herdr-ide:inactive-3": 0,
+      "checkout:local:herdr-ide:inactive-4": 0,
+      "checkout:local:herdr-ide:inactive-5": 0,
+      "checkout:local:herdr-ide:inactive-6": 0,
+      "checkout:local:herdr-ide:inactive-7": 0,
+      "checkout:local:herdr-ide:inactive-8": 0,
+      "checkout:local:herdr-ide:inactive-9": 0,
+      "checkout:local:herdr-ide:inactive-10": 0,
+      "checkout:local:herdr-ide:inactive-11": 0,
+      "checkout:local:herdr-ide:inactive-12": 0,
+      "checkout:local:herdr-ide:inactive-13": 0,
+      "project:local:sasu": 9,
+      "checkout:local:sasu:main": 9,
+      "project:local:old-prototype": 0,
+      "checkout:local:old-prototype:main": 0,
+      "project:local:dotfiles": 0,
+      "checkout:local:dotfiles:main": 0,
+      "project:local:research-notes": 0,
+      "checkout:local:research-notes:main": 0,
+      "project:local:home": 12,
+      "checkout:local:home:folder": 13,
+      "project:mini:remote:mini:workspace:web": 11,
+      "checkout:mini:remote:mini:workspace:web:main": 0,
+      "project:mini:remote:mini:workspace:home": 0,
+      "checkout:mini:remote:mini:workspace:home:main": 0
+    },
+    "long:busy": {
+      "device:local": 10,
+      "device:mini": 14,
+      "device:build-box": 0,
+      "project:local:team-notes": 2,
+      "checkout:local:team-notes:folder": 3,
+      "project:local:herdr-ide": 4,
+      "checkout:local:herdr-ide:main": 5,
+      "checkout:local:herdr-ide:155": 6,
+      "checkout:local:herdr-ide:154": 7,
+      "checkout:local:herdr-ide:electron": 8,
+      "checkout:local:herdr-ide:ux": 0,
+      "checkout:local:herdr-ide:fix": 0,
+      "checkout:local:herdr-ide:legacy": 0,
+      "checkout:local:herdr-ide:inactive-0": 8,
+      "checkout:local:herdr-ide:inactive-1": 0,
+      "checkout:local:herdr-ide:inactive-2": 0,
+      "checkout:local:herdr-ide:inactive-3": 0,
+      "checkout:local:herdr-ide:inactive-4": 0,
+      "checkout:local:herdr-ide:inactive-5": 0,
+      "checkout:local:herdr-ide:inactive-6": 0,
+      "checkout:local:herdr-ide:inactive-7": 0,
+      "checkout:local:herdr-ide:inactive-8": 0,
+      "checkout:local:herdr-ide:inactive-9": 0,
+      "checkout:local:herdr-ide:inactive-10": 0,
+      "checkout:local:herdr-ide:inactive-11": 0,
+      "checkout:local:herdr-ide:inactive-12": 0,
+      "checkout:local:herdr-ide:inactive-13": 0,
+      "project:local:sasu": 9,
+      "checkout:local:sasu:main": 9,
+      "project:local:old-prototype": 0,
+      "checkout:local:old-prototype:main": 0,
+      "project:local:dotfiles": 0,
+      "checkout:local:dotfiles:main": 0,
+      "project:local:research-notes": 0,
+      "checkout:local:research-notes:main": 0,
+      "project:local:home": 12,
+      "checkout:local:home:folder": 13,
+      "project:mini:remote:mini:workspace:web": 14,
+      "checkout:mini:remote:mini:workspace:web:main": 0,
+      "project:mini:remote:mini:workspace:home": 0,
+      "checkout:mini:remote:mini:workspace:home:main": 0
+    }
+  }
+}

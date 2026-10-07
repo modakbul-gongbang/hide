@@ -256,6 +256,9 @@ Ownership is the fifth derived status axis and it is read off the lineage, never
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; instead it is a signal in every ancestor's read fingerprint, so the ancestor turns unread and its badge reports the count, while the ancestor's own group stays whatever its own axes say.
 The lineage is therefore built before the read axis is applied on every ingest, and there is no clock, timer or second store for it.
 The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifecycle, completion, ownership and read state, `turn.rs` derives groups, request verbs and runtime action gates, `work.rs` associates PRs and issues and assigns each duty, and `tally.rs` owns marks, representative ranks and scope counts.
+The `agent_scope` projection carries physical totals, Overview membership and request membership as separate values because their existing screen rules differ.
+`agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
+Catalog rebuilding restores cached scope fields before equality checks so an unchanged source does not create a publication merely by constructing new project objects.
 `sidebar.rs` retains payload and snapshot assembly, `request_view.rs` retains request block assembly and timestamp persistence, and `pet.rs` selects a pose from the local summary.
 These functions operate on the facts already projected by the core, including remote rows; they introduce no reader, timer, worker or I/O under the runtime lock.
 The existing `sidebar::tests`, `request_view::tests`, `pet::tests` and `runtime::tests::lineage` exercise these shared rules through their original projection callers.

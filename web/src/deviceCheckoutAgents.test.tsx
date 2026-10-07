@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
@@ -28,11 +29,11 @@ function project(device: string): { workspace: Workspace; agent: AgentRow; check
   const scope = device === "local" ? "" : `remote:${device}:`;
   const checkoutId = `${scope}checkout:w3Y`;
   const paneId = `${scope}pane:w3Y:p7`;
-  const workspace = {
+  const workspace = { agent_scope: emptyScope(),
     id: `${scope}workspace:w3Y`, label: "modakbul", path: "/fixture/modakbul", device_id: device, is_git: true, registered: true,
     temporary: false, pinned: false, remote_target_id: device === "local" ? null : device,
     inactive_checkouts: { expanded: false, checkout_ids: [] },
-    checkouts: [{
+    checkouts: [{ agent_scope: emptyScope(),
       id: checkoutId, workspace_id: `${scope}workspace:w3Y`, label: "modakbul", path: "/fixture/modakbul", branch: "main",
       is_primary: true, is_worktree: false, exists: true, active_tab_id: `${scope}tab:w3Y:t7`, strip: [],
       worktree: { branch: "main", head_sha: null, last_commit_unix_seconds: null },

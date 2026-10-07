@@ -1,3 +1,5 @@
+import { emptyScope } from "../test/legacyAgentScope";
+import { requestRows, requestGroups, requestsTile } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The request view's rules (PRD overview-request-view): which rows it draws
 // and in what order, the Requests tile, the one-line request (D-42), and the
@@ -7,22 +9,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { LensAgent } from "./overviewLens";
-import {
-  childrenSummary,
-  fullRequest,
-  openCandidates,
-  pullRequestChip,
-  requestGroups,
-  requestLine,
-  requestRows,
-  requestsTile,
-  senderWords,
-  resultLine,
-  rowIssues,
-  rowIssueChips,
-  splitTail,
-  verdictLine,
-} from "./requestList";
+import { childrenSummary, fullRequest, openCandidates, pullRequestChip, requestLine, senderWords, resultLine, rowIssues, rowIssueChips, splitTail, verdictLine,  } from "./requestList";
 import type { AgentPullRequest, AgentRequest, AgentRow, Checkout, RequestVerb, Task, Workspace } from "./snapshot";
 
 const NOW = new Date(2026, 9, 3, 15, 0, 0).getTime();
@@ -30,7 +17,7 @@ const NOW = new Date(2026, 9, 3, 15, 0, 0).getTime();
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
-const PROJECT = {
+const PROJECT = { agent_scope: emptyScope(),
   id: "project",
   label: "Project",
   path: "/fixture",

@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28): four stages from Git, a card per issue and per worktree, the
@@ -21,7 +22,7 @@ function pr(badge: PullRequest["badge"], checks: PullRequest["checks"] = "unknow
 /** `merged` is work that landed (Git and the link record agree); `inBase` is only Git finding HEAD in the base, as a checkout with no commits of its own does. */
 function checkout(id: string, options: { changed?: number; ahead?: number; pr?: PullRequest; worktree?: boolean; panes?: string[]; merged?: boolean; inBase?: boolean; task?: string; closes?: string[]; behind?: number } = {}): Checkout {
   const worktree = options.worktree ?? true;
-  return {
+  return { agent_scope: emptyScope(),
     id,
     workspace_id: "project",
     label: id,
@@ -52,7 +53,7 @@ function task(number: number, open = true, title = `Task ${number}`): Task {
 
 function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task[] | null; failure?: string; id?: string; remote?: string } = {}): Workspace {
   const connected = options.tasks !== null;
-  return {
+  return { agent_scope: emptyScope(),
     ...(options.remote ? { remote_target_id: options.remote } : {}),
     id: options.id ?? "project",
     label: options.id ?? "Project",

@@ -6,7 +6,7 @@
 // that is not connected has no count, since what it last reported is not current.
 
 import type { TFunction } from "i18next";
-import { groupCounts } from "./navigation";
+import { deviceScope } from "./agentScope";
 import { localDeviceId, type AgentRow, type Device, type SnapshotRest, type Workspace } from "./snapshot";
 
 /** The rail is shown unless the operator hid it; the choice is the core's `ui_state.device_rail_visible`. */
@@ -49,9 +49,9 @@ export type BadgeState = (typeof BADGE_STATES)[number]["state"];
  */
 export type TileCounts = { needs_you: number; done: number };
 
-export function tileCounts(rest: SnapshotRest | null, localAgents: AgentRow[], deviceId: string): TileCounts {
-  const counts = groupCounts(deviceAgents(rest, localAgents, deviceId));
-  return { needs_you: counts.needs_you, done: counts.done };
+export function tileCounts(rest: SnapshotRest | null, _localAgents: AgentRow[], deviceId: string): TileCounts {
+  const counts = deviceScope(rest, deviceId)?.groups;
+  return { needs_you: counts?.needs_you ?? 0, done: counts?.done ?? 0 };
 }
 
 /** The number the Needs You pill draws: the count, or `9+` from ten. */

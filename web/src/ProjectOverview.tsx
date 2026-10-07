@@ -63,13 +63,13 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const now = Date.now();
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
-  const rows = useMemo(() => requestRows(lensAgents, deviceAgents ?? []), [lensAgents, deviceAgents]);
+  const rows = useMemo(() => workspace ? requestRows(lensAgents, deviceAgents ?? [], workspace.agent_scope) : [], [lensAgents, deviceAgents, workspace]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
   const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
   const tiles = useMemo(
     () =>
       tasks && workspace && found && pullRequests
-        ? [agentsTile(lensAgents, found.availability, t), requestsTile(rows, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
+        ? [agentsTile(workspace.agent_scope, found.availability, t), requestsTile(workspace.agent_scope, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
         : [],
     [tasks, workspace, found, rows, lensAgents, sessions, pullRequests, t, i18n.language],
   );
@@ -178,7 +178,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
         <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} actions={actions} now={now} />
       ) : view === "requests" ? (
         availability.state === "ready" ? (
-          <RequestView rows={rows} scope="project" lens={lens.requests} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
+          <RequestView agentScope={workspace!.agent_scope} rows={rows} scope="project" lens={lens.requests} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
         ) : (
           <div className="flex-1" data-requests-unavailable={availability.state} />
         )

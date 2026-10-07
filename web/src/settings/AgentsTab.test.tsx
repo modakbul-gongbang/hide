@@ -1,3 +1,4 @@
+import { emptyScope } from "../../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -55,7 +56,7 @@ const SEVEN = [
 ];
 
 const kit = (agents: KitAgent[], over: Partial<Kit> = {}): Kit => ({ unavailable: null, busy: false, components: [], agents, offers_reinstall: false, shares_account_with: null, ...over });
-const device = (id: string, over: Partial<Device> = {}): Device => ({ id, label: id === "local" ? "mini" : "Studio", kind: id === "local" ? "local" : "remote", state: id === "local" ? "local" : "ready", message: null, ssh_alias: id === "local" ? null : id, agent_count: 0, test: null, kit: kit(SEVEN), ...over });
+const device = (id: string, over: Partial<Device> = {}): Device => ({ agent_scope: emptyScope(), id, label: id === "local" ? "mini" : "Studio", kind: id === "local" ? "local" : "remote", state: id === "local" ? "local" : "ready", message: null, ssh_alias: id === "local" ? null : id, agent_count: 0, test: null, kit: kit(SEVEN), ...over });
 
 const state = (devices: Device[]) => ({
   connection: "live" as const,

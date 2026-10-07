@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -31,13 +32,13 @@ function row(): WorktreeRow {
   };
 }
 function catalog(worktree: WorktreeRow): SnapshotRest {
-  const checkout: Checkout = {
+  const checkout: Checkout = { agent_scope: emptyScope(),
     id: "checkout:task", workspace_id: "project:example", label: "task", path: worktree.path,
     branch: worktree.branch, purpose: null, is_worktree: true, exists: true, has_panes: false,
     pull_request: null, active_tab_id: null, strip: [], next_tab_label: "1", tabs: [], worktree,
   };
   return {
-    navigator: { workspaces: [{
+    navigator: { workspaces: [{ agent_scope: emptyScope(),
       id: "project:example", label: "Example", path: "/projects/example", device_id: "local",
       registered: true, temporary: false, pinned: false, checkouts: [checkout],
       inactive_checkouts: { expanded: false, checkout_ids: [] },

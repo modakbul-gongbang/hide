@@ -8,6 +8,8 @@ mod agent_areas;
 mod agent_connection;
 #[path = "tests/agent_features.rs"]
 mod agent_features;
+#[path = "tests/agent_scopes.rs"]
+mod agent_scopes;
 #[path = "tests/agent_sleep.rs"]
 mod agent_sleep;
 #[path = "tests/agents_settings_remote.rs"]
@@ -126,6 +128,7 @@ fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
         cross_repository: false,
     };
     CheckoutSnapshot {
+        agent_scope: Default::default(),
         id: "checkout-feature".to_owned(),
         workspace_id: "workspace-1".to_owned(),
         label: "feature".to_owned(),
@@ -653,6 +656,7 @@ fn checkout(
     pane: Option<PaneSnapshot>,
 ) -> CheckoutSnapshot {
     CheckoutSnapshot {
+        agent_scope: Default::default(),
         next_tab_label: crate::model::next_tab_label(std::iter::empty()),
         id: checkout_id.to_owned(),
         workspace_id: workspace_id.to_owned(),
@@ -680,6 +684,7 @@ fn workspace(
     checkouts: Vec<CheckoutSnapshot>,
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
+        agent_scope: Default::default(),
         home_issues: Default::default(),
         pull_requests: Vec::new(),
         tasks: Default::default(),

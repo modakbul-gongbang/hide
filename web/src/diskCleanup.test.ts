@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 // The disk cleanup sheet's rules (PRD disk-layers): the selection math, the
 // filters, the folded row, the footer and the entrance numbers, read against
 // small fixtures. Expected answers are the PRD's Behaviors (B2, B4, B10-B16, B22).
@@ -65,7 +66,7 @@ function checkout(name: string, options: Options = {}): Checkout {
     : options.unavailable
       ? { total_bytes: null, unavailable_reason: "limit" }
       : { total_bytes: total, unavailable_reason: null, layers: layers(build, deps, options.other ?? 0) };
-  return {
+  return { agent_scope: emptyScope(),
     id: name,
     workspace_id: "p",
     label: name,
@@ -110,7 +111,7 @@ function workspace(checkouts: Checkout[], cleanup: Partial<DiskCleanup> | null, 
         rows: checkouts.map((c) => core(c.path, { is_main: c.worktree?.is_main ?? false, exclusion_code: c.worktree?.is_main ? "main" : null, in_use: (c.agent_summary?.working ?? 0) > 0 ? { code: "agent_working", name: null, port: null } : null, ...rows[c.label] })),
       }
     : null;
-  return { id, label: id, path: "/r", device_id: "local", is_git: true, registered: true, temporary: false, pinned: false, checkouts, inactive_checkouts: { expanded: false, checkout_ids: [] }, cleanup: review } as Workspace;
+  return { agent_scope: emptyScope(), id, label: id, path: "/r", device_id: "local", is_git: true, registered: true, temporary: false, pinned: false, checkouts, inactive_checkouts: { expanded: false, checkout_ids: [] }, cleanup: review } as Workspace;
 }
 
 function ready(checkouts: Checkout[], rows: Record<string, Partial<CleanupRow>> = {}): SheetRow[] {

@@ -585,3 +585,12 @@ A waiting root intentionally has a working row mark and a subdued chip and searc
 A read root question clears the server’s effective push state, while the phone’s existing open-page rule keeps its notification while the demand remains.
 The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
 The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
+
+### Scope projections
+
+`agent_state/tally/scope.rs` publishes `agent_scope` on the navigator, each device, each project and each checkout.
+Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
+Requests exclude a delegated row only when its parent belongs to that scope, and publish their ordered groups and counts separately from physical and Overview totals.
+Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
+The scope cache compares owned agent rows, device connection facts and checkout membership and marks; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
+The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.

@@ -206,6 +206,7 @@ pub(crate) fn group(
             }
             let name = crate::workspace::checkout_row_label(None, Path::new(&raw_checkout.path));
             let part = CheckoutSnapshot {
+                agent_scope: Default::default(),
                 id: id.clone(),
                 label: name.clone(),
                 owner_workspace_id: raw_owner(
@@ -232,6 +233,7 @@ pub(crate) fn group(
             {
                 Some(project) => {
                     let part = CheckoutSnapshot {
+                        agent_scope: Default::default(),
                         workspace_id: project.id.clone(),
                         tabs: part
                             .tabs
@@ -249,6 +251,7 @@ pub(crate) fn group(
                     merge_checkout(project, part);
                 }
                 None => projects.push(WorkspaceSnapshot {
+                    agent_scope: Default::default(),
                     label: name.clone(),
                     repo_name: name,
                     checkouts: vec![part],
@@ -309,6 +312,7 @@ pub(crate) fn group(
                 .cloned()
                 .collect::<Vec<_>>();
             let checkout = CheckoutSnapshot {
+                agent_scope: Default::default(),
                 id: checkout_id,
                 workspace_id: project_id.clone(),
                 label: crate::workspace::checkout_row_label(
@@ -347,6 +351,7 @@ pub(crate) fn group(
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_else(|| root.clone());
                     projects.push(WorkspaceSnapshot {
+                        agent_scope: Default::default(),
                         id: project_id.clone(),
                         label: name.clone(),
                         path: root.clone(),
@@ -560,6 +565,7 @@ pub(crate) fn apply_registrations(
         let known = facts.known(&registration.path);
         let branch = known.and_then(|facts| facts.branch.clone());
         session.workspaces.push(WorkspaceSnapshot {
+            agent_scope: Default::default(),
             home_issues: Default::default(),
             pull_requests: Vec::new(),
             tasks: Default::default(),

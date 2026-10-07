@@ -754,6 +754,7 @@ impl Runtime {
         }
         self.resync_navigator_focus();
         self.rebuild_tab_strips();
+        self.refresh_agent_scopes();
         previous != self.snapshot.navigator || previous_card != self.snapshot.card
     }
     /// Puts one strip entry at a new place in its checkout's strip.
@@ -2000,6 +2001,7 @@ impl Runtime {
             self.sync_async_operations();
         }
         changed |= self.refresh_browser_inventory_scope();
+        changed |= self.refresh_agent_scopes();
         changed
     }
     /// Reconciles the pane and checkout ids loaded from disk against the first

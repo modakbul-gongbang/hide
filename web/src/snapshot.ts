@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 // The parts of the core's `rest` section the web shell reads, typed as the
 // core serializes them (herdr-core/src/model.rs), plus the pure selectors that
 // resolve the operator's focused checkout, its visible tab and that tab's
@@ -521,6 +522,7 @@ export type WorktreeDisk = {
 };
 
 export type Checkout = {
+  agent_scope: AgentScope;
   id: string;
   workspace_id: string;
   label: string;
@@ -558,6 +560,7 @@ export type Checkout = {
 };
 
 export type Workspace = {
+  agent_scope: AgentScope;
   id: string;
   label: string;
   path: string;
@@ -956,6 +959,7 @@ export type DeviceHost = {
 };
 
 export type Device = {
+  agent_scope: AgentScope;
   id: string;
   label: string;
   /** `local` for the daemon's own machine, `remote` for an SSH device. */
@@ -1415,6 +1419,7 @@ export type LinkSummaries = {
 export type SnapshotRest = {
   git_worktrees_loading?: boolean;
   navigator?: {
+    agent_scope?: AgentScope;
     focused_workspace_id?: string | null;
     focused_checkout_id?: string | null;
     /** The focused checkout's root, which the Explorer reveals under. */
