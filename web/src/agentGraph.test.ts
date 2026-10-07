@@ -63,6 +63,7 @@ function checkout(id: string, options: CheckoutOptions = {}): Checkout {
     exists: !options.missing,
     has_panes: tabs.length > 0,
     worktree: { merged: options.merged ?? null, is_main: primary, missing: options.missing ?? false, changed_file_count: 0, dirty: false } as Checkout["worktree"],
+    landed: options.merged ?? false,
     pull_request: options.pr ?? null,
     task_key: options.task ?? null,
     changed_file_count: 0,

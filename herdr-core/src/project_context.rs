@@ -134,11 +134,7 @@ fn checkout_is_inactive(
     if checkout_has_live_exception(checkout, focused_checkout_id) {
         return false;
     }
-    let merged = checkout
-        .worktree
-        .as_ref()
-        .and_then(|worktree| worktree.merged)
-        == Some(true)
+    let settled = checkout.landed
         || checkout
             .pull_request
             .as_ref()
@@ -146,7 +142,7 @@ fn checkout_is_inactive(
     let stale = checkout_activity(checkout, by_pane)
         .unix_ms
         .is_some_and(|last| now_unix_ms.saturating_sub(last) > INACTIVE_AFTER_MS);
-    merged || stale
+    settled || stale
 }
 
 /// Rebuilds core-owned inactive membership without moving the authoritative
@@ -522,9 +518,10 @@ mod tests {
         assert_eq!(projects[0].last_activity_unix_ms, Some(3_000_000));
     }
 
-    /// B2, B6, B9, B16. Git merge, settled PR, and the seven-day boundary
+    /// B2, B6, B9, B16. Landed work, settled PR, and the seven-day boundary
     /// decide membership. The primary stays outside its project's checkout
-    /// fold, and a checkout with no known activity is not guessed stale.
+    /// fold, a checkout with no known activity is not guessed stale, and one
+    /// Git reads as merged only because it has no commits of its own stays.
     #[test]
     fn inactive_checkouts_cover_settled_stale_boundary_primary_and_unknown_activity() {
         let now_ms = 20 * 24 * 60 * 60 * 1_000;
@@ -536,6 +533,9 @@ mod tests {
 
         let mut merged = make_worktree_checkout("alpha", "merged", Some(recent_seconds));
         merged.worktree.as_mut().unwrap().merged = Some(true);
+        merged.landed = true;
+        let mut untouched = make_worktree_checkout("alpha", "untouched", Some(recent_seconds));
+        untouched.worktree.as_mut().unwrap().merged = Some(true);
         let stale = make_worktree_checkout("alpha", "stale", Some(old_seconds));
         let recent = make_worktree_checkout("alpha", "recent", Some(recent_seconds));
         let unknown = make_worktree_checkout("alpha", "unknown", None);
@@ -543,7 +543,7 @@ mod tests {
         closed.pull_request = Some(settled_pull_request(PullRequestBadge::Closed));
         project
             .checkouts
-            .extend([merged, stale, recent, unknown, closed]);
+            .extend([merged, untouched, stale, recent, unknown, closed]);
         let mut navigator = navigator(vec![project]);
 
         assert!(refresh_inactive_groups(
@@ -614,6 +614,7 @@ mod tests {
         for id in ids {
             let mut checkout = make_worktree_checkout("alpha", id, None);
             checkout.worktree.as_mut().unwrap().merged = Some(true);
+            checkout.landed = true;
             project.checkouts.push(checkout);
         }
         project.checkouts[1].agent_summary.working = 1;

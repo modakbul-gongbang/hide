@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
 import { openProjectOverview } from "./overview-entry";
 
@@ -27,6 +28,46 @@ const SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55\n# Created by the
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
+}
+
+/**
+ * A logged-in `gh` whose one pull request merged `branch` at `head`, the
+ * commit its worktree still holds: the record that makes that worktree's work
+ * landed, so the sheet reads it as finished. Git ancestry alone does not.
+ */
+function fakeGh(dir: string, branch: string, head: string): string {
+  const bin = path.join(dir, "gh-bin");
+  const pulls = JSON.stringify([
+    {
+      number: 7,
+      title: "shipped work",
+      statusCheckRollup: [],
+      headRefName: branch,
+      headRefOid: head,
+      baseRefName: "main",
+      state: "MERGED",
+      reviewDecision: null,
+      isDraft: false,
+      url: "https://github.com/acme/repo/pull/7",
+      mergedAt: "2026-09-27T00:00:00Z",
+      updatedAt: "2026-09-27T00:00:00Z",
+      closingIssuesReferences: [],
+    },
+  ]);
+  fixtureProgram(
+    bin,
+    "gh",
+    `const args = process.argv.slice(2);
+const key = args.slice(0, 2).join(" ");
+const answers = { "pr list": ${JSON.stringify(pulls)}, "repo view": '{"nameWithOwner":"acme/repo"}', "issue list": "[]" };
+if (key === "auth status") process.exit(0);
+if (args.join(" ").includes("--state merged")) { console.log("[]"); process.exit(0); }
+if (key in answers) { console.log(answers[key]); process.exit(0); }
+console.error("unsupported: " + args.join(" "));
+process.exit(1);
+`,
+  );
+  return bin;
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
@@ -106,7 +147,7 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     const created = herdr.run(["workspace", "create", "--cwd", repo, "--label", "repo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
     await prompt(herdr, created.result.root_pane.pane_id);
 
-    daemon = await startHided(herdr, "disk-cleanup");
+    daemon = await startHided(herdr, "disk-cleanup", undefined, { PATH: `${fakeGh(herdr.root, "prd/shipped", git(shipped, ["rev-parse", "HEAD"]).trim())}${path.delimiter}${herdr.fixturePath}` });
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
@@ -140,7 +181,7 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await sheet.locator("[data-disk-fold-toggle]").click();
     await expect(row("/repo-shipped")).toBeVisible();
     await expect(row("/repo-active")).toBeVisible();
-    // D-22: the merged worktree is finished, the other rests, and each filter states its count.
+    // D-22: the worktree whose pull request merged is finished, the other rests, and each filter states its count.
     await expect(row("/repo-shipped")).toHaveAttribute("data-disk-bucket", "done");
     await expect(row("/repo-active")).toHaveAttribute("data-disk-bucket", "resting");
     await expect(sheet.locator('[data-disk-filter-item="done"]')).toContainText("1");

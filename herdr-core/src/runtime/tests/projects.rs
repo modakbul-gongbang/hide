@@ -2138,6 +2138,7 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
             merged: Some(true),
             ..Default::default()
         }),
+        landed: true,
         ..CheckoutSnapshot::default()
     };
     runtime.snapshot.navigator.workspaces = vec![workspace(

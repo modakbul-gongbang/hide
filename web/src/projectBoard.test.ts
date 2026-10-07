@@ -17,7 +17,8 @@ function pr(badge: PullRequest["badge"], checks: PullRequest["checks"] = "unknow
   return { number: 7, title: "PR", url: "https://github.com/acme/project/pull/7", badge, review: null, is_draft: draft, checks };
 }
 
-function checkout(id: string, options: { changed?: number; ahead?: number; pr?: PullRequest; worktree?: boolean; panes?: string[]; merged?: boolean; task?: string; closes?: string[]; behind?: number } = {}): Checkout {
+/** `merged` is work that landed (Git and the link record agree); `inBase` is only Git finding HEAD in the base, as a checkout with no commits of its own does. */
+function checkout(id: string, options: { changed?: number; ahead?: number; pr?: PullRequest; worktree?: boolean; panes?: string[]; merged?: boolean; inBase?: boolean; task?: string; closes?: string[]; behind?: number } = {}): Checkout {
   const worktree = options.worktree ?? true;
   return {
     id,
@@ -29,7 +30,8 @@ function checkout(id: string, options: { changed?: number; ahead?: number; pr?: 
     is_worktree: worktree,
     exists: true,
     has_panes: (options.panes ?? []).length > 0,
-    worktree: { merged: options.merged ?? null, is_main: !worktree, behind_upstream: options.behind ?? null } as Checkout["worktree"],
+    worktree: { merged: options.merged || options.inBase ? true : null, is_main: !worktree, behind_upstream: options.behind ?? null } as Checkout["worktree"],
+    landed: options.merged ?? false,
     pull_request: options.pr ?? null,
     issue: null,
     task_key: options.task ?? null,
@@ -87,6 +89,8 @@ describe("the Git stage", () => {
     expect(stageOf(checkout("a", { changed: 3, pr: pr("merged") }))).toBe("done");
     expect(stageOf(checkout("a", { changed: 3, pr: pr("closed") }))).toBe("working");
     expect(stageOf(checkout("a", { merged: true }))).toBe("done");
+    // Git finds a checkout with no commits of its own in its base too; only landed work is done.
+    expect(stageOf(checkout("a", { inBase: true }))).toBe("working");
   });
 });
 

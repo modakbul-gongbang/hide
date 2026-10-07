@@ -515,6 +515,8 @@ export type Checkout = {
   agent_summary?: CheckoutAgentSummary;
   /** The worktree row behind a Git checkout, or null for a plain folder. */
   worktree?: WorktreeRow | null;
+  /** The work done here is in the base: Git finds HEAD there and the link record ties its sessions to a merged pull request and to none still open. Git alone cannot say so, since a checkout with no commits of its own is in its base too. Absent from older daemons. */
+  landed?: boolean;
   pull_request: PullRequest | null;
   /** The issue this checkout's work is linked to. */
   issue?: IssueLink | null;
