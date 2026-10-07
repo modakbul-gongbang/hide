@@ -99,13 +99,19 @@ const REPOSITORY_TIMEOUT: Duration = Duration::from_secs(10);
 /// reports on each wake, keeps only the projects whose Git facts changed,
 /// and lets its existing background reader do the Git work once a project
 /// has been quiet for [`GIT_WATCH_DEBOUNCE`]. A change of the watched set
-/// starts a new watch and ends the old one.
+/// starts a new watch and keeps the old one until the new one is watching,
+/// so a repository in both is never unwatched; a watch that ended, or could
+/// not start, is started again after [`GIT_WATCH_RETRY`], and once it is
+/// watching every project is read again, because anything may have changed
+/// in between.
 /// The Explorer watcher in hided polls only the selected checkout's visible
 /// directories, so it cannot observe every registered project's Git refs
 /// without idle polling and another daemon-to-core event path.
 struct GitWatch {
     node: std::sync::Arc<dyn crate::node_access::NodeLink>,
     subscription: Option<GitSubscription>,
+    /// The watch `subscription` replaced, until `subscription` is watching.
+    outgoing: Option<GitSubscription>,
     /// When a watch that ended is started again.
     retry_at: Option<Instant>,
     /// Each watched Git common directory and the projects that share it.
@@ -123,12 +129,16 @@ struct GitSubscription {
     reports: std::sync::mpsc::Receiver<Result<GitWatchReport, String>>,
     /// The node has said it is watching; a change before that may be missed.
     watching: bool,
+    /// Started after a watch ended or could not start, so once it is
+    /// watching every project is read again.
+    catch_up: bool,
 }
 
 impl GitSubscription {
     fn start(
         node: &std::sync::Arc<dyn crate::node_access::NodeLink>,
         common_dirs: Vec<String>,
+        catch_up: bool,
     ) -> Option<Self> {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (sender, reports) = std::sync::mpsc::channel();
@@ -157,6 +167,7 @@ impl GitSubscription {
                 stop,
                 reports,
                 watching: false,
+                catch_up,
             }),
             Err(error) => {
                 crate::diagnostic!(serde_json::json!({
@@ -179,6 +190,7 @@ impl GitWatch {
         Self {
             node,
             subscription: None,
+            outgoing: None,
             retry_at: None,
             roots: BTreeMap::new(),
             pending: BTreeMap::new(),
@@ -194,8 +206,12 @@ impl GitWatch {
             .collect();
         let restart_due = self.subscription.is_none()
             && !self.registered.is_empty()
-            && self.retry_at.is_none_or(|at| at <= Instant::now());
-        if requested_roots == self.requested_roots && !restart_due {
+            && self.retry_at.is_some_and(|at| at <= Instant::now());
+        if requested_roots == self.requested_roots {
+            if restart_due {
+                let common: BTreeSet<_> = self.registered.values().cloned().collect();
+                self.start(&common, true);
+            }
             return;
         }
         self.requested_roots = requested_roots;
@@ -228,18 +244,18 @@ impl GitWatch {
         }
         let desired_common: BTreeSet<_> = desired.values().cloned().collect();
         let previous_common: BTreeSet<_> = self.registered.values().cloned().collect();
-        if desired_common != previous_common || restart_due {
-            self.subscription = None;
-            if !desired_common.is_empty() {
-                self.subscription = GitSubscription::start(
-                    &self.node,
-                    desired_common
-                        .iter()
-                        .map(|common| common.to_string_lossy().into_owned())
-                        .collect(),
-                );
+        if desired_common != previous_common {
+            // A watch waiting to restart has missed changes; one running
+            // has not, and stays until its replacement is watching.
+            let catch_up = self.subscription.is_none() && !previous_common.is_empty();
+            if let Some(running) = self.subscription.take()
+                && self.outgoing.is_none()
+            {
+                self.outgoing = Some(running);
             }
-            self.retry_at = None;
+            self.start(&desired_common, catch_up);
+        } else if restart_due {
+            self.start(&desired_common, true);
         }
         let mut roots = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
         for (project, common) in &desired {
@@ -254,20 +270,54 @@ impl GitWatch {
             .retain(|project, _| self.registered.contains_key(project));
     }
 
+    /// Starts the watch over `common`, or schedules another try when the
+    /// thread cannot start. No common directory is no watch.
+    fn start(&mut self, common: &BTreeSet<PathBuf>, catch_up: bool) {
+        self.subscription = None;
+        self.retry_at = None;
+        if common.is_empty() {
+            self.outgoing = None;
+            return;
+        }
+        self.subscription = GitSubscription::start(
+            &self.node,
+            common
+                .iter()
+                .map(|common| common.to_string_lossy().into_owned())
+                .collect(),
+            catch_up,
+        );
+        if self.subscription.is_none() {
+            self.retry_at = Some(Instant::now() + GIT_WATCH_RETRY);
+        }
+    }
+
     /// Moves what the watch reported into `pending`: a changed Git fact
-    /// marks the projects of its repository, and lost reports (an overflow)
-    /// mark every watched project, because any of them may have changed. A
-    /// watch that ended is started again after [`GIT_WATCH_RETRY`].
+    /// marks the projects of its repository, and lost reports (an overflow,
+    /// or a watch restarted after a gap) mark every watched project, because
+    /// any of them may have changed. A watch that ended is started again
+    /// after [`GIT_WATCH_RETRY`].
     fn collect(&mut self) {
+        let now = Instant::now();
+        let mut changed = Vec::new();
+        if let Some(outgoing) = self.outgoing.as_mut() {
+            while let Ok(report) = outgoing.reports.try_recv() {
+                if let Ok(GitWatchReport::Changed { common_dirs }) = report {
+                    changed.extend(common_dirs);
+                }
+            }
+        }
         let Some(subscription) = self.subscription.as_mut() else {
+            self.mark(&changed, now);
             return;
         };
-        let now = Instant::now();
         let mut ended = None;
+        let mut every = false;
         while let Ok(report) = subscription.reports.try_recv() {
             match report {
                 Ok(GitWatchReport::Watching { unwatched }) => {
                     subscription.watching = true;
+                    every |= std::mem::take(&mut subscription.catch_up);
                     for (common, message) in unwatched {
                         crate::diagnostic!(serde_json::json!({
                             "component": "worktrees", "kind": "git_watch.project_failed",
@@ -275,24 +325,25 @@ impl GitWatch {
                         }));
                     }
                 }
-                Ok(GitWatchReport::Changed { common_dirs }) => {
-                    for common in common_dirs {
-                        for project in self.roots.get(Path::new(&common)).into_iter().flatten() {
-                            self.pending.insert(project.clone(), now);
-                        }
-                    }
-                }
+                Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
                 Ok(GitWatchReport::Overflow { reason }) => {
                     crate::diagnostic!(serde_json::json!({
                         "component": "worktrees", "kind": "git_watch.overflow",
                         "message": reason, "projects": self.registered.len()
                     }));
-                    for project in self.registered.keys() {
-                        self.pending.insert(project.clone(), now);
-                    }
+                    every = true;
                 }
                 Ok(GitWatchReport::Quiet) => {}
                 Err(reason) => ended = Some(reason),
+            }
+        }
+        if subscription.watching {
+            self.outgoing = None;
+        }
+        self.mark(&changed, now);
+        if every {
+            for project in self.registered.keys() {
+                self.pending.insert(project.clone(), now);
             }
         }
         if let Some(reason) = ended {
@@ -301,6 +352,15 @@ impl GitWatch {
             }));
             self.subscription = None;
             self.retry_at = Some(now + GIT_WATCH_RETRY);
+        }
+    }
+
+    /// Marks the projects of each changed common directory.
+    fn mark(&mut self, common_dirs: &[String], now: Instant) {
+        for common in common_dirs {
+            for project in self.roots.get(Path::new(common)).into_iter().flatten() {
+                self.pending.insert(project.clone(), now);
+            }
         }
     }
 
@@ -814,6 +874,173 @@ mod tests {
         assert_eq!(described.ahead, 0);
         assert_eq!(described.behind, 0);
         assert_eq!(described.unpushed, None);
+    }
+
+    /// A node whose projects are each their own repository, and whose every
+    /// `Call::GitWatch` forwards the reports the test sends on that watch's
+    /// own channel, acknowledging each, until the test drops the sender.
+    struct DrivenWatches {
+        watches:
+            std::sync::Mutex<std::sync::mpsc::Receiver<std::sync::mpsc::Receiver<GitWatchReport>>>,
+        forwarded: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    }
+
+    impl crate::node_access::NodeLink for DrivenWatches {
+        fn call(
+            &self,
+            call: Call,
+            timeout: Duration,
+        ) -> Result<hide_node_link::link::LinkAnswer, hide_node_link::link::LinkError> {
+            self.call_with_progress(call, timeout, &mut |_| true)
+        }
+
+        fn call_with_progress(
+            &self,
+            call: Call,
+            _timeout: Duration,
+            progress: &mut dyn FnMut(serde_json::Value) -> bool,
+        ) -> Result<hide_node_link::link::LinkAnswer, hide_node_link::link::LinkError> {
+            match call {
+                Call::Repository { path } => Ok(serde_json::json!(RepositoryDirs {
+                    root: path.clone(),
+                    git_dir: format!("{path}/.git"),
+                    common_dir: format!("{path}/.git"),
+                })
+                .into()),
+                Call::GitWatch { .. } => {
+                    let reports = self.watches.lock().unwrap().recv().unwrap();
+                    let forwarded = self.forwarded.lock().unwrap().clone();
+                    while let Ok(report) = reports.recv() {
+                        let go_on = progress(serde_json::to_value(report).unwrap());
+                        forwarded.send(()).unwrap();
+                        if !go_on {
+                            break;
+                        }
+                    }
+                    Ok(serde_json::Value::Null.into())
+                }
+                other => panic!("unexpected call {other:?}"),
+            }
+        }
+    }
+
+    struct Driver {
+        watch: GitWatch,
+        watches: std::sync::mpsc::Sender<std::sync::mpsc::Receiver<GitWatchReport>>,
+        forwarded: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl Driver {
+        fn new() -> Self {
+            let (watches, waiting) = std::sync::mpsc::channel();
+            let (acknowledge, forwarded) = std::sync::mpsc::channel();
+            let node = DrivenWatches {
+                watches: std::sync::Mutex::new(waiting),
+                forwarded: std::sync::Mutex::new(acknowledge),
+            };
+            Self {
+                watch: GitWatch::new(std::sync::Arc::new(node)),
+                watches,
+                forwarded,
+            }
+        }
+
+        /// The sender of the next watch the node starts.
+        fn next_watch(&self) -> std::sync::mpsc::Sender<GitWatchReport> {
+            let (sender, reports) = std::sync::mpsc::channel();
+            self.watches.send(reports).unwrap();
+            sender
+        }
+
+        /// Sends `report` on `on` and collects it once the node forwarded it.
+        fn report(&mut self, on: &std::sync::mpsc::Sender<GitWatchReport>, report: GitWatchReport) {
+            on.send(report).unwrap();
+            self.forwarded
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the node forwarded the report");
+            self.watch.collect();
+        }
+    }
+
+    fn projects(roots: &[&str]) -> Vec<WorktreeProjectRequest> {
+        roots
+            .iter()
+            .map(|root| WorktreeProjectRequest {
+                root_path: PathBuf::from(root),
+                bases: BTreeMap::new(),
+                base_override: None,
+                generation: 0,
+            })
+            .collect()
+    }
+
+    fn watching() -> GitWatchReport {
+        GitWatchReport::Watching {
+            unwatched: Vec::new(),
+        }
+    }
+
+    /// A watch that ended may have missed any change, so once its restart is
+    /// watching every project is read again; the first watch reads nothing.
+    #[test]
+    fn a_git_watch_restarted_after_it_ended_rereads_every_project() {
+        let mut driver = Driver::new();
+        let first = driver.next_watch();
+        let both = projects(&["/a", "/b"]);
+        driver.watch.reconcile(&both);
+        driver.report(&first, watching());
+        assert!(driver.watch.pending.is_empty());
+        drop(first);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while driver.watch.subscription.is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "the ended watch was never collected"
+            );
+            std::thread::yield_now();
+            driver.watch.collect();
+        }
+        assert!(driver.watch.retry_at.is_some());
+
+        driver.watch.retry_at = Some(Instant::now());
+        let second = driver.next_watch();
+        driver.watch.reconcile(&both);
+        assert!(
+            driver.watch.pending.is_empty(),
+            "nothing is read before the watch is up"
+        );
+        driver.report(&second, watching());
+        assert_eq!(
+            driver.watch.pending.keys().cloned().collect::<Vec<_>>(),
+            vec![PathBuf::from("/a"), PathBuf::from("/b")]
+        );
+    }
+
+    /// Adding a project starts a new watch, and the old one keeps reporting
+    /// until the new one is watching, so a change in between is not lost and
+    /// nothing is read again for the swap itself.
+    #[test]
+    fn a_change_while_the_watched_set_changes_is_kept() {
+        let mut driver = Driver::new();
+        let first = driver.next_watch();
+        driver.watch.reconcile(&projects(&["/a"]));
+        driver.report(&first, watching());
+        let second = driver.next_watch();
+        driver.watch.reconcile(&projects(&["/a", "/b"]));
+        driver.report(
+            &first,
+            GitWatchReport::Changed {
+                common_dirs: vec!["/a/.git".to_owned()],
+            },
+        );
+        assert_eq!(
+            driver.watch.pending.keys().cloned().collect::<Vec<_>>(),
+            vec![PathBuf::from("/a")]
+        );
+        driver.watch.pending.clear();
+        driver.report(&second, watching());
+        assert!(driver.watch.outgoing.is_none());
+        assert!(driver.watch.pending.is_empty());
     }
 }
 
