@@ -5,15 +5,17 @@
 //! belongs to is [`attributed_ports`]'s job, and it is pure, so the rule can be
 //! tested without a server to point it at.
 //!
-//! System reads happen on the session-sync coordinator thread, never while
-//! the runtime mutex is held and never on a per-event path. Unix uses `lsof`;
-//! Windows uses the platform's bounded native listener observation.
-//! [`PortsReader::read_if_due`] recomputes only once a refresh window has
-//! lapsed.
+//! System reads happen on the reader's own worker thread, never on the
+//! session-sync coordinator thread that applies Herdr's events (PRD
+//! instant-pane-topology D-13), never while the runtime mutex is held and
+//! never on a per-event path. Unix uses `lsof`; Windows uses the platform's
+//! bounded native listener observation. [`PortsReader::read_if_due`] starts a
+//! read only once a refresh window has lapsed and hands its answer back on a
+//! later wake.
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use hide_node_link::protocol::Call;
 
@@ -32,32 +34,25 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct PortsReader {
-    node: Arc<dyn NodeLink>,
-    read_at: Option<Instant>,
+    inner: crate::reader::BackgroundRead<(), ListeningPortsSnapshot>,
 }
 
 impl PortsReader {
     /// Reads the listeners of `node`'s machine.
     pub fn new(node: Arc<dyn NodeLink>) -> Self {
+        // The refresh window starts when a sample is complete, so a slow
+        // system read cannot make the next wake look due at once.
         Self {
-            node,
-            read_at: None,
+            inner: crate::reader::BackgroundRead::new(
+                REFRESH_INTERVAL,
+                Duration::ZERO,
+                move |_: &()| read_now(node.as_ref()),
+            ),
         }
     }
 
     pub fn read_if_due(&mut self) -> Option<ListeningPortsSnapshot> {
-        if self
-            .read_at
-            .is_some_and(|read_at| read_at.elapsed() < REFRESH_INTERVAL)
-        {
-            return None;
-        }
-        let snapshot = read_now(self.node.as_ref());
-        // The refresh interval starts when the sample is complete. A slow
-        // system read must not make the very next coordinator tick look due
-        // again merely because the read itself took most of the window.
-        self.read_at = Some(Instant::now());
-        Some(snapshot)
+        self.inner.poll(())
     }
 }
 
@@ -176,9 +171,9 @@ mod tests {
             .port();
         let cwd = std::env::current_dir().expect("the test process has a working directory");
 
-        let read = PortsReader::new(Arc::new(hide_node::Local::of_process()))
-            .read_if_due()
-            .expect("the first read is always due");
+        let read = settled(&mut PortsReader::new(Arc::new(
+            hide_node::Local::of_process(),
+        )));
 
         assert_eq!(
             read.unavailable_reason, None,
@@ -333,10 +328,20 @@ mod tests {
         link::remove_link(&alias).unwrap();
     }
 
+    /// The first answer: the first call starts the worker, which is joined
+    /// before the answer is collected.
+    fn settled(reader: &mut PortsReader) -> ListeningPortsSnapshot {
+        assert!(reader.read_if_due().is_none(), "a read is never inline");
+        reader.inner.join_pending();
+        reader
+            .read_if_due()
+            .expect("the finished read is handed back")
+    }
+
     #[test]
     fn the_first_read_is_due_and_the_next_one_inside_the_window_is_not() {
         let mut reader = PortsReader::new(Arc::new(hide_node::Local::of_process()));
-        assert!(reader.read_if_due().is_some());
+        settled(&mut reader);
         assert!(reader.read_if_due().is_none());
     }
 }

@@ -65,6 +65,13 @@ fn run_coordinator(
     let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
     let mut defer_background_reads = true;
     let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+    // How many events the replica had applied when the agent list in
+    // flight was asked for. Events that land while it is out may have moved
+    // agents its answer does not show, so the list is asked again as soon
+    // as `AGENT_REASK_SPACING` after the one answered allows.
+    let mut agents_asked_at_events: Option<u64> = None;
+    // A refresh asked for while a list was out, owed when it answers.
+    let mut agents_refresh_owed = false;
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
     let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
@@ -159,6 +166,15 @@ fn run_coordinator(
         publish_ai_settings(&context, home);
     }
     let mut labels = start_label_worker(&context, &sender);
+    // The socket reads beside the event stream run on their own worker, so
+    // this thread never waits on a fresh connection (`sync_reads.rs`).
+    let mut sync_reader = match SyncReader::start(&context, sender.clone()) {
+        Ok(reader) => reader,
+        Err(message) => {
+            publish_failure(&context, SessionFetchError::Unreachable(message));
+            return;
+        }
+    };
 
     loop {
         if context.runtime.upgrade().is_none() {
@@ -188,9 +204,26 @@ fn run_coordinator(
                     subscription = Some(next_subscription);
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
                     active_tab_reads.clear();
+                    if let Err(message) = sync_reader.reset() {
+                        crate::diagnostic!(json!({
+                            "component": "session_sync",
+                            "kind": "sync_read.start_failed",
+                            "target": context.log_target(),
+                            "message": message,
+                        }));
+                        stop_subscription(&mut subscription);
+                        if !publish_failure(&context, SessionFetchError::Stale(message)) {
+                            return;
+                        }
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                        continue;
+                    }
                     defer_background_reads = true;
                     reconnect_delay = RECONNECT_INITIAL_DELAY;
                     next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+                    agents_asked_at_events = None;
+                    agents_refresh_owed = false;
                     next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
                     if let Some(writer) = lineage_writer.as_mut()
                         && let Some(runtime) = context.runtime.upgrade()
@@ -252,70 +285,16 @@ fn run_coordinator(
             }
         }
 
-        if subscription.is_some() && Instant::now() >= next_agent_refresh {
+        if let Some(active) = subscription.as_ref()
+            && Instant::now() >= next_agent_refresh
+        {
             next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
-            let snapshot_started_at = Instant::now();
-            match fetch_agents(&context) {
-                Ok(agents) => {
-                    let current = replica
-                        .as_mut()
-                        .expect("active subscription always has a replica");
-                    let (native_changed, requested) =
-                        agent_tick_changes(current, &agents, catalog_cache.as_ref());
-                    if let Some(writer) = lineage_writer.as_mut()
-                        && let Some(runtime) = context.runtime.upgrade()
-                    {
-                        let state = runtime
-                            .lock()
-                            .ok()
-                            .and_then(|guard| guard.delivery_state().ok());
-                        if let Some(state) = state {
-                            writer.observe(&state, &agents, native_changed, snapshot_started_at);
-                        }
-                    }
-                    if requested {
-                        current.replace_agents(agents);
-                        match current.refresh_published_state() {
-                            Ok(changed)
-                                if (changed || requested)
-                                    && !publish_replica(
-                                        &context,
-                                        current,
-                                        &mut catalog_cache,
-                                        &mut purpose_mirror,
-                                        &mut labels,
-                                    ) =>
-                            {
-                                stop_subscription(&mut subscription);
-                                return;
-                            }
-                            Ok(_) => {}
-                            Err(error) => {
-                                log_sync_failure(
-                                    &context,
-                                    "agent_refresh.invalid_projection",
-                                    Some(current),
-                                    &error,
-                                );
-                                stop_subscription(&mut subscription);
-                                if !publish_failure(&context, error) {
-                                    return;
-                                }
-                                reconnect_at = Instant::now() + reconnect_delay;
-                                reconnect_delay = next_reconnect_delay(reconnect_delay);
-                            }
-                        }
-                    }
-                }
-                Err(error) => {
-                    log_sync_failure(&context, "agent_refresh.failed", replica.as_ref(), &error);
-                    stop_subscription(&mut subscription);
-                    if !publish_failure(&context, stale_if_projected(replica.as_ref(), error)) {
-                        return;
-                    }
-                    reconnect_at = Instant::now() + reconnect_delay;
-                    reconnect_delay = next_reconnect_delay(reconnect_delay);
-                }
+            if sync_reader.ask(active.generation, SyncRead::Agents) {
+                agents_asked_at_events = replica.as_ref().map(|current| current.applied_events);
+            } else {
+                // The list out was asked before this need; its answer asks
+                // again.
+                agents_refresh_owed = true;
             }
         }
 
@@ -349,66 +328,39 @@ fn run_coordinator(
                     &mut catalog_cache,
                     &mut purpose_mirror,
                     &mut labels,
+                    &mut arrivals,
                 )
             {
                 stop_subscription(&mut subscription);
                 return;
             }
-            if subscription.is_some()
+            if let Some(active) = subscription.as_ref()
                 && let Some(current) = replica.as_mut()
-                && !current.workspaces_awaiting_active_tab().is_empty()
+                && let Err(error) = ask_active_tabs(
+                    &mut sync_reader,
+                    active.generation,
+                    current,
+                    &mut active_tab_reads,
+                )
             {
-                match settle_active_tab_reads(&context, current, &mut active_tab_reads) {
-                    Ok(true) => {
-                        if !publish_replica(
-                            &context,
-                            current,
-                            &mut catalog_cache,
-                            &mut purpose_mirror,
-                            &mut labels,
-                        ) {
-                            stop_subscription(&mut subscription);
-                            return;
-                        }
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        log_sync_failure(&context, "active_tab_read.failed", Some(current), &error);
-                        stop_subscription(&mut subscription);
-                        if !publish_failure(&context, error) {
-                            return;
-                        }
-                        reconnect_at = Instant::now() + reconnect_delay;
-                        reconnect_delay = next_reconnect_delay(reconnect_delay);
-                    }
+                log_sync_failure(&context, "active_tab_read.failed", Some(current), &error);
+                stop_subscription(&mut subscription);
+                if !publish_failure(&context, error) {
+                    return;
                 }
+                reconnect_at = Instant::now() + reconnect_delay;
+                reconnect_delay = next_reconnect_delay(reconnect_delay);
             }
-            if subscription.is_some()
+            // Herdr sends no event when a pane's cwd settles, so the tick
+            // asks the worker to read again every pane whose last answer did
+            // not repeat the one before it; a pane the worker could not take
+            // now is due again on the next tick.
+            if let Some(active) = subscription.as_ref()
                 && let Some(current) = replica.as_mut()
             {
-                match reread_pane_cwds(&context, current) {
-                    Ok(true) => {
-                        if !publish_replica(
-                            &context,
-                            current,
-                            &mut catalog_cache,
-                            &mut purpose_mirror,
-                            &mut labels,
-                        ) {
-                            stop_subscription(&mut subscription);
-                            return;
-                        }
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        log_sync_failure(&context, "pane_cwd_read.failed", Some(current), &error);
-                        stop_subscription(&mut subscription);
-                        if !publish_failure(&context, error) {
-                            return;
-                        }
-                        reconnect_at = Instant::now() + reconnect_delay;
-                        reconnect_delay = next_reconnect_delay(reconnect_delay);
-                    }
+                let rereads = current.take_cwd_rereads();
+                if !rereads.is_empty() {
+                    sync_reader.ask(active.generation, SyncRead::PaneCwds(rereads));
                 }
             }
         }
@@ -623,19 +575,35 @@ fn run_coordinator(
                 };
                 match parse_subscription_line(&line) {
                     Ok(SubscriptionLine::Event(event)) => {
+                        if context.is_local() {
+                            let (tab_id, pane_id, layout) = event.subject();
+                            if tab_id.is_some() || pane_id.is_some() {
+                                if arrivals.len() >= ARRIVAL_BUFFER_LIMIT {
+                                    arrivals.remove(0);
+                                }
+                                arrivals.push(HerdrArrival {
+                                    tab_id: tab_id.map(str::to_owned),
+                                    pane_id: pane_id.map(str::to_owned),
+                                    layout,
+                                    received_at,
+                                });
+                            }
+                        }
                         let current = replica
                             .as_mut()
                             .expect("active subscription always has a replica");
                         let applied = current
                             .apply(event, mode)
-                            .map_err(|error| ("event.rejected", error))
-                            .and_then(|outcome| {
-                                let confirmed = confirm_pane_cwds(&context, current)
-                                    .map_err(|error| ("pane_cwd_read.failed", error))?;
-                                Ok((outcome, confirmed))
-                            });
+                            .map_err(|error| ("event.rejected", error));
                         match applied {
-                            Ok((outcome, confirmed)) => {
+                            Ok(outcome) => {
+                                // A pane announced with a cwd Herdr has not
+                                // confirmed is read back on the worker; the
+                                // publish waits for it (`publish_replica`).
+                                let awaiting = current.panes_awaiting_cwd();
+                                if !awaiting.is_empty() {
+                                    sync_reader.ask(generation, SyncRead::PaneCwds(awaiting));
+                                }
                                 if outcome.refresh_agents {
                                     next_agent_refresh = Instant::now();
                                 }
@@ -644,52 +612,37 @@ fn run_coordinator(
                                     stop_subscription(&mut subscription);
                                     return;
                                 }
-                                if (outcome.publish || confirmed)
+                                if outcome.publish
                                     && !publish_replica(
                                         &context,
                                         current,
                                         &mut catalog_cache,
                                         &mut purpose_mirror,
                                         &mut labels,
+                                        &mut arrivals,
                                     )
                                 {
                                     stop_subscription(&mut subscription);
                                     return;
                                 }
-                                if !current.workspaces_awaiting_active_tab().is_empty() {
-                                    match settle_active_tab_reads(
+                                if let Err(error) = ask_active_tabs(
+                                    &mut sync_reader,
+                                    generation,
+                                    current,
+                                    &mut active_tab_reads,
+                                ) {
+                                    log_sync_failure(
                                         &context,
-                                        current,
-                                        &mut active_tab_reads,
-                                    ) {
-                                        Ok(true) => {
-                                            if !publish_replica(
-                                                &context,
-                                                current,
-                                                &mut catalog_cache,
-                                                &mut purpose_mirror,
-                                                &mut labels,
-                                            ) {
-                                                stop_subscription(&mut subscription);
-                                                return;
-                                            }
-                                        }
-                                        Ok(false) => {}
-                                        Err(error) => {
-                                            log_sync_failure(
-                                                &context,
-                                                "active_tab_read.failed",
-                                                Some(current),
-                                                &error,
-                                            );
-                                            stop_subscription(&mut subscription);
-                                            if !publish_failure(&context, error) {
-                                                return;
-                                            }
-                                            reconnect_at = Instant::now() + reconnect_delay;
-                                            reconnect_delay = next_reconnect_delay(reconnect_delay);
-                                        }
+                                        "active_tab_read.failed",
+                                        Some(current),
+                                        &error,
+                                    );
+                                    stop_subscription(&mut subscription);
+                                    if !publish_failure(&context, error) {
+                                        return;
                                     }
+                                    reconnect_at = Instant::now() + reconnect_delay;
+                                    reconnect_delay = next_reconnect_delay(reconnect_delay);
                                 }
                             }
                             Err((kind, error)) => {
@@ -784,6 +737,197 @@ fn run_coordinator(
                 reconnect_at = Instant::now() + reconnect_delay;
                 reconnect_delay = next_reconnect_delay(reconnect_delay);
             }
+            Ok(CoordinatorMessage::SyncRead { generation, answer }) => {
+                sync_reader.answered(generation, &answer);
+                if subscription.as_ref().map(|active| active.generation) != Some(generation) {
+                    continue;
+                }
+                match answer {
+                    SyncReadAnswer::Agents { started_at, result } => match result {
+                        Ok(agents) => {
+                            let current = replica
+                                .as_mut()
+                                .expect("active subscription always has a replica");
+                            let moved = agents_asked_at_events
+                                .take()
+                                .is_some_and(|asked| asked != current.applied_events);
+                            if std::mem::take(&mut agents_refresh_owed) || moved {
+                                // Spaced from the read just answered, so a
+                                // steady event stream is not a standing poll.
+                                next_agent_refresh = next_agent_refresh
+                                    .min((started_at + AGENT_REASK_SPACING).max(Instant::now()));
+                            }
+                            let (native_changed, requested) =
+                                agent_tick_changes(current, &agents, catalog_cache.as_ref());
+                            if let Some(writer) = lineage_writer.as_mut()
+                                && let Some(runtime) = context.runtime.upgrade()
+                            {
+                                let state = runtime
+                                    .lock()
+                                    .ok()
+                                    .and_then(|guard| guard.delivery_state().ok());
+                                if let Some(state) = state {
+                                    writer.observe(&state, &agents, native_changed, started_at);
+                                }
+                            }
+                            if requested {
+                                current.replace_agents(agents);
+                                match current.refresh_published_state() {
+                                    Ok(changed)
+                                        if (changed || requested)
+                                            && !publish_replica(
+                                                &context,
+                                                current,
+                                                &mut catalog_cache,
+                                                &mut purpose_mirror,
+                                                &mut labels,
+                                                &mut arrivals,
+                                            ) =>
+                                    {
+                                        stop_subscription(&mut subscription);
+                                        return;
+                                    }
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        log_sync_failure(
+                                            &context,
+                                            "agent_refresh.invalid_projection",
+                                            Some(current),
+                                            &error,
+                                        );
+                                        stop_subscription(&mut subscription);
+                                        if !publish_failure(&context, error) {
+                                            return;
+                                        }
+                                        reconnect_at = Instant::now() + reconnect_delay;
+                                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            log_sync_failure(
+                                &context,
+                                "agent_refresh.failed",
+                                replica.as_ref(),
+                                &error,
+                            );
+                            stop_subscription(&mut subscription);
+                            if !publish_failure(
+                                &context,
+                                stale_if_projected(replica.as_ref(), error),
+                            ) {
+                                return;
+                            }
+                            reconnect_at = Instant::now() + reconnect_delay;
+                            reconnect_delay = next_reconnect_delay(reconnect_delay);
+                        }
+                    },
+                    SyncReadAnswer::PaneCwds(result) => {
+                        let current = replica
+                            .as_mut()
+                            .expect("active subscription always has a replica");
+                        let confirmed =
+                            result.and_then(|cwds| apply_pane_cwds(&context, current, cwds));
+                        match confirmed {
+                            Ok(_) => {
+                                let awaiting = current.panes_awaiting_cwd();
+                                if !awaiting.is_empty() {
+                                    // A pane announced while this read was out.
+                                    sync_reader.ask(generation, SyncRead::PaneCwds(awaiting));
+                                } else if !publish_replica(
+                                    &context,
+                                    current,
+                                    &mut catalog_cache,
+                                    &mut purpose_mirror,
+                                    &mut labels,
+                                    &mut arrivals,
+                                ) {
+                                    stop_subscription(&mut subscription);
+                                    return;
+                                }
+                            }
+                            Err(error) => {
+                                log_sync_failure(
+                                    &context,
+                                    "pane_cwd_read.failed",
+                                    Some(current),
+                                    &error,
+                                );
+                                stop_subscription(&mut subscription);
+                                if !publish_failure(&context, error) {
+                                    return;
+                                }
+                                reconnect_at = Instant::now() + reconnect_delay;
+                                reconnect_delay = next_reconnect_delay(reconnect_delay);
+                            }
+                        }
+                    }
+                    SyncReadAnswer::ActiveTabs(result) => {
+                        let current = replica
+                            .as_mut()
+                            .expect("active subscription always has a replica");
+                        let settled = result.and_then(|tabs| {
+                            settle_active_tabs(&context, current, &mut active_tab_reads, tabs)
+                        });
+                        match settled {
+                            Ok(true) => {
+                                if !publish_replica(
+                                    &context,
+                                    current,
+                                    &mut catalog_cache,
+                                    &mut purpose_mirror,
+                                    &mut labels,
+                                    &mut arrivals,
+                                ) {
+                                    stop_subscription(&mut subscription);
+                                    return;
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                log_sync_failure(
+                                    &context,
+                                    "active_tab_read.failed",
+                                    Some(current),
+                                    &error,
+                                );
+                                stop_subscription(&mut subscription);
+                                if !publish_failure(&context, error) {
+                                    return;
+                                }
+                                reconnect_at = Instant::now() + reconnect_delay;
+                                reconnect_delay = next_reconnect_delay(reconnect_delay);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(CoordinatorMessage::Republish) => {
+                // Cleared before the read, so a wake that lands during the
+                // publish asks for the next one rather than being lost.
+                republish_pending.store(false, Ordering::Release);
+                // Hide draws ahead of Herdr only on this machine's Herdr, so
+                // only its replica carries the overlay. The published state
+                // already leaves out what still waits for Herdr, as on the
+                // event path, so a tab waiting for its layout elsewhere does
+                // not hold the drawing back.
+                if context.is_local()
+                    && subscription.is_some()
+                    && let Some(current) = replica.as_mut()
+                    && !publish_replica(
+                        &context,
+                        current,
+                        &mut catalog_cache,
+                        &mut purpose_mirror,
+                        &mut labels,
+                        &mut arrivals,
+                    )
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
             Ok(CoordinatorMessage::Labels) => {
                 // A disconnected replica is stale; its labels wait for the
                 // reconnect's first publish rather than clearing the error.
@@ -871,38 +1015,18 @@ fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
     }
 }
 
-/// Reads the cwd of every pane an event announced and Herdr has not
-/// answered for yet, and returns whether the published projection changed.
-/// It runs right after the event that announced the pane, before that pane
-/// can publish: its tab waits for the layout event that follows.
-fn confirm_pane_cwds(
+/// Applies the `pane.get` answers the worker read for panes waiting for
+/// their cwd: those an event announced with a cwd Herdr had not confirmed,
+/// and those an operation tick reads again because the last answer did not
+/// repeat the one before it. Returns whether the published projection
+/// changed.
+fn apply_pane_cwds(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
-) -> Result<bool, SessionFetchError> {
-    let panes = replica.panes_awaiting_cwd();
-    read_pane_cwds(context, replica, panes)
-}
-
-/// Reads again, on an operation tick, every pane whose last answer did not
-/// repeat the one before it, and returns whether the published projection
-/// changed. Herdr sends no event when a pane's cwd settles, so the tick is
-/// the only moment that can see it.
-fn reread_pane_cwds(
-    context: &SessionSyncContext,
-    replica: &mut SessionReplica,
-) -> Result<bool, SessionFetchError> {
-    let panes = replica.take_cwd_rereads();
-    read_pane_cwds(context, replica, panes)
-}
-
-fn read_pane_cwds(
-    context: &SessionSyncContext,
-    replica: &mut SessionReplica,
-    panes: Vec<String>,
+    cwds: Vec<(String, Option<String>)>,
 ) -> Result<bool, SessionFetchError> {
     let mut corrected = false;
-    for pane_id in panes {
-        let cwd = fetch_pane_cwd(context, &pane_id)?;
+    for (pane_id, cwd) in cwds {
         if replica.confirm_pane_cwd(&pane_id, cwd) {
             crate::diagnostic!(json!({
                 "component": "session_sync",
@@ -919,30 +1043,50 @@ fn read_pane_cwds(
     replica.refresh_published_state()
 }
 
-/// Reads the replacement active tab for every workspace still waiting for
-/// one and settles the replica with the answer. Returns whether the
-/// published projection changed. A read that names a tab the event stream
-/// has not delivered keeps the workspace waiting for the next tick; a
-/// workspace still waiting after `ACTIVE_TAB_READ_ATTEMPT_LIMIT` reads is a
-/// replica that cannot converge, which the caller rebuilds from a snapshot.
-fn settle_active_tab_reads(
+/// Asks the worker which tab every workspace still waiting for a
+/// replacement active tab now holds. A workspace still waiting after
+/// `ACTIVE_TAB_READ_ATTEMPT_LIMIT` reads is a replica that cannot converge,
+/// which the caller rebuilds from a snapshot.
+fn ask_active_tabs(
+    reader: &mut SyncReader,
+    generation: u64,
+    replica: &SessionReplica,
+    attempts: &mut BTreeMap<String, u32>,
+) -> Result<(), SessionFetchError> {
+    let waiting = replica.workspaces_awaiting_active_tab();
+    attempts.retain(|workspace_id, _| waiting.contains(workspace_id));
+    if waiting.is_empty() {
+        return Ok(());
+    }
+    if let Some((workspace_id, _)) = attempts
+        .iter()
+        .find(|(_, attempt)| **attempt >= ACTIVE_TAB_READ_ATTEMPT_LIMIT)
+    {
+        return Err(SessionFetchError::Stale(format!(
+            "workspace {workspace_id} named no active tab the event stream knows in {ACTIVE_TAB_READ_ATTEMPT_LIMIT} reads"
+        )));
+    }
+    let workspace_ids = waiting.to_vec();
+    if reader.ask(generation, SyncRead::ActiveTabs(workspace_ids)) {
+        for workspace_id in waiting {
+            *attempts.entry(workspace_id).or_insert(0) += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Settles the replica with the active tabs the worker read. A read that
+/// names a tab the event stream has not delivered keeps its workspace
+/// waiting for the next ask. Returns whether the published projection
+/// changed.
+fn settle_active_tabs(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
     attempts: &mut BTreeMap<String, u32>,
+    tabs: Vec<(String, String)>,
 ) -> Result<bool, SessionFetchError> {
-    let waiting = replica.workspaces_awaiting_active_tab();
-    attempts.retain(|workspace_id, _| waiting.contains(workspace_id));
     let mut settled = false;
-    for workspace_id in waiting {
-        let attempt = attempts.entry(workspace_id.clone()).or_insert(0);
-        *attempt += 1;
-        let attempt = *attempt;
-        if attempt > ACTIVE_TAB_READ_ATTEMPT_LIMIT {
-            return Err(SessionFetchError::Stale(format!(
-                "workspace {workspace_id} named no active tab the event stream knows in {ACTIVE_TAB_READ_ATTEMPT_LIMIT} reads"
-            )));
-        }
-        let active_tab_id = fetch_workspace_active_tab(context, &workspace_id)?;
+    for (workspace_id, active_tab_id) in tabs {
         let settled_now = replica.settle_active_tab(&workspace_id, &active_tab_id);
         crate::diagnostic!(json!({
             "component": "session_sync",
@@ -964,19 +1108,96 @@ fn settle_active_tab_reads(
     replica.refresh_published_state()
 }
 
+/// Gives every pane in `awaiting` that a published layout places a cwd it
+/// can be grouped by before Herdr confirms its own: a confirmed pane's in
+/// the same tab. A pane in a tab Hide created (`clamped_tabs`) is read as
+/// that tab's checkout by the runtime already. Returns false when some
+/// placed pane has neither, which must wait for its read.
+fn stand_in_unconfirmed_cwds(
+    payload: &mut SessionSnapshotPayload,
+    awaiting: &[String],
+    clamped_tabs: &HashSet<String>,
+) -> bool {
+    let mut stand_ins = Vec::new();
+    for pane_id in awaiting {
+        let Some(layout) = payload
+            .layouts
+            .iter()
+            .find(|layout| layout.panes.iter().any(|pane| &pane.pane_id == pane_id))
+        else {
+            // No published layout places it, so nothing groups by its cwd.
+            continue;
+        };
+        if clamped_tabs.contains(&layout.tab_id) {
+            continue;
+        }
+        let sibling = layout
+            .panes
+            .iter()
+            .filter(|pane| !awaiting.contains(&pane.pane_id))
+            .find_map(|pane| {
+                payload
+                    .panes
+                    .iter()
+                    .find(|row| row.pane_id == pane.pane_id)
+                    .and_then(|row| row.cwd.clone())
+            });
+        match sibling {
+            Some(cwd) => stand_ins.push((pane_id.clone(), cwd)),
+            None => return false,
+        }
+    }
+    for (pane_id, cwd) in stand_ins {
+        if let Some(pane) = payload
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == pane_id)
+        {
+            pane.cwd = Some(cwd);
+        }
+    }
+    true
+}
+
 fn publish_replica(
     context: &SessionSyncContext,
     replica: &mut SessionReplica,
     catalog_cache: &mut Option<CatalogCache>,
     purpose_mirror: &mut Option<live::PurposeMirror>,
     labels: &mut Option<LabelWorker>,
+    arrivals: &mut Vec<HerdrArrival>,
 ) -> bool {
+    let awaiting = replica.panes_awaiting_cwd();
     let mut payload = replica.project();
     // Observe native state before label overlays add UI timestamps. This is
     // bounded memory work; no delivery I/O or notifier is started here.
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
+        // A pane announced with a cwd Herdr has not confirmed must not group
+        // its tab under another folder before the worker's read lands. Its
+        // layout still publishes now (PRD instant-pane-topology B20): it
+        // reads as the folder of a confirmed pane beside it, or as the
+        // checkout a tab Hide created was asked for, decided under the lock
+        // that reads those tabs. Only a pane with neither holds the publish
+        // until the read, which publishes then; nothing is observed for it.
+        if !awaiting.is_empty() {
+            let clamped_tabs = if context.is_local() {
+                guard
+                    .created_tab_clamps()
+                    .into_iter()
+                    .map(|clamp| clamp.tab_id)
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+            if !stand_in_unconfirmed_cwds(&mut payload, &awaiting, &clamped_tabs) {
+                return true;
+            }
+        }
+        if !arrivals.is_empty() {
+            guard.observe_herdr_arrivals(&std::mem::take(arrivals));
+        }
         match &context.target {
             SessionSyncTarget::Local { socket_path } => {
                 let node = guard.node().clone();
@@ -1130,17 +1351,21 @@ fn publish_replica(
             asked,
             paths,
             built_at,
+            purposes_synced: None,
         });
     }
     let cache = catalog_cache
-        .as_ref()
+        .as_mut()
         .expect("catalog cache is filled on a miss");
-    if let Some(mirror) = purpose_mirror.as_mut() {
+    if let Some(mirror) = purpose_mirror.as_mut()
+        && cache.purposes_synced.as_ref() != Some(&unconfirmed_created_purposes)
+    {
         mirror.sync(
             &cache.spaces,
             &cache.workspaces,
             &unconfirmed_created_purposes,
         );
+        cache.purposes_synced = Some(unconfirmed_created_purposes);
     }
     let precomputed = PrecomputedCatalog {
         registrations,
@@ -2317,9 +2542,35 @@ mod pane_cwd_confirmation_tests {
         })
     }
 
-    /// One operation tick of the coordinator, as far as pane cwds go.
+    /// One operation tick of the coordinator, as far as pane cwds go: the
+    /// panes it asks the worker to read again, read and applied.
     fn tick(context: &SessionSyncContext, replica: &mut SessionReplica) {
-        reread_pane_cwds(context, replica).expect("cwd read succeeds");
+        let rereads = replica.take_cwd_rereads();
+        read_and_apply(context, replica, rereads).expect("cwd read succeeds");
+    }
+
+    /// Reads back every pane waiting for its cwd and applies the answers, as
+    /// the sync-read worker and the coordinator do together.
+    fn confirm_pane_cwds(
+        context: &SessionSyncContext,
+        replica: &mut SessionReplica,
+    ) -> Result<bool, SessionFetchError> {
+        let awaiting = replica.panes_awaiting_cwd();
+        read_and_apply(context, replica, awaiting)
+    }
+
+    /// What the sync-read worker reads for `panes`, applied as the
+    /// coordinator applies its answer.
+    fn read_and_apply(
+        context: &SessionSyncContext,
+        replica: &mut SessionReplica,
+        panes: Vec<String>,
+    ) -> Result<bool, SessionFetchError> {
+        let cwds = panes
+            .into_iter()
+            .map(|pane_id| fetch_pane_cwd(context, &pane_id).map(|cwd| (pane_id, cwd)))
+            .collect::<Result<Vec<_>, _>>()?;
+        apply_pane_cwds(context, replica, cwds)
     }
 
     /// Applies one event the way the coordinator's event path does.
@@ -2516,5 +2767,105 @@ mod pane_cwd_confirmation_tests {
                 .any(|pane| pane.pane_id == "w1:x64"),
             "the pane past the cap is kept, only its read is not"
         );
+    }
+}
+
+#[cfg(test)]
+mod cwd_stand_in_tests {
+    use super::*;
+
+    /// Tab `w1:t1` holds `p1` in the checkout and `p2`, just split from it,
+    /// announced at Herdr's wrong birth cwd; tab `w1:t2` holds only `p3`.
+    fn payload() -> SessionSnapshotPayload {
+        let pane = |tab: &str, pane: &str, cwd: &str| {
+            json!({
+                "workspace_id": "w1", "tab_id": tab, "pane_id": pane,
+                "terminal_id": "fixture-terminal", "focused": false, "revision": 0,
+                "agent_status": "idle", "cwd": cwd
+            })
+        };
+        let layout = |tab: &str, panes: &[&str]| {
+            json!({
+                "workspace_id": "w1", "tab_id": tab, "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                "focused_pane_id": panes[0],
+                "panes": panes.iter().enumerate().map(|(index, pane)| json!({
+                    "pane_id": pane, "focused": index == 0,
+                    "rect": {"x": index as u32 * 60, "y": 0, "width": 60, "height": 60}
+                })).collect::<Vec<_>>(),
+                "splits": if panes.len() > 1 {
+                    vec![json!({"id": "split_1", "direction": "right", "ratio": 0.5,
+                                "rect": {"x": 0, "y": 0, "width": 120, "height": 60}})]
+                } else {
+                    Vec::new()
+                }
+            })
+        };
+        let snapshot = json!({
+            "version": "0.8.2",
+            "protocol": hide_herdr_client::HERDR_PROTOCOL_REVISION,
+            "focused_pane_id": "w1:p1",
+            "workspaces": [{
+                "workspace_id": "w1", "label": "fixture", "agent_status": "idle",
+                "focused": true, "number": 1, "pane_count": 3, "tab_count": 2,
+                "active_tab_id": "w1:t1"
+            }],
+            "tabs": [
+                {"workspace_id": "w1", "tab_id": "w1:t1", "agent_status": "idle",
+                 "focused": true, "number": 1, "pane_count": 2, "label": "1"},
+                {"workspace_id": "w1", "tab_id": "w1:t2", "agent_status": "idle",
+                 "focused": false, "number": 2, "pane_count": 1, "label": "2"}
+            ],
+            "panes": [
+                pane("w1:t1", "w1:p1", "/work/repo"),
+                pane("w1:t1", "w1:p2", "/tmp"),
+                pane("w1:t2", "w1:p3", "/tmp")
+            ],
+            "layouts": [layout("w1:t1", &["w1:p1", "w1:p2"]), layout("w1:t2", &["w1:p3"])],
+            "agents": []
+        });
+        SessionReplica::from_snapshot(&snapshot)
+            .expect("fixture snapshot")
+            .project()
+    }
+
+    fn cwd(payload: &SessionSnapshotPayload, pane_id: &str) -> Option<String> {
+        payload
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .and_then(|pane| pane.cwd.clone())
+    }
+
+    /// B20: a split's pane publishes with its layout before Herdr confirms
+    /// its cwd, read as the folder of the pane it was split from.
+    #[test]
+    fn a_new_pane_beside_a_confirmed_one_publishes_in_that_folder() {
+        let mut payload = payload();
+        assert!(stand_in_unconfirmed_cwds(
+            &mut payload,
+            &["w1:p2".to_owned()],
+            &HashSet::new()
+        ));
+        assert_eq!(cwd(&payload, "w1:p2").as_deref(), Some("/work/repo"));
+    }
+
+    /// A lone unconfirmed pane in a tab Hide did not create waits for its
+    /// read; one in a tab Hide created publishes, read as that tab's checkout.
+    #[test]
+    fn a_lone_unconfirmed_pane_waits_unless_hide_created_its_tab() {
+        let mut payload = payload();
+        let awaiting = ["w1:p3".to_owned()];
+        assert!(!stand_in_unconfirmed_cwds(
+            &mut payload,
+            &awaiting,
+            &HashSet::new()
+        ));
+        assert!(stand_in_unconfirmed_cwds(
+            &mut payload,
+            &awaiting,
+            &HashSet::from(["w1:t2".to_owned()])
+        ));
+        assert_eq!(cwd(&payload, "w1:p3").as_deref(), Some("/tmp"));
     }
 }

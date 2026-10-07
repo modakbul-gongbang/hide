@@ -9,7 +9,7 @@
 //! read of the keychain was denied on every rebuild, because an ad hoc
 //! signed dev build has a new code identity each time.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -173,17 +173,31 @@ struct ClaudeUsageAnswer {
     outcome: Result<SuccessfulUsage, FetchFailure>,
 }
 
+#[derive(Clone, PartialEq)]
+struct CodexUsageRequest {
+    attempt: u64,
+}
+
+struct CodexUsageAnswer {
+    checked_at_unix_ms: u64,
+    outcome: Result<SuccessfulUsage, FetchFailure>,
+    /// The local session files' reading, taken only when the network read
+    /// failed.
+    fallback: Option<SessionFallback>,
+}
+
 pub struct ProviderUsageReader {
-    paths: UsagePaths,
     started_at: Instant,
     last_seen_popover_generation: u64,
     claude: ProviderState,
     codex: ProviderState,
     codex_fallback: Option<SessionFallback>,
     published: Vec<ProviderUsageSnapshot>,
-    http: UreqUsageClient,
-    /// The core's own node, which holds the operator's logins.
-    node: Arc<dyn NodeLink>,
+    /// The Codex read (credentials and session files from the node that holds
+    /// the login, then the usage endpoint) runs on this worker, for the same
+    /// reason as the Claude one (PRD instant-pane-topology D-13).
+    codex_read: BackgroundRead<CodexUsageRequest, CodexUsageAnswer>,
+    codex_attempt: u64,
     /// The Claude read runs on this worker: a `claude` child takes seconds,
     /// and the coordinator thread that drives this reader is the one that
     /// applies every Herdr pane event.
@@ -202,26 +216,26 @@ impl ProviderUsageReader {
             claude_cancel.clone(),
             Arc::clone(&node),
         );
+        let codex_read = codex_background_read(paths.codex_home.clone(), node);
         Self {
-            paths,
             started_at: Instant::now(),
             last_seen_popover_generation: 0,
             claude: ProviderState::new("claude", "Claude Code"),
             codex: ProviderState::new("codex", "Codex"),
             codex_fallback: None,
             published: ProviderUsageSnapshot::initial_rows(),
-            http: UreqUsageClient::new(),
-            node,
+            codex_read,
+            codex_attempt: 0,
             claude_read,
             claude_attempt: 0,
             claude_cancel,
         }
     }
 
-    /// Runs the Codex credential, network and fallback reads on the
-    /// coordinator thread, outside `Mutex<Runtime>`, starts the Claude read
-    /// on its worker and collects its answer on a later wake, and publishes
-    /// only a changed answer.
+    /// Starts the Claude and Codex reads on their workers when due, collects
+    /// their answers on a later wake, and publishes only a changed answer.
+    /// Nothing here blocks the coordinator thread that applies Herdr's events
+    /// (PRD instant-pane-topology D-13).
     pub(crate) fn read_if_due(
         &mut self,
         activity: UsageActivity,
@@ -242,6 +256,7 @@ impl ProviderUsageReader {
         if initial_due || codex_due {
             self.refresh_codex(now);
         }
+        self.collect_codex(now);
 
         let now_unix_ms = unix_milliseconds();
         let next = vec![
@@ -284,80 +299,37 @@ impl ProviderUsageReader {
         }
     }
 
+    /// Starts one Codex read; the answer lands through
+    /// [`Self::collect_codex`].
     fn refresh_codex(&mut self, now: Instant) {
         if !self.codex.can_attempt(now) {
             return;
         }
-        let checked_at = unix_milliseconds();
-        let credentials = match self.codex_credentials() {
-            Ok(credentials) => credentials,
-            Err(kind) => {
-                self.codex
-                    .record_failure(FetchFailure::authentication(kind), now, checked_at);
-                self.refresh_codex_fallback(checked_at);
-                return;
-            }
-        };
-        let authorization = format!("Bearer {}", credentials.access_token);
-        let response = self.http.get(
-            CODEX_USAGE_URL,
-            &[
-                ("Authorization", authorization.as_str()),
-                ("User-Agent", "codex-cli"),
-                ("OpenAI-Beta", "codex-1"),
-                ("originator", "Codex Desktop"),
-                ("ChatGPT-Account-Id", credentials.account_id.as_str()),
-            ],
-        );
-        match response.and_then(HttpResponse::success_body) {
-            Ok(body) => match parse_codex_usage(&body, checked_at) {
-                Ok(success) => {
-                    self.codex.record_success(success, now);
-                    self.codex_fallback = None;
-                }
-                Err(failure) => {
-                    self.codex.record_failure(failure, now, checked_at);
-                    self.refresh_codex_fallback(checked_at);
-                }
-            },
-            Err(failure) => {
-                self.codex.record_failure(failure, now, checked_at);
-                self.refresh_codex_fallback(checked_at);
-            }
-        }
+        self.codex_attempt += 1;
+        self.codex.last_attempt = Some(now);
     }
 
-    /// The Codex login, from the node that holds it.
-    fn codex_credentials(&self) -> Result<hide_node_link::usage::CodexCredentials, &'static str> {
-        let codex_home = self.paths.codex_home.as_ref().ok_or("credential_path")?;
-        let call = Call::CodexCredentials {
-            codex_home: codex_home.to_string_lossy().into_owned(),
-        };
-        match call_as(self.node.as_ref(), call, NODE_READ_TIMEOUT) {
-            Ok(CredentialsAnswer::Found { credentials }) => Ok(credentials),
-            Ok(CredentialsAnswer::Refused { refusal }) => Err(refusal.code()),
-            Err(_) => Err("credentials_unreadable"),
+    fn collect_codex(&mut self, now: Instant) {
+        if self.codex_attempt == 0 {
+            return;
         }
-    }
-
-    fn refresh_codex_fallback(&mut self, checked_at: u64) {
-        let Some(codex_home) = self.paths.codex_home.as_ref() else {
-            self.codex_fallback = None;
+        let request = CodexUsageRequest {
+            attempt: self.codex_attempt,
+        };
+        let Some(answer) = self.codex_read.poll(request) else {
             return;
         };
-        let call = Call::CodexSessionUsage {
-            codex_home: codex_home.to_string_lossy().into_owned(),
-        };
-        let read: Option<CodexWeeklyUsage> =
-            call_as(self.node.as_ref(), call, NODE_READ_TIMEOUT).unwrap_or_default();
-        self.codex_fallback = read.map(|usage| SessionFallback {
-            value: UsageValue {
-                label: "Codex".to_owned(),
-                used_percent: usage.used_percent,
-                resets_at_unix_seconds: usage.resets_at_unix_seconds,
-            },
-            source_at_unix_ms: usage.source_at_unix_ms.unwrap_or(checked_at),
-        });
+        match answer.outcome {
+            Ok(success) => {
+                self.codex.record_success(success, now);
+                self.codex_fallback = None;
+            }
+            Err(failure) => {
+                self.codex
+                    .record_failure(failure, now, answer.checked_at_unix_ms);
+                self.codex_fallback = answer.fallback;
+            }
+        }
     }
 }
 
@@ -404,6 +376,80 @@ fn claude_background_read(
             checked_at_unix_ms,
             outcome,
         }
+    })
+}
+
+/// The worker that asks the node for the Codex login, asks the usage
+/// endpoint and, when that fails, asks the node for the local session files'
+/// reading instead.
+fn codex_background_read(
+    codex_home: Option<PathBuf>,
+    node: Arc<dyn NodeLink>,
+) -> BackgroundRead<CodexUsageRequest, CodexUsageAnswer> {
+    let http = UreqUsageClient::new();
+    BackgroundRead::on_change(Duration::ZERO, move |_: &CodexUsageRequest| {
+        let checked_at_unix_ms = unix_milliseconds();
+        let outcome = codex_credentials(codex_home.as_deref(), node.as_ref())
+            .map_err(FetchFailure::authentication)
+            .and_then(|credentials| {
+                let authorization = format!("Bearer {}", credentials.access_token);
+                http.get(
+                    CODEX_USAGE_URL,
+                    &[
+                        ("Authorization", authorization.as_str()),
+                        ("User-Agent", "codex-cli"),
+                        ("OpenAI-Beta", "codex-1"),
+                        ("originator", "Codex Desktop"),
+                        ("ChatGPT-Account-Id", credentials.account_id.as_str()),
+                    ],
+                )
+            })
+            .and_then(HttpResponse::success_body)
+            .and_then(|body| parse_codex_usage(&body, checked_at_unix_ms));
+        let fallback = outcome.is_err().then(|| {
+            codex_session_fallback(codex_home.as_deref(), node.as_ref(), checked_at_unix_ms)
+        });
+        CodexUsageAnswer {
+            checked_at_unix_ms,
+            outcome,
+            fallback: fallback.flatten(),
+        }
+    })
+}
+
+/// The Codex login, from the node that holds it.
+fn codex_credentials(
+    codex_home: Option<&Path>,
+    node: &dyn NodeLink,
+) -> Result<hide_node_link::usage::CodexCredentials, &'static str> {
+    let codex_home = codex_home.ok_or("credential_path")?;
+    let call = Call::CodexCredentials {
+        codex_home: codex_home.to_string_lossy().into_owned(),
+    };
+    match call_as(node, call, NODE_READ_TIMEOUT) {
+        Ok(CredentialsAnswer::Found { credentials }) => Ok(credentials),
+        Ok(CredentialsAnswer::Refused { refusal }) => Err(refusal.code()),
+        Err(_) => Err("credentials_unreadable"),
+    }
+}
+
+/// The local session files' weekly reading, from the node that holds them.
+fn codex_session_fallback(
+    codex_home: Option<&Path>,
+    node: &dyn NodeLink,
+    checked_at: u64,
+) -> Option<SessionFallback> {
+    let call = Call::CodexSessionUsage {
+        codex_home: codex_home?.to_string_lossy().into_owned(),
+    };
+    let read: Option<CodexWeeklyUsage> = call_as(node, call, NODE_READ_TIMEOUT).unwrap_or_default();
+    read.map(|usage| SessionFallback {
+        value: UsageValue {
+            label: "Codex".to_owned(),
+            used_percent: usage.used_percent,
+            resets_at_unix_seconds: usage.resets_at_unix_seconds,
+        },
+        source_at_unix_ms: usage.source_at_unix_ms.unwrap_or(checked_at),
     })
 }
 

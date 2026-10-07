@@ -35,6 +35,9 @@ const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 /// the grace only has to cover the reader being scheduled late.
 const RECONCILE_GRACE: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+/// The least time between two agent lists asked for because the session
+/// moved while one was out; a steady event stream re-asks at this pace.
+const AGENT_REASK_SPACING: Duration = Duration::from_millis(250);
 const ASYNC_OPERATION_TICK_INTERVAL: Duration = Duration::from_millis(250);
 /// Herdr events kept between two publishes for the operation stage records;
 /// a burst longer than this keeps its newest events.
@@ -195,11 +198,26 @@ pub(crate) struct CatalogCache {
     asked: BTreeSet<String>,
     paths: Arc<workspace::PathIndex>,
     built_at: Instant,
+    /// The unconfirmed created purposes the purpose mirror last synced this
+    /// catalog with; `None` until it has. A publish that changed neither,
+    /// such as an agent status change, has no purpose to mirror (PRD
+    /// instant-pane-topology D-18).
+    purposes_synced: Option<HashMap<String, String>>,
 }
 
 pub(crate) struct SessionSyncHandle {
     sender: Sender<CoordinatorMessage>,
+    republish_pending: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+}
+
+impl SessionSyncHandle {
+    pub(crate) fn republish_waker(&self) -> RepublishWaker {
+        RepublishWaker {
+            sender: self.sender.clone(),
+            pending: Arc::clone(&self.republish_pending),
+        }
+    }
 }
 
 impl Drop for SessionSyncHandle {
@@ -231,6 +249,35 @@ pub(crate) enum CoordinatorMessage {
     },
     /// The label worker has a read or an analysis result to take.
     Labels,
+    /// The runtime drew something ahead of Herdr, or took it back, and the
+    /// session has to be read again with it (`RepublishWaker`).
+    Republish,
+    /// A socket read the sync-read worker made for the subscription of
+    /// `generation` (`sync_reads.rs`).
+    SyncRead {
+        generation: u64,
+        answer: sync_reads::SyncReadAnswer,
+    },
+}
+
+/// Wakes the local coordinator to publish its session again at once: the
+/// core has drawn a created tab or a predicted pane geometry ahead of Herdr,
+/// or taken one back, and the overlay rides the next ingest (PRD
+/// instant-pane-topology D-05, D-07). Wakes that arrive before the
+/// coordinator takes the first are one publish, so a burst cannot queue
+/// publishes.
+#[derive(Clone)]
+pub(crate) struct RepublishWaker {
+    sender: Sender<CoordinatorMessage>,
+    pending: Arc<AtomicBool>,
+}
+
+impl RepublishWaker {
+    pub(crate) fn wake(&self) {
+        if !self.pending.swap(true, Ordering::AcqRel) {
+            let _ = self.sender.send(CoordinatorMessage::Republish);
+        }
+    }
 }
 
 pub(crate) struct ActiveSubscription {
@@ -257,6 +304,7 @@ mod process_info;
 mod projection;
 mod replica;
 mod subscription;
+mod sync_reads;
 #[cfg(test)]
 mod tests;
 
@@ -277,3 +325,4 @@ pub(crate) use subscription::{
     Connected, connect, fetch_agents, fetch_pane_cwd, fetch_workspace_active_tab, log_sync_failure,
     stop_subscription,
 };
+use sync_reads::{SyncRead, SyncReadAnswer, SyncReader};
