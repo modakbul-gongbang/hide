@@ -1380,6 +1380,8 @@ fn diff_open_requires_a_real_working_tree_change() {
         "user.name=Fixture",
         "-c",
         "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
         "commit",
         "-qm",
         "baseline",

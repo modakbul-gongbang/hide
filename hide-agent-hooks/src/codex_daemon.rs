@@ -1,18 +1,18 @@
-//! Codex's shared app-server daemon, read and switched through Codex's own
-//! `codex features` command (PRD overview-request-view D-21, D-22, D-25;
-//! settings-cleanup D-12, D-14).
+//! Codex's shared app-server daemon, read, switched and stopped through
+//! Codex's own commands (PRD overview-request-view D-21, D-22, D-25;
+//! settings-cleanup D-12, D-14; codex-daemon-apply D-04, D-05, D-11).
 //!
 //! A Codex attached to the shared daemon runs its hooks in the daemon's
 //! environment, not the pane's, so Herdr never learns that pane's session and
 //! Hide cannot read it (openai/codex#48500). Turning `daemon_auto_start` off
-//! makes every Codex the operator starts by hand run in its own pane. Only
-//! the operator's own request turns it off: no install pass does. This is the
-//! only code that changes that setting, and it changes it only through
-//! `codex features disable daemon_auto_start`: Codex's `config.toml` is never
-//! written here.
-//!
-//! A running daemon is never stopped (D-23); the setting reaches each Codex
-//! started after it.
+//! makes every Codex the operator starts by hand run in its own pane, but a
+//! daemon that is already running keeps serving each Codex that attaches to
+//! it, so the operator's confirmed request also stops that daemon
+//! ([`stop`]), which disconnects every Codex attached to it. Only that
+//! request does either: no install pass does. This is the only code that
+//! changes the setting or stops the daemon, through `codex features disable
+//! daemon_auto_start` and `codex app-server daemon stop`: Codex's
+//! `config.toml` is never written here.
 //!
 //! This is a transition path: it goes away with the Settings link that calls
 //! it once openai/codex#48500 runs a daemon's hooks in each window's
@@ -33,6 +33,16 @@ pub const DAEMON_FEATURE: &str = "daemon_auto_start";
 /// How long one `codex features` or `codex app-server daemon version` call
 /// may take; each answers in well under a second.
 const DEADLINE: Duration = Duration::from_secs(5);
+
+/// How long `codex app-server daemon stop` may take: it returns once the
+/// daemon has let its clients go and exited.
+const STOP_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Where a running daemon keeps its control socket, under the account's
+/// `CODEX_HOME`. This is Codex 0.160's observed layout, not a documented
+/// contract: `daemon version` names this path when it cannot connect, the
+/// link appears with `daemon start` and goes with `daemon stop`.
+const CONTROL_SOCKET: &str = "app-server-control/app-server-control.sock";
 
 /// What Codex on one machine says about its shared daemon.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,7 +65,7 @@ pub fn find_codex(home: &Path) -> Option<PathBuf> {
 /// Reads the actual binary's feature capability without querying or starting
 /// a daemon and without changing the account's setting.
 pub fn read_setting(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<DaemonSetting, String> {
-    let listed = run(codex, home, &["features", "list"], stop)?;
+    let listed = run(codex, home, &["features", "list"], DEADLINE, stop)?;
     if !listed.succeeded() {
         return Err(failed(codex, "features list", &listed));
     }
@@ -86,13 +96,17 @@ pub enum SwitchFailure {
 /// setting is changed only when Codex says it did: a refusal, a timeout and
 /// a stop leave it as it was.
 pub fn turn_off(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<(), SwitchError> {
-    let finished =
-        run(codex, home, &["features", "disable", DAEMON_FEATURE], stop).map_err(|error| {
-            SwitchError {
-                failure: error.failure,
-                message: error.message,
-            }
-        })?;
+    let finished = run(
+        codex,
+        home,
+        &["features", "disable", DAEMON_FEATURE],
+        DEADLINE,
+        stop,
+    )
+    .map_err(|error| SwitchError {
+        failure: error.failure,
+        message: error.message,
+    })?;
     if finished.succeeded() {
         Ok(())
     } else {
@@ -101,6 +115,142 @@ pub fn turn_off(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<(), Swit
             message: failed(codex, "features disable", &finished),
         })
     }
+}
+
+/// `codex app-server daemon version` answers `"status":"running"` with exit 0
+/// while a daemon serves its control socket, and fails when none does; it
+/// never starts one. A failure counts as no daemon only while the control
+/// socket is gone ([`CONTROL_SOCKET`]); a failure with the socket still there
+/// is an error, as is an exit-0 answer Hide cannot read, never a daemon that
+/// is down (engineering rule 4).
+pub fn daemon_running(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<bool, String> {
+    match daemon_answer(codex, home, stop)? {
+        Answer::Running => Ok(true),
+        Answer::Down(_) => Ok(false),
+        Answer::Unsure(why) => Err(why),
+    }
+}
+
+/// What `daemon version` says about the daemon, each with the words that go
+/// to the log, so a failure that only looked like "no daemon" stays visible.
+enum Answer {
+    Running,
+    /// It failed or answered another status, and the control socket is gone.
+    Down(String),
+    /// It failed while the control socket is still there (a daemon that
+    /// cannot be asked, or a stale socket a crashed daemon left behind), or
+    /// it answered something Hide cannot read.
+    Unsure(String),
+}
+
+fn daemon_answer(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Answer, String> {
+    let finished = run(
+        codex,
+        home,
+        &["app-server", "daemon", "version"],
+        DEADLINE,
+        stop,
+    )?;
+    if !finished.succeeded() {
+        let answer = exited(
+            codex,
+            "app-server daemon version",
+            &finished,
+            &finished.stderr,
+        );
+        let socket = home.join(".codex").join(CONTROL_SOCKET);
+        return Ok(match std::fs::symlink_metadata(&socket) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Answer::Down(answer),
+            Ok(_) => Answer::Unsure(format!(
+                "{answer}, while the daemon's control socket {} is still there",
+                socket.display()
+            )),
+            Err(error) => Answer::Unsure(format!(
+                "{answer}, and the daemon's control socket {} could not be checked: {error}",
+                socket.display()
+            )),
+        });
+    }
+    match daemon_status(&finished.stdout).as_deref() {
+        Some("running") => Ok(Answer::Running),
+        Some(status) => Ok(Answer::Down(format!(
+            "codex app-server daemon version answered status {}",
+            excerpt(status)
+        ))),
+        None => Ok(Answer::Unsure(format!(
+            "codex app-server daemon version printed an answer Hide cannot read: {}",
+            excerpt(&finished.stdout)
+        ))),
+    }
+}
+
+/// The `status` field of a `codex app-server daemon` JSON answer.
+fn daemon_status(stdout: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(stdout.trim()).ok()?;
+    Some(value.get("status")?.as_str()?.to_owned())
+}
+
+/// What [`stop`] found.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Stopped {
+    /// A daemon answered and Hide stopped it.
+    Stopped,
+    /// No daemon was running, so nothing was stopped (engineering rule 11).
+    /// `answer` is what Codex said, for the log: a transient failure reads as
+    /// no daemon, and this keeps it visible.
+    AlreadyStopped { answer: String },
+}
+
+/// Stops the shared daemon, which disconnects every Codex attached to it;
+/// a Codex started with `--no-daemon` is not attached and keeps running.
+/// Inside the operator's confirmed turn-off nothing is decided from the
+/// control socket, whose place is only Codex 0.160's observed layout: unless
+/// `daemon version` reads running, `codex app-server daemon stop` is asked,
+/// which knows the daemon by its process, and its typed `status` decides:
+/// `notRunning` means nothing was running (also a crashed daemon whose stale
+/// socket remains, measured on 0.160), `stopped` is checked again, and any
+/// other answer is a failure. A daemon that read running is always asked
+/// again after the stop, so one that answers then (another app or a `daemon
+/// bootstrap` manager started it again) is a failure, not a stop; a second
+/// request over a daemon that is down asks `daemon stop` again, which is a
+/// no-op that answers `notRunning` (engineering rule 11).
+pub fn stop(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Stopped, String> {
+    let not_running = match daemon_answer(codex, home, stop)? {
+        Answer::Running => None,
+        Answer::Down(why) | Answer::Unsure(why) => Some(why),
+    };
+    let finished = run(
+        codex,
+        home,
+        &["app-server", "daemon", "stop"],
+        STOP_DEADLINE,
+        stop,
+    )?;
+    if !finished.succeeded() {
+        return Err(failed(codex, "app-server daemon stop", &finished));
+    }
+    match daemon_status(&finished.stdout).as_deref() {
+        Some("notRunning") => {
+            if let Some(why) = not_running {
+                return Ok(Stopped::AlreadyStopped {
+                    answer: format!("{why}; codex app-server daemon stop answered notRunning"),
+                });
+            }
+        }
+        Some("stopped") => {}
+        _ => {
+            return Err(format!(
+                "codex app-server daemon stop printed an answer Hide cannot read: {}",
+                excerpt(&finished.stdout)
+            ));
+        }
+    }
+    if daemon_running(codex, home, stop)? {
+        return Err(
+            "the shared Codex daemon still answers after codex app-server daemon stop".to_owned(),
+        );
+    }
+    Ok(Stopped::Stopped)
 }
 
 /// The `daemon_auto_start` row of `codex features list`, whose columns are the
@@ -128,7 +278,13 @@ fn parse_feature_list(stdout: &str) -> Result<DaemonSetting, String> {
 /// launching shell carried never redirects which setting is changed. Its
 /// `PATH` is the one it was found on ([`crate::diagnosis::cli_path`]), so a
 /// Codex installed by pnpm, a script that runs `node`, finds `node` there.
-fn run(codex: &Path, home: &Path, args: &[&str], stop: &AtomicBool) -> Result<Finished, RunError> {
+fn run(
+    codex: &Path,
+    home: &Path,
+    args: &[&str],
+    deadline: Duration,
+    stop: &AtomicBool,
+) -> Result<Finished, RunError> {
     let mut command = Command::new(codex);
     command
         .args(args)
@@ -143,7 +299,7 @@ fn run(codex: &Path, home: &Path, args: &[&str], stop: &AtomicBool) -> Result<Fi
             })?,
         );
     let name = format!("codex {}", args.join(" "));
-    run_to_end(&mut command, DEADLINE, stop).map_err(|failure| match failure {
+    run_to_end(&mut command, deadline, stop).map_err(|failure| match failure {
         RunFailure::Start(error) => RunError {
             failure: SwitchFailure::CouldNotStart,
             message: format!("{} could not start: {error}", codex.display()),
@@ -156,7 +312,7 @@ fn run(codex: &Path, home: &Path, args: &[&str], stop: &AtomicBool) -> Result<Fi
             failure: SwitchFailure::TimedOut,
             message: format!(
                 "{name} did not answer within {} seconds and was stopped",
-                DEADLINE.as_secs()
+                deadline.as_secs()
             ),
         },
         RunFailure::Stopped => RunError {
@@ -177,8 +333,32 @@ impl From<RunError> for String {
     }
 }
 
+/// At most this many characters of what Codex printed reach a report and the
+/// core's log (engineering rule 15): enough to tell one failure from another.
+const EXCERPT_CHARS: usize = 240;
+
+/// The first non-empty line of what Codex printed, cut to [`EXCERPT_CHARS`].
+fn excerpt(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    match line.char_indices().nth(EXCERPT_CHARS) {
+        Some((end, _)) => format!("{}...", &line[..end]),
+        None => line.to_owned(),
+    }
+}
+
 fn failed(codex: &Path, what: &str, finished: &Finished) -> String {
-    let line = finished.last_error_line();
+    exited(codex, what, finished, &finished.last_error_line())
+}
+
+/// How a Codex command ended, with one line of what it printed: the last
+/// error line names the cause for most commands; the daemon's version check
+/// passes its first line, which names the socket it could not reach.
+fn exited(codex: &Path, what: &str, finished: &Finished, printed: &str) -> String {
+    let line = excerpt(printed);
     let code = finished
         .code
         .map_or_else(|| "a signal".to_owned(), |code| format!("code {code}"));
@@ -303,5 +483,265 @@ mod tests {
                 .failure,
             SwitchFailure::CouldNotStart
         );
+    }
+
+    #[test]
+    fn a_daemon_answer_is_read_by_its_status_field() {
+        assert_eq!(
+            daemon_status(r#"{"status":"running","pid":1}"#).as_deref(),
+            Some("running")
+        );
+        assert_eq!(
+            daemon_status(r#"{"status":"notRunning"}"#).as_deref(),
+            Some("notRunning")
+        );
+        assert_eq!(daemon_status("Error: failed to connect"), None);
+        assert_eq!(daemon_status(r#"{"pid":1}"#), None);
+    }
+
+    #[test]
+    fn what_codex_printed_reaches_the_log_as_one_short_line() {
+        assert_eq!(
+            excerpt("\n  Error: failed to connect  \nCaused by: x\n"),
+            "Error: failed to connect"
+        );
+        let long = "é".repeat(10_000);
+        let cut = excerpt(&long);
+        assert_eq!(cut.chars().count(), EXCERPT_CHARS + 3);
+        assert!(cut.ends_with("..."));
+    }
+
+    /// A stand-in `codex` whose daemon is the file `running` in its HOME;
+    /// each call is logged with the `CODEX_HOME` it was given.
+    #[cfg(unix)]
+    fn fake_daemon() -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let codex = home.path().join("bin/codex");
+        std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        std::fs::write(
+            &codex,
+            concat!(
+                "#!/bin/sh\n",
+                "echo \"$CODEX_HOME $*\" >> \"$HOME/codex.log\"\n",
+                "case \"$1 $2 $3\" in\n",
+                "  'app-server daemon version')\n",
+                "    if [ -e \"$HOME/running\" ] && [ ! -e \"$HOME/version-fails\" ]; then cat \"$HOME/answer\" 2>/dev/null || echo '{\"status\":\"running\"}'; exit 0; fi\n",
+                "    printf 'Error: failed to connect\\n\\nCaused by:\\n    No such file or directory\\n' >&2; exit 1 ;;\n",
+                "  'app-server daemon stop')\n",
+                "    if [ -e \"$HOME/stop-fails\" ]; then echo 'Error: permission denied' >&2; exit 1; fi\n",
+                "    if [ -e \"$HOME/stop-mute\" ]; then exit 0; fi\n",
+                "    if [ ! -e \"$HOME/running\" ] || [ -e \"$HOME/stop-says-not-running\" ]; then echo '{\"status\":\"notRunning\"}'; exit 0; fi\n",
+                "    [ -e \"$HOME/comes-back\" ] || rm -f \"$HOME/running\"\n",
+                "    [ -e \"$HOME/keeps-socket\" ] || rm -f \"$HOME/.codex/app-server-control/app-server-control.sock\"\n",
+                "    echo '{\"status\":\"stopped\"}'; exit 0 ;;\n",
+                "esac\n",
+                "exit 2\n",
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (home, codex)
+    }
+
+    #[cfg(unix)]
+    fn calls(home: &Path) -> Vec<String> {
+        std::fs::read_to_string(home.join("codex.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_running_daemon_is_stopped_through_the_accounts_own_codex_home() {
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        let quitting = AtomicBool::new(false);
+
+        assert_eq!(stop(&codex, home.path(), &quitting), Ok(Stopped::Stopped));
+        assert!(!home.path().join("running").exists());
+        let codex_home = home.path().join(".codex");
+        let codex_home = codex_home.display();
+        assert_eq!(
+            calls(home.path()),
+            [
+                format!("{codex_home} app-server daemon version"),
+                format!("{codex_home} app-server daemon stop"),
+                format!("{codex_home} app-server daemon version"),
+            ]
+        );
+
+        // The same apply again stops nothing: `daemon stop` is a no-op that
+        // answers notRunning, and the log keeps what the version check said,
+        // exit code included.
+        let Ok(Stopped::AlreadyStopped { answer }) = stop(&codex, home.path(), &quitting) else {
+            panic!("a second stop found a daemon");
+        };
+        assert!(
+            answer
+                .contains("app-server daemon version exited with code 1: Error: failed to connect")
+                && answer.ends_with("daemon stop answered notRunning"),
+            "{answer}"
+        );
+        assert!(!home.path().join("running").exists());
+    }
+
+    /// Hide quitting while the version check runs stops nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_quit_before_the_version_check_answers_never_runs_daemon_stop() {
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        assert!(stop(&codex, home.path(), &AtomicBool::new(true)).is_err());
+        assert!(
+            !calls(home.path())
+                .iter()
+                .any(|call| call.ends_with("daemon stop"))
+        );
+        assert!(home.path().join("running").exists());
+    }
+
+    /// The confirmed stop never decides from the control socket: a daemon
+    /// whose socket lives elsewhere (another Codex version or platform, a
+    /// relocated CODEX_HOME) and whose version check fails is still stopped.
+    #[cfg(unix)]
+    #[test]
+    fn a_daemon_whose_socket_is_elsewhere_is_still_stopped() {
+        let quitting = AtomicBool::new(false);
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        assert_eq!(
+            daemon_running(&codex, home.path(), &quitting),
+            Ok(false),
+            "the pane's read keeps the socket rule"
+        );
+
+        assert_eq!(stop(&codex, home.path(), &quitting), Ok(Stopped::Stopped));
+        assert!(
+            !home.path().join("running").exists(),
+            "the daemon was stopped"
+        );
+
+        // A `daemon stop` answer Hide cannot read is a failure, never done.
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        std::fs::write(home.path().join("stop-mute"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("cannot read"), "{failure}");
+    }
+
+    /// A failed `daemon version` is no daemon only once the control socket is
+    /// gone; with the socket still there the read is an error, and the stop
+    /// asks `daemon stop`, whose typed answer settles it, so the turn-off
+    /// never answers done over a daemon that runs.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_version_with_the_control_socket_still_there_is_not_a_daemon_that_is_down() {
+        let quitting = AtomicBool::new(false);
+        let stops = |home: &Path| {
+            calls(home)
+                .iter()
+                .filter(|call| call.ends_with("daemon stop"))
+                .count()
+        };
+        let link = |home: &Path| {
+            let socket = home.join(".codex").join(CONTROL_SOCKET);
+            std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(home.join("gone"), &socket).unwrap();
+            socket
+        };
+
+        // No socket: down to a read; the stop asks `daemon stop`, which
+        // answers notRunning, and nothing is stopped.
+        let (home, codex) = fake_daemon();
+        assert_eq!(daemon_running(&codex, home.path(), &quitting), Ok(false));
+        assert!(matches!(
+            stop(&codex, home.path(), &quitting),
+            Ok(Stopped::AlreadyStopped { .. })
+        ));
+        assert_eq!(stops(home.path()), 1);
+
+        // A stale socket a crashed daemon left: unknown to a read; the stop
+        // asks `daemon stop`, which answers notRunning.
+        let (home, codex) = fake_daemon();
+        link(home.path());
+        let unknown = daemon_running(&codex, home.path(), &quitting).unwrap_err();
+        assert!(
+            unknown.contains("exited with code 1: Error: failed to connect, while"),
+            "the first error line is kept: {unknown}"
+        );
+        let Ok(Stopped::AlreadyStopped { answer }) = stop(&codex, home.path(), &quitting) else {
+            panic!("a crashed daemon's stale socket is not a running daemon");
+        };
+        assert!(answer.ends_with("answered notRunning"), "{answer}");
+        assert_eq!(stops(home.path()), 1);
+
+        // A running daemon that cannot be asked is stopped, and its socket
+        // goes with it.
+        let (home, codex) = fake_daemon();
+        let socket = link(home.path());
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        assert_eq!(stop(&codex, home.path(), &quitting), Ok(Stopped::Stopped));
+        assert!(std::fs::symlink_metadata(&socket).is_err());
+
+        // A stop after which the socket is still there and nothing answers
+        // is a failure, not done.
+        let (home, codex) = fake_daemon();
+        link(home.path());
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        std::fs::write(home.path().join("keeps-socket"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("control socket"), "{failure}");
+
+        // A stop that fails while Hide cannot tell is a failure.
+        let (home, codex) = fake_daemon();
+        link(home.path());
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        std::fs::write(home.path().join("stop-fails"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("permission denied"), "{failure}");
+
+        // notRunning is not trusted over a daemon that answered running: it
+        // is asked again, and one that still answers is a failure.
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("stop-says-not-running"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("still answers"), "{failure}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_that_does_not_take_effect_is_a_failure() {
+        let quitting = AtomicBool::new(false);
+
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("stop-fails"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("permission denied"), "{failure}");
+
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("comes-back"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("still answers"), "{failure}");
+
+        // A version answer Hide cannot read is not a daemon that is down: a
+        // read reports it as unknown, and the stop asks `daemon stop`.
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("answer"), "daemon v2 ready\n").unwrap();
+        let unknown = daemon_running(&codex, home.path(), &quitting).unwrap_err();
+        assert!(unknown.contains("cannot read"), "{unknown}");
+        assert_eq!(stop(&codex, home.path(), &quitting), Ok(Stopped::Stopped));
     }
 }

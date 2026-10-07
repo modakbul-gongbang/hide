@@ -983,43 +983,45 @@ test("a dropped file reaches the terminal as an attachment", async ({ page }) =>
   try {
     // The fixture checkout's panes run the shim that logs every PTY byte, so
     // the pasted token is observable there; openCheckout focused the repository.
+    // The repository's pane stays on screen until the core answers the checkout
+    // click, so the drop waits for the fixture's own first pane, by its id.
     await page.locator('[data-sidebar-mode="projects"]').click();
     const project = page.locator("[data-project]", { hasText: "fixture" });
     await project.locator("[data-checkout]").first().click();
-    await page.locator('[data-tab-kind="herdr"]').first().click();
-    const pane = page.locator("[data-pane-view]").first();
-    await expect(pane).toBeVisible();
+    const [target] = herdr.panes;
+    await expect(page.locator(`[data-pane-view="${target}"]`)).toBeVisible();
 
     // A file drop is bytes the browser can read but cannot name; the shell
     // uploads them, and the core pastes the staged path into the PTY (B14).
-    await page.evaluate(async (base64) => {
+    await page.evaluate(async ({ base64, pane }) => {
       const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
       const file = new File([binary], "dropped.png", { type: "image/png" });
       const data = new DataTransfer();
       data.items.add(file);
-      const target = document.querySelector("[data-pane-view]") as HTMLElement;
-      target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
-      target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
-    }, PNG.toString("base64"));
+      const view = document.querySelector(`[data-pane-view="${pane}"]`) as HTMLElement;
+      view.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+      view.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, { base64: PNG.toString("base64"), pane: target });
 
     await expect.poll(() => sent.get("attachment_stage")).toBe(1);
     await expect.poll(() => sent.get("attachment_commit")).toBe(1);
 
-    // The shim logs every byte its PTY received, so the pasted token shows up.
-    const logs = herdr.inputLogs.map((file) => file);
-    const read = () => logs.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "")).join("\n");
+    // The shim logs every byte its PTY received, so the pasted token shows up
+    // in the log of the pane it was dropped on (`inputLogs` follows `panes`).
+    const [log] = herdr.inputLogs;
+    const read = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "");
     await expect.poll(read, { timeout: 15_000 }).toContain("dropped.png");
 
     // ⌘V of an image: the same flow, with the image staged at the path the core
     // reads a clipboard attachment from (B14).
-    await page.evaluate((base64) => {
+    await page.evaluate(({ base64, pane }) => {
       const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
       const file = new File([binary], "clipboard.png", { type: "image/png" });
       const data = new DataTransfer();
       data.items.add(file);
-      const target = document.querySelector("[data-terminal-host]") as HTMLElement;
-      target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
-    }, PNG.toString("base64"));
+      const host = document.querySelector(`[data-pane-view="${pane}"] [data-terminal-host]`) as HTMLElement;
+      host.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+    }, { base64: PNG.toString("base64"), pane: target });
     await expect.poll(read, { timeout: 15_000 }).toContain("TerminalClipboard");
     await expect(page.locator("[data-pane-attachment-refusal]")).toHaveCount(0);
     await screenshot(page, "s3-attachment-drop");

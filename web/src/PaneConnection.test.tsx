@@ -111,22 +111,114 @@ it("offers no Reopen where it would change nothing: a setup problem, and a pane 
   await remote.unmount();
 });
 
-it("explains the shared server, turns it off for this Mac on request and shows the answer it reads back", async () => {
+const offLink = () => document.querySelector("[data-codex-shared-server-off]") as HTMLElement | null;
+const confirmation = () => document.querySelector("[data-codex-shared-server-confirm]") as HTMLElement | null;
+const press = async (selector: string) => { await act(async () => { (document.querySelector(selector) as HTMLElement).click(); }); };
+
+it("explains the shared server, asks before turning it off and stopping it, and shows the answer it reads back (PRD codex-daemon-apply B1-B3)", async () => {
   const { events, render, unmount } = await mount(pane(not({ reason: "codex_shared_server" })));
   await open();
   expect(popover()?.textContent).toContain("Hide can't follow this Codex");
   expect(popover()?.textContent).toContain("Reopen on its own server");
-  expect(popover()?.textContent).toContain("Changes Codex everywhere on this Mac.");
-  await act(async () => { (document.querySelector("[data-codex-shared-server-off]") as HTMLElement).click(); });
+  expect(popover()?.textContent).toContain("Changes Codex everywhere on this Mac and stops its running shared server.");
+
+  // The link asks first and sends nothing.
+  await act(async () => { offLink()!.click(); });
+  expect(events).toEqual([]);
+  const dialog = confirmation();
+  expect(dialog?.getAttribute("data-codex-shared-server-confirm")).toBe("local");
+  expect(dialog?.textContent).toContain("Turn off Codex's shared server on this Mac?");
+  expect(dialog?.textContent).toContain("the one running now stops");
+  expect(dialog?.textContent).toContain("Every Codex attached to it disconnects. In its pane, run codex resume to continue.");
+  expect(dialog?.textContent).toContain("Codex that Hide started doesn't use this server and keeps running.");
+  // No button has the keyboard, and no count of Codex is claimed (B2).
+  expect(document.activeElement?.tagName).not.toBe("BUTTON");
+  expect(dialog?.textContent).not.toMatch(/\d/);
+
+  await press("[data-codex-shared-server-go]");
   expect(events).toEqual([{ schema_version: 2, kind: "codex_daemon_disable", payload: { device_id: "local" } }]);
+  expect(confirmation()).toBeNull();
+  // The popover stays to show the answer (B3).
+  expect(popover()).not.toBeNull();
 
   await act(async () => { useShellStore.setState(snapshot({ state: "pending" }) as never); });
   expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("pending");
+  expect(offLink()?.hasAttribute("disabled")).toBe(true);
 
   // Done: the pane now reads "started before Hide was set up", and the answer stays on screen.
   await act(async () => { useShellStore.setState(snapshot({ state: "done" }) as never); });
   await render(pane(not({ reason: "started_before_hide" })));
   expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("done");
+  expect(popover()?.textContent).toContain("Codex's shared server is off.");
+  await unmount();
+});
+
+it("changes nothing when the confirmation is kept or dismissed (B2)", async () => {
+  const { events, unmount } = await mount(pane(not({ reason: "codex_shared_server" })));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-keep]");
+  expect(confirmation()).toBeNull();
+  await act(async () => { offLink()!.click(); });
+  await act(async () => {
+    confirmation()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect(confirmation()).toBeNull();
+  expect(events).toEqual([]);
+  await unmount();
+});
+
+it("closes the confirmation by itself once its pane stops offering the turn-off", async () => {
+  const { events, render, unmount } = await mount(pane(not({ reason: "codex_shared_server" })));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  expect(confirmation()).not.toBeNull();
+  await render(pane(not({ reason: "started_before_hide" })));
+  expect(confirmation()).toBeNull();
+  expect(events).toEqual([]);
+  await unmount();
+});
+
+it("says when autostart went off but the running server did not stop, and keeps the link to try again (B7)", async () => {
+  const { events, unmount } = await mount(pane(not({ reason: "codex_shared_server" })));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-go]");
+  await act(async () => { useShellStore.setState(snapshot({ state: "failed", reason: "stop_failed" }) as never); });
+  const line = document.querySelector("[data-codex-shared-server-outcome]");
+  expect(line?.getAttribute("data-codex-shared-server-outcome")).toBe("failed");
+  expect(line?.textContent).toBe("Autostart is off, but the running shared server didn't stop. Try again.");
+  expect(offLink()?.hasAttribute("disabled")).toBe(false);
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-go]");
+  expect(events).toHaveLength(2);
+  await unmount();
+});
+
+it("does not show the last request's answer as the next one's until the core moves on (B9: a second turn-off)", async () => {
+  const { events, unmount } = await mount(pane(not({ reason: "codex_shared_server" })), snapshot({ state: "done" }));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-go]");
+  expect(events).toHaveLength(1);
+  expect(document.querySelector("[data-codex-shared-server-outcome]")).toBeNull();
+  await act(async () => { useShellStore.setState(snapshot({ state: "pending" }) as never); });
+  expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("pending");
+  await act(async () => { useShellStore.setState(snapshot({ state: "done" }) as never); });
+  expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("done");
+  await unmount();
+});
+
+it("says only that the machine could not be reached when the answer is unreachable, which may come after autostart went off", async () => {
+  const { unmount } = await mount(pane(not({ reason: "codex_shared_server" })));
+  await open();
+  await act(async () => { offLink()!.click(); });
+  await press("[data-codex-shared-server-go]");
+  await act(async () => { useShellStore.setState(snapshot({ state: "failed", reason: "unreachable" }) as never); });
+  const line = document.querySelector("[data-codex-shared-server-outcome]");
+  expect(line?.getAttribute("data-codex-shared-server-outcome")).toBe("failed");
+  expect(line?.textContent).toBe("Couldn't reach that machine. Try again.");
+  expect(offLink()?.hasAttribute("disabled")).toBe(false);
   await unmount();
 });
 

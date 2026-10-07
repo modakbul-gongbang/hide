@@ -175,6 +175,10 @@ pub(crate) fn run(
                     .collect(),
             }))
         }
+        Command::Show { id } if id == super::HERE => {
+            let ledger = state(&client)?;
+            Ok(view(super::here(&ledger, &actor)?, &ledger))
+        }
         Command::Show { id } => {
             let ledger = state(&client)?;
             let record = ledger
@@ -229,11 +233,9 @@ pub(crate) fn run(
             let ledger = state(&client)?;
             let parent = parent
                 .map(|id| {
-                    if id == "here" {
-                        ledger
-                            .agents
-                            .iter()
-                            .find(|p| !p.ended && p.actor.same_identity(&actor))
+                    if id == super::HERE {
+                        super::live_self(&ledger, &actor)
+                            .next()
                             .map(|p| p.id.clone())
                             .ok_or("parent_unavailable".to_owned())
                     } else {
@@ -370,12 +372,8 @@ fn spawn(
         return Err("invalid_agent_name".into());
     }
     let mut ledger = state(client)?;
-    let parent_id = if parent == "here" {
-        if let Some(parent) = ledger
-            .agents
-            .iter()
-            .find(|record| !record.ended && record.actor.same_identity(actor))
-        {
+    let parent_id = if parent == super::HERE {
+        if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
         } else {
             let (connector, host_scope, native_machine, _) = context(client, &actor.device_id)?;
