@@ -2,6 +2,7 @@ import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest 
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentScope = {
+  closes: Record<string, CloseScope>;
   raised: { group: "needs_you" | "done"; shown: string[]; more: string[] }[];
   owners: Record<string, string>;
   badge_total: number;
@@ -62,4 +63,18 @@ export type AgentTreeScope = {
   more: number;
   needs_you: boolean;
   turn_kind: "question" | "review" | null;
+};
+
+export type CloseScope = {
+  decision: { action: "status_unknown"; label: string } | { action: "confirm" } | { action: "close" };
+  stop_work: { rows: { pane_id: string; agent: boolean; label: string; state: "active" | "unknown" | "quiet" }[]; unknown: number | null };
+  subtree: CloseSubtree | null;
+  subtree_all: CloseSubtree | null;
+};
+export type CloseSubtree = {
+  ids: string[];
+  rows: { pane_id: string; depth: number; target: boolean; state: "working" | "waiting" | "unread" | "unknown" | "quiet" }[];
+  counts: { working: number; waiting: number; unread: number; unknown: number };
+  unknown: boolean;
+  target_unknown: boolean;
 };

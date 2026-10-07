@@ -26,7 +26,7 @@ import {
   type CloseWatchFrame,
 } from "./buffers";
 import { createCatalogObserver } from "./agentPicker";
-import { closeDecision, statusUnknownNotice, subtreeOf } from "./close";
+import { closeScope, closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
@@ -274,8 +274,9 @@ export function createActions(send: DispatchFn) {
    * pane or tab lives on, and the close goes there as `remote_control`; a
    * local close is the core's own `close_pane`/`close_tab`.
    */
-  const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, agents: AgentRow[]) => {
-    const decision = closeDecision(panes, agents);
+  const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, _agents: AgentRow[]) => {
+    const consequence = closeScope(rest(), panes.map((p) => p.id));
+    const decision = closeDecision(consequence);
     if (decision.action === "status_unknown") {
       ui().setNotice({ text: statusUnknownNotice(decision.label, translate), refreshable: true });
       return;
@@ -283,7 +284,7 @@ export function createActions(send: DispatchFn) {
     // An agent with live descendants outside what closes asks the subtree
     // sheet instead of the Stop-work one (PRD close-agent-subtree B2); which
     // of the two shows is re-derived while it is open (B28).
-    if (decision.action === "confirm" || subtreeOf(panes.map((pane) => pane.id), everyAgent())) {
+    if (decision.action === "confirm" || subtreeOf(consequence, everyAgent())) {
       ui().setPendingClose({ kind, id, targetId });
       return;
     }

@@ -18,7 +18,7 @@ import { DiskCleanupSheet } from "./DiskCleanupSheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
 import { SubtreeList } from "./components/subtree-list";
-import { subtreeOf, type Subtree } from "./close";
+import { closeScope, subtreeOf, type Subtree } from "./close";
 import { NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
 import { PrDelegateDialog, PrLinkDialog, PrNewIssueDialog } from "./PrDialogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
@@ -145,9 +145,9 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
  * which leaves the dialog as it was.
  */
 function useOutsideSubtree(actions: Actions, inside: string[]): Subtree | null {
-  useShellStore((s) => s.rest);
+  const rest = useShellStore((s) => s.rest);
   useShellStore((s) => s.agents);
-  return subtreeOf(inside, actions.everyAgent());
+  return subtreeOf(closeScope(rest, inside), actions.everyAgent());
 }
 
 /**

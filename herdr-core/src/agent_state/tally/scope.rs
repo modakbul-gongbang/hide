@@ -114,6 +114,7 @@ pub struct Raised {
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub closes: BTreeMap<String, super::close::Consequence>,
     pub prs: crate::agent_state::work::board::Board,
     pub raised: Vec<Raised>,
     pub owners: BTreeMap<String, String>,
@@ -448,7 +449,7 @@ struct PlaceInput {
     checkouts: Vec<(
         String,
         MarkCountsSnapshot,
-        Vec<(Option<String>, Vec<String>)>,
+        Vec<(Option<String>, Vec<super::close::PaneInput>)>,
     )>,
 }
 
@@ -584,7 +585,10 @@ impl Cache {
                                     .map(|t| {
                                         (
                                             t.id.clone(),
-                                            t.panes.iter().map(|p| p.id.clone()).collect(),
+                                            t.panes
+                                                .iter()
+                                                .map(super::close::PaneInput::from)
+                                                .collect(),
                                         )
                                     })
                                     .collect(),
@@ -773,6 +777,9 @@ impl Cache {
             project_marks(&overall_projects),
         );
         overall.folded = super::lineage::folded(&live, &live_projects, &places);
+        for device in &devices {
+            super::close::add(&mut overall.closes, &device.projects, &device.agents, &live);
+        }
         self.output = Output {
             projects,
             checkouts,

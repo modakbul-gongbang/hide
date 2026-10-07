@@ -259,6 +259,8 @@ The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifec
 Its scope projection also carries list sections and checkout trees; the web resolves their pane IDs and applies locale-aware typography and alphabetical placement without choosing status priority, membership or counts.
 The `agent_scope` projection carries physical totals, Overview membership and request membership as separate values because their existing screen rules differ.
 `agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
+Existing close targets also carry `tally/close.rs` consequences: confirmation priority, stop-work rows, and outside-descendant rows and counts.
+The cache includes pane close flags and labels so a pane-only change refreshes an open sheet; it adds no close action or runtime enforcement path.
 Catalog rebuilding restores cached scope fields before equality checks so an unchanged source does not create a publication merely by constructing new project objects.
 `sidebar.rs` retains payload and snapshot assembly, `request_view.rs` retains request block assembly and timestamp persistence, and `pet.rs` selects a pose from the local summary.
 These functions operate on the facts already projected by the core, including remote rows; they introduce no reader, timer, worker or I/O under the runtime lock.

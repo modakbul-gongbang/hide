@@ -606,3 +606,8 @@ The maker remains listed after moving to other work, but only the branch's agent
 `runtime::tests::agent_scopes::pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes` pins that distinction and GitHub-only invalidation.
 The device scope also carries raised sections (five Needs You rows and three Done rows before overflow) and each numbered agent's first checkout owner.
 `runtime::tests::agent_scopes::raised_sections_keep_five_questions_three_completions_and_first_number_owner` pins those limits.
+
+`agent_state/tally/close.rs` publishes the existing pane, tab, checkout and project close targets' confirmation decision, stop-work rows and outside-descendant lists and counts.
+The first unknown target still takes priority over confirmation; a subtree sheet includes every target while counting only descendants outside it.
+The shell chooses the current target and translates the published states; runtime close enforcement is unchanged.
+`runtime::tests::agent_scopes::close_consequences_keep_unknown_priority_and_outside_descendant_counts` pins these rules and pane-only invalidation.

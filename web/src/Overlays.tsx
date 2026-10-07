@@ -23,7 +23,7 @@ import type { SurfaceKind } from "./recent";
 import { commandLabel } from "./shortcutLabels";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
-import { closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
+import { closeScope, closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
 import { RowMark, SubtreeList } from "./components/subtree-list";
 import { knownProvider } from "./workspace";
 
@@ -142,14 +142,14 @@ function KindMark({ item, title }: { item: CycleItem; title: string }) {
  */
 export function ConfirmClose({ actions }: { actions: Actions }) {
   const pending = useUiStore((s) => s.pendingClose);
-  useShellStore((s) => s.rest);
+  const rest = useShellStore((s) => s.rest);
   useShellStore((s) => s.agents);
   const target = pending ? actions.closeTarget(pending) : null;
   const gone = pending != null && target === null;
   useEffect(() => {
     if (gone) actions.keepOpen();
   }, [gone, actions]);
-  const sheet = target ? closeSheet(target.panes, target.agents, actions.everyAgent()) : null;
+  const sheet = target ? closeSheet(target.panes, target.agents, actions.everyAgent(), closeScope(rest, target.panes.map((p) => p.id))) : null;
   const blocked = sheet?.sheet === "subtree" ? sheet.subtree.unknown || sheet.subtree.targetUnknown : sheet?.stopWork.unknown != null;
   // A pane or descendant whose status turns unknown while the sheet is open
   // disables a close under the keyboard; the cancel button takes it, as when

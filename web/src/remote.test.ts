@@ -1,4 +1,4 @@
-import { emptyScope } from "../test/legacyAgentScope";
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -158,7 +158,7 @@ function deviceViews(views: boolean): WorkspaceView {
 function seed(value: SnapshotRest) {
   noteKeyboardOwner({ kind: "none" });
   useShellStore.setState({ rest: null, agents: [], focusedPaneId: null });
-  useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: value } });
+  useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: legacyRest(value, []) } });
 }
 
 function recorder() {

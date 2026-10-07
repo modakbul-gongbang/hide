@@ -1,6 +1,7 @@
 //! Scope totals, marks and representative ordering.
 pub mod scope;
 pub(crate) mod lineage;
+mod close;
 use super::axes::*;
 use super::turn::*;
 use crate::model::SidebarAgentSnapshot;

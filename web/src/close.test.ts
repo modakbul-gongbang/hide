@@ -1,6 +1,7 @@
+import { closeDecision, closeSheet, stopWorkOf, subtreeOf } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { agentClosing, closeDecision, closeSheet, statusUnknownNotice, stopWorkCopy, stopWorkOf, subtreeOf, subtreeTitle } from "./close";
+import { agentClosing, statusUnknownNotice, stopWorkCopy, subtreeTitle } from "./close";
 import { subtreeSummaryWords } from "./components/subtree-list";
 import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, PaneRow } from "./snapshot";

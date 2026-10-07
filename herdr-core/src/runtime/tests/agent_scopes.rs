@@ -13,6 +13,77 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
 }
 
 #[test]
+fn close_consequences_keep_unknown_priority_and_outside_descendant_counts() {
+    let mut runtime = runtime();
+    let mut agents = rows();
+    let mut neighbour = agents[0].clone();
+    neighbour.pane_id = "neighbour".into();
+    neighbour.requires_close_status_check = true;
+    neighbour.state.subtree = "unknown";
+    agents[0].close_descendant_pane_ids = vec!["child".into(), "gone".into()];
+    agents[0].lineage_child_pane_ids = vec!["child".into()];
+    agents[1].lineage_parent_pane_id = Some("root".into());
+    agents[1].lineage_depth = 2;
+    agents[1].state.subtree = "waiting";
+    agents.push(neighbour);
+    runtime.snapshot.navigator.agents = agents;
+    let mut root = pane("root", "/fixture");
+    root.requires_close_confirmation = true;
+    let mut neighbour = pane("neighbour", "/fixture");
+    neighbour.herdr_label = Some("second pane".into());
+    let mut inside = checkout("project", "inside", "/fixture", Some(root));
+    inside.tabs[0].panes.push(neighbour);
+    let outside = checkout(
+        "project",
+        "outside",
+        "/outside",
+        Some(pane("child", "/outside")),
+    );
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/fixture",
+        vec![inside, outside],
+    )];
+    assert!(runtime.refresh_agent_scopes());
+    let close = &runtime.snapshot.navigator.agent_scope.closes["root\0neighbour"];
+    assert_eq!(
+        serde_json::to_value(&close.decision).unwrap(),
+        serde_json::json!({"action":"status_unknown", "label":"second pane"})
+    );
+    assert_eq!(close.stop_work.unknown, Some(1));
+    let subtree = close.subtree.as_ref().unwrap();
+    assert_eq!(subtree.ids, ["child"]);
+    assert_eq!(
+        subtree
+            .rows
+            .iter()
+            .map(|r| (r.pane_id.as_str(), r.depth, r.target))
+            .collect::<Vec<_>>(),
+        [("root", 0, true), ("child", 2, false)]
+    );
+    assert_eq!(subtree.counts.waiting, 1);
+    assert!(!subtree.unknown);
+    assert!(!subtree.target_unknown);
+    assert!(close.subtree_all.as_ref().unwrap().target_unknown);
+    assert_eq!(close.subtree_all.as_ref().unwrap().rows.len(), 3);
+    assert!(
+        runtime.snapshot.navigator.agent_scope.closes["root\0neighbour\0child"]
+            .subtree
+            .is_none()
+    );
+    assert!(!runtime.refresh_agent_scopes());
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].tabs[0].panes[0]
+        .requires_close_status_check = true;
+    assert!(
+        runtime.refresh_agent_scopes(),
+        "a pane-only status change refreshes the close notice"
+    );
+    let close = &runtime.snapshot.navigator.agent_scope.closes["root\0neighbour"];
+    assert_eq!(close.stop_work.unknown, Some(0));
+}
+
+#[test]
 fn scopes_keep_first_overview_owner_last_badge_owner_and_restore_rebuilt_catalog_values() {
     let mut runtime = runtime();
     let mut rows = rows();
