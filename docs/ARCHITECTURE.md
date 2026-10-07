@@ -258,6 +258,7 @@ The lineage is therefore built before the read axis is applied on every ingest, 
 The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifecycle, completion, ownership and read state, `turn.rs` derives groups, request verbs and runtime action gates, `work.rs` associates PRs and issues and assigns each duty, and `tally.rs` owns marks, representative ranks and scope counts.
 Its scope projection also carries list sections and checkout trees; the web resolves their pane IDs and applies locale-aware typography and alphabetical placement without choosing status priority, membership or counts.
 The `agent_scope` projection carries physical totals, Overview membership and request membership as separate values because their existing screen rules differ.
+Device scopes also carry connected row listings and pane places, and the PR projection carries the tile's turn breakdown, so the shell does not reconstruct ownership or sum attention groups.
 `agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
 Existing close targets also carry `tally/close.rs` consequences: confirmation priority, stop-work rows, and outside-descendant rows and counts.
 `tally/graph.rs` supplies graph attention, ordered membership, fold classes and tucked marks for the fixed sixteen fold/scope combinations, deduplicating equal maps.

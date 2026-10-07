@@ -152,28 +152,25 @@ export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | 
  * the last value and says so by the name (B22).
  */
 export function prsTile(board: PrBoard, t: TFunction<"translation">): Tile {
-  const rows = (group: string) => board.groups.find((entry) => entry.group === group)?.rows ?? [];
-  const turn = rows("turn");
-  const look = turn.filter((row) => row.needsLook).length;
-  const drafts = turn.filter((row) => !row.needsLook && row.tone === "draft").length;
+  const counts = board.counts;
   const parts = [
-    { key: "review", label: t("board.stage.review"), count: turn.length - look - drafts },
-    { key: "draft", label: t("overview.draft"), count: drafts },
-    { key: "look", label: t("overview.reviewFinishedAgent"), count: look },
+    { key: "review", label: t("board.stage.review"), count: counts.review },
+    { key: "draft", label: t("overview.draft"), count: counts.draft },
+    { key: "look", label: t("overview.reviewFinishedAgent"), count: counts.look },
   ].filter((part) => part.count > 0);
   return {
     id: "prs",
     label: t("overview.prs"),
     value: board.open,
     unit: t("board.unit.open"),
-    badge: board.open !== null && turn.length > 0 ? { count: turn.length, parts } : null,
+    badge: board.open !== null && counts.turn > 0 ? { count: counts.turn, parts } : null,
     bar:
       board.open === null
         ? null
         : [
-            { key: "turn", label: t("board.prGroup.turn"), count: turn.length },
-            { key: "fixing", label: t("board.prGroup.fixing"), count: rows("fixing").length },
-            { key: "blocked", label: t("board.prGroup.blocked"), count: rows("blocked").length },
+            { key: "turn", label: t("board.prGroup.turn"), count: counts.turn },
+            { key: "fixing", label: t("board.prGroup.fixing"), count: counts.fixing },
+            { key: "blocked", label: t("board.prGroup.blocked"), count: counts.blocked },
           ],
     failure: board.failure ? readFailureText(board.failure, t) : null,
   };

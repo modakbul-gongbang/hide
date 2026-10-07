@@ -167,6 +167,9 @@ fn scopes_keep_first_overview_owner_last_badge_owner_and_restore_rebuilt_catalog
     );
     assert_eq!(project.agent_scope.overview_total, 1);
     assert_eq!(project.agent_scope.members[0].checkout_id, "first");
+    assert_eq!(project.agent_scope.places["root"].checkout_id, "first");
+    assert_eq!(runtime.snapshot.navigator.agent_scope.listed.len(), 3);
+    assert_eq!(runtime.snapshot.navigator.agent_scope.listed[2].index, 2);
     assert_eq!(project.checkouts[0].agent_summary.working, 0);
     assert_eq!(project.checkouts[1].agent_summary.working, 1);
     assert_eq!(project.agent_scope.marks.working, 1);
@@ -246,6 +249,8 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
         .unwrap()
         .agent_scope;
     assert_eq!((scope.total, scope.overview_total), (2, 1));
+    assert_eq!(scope.listed.len(), 2);
+    assert!(scope.places_live);
     runtime.snapshot.status.remote[0].state = "stale".into();
     assert!(runtime.refresh_agent_scopes());
     let scope = &runtime
@@ -261,6 +266,12 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
         (0, 0, 1)
     );
     assert_eq!(runtime.snapshot.navigator.agent_scope.total, 0);
+    assert!(scope.listed.is_empty());
+    assert!(!scope.places_live);
+    assert!(
+        scope.places.contains_key("root"),
+        "search context retains the catalog's place"
+    );
     assert_eq!(runtime.snapshot.navigator.agent_scope.overview_total, 1);
     assert!(!runtime.refresh_agent_scopes());
 }
@@ -410,6 +421,7 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
     assert!(board.rows[0].needs_look);
     assert_eq!(board.rows[0].issue.as_ref().unwrap().label, "#7");
     assert_eq!(board.open, 1);
+    assert_eq!(board.counts.blocked, 1);
     assert_eq!(board.groups[0].numbers, vec![42]);
     runtime.snapshot.navigator.workspaces[0].pull_requests[0].checks = PullRequestChecks::Passing;
     assert!(
@@ -425,6 +437,14 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
         "turn"
     );
     runtime.snapshot.navigator.agents[1].activity = "working".into();
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .prs
+            .counts
+            .look,
+        1
+    );
     runtime.snapshot.navigator.agents[1].group = "working".into();
     runtime.snapshot.navigator.agents[1].state =
         crate::agent_state::turn::row_state(&runtime.snapshot.navigator.agents[1]);

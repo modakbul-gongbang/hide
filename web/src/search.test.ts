@@ -1,9 +1,9 @@
-import { emptyScope } from "../test/legacyAgentScope";
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries, type SearchEntry } from "./search";
+import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries as drawSearchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
 
 const { t } = initializeInterfaceI18n("en");
@@ -369,3 +369,7 @@ describe("Open URL in Browser", () => {
     expect(openUrlEntry("localhost:5173", null, t)).toMatchObject({ dimmed: false, subtitle: "http://localhost:5173" });
   });
 });
+
+function searchEntries(rest: SnapshotRest | null, ...args: Parameters<typeof drawSearchEntries> extends [unknown, ...infer R] ? R : never) {
+  return drawSearchEntries(rest ? legacyRest(rest, rest.navigator?.agents ?? []) : rest, ...args);
+}

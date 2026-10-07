@@ -11,7 +11,6 @@ import type { TreeRow } from "./agentRow";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
-import { folderCheckout } from "./projects";
 import { projectsOf } from "./remote";
 import { entryBox } from "./agentGraph";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
@@ -64,15 +63,6 @@ export type DeviceSection = {
   projects: ProjectEntry[];
 };
 
-/** The pane ids a Project's checkouts hold. */
-export function projectPaneIds(workspace: Workspace): Set<string> {
-  const ids = new Set<string>();
-  for (const checkout of workspace.checkouts) {
-    for (const tab of checkout.tabs) for (const pane of tab.panes) ids.add(pane.id);
-  }
-  return ids;
-}
-
 /** The agents running in a Project, in the core's order. */
 export function projectAgents(workspace: Workspace, agents: AgentRow[]): AgentRow[] {
   return scopeRows(workspace.agent_scope.pane_ids, agents);
@@ -101,30 +91,18 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
  * gave them. A device that is not connected lists nothing, since what it
  * last reported is not current.
  */
-export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[]): ListedAgent[] {
-  const local = devices?.find((row) => row.kind !== "remote");
-  const listed: ListedAgent[] = localAgents.map((agent) => ({
-    agent: { ...agent, device_id: local?.id ?? "", device_label: local?.label ?? translate("common.thisMac") },
-    device: null,
-  }));
-  for (const status of remote ?? []) {
-    if (status.state !== "connected") continue;
-    const device = deviceLabel(devices, status.target_id);
-    for (const agent of status.session?.agents ?? []) {
-      listed.push({ agent: { ...agent, device_id: status.target_id, device_label: device }, device });
-    }
-  }
-  return listed;
+export function allAgents(remote: RemoteStatus[] | undefined, localAgents: AgentRow[], scope: AgentScope | null | undefined): ListedAgent[] {
+  return (scope?.listed ?? []).map((entry) => {
+    const agent = entry.remote ? remote?.find((r) => r.target_id === entry.device_id)?.session?.agents[entry.index] : localAgents[entry.index];
+    if (!agent || agent.pane_id !== entry.pane_id) throw new Error(`Missing listed agent: ${entry.pane_id}`);
+    const label = entry.device_label ?? translate("common.thisMac");
+    return { agent: { ...agent, device_id: entry.device_id, device_label: label }, device: entry.remote ? label : null };
+  });
 }
 
-/** One device's current agents, listed as the sidebar's Agents tab draws them: a device that is not connected lists nothing. */
+/** One device's core-projected current rows, in their published order. */
 export function deviceListedAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[], deviceId: string): ListedAgent[] {
-  return allAgents(remote, devices, localAgents).filter((row) => row.agent.device_id === deviceId);
-}
-
-/** Every connected workspace, local and remote, with its device id intact. */
-export function allLineageWorkspaces(local: Workspace[] | undefined, remote: RemoteStatus[] | undefined): Workspace[] {
-  return [...(local ?? []), ...(remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? [])];
+  return allAgents(remote, localAgents, devices?.find((d) => d.id === deviceId)?.agent_scope);
 }
 
 function deviceLabel(devices: Device[] | undefined, targetId: string): string {
@@ -146,8 +124,7 @@ export function agentPlaces(
 ): (device: string | null, paneId: string) => string | null {
   const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [])]]);
   for (const status of remote ?? []) {
-    if (status.state !== "connected") continue;
-    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces(status.session?.workspaces ?? []));
+    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces((status.session?.workspaces ?? []).filter((p) => p.agent_scope.places_live)));
   }
   return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
 }
@@ -156,10 +133,10 @@ export function agentPlaces(
 export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
   const places = new Map<string, string>();
   for (const workspace of workspaces) {
-    const folder = folderCheckout(workspace) !== null;
-    for (const checkout of workspace.checkouts) {
-      const place = workspace.is_home ? translate("common.home") : folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
-      for (const tab of checkout.tabs) for (const pane of tab.panes) if (!places.has(pane.id)) places.set(pane.id, place);
+    for (const [pane, value] of Object.entries(workspace.agent_scope.places)) {
+      const checkout = workspace.checkouts.find((c) => c.id === value.checkout_id);
+      if (!checkout) throw new Error(`Missing place checkout: ${value.checkout_id}`);
+      places.set(pane, value.kind === "home" ? translate("common.home") : value.kind === "folder" ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`);
     }
   }
   return places;

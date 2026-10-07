@@ -20,7 +20,7 @@ import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, req
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { listed: [], places: {}, places_live: false, graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent)): AgentScope {
@@ -62,6 +62,8 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
     members.push({ agent, checkout, project, device: null, bucket: agent.state?.bucket ?? "resting", task: null });
   }
   const scope = legacyScope(members, agents);
+  scope.places_live = true;
+  for (const checkout of project.checkouts) for (const tab of checkout.tabs ?? []) for (const pane of tab.panes) scope.places[pane.id] ??= { project_id: project.id, checkout_id: checkout.id, kind: project.is_home ? "home" : !project.is_git && project.checkouts.length === 1 ? "folder" : "checkout" };
   const physical = agents.filter((agent) => owners.has(agent.pane_id));
   physicalScope(scope, physical);
   for (const checkout of project.checkouts) {
@@ -81,7 +83,7 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
   });
   const prs = beforeBuildPrs({ workspace: treeProject, agents: [...agents], device: null }, 0);
   scope.graph = legacyGraphScope(project, scope.members, agents);
-  scope.prs = { rows: prs.groups.flatMap((g) => g.rows).map((r) => ({ number: r.number, checkout_id: r.checkout?.id ?? null, agents: r.agents.map((a) => a.pane_id), lineage: r.lineage.map((a) => ({ pane_id: a.agent.pane_id, depth: a.depth })), needs_look: r.needsLook, group: r.group, issue: r.issue ? { key: r.issue.key, label: r.issue.label, url: r.issue.url, task_key: r.issue.task?.key ?? null } : null })), groups: prs.groups.map((g) => ({ group: g.group, numbers: g.rows.map((r) => r.number) })), open: (project.pull_requests ?? []).filter((p) => p.badge !== "merged").length };
+  scope.prs = { counts: legacyPrCounts(prs), rows: prs.groups.flatMap((g) => g.rows).map((r) => ({ number: r.number, checkout_id: r.checkout?.id ?? null, agents: r.agents.map((a) => a.pane_id), lineage: r.lineage.map((a) => ({ pane_id: a.agent.pane_id, depth: a.depth })), needs_look: r.needsLook, group: r.group, issue: r.issue ? { key: r.issue.key, label: r.issue.label, url: r.issue.url, task_key: r.issue.task?.key ?? null } : null })), groups: prs.groups.map((g) => ({ group: g.group, numbers: g.rows.map((r) => r.number) })), open: (project.pull_requests ?? []).filter((p) => p.badge !== "merged").length };
   return { ...project, checkouts, agent_scope: scope };
 }
 
@@ -143,7 +145,7 @@ export function requestsTile(rows: readonly RequestRow[], ...args: Parameters<ty
 export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest {
   const localId = rest.navigator?.devices?.find((d) => d.kind !== "remote")?.id ?? "";
   const projects = (rest.navigator?.workspaces ?? []).map((p) => legacyProject(p, agents));
-  const remotes = (rest.status?.remote ?? []).map((r) => ({ ...r, session: r.session ? { ...r.session, workspaces: r.session.workspaces.map((p) => legacyProject(p, r.session!.agents)) } : r.session }));
+  const remotes = (rest.status?.remote ?? []).map((r) => ({ ...r, session: r.session ? { ...r.session, workspaces: (r.session.workspaces ?? []).map((p) => legacyProject(p, r.session!.agents ?? [])) } : r.session }));
   const deviceScopes = new Map<string, AgentScope>();
   const local = legacyScope(scopeAgents(projects.filter((p) => !p.is_home).map((workspace) => ({ workspace, agents, device: null }))), agents);
   physicalScope(local, agents);
@@ -162,7 +164,22 @@ export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest
     const trees = beforeCheckoutAgentRows(project, liveRows);
     for (const checkout of project.checkouts) checkout.agent_scope.global_tree = legacyTree(trees.get(checkout.id) ?? []);
   }
+  const listed = (rows: readonly AgentRow[], id: string, label: string | null, remote: boolean) => rows.map((a, index) => ({ pane_id: a.pane_id, device_id: id, device_label: label, remote, index }));
+  local.listed = listed(agents, localId, rest.navigator?.devices?.find((d) => d.id === localId)?.label ?? null, false);
+  local.places_live = true;
+  const assignPlaces = (projects: Workspace[], scope: AgentScope, live: boolean) => {
+    for (const project of projects) for (const [id, place] of Object.entries(project.agent_scope.places)) scope.places[id] ??= place;
+    for (const project of projects) { project.agent_scope.places = Object.fromEntries(Object.entries(scope.places).filter(([, place]) => place.project_id === project.id)); project.agent_scope.places_live = live; }
+    scope.places_live = live;
+  };
+  assignPlaces(projects, local, true);
+  for (const remote of remotes) {
+    const scope = deviceScopes.get(remote.target_id)!;
+    scope.listed = remote.state === "connected" ? listed(remote.session?.agents ?? [], remote.target_id, rest.navigator?.devices?.find((d) => d.id === remote.target_id)?.label ?? remote.target_id, true) : [];
+    assignPlaces(remote.session?.workspaces ?? [], scope, remote.state === "connected");
+  }
   const overall = legacyPhysicalScope(liveRows);
+  overall.listed = [...local.listed, ...remotes.flatMap((r) => deviceScopes.get(r.target_id)!.listed)];
   overall.closes = legacyConsequences(projects, agents, liveRows);
   for (const remote of remotes) Object.assign(overall.closes, legacyConsequences(remote.session?.workspaces ?? [], remote.session?.agents ?? [], liveRows));
   overall.folded = foldedScopes(liveRows, liveWorkspaces);
@@ -276,3 +293,11 @@ export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]
   return drawClose.subtreeOf(legacyCloseScope(panes, agents), agents, options);
 }
 export function closeSheet(panes: readonly PaneRow[], host: readonly AgentRow[], all: readonly AgentRow[]) { return drawClose.closeSheet(panes, host, all, legacyCloseScope(panes, host, all)); }
+
+export function legacyPrCounts(board: { groups: { group: string; rows: { needsLook: boolean; tone: string }[] }[] }) {
+  const rows = (group: string) => board.groups.find((g) => g.group === group)?.rows ?? [];
+  const turn = rows("turn");
+  const look = turn.filter((r) => r.needsLook).length;
+  const draft = turn.filter((r) => !r.needsLook && r.tone === "draft").length;
+  return { turn: turn.length, fixing: rows("fixing").length, blocked: rows("blocked").length, review: turn.length - look - draft, draft, look };
+}

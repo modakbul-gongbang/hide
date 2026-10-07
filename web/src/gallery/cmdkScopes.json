@@ -1,0 +1,1370 @@
+{
+  "overall": {
+    "listed": [
+      {
+        "pane_id": "p-parent",
+        "device_id": "local",
+        "device_label": "This Mac",
+        "remote": false,
+        "index": 0
+      },
+      {
+        "pane_id": "p-child",
+        "device_id": "local",
+        "device_label": "This Mac",
+        "remote": false,
+        "index": 1
+      },
+      {
+        "pane_id": "p-dag",
+        "device_id": "local",
+        "device_label": "This Mac",
+        "remote": false,
+        "index": 2
+      }
+    ],
+    "places": {},
+    "places_live": false,
+    "graph": {
+      "attention": 4,
+      "recency": "",
+      "checkouts": {},
+      "variants": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "tucked": [
+        {}
+      ]
+    },
+    "closes": {
+      "": {
+        "decision": {
+          "action": "close"
+        },
+        "stop_work": {
+          "rows": [],
+          "unknown": null
+        },
+        "subtree": null,
+        "subtree_all": null
+      },
+      "p-parent": {
+        "decision": {
+          "action": "close"
+        },
+        "stop_work": {
+          "rows": [
+            {
+              "pane_id": "p-parent",
+              "agent": true,
+              "label": "codex workspace-write 원인 조사",
+              "state": "quiet"
+            }
+          ],
+          "unknown": null
+        },
+        "subtree": null,
+        "subtree_all": null
+      },
+      "p-dag": {
+        "decision": {
+          "action": "close"
+        },
+        "stop_work": {
+          "rows": [
+            {
+              "pane_id": "p-dag",
+              "agent": true,
+              "label": "그래프 다이어그램 DAG 시각화",
+              "state": "quiet"
+            }
+          ],
+          "unknown": null
+        },
+        "subtree": null,
+        "subtree_all": null
+      },
+      "p-parent\u0000p-dag": {
+        "decision": {
+          "action": "close"
+        },
+        "stop_work": {
+          "rows": [
+            {
+              "pane_id": "p-parent",
+              "agent": true,
+              "label": "codex workspace-write 원인 조사",
+              "state": "quiet"
+            },
+            {
+              "pane_id": "p-dag",
+              "agent": true,
+              "label": "그래프 다이어그램 DAG 시각화",
+              "state": "quiet"
+            }
+          ],
+          "unknown": null
+        },
+        "subtree": null,
+        "subtree_all": null
+      },
+      "p-child": {
+        "decision": {
+          "action": "close"
+        },
+        "stop_work": {
+          "rows": [
+            {
+              "pane_id": "p-child",
+              "agent": true,
+              "label": "mailbox 쓰기 명령 sandbox 오류 해결",
+              "state": "quiet"
+            }
+          ],
+          "unknown": null
+        },
+        "subtree": null,
+        "subtree_all": null
+      },
+      "p-parent\u0000p-dag\u0000p-child": {
+        "decision": {
+          "action": "close"
+        },
+        "stop_work": {
+          "rows": [
+            {
+              "pane_id": "p-parent",
+              "agent": true,
+              "label": "codex workspace-write 원인 조사",
+              "state": "quiet"
+            },
+            {
+              "pane_id": "p-dag",
+              "agent": true,
+              "label": "그래프 다이어그램 DAG 시각화",
+              "state": "quiet"
+            },
+            {
+              "pane_id": "p-child",
+              "agent": true,
+              "label": "mailbox 쓰기 명령 sandbox 오류 해결",
+              "state": "quiet"
+            }
+          ],
+          "unknown": null
+        },
+        "subtree": null,
+        "subtree_all": null
+      }
+    },
+    "raised": [],
+    "owners": {},
+    "badge_total": 0,
+    "prs": {
+      "counts": {
+        "turn": 0,
+        "fixing": 0,
+        "blocked": 0,
+        "review": 0,
+        "draft": 0,
+        "look": 0
+      },
+      "rows": [],
+      "groups": [],
+      "open": 0
+    },
+    "pane_ids": [
+      "p-parent",
+      "p-child",
+      "p-dag"
+    ],
+    "group_rows": [
+      {
+        "group": "done",
+        "pane_ids": [
+          "p-child"
+        ]
+      },
+      {
+        "group": "working",
+        "pane_ids": [
+          "p-parent",
+          "p-dag"
+        ]
+      }
+    ],
+    "descendants": {
+      "p-parent": 1,
+      "p-child": 0,
+      "p-dag": 0
+    },
+    "children": {
+      "p-parent": [
+        "p-child"
+      ],
+      "p-child": [],
+      "p-dag": []
+    },
+    "folded": {
+      "p-parent": {
+        "tiers": [
+          [
+            {
+              "key": "local\u0000c-sand",
+              "candidates": [
+                "p-child"
+              ],
+              "branch": "fix/mailbox-sandbox-letters",
+              "pull_request": 275,
+              "device": null
+            }
+          ]
+        ],
+        "overflow": 0,
+        "badge_descendants": 0,
+        "badge_counts": {
+          "error": 0,
+          "approval": 0,
+          "question": 0,
+          "working": 0,
+          "done": 0
+        },
+        "badge_children": []
+      },
+      "p-child": {
+        "tiers": [],
+        "overflow": 0,
+        "badge_descendants": 0,
+        "badge_counts": {
+          "error": 0,
+          "approval": 0,
+          "question": 0,
+          "working": 0,
+          "done": 0
+        },
+        "badge_children": []
+      },
+      "p-dag": {
+        "tiers": [],
+        "overflow": 0,
+        "badge_descendants": 0,
+        "badge_counts": {
+          "error": 0,
+          "approval": 0,
+          "question": 0,
+          "working": 0,
+          "done": 0
+        },
+        "badge_children": []
+      }
+    },
+    "tree": {
+      "rows": [],
+      "visible_rows": [],
+      "shown": [],
+      "more": 0,
+      "needs_you": false,
+      "turn_kind": null
+    },
+    "global_tree": {
+      "rows": [],
+      "visible_rows": [],
+      "shown": [],
+      "more": 0,
+      "needs_you": false,
+      "turn_kind": null
+    },
+    "total": 3,
+    "overview_total": 0,
+    "roots": [
+      "p-parent",
+      "p-child",
+      "p-dag"
+    ],
+    "groups": {
+      "needs_you": 0,
+      "done": 1,
+      "working": 2,
+      "seen": 0
+    },
+    "marks": {
+      "error": 0,
+      "approval": 0,
+      "question": 0,
+      "working": 0,
+      "done": 0,
+      "idle": 0
+    },
+    "sections": [
+      {
+        "group": "done",
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0,
+            "descendants": 0
+          }
+        ],
+        "count": 1
+      },
+      {
+        "group": "working",
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0,
+            "descendants": 1
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0,
+            "descendants": 0
+          }
+        ],
+        "count": 3
+      }
+    ],
+    "members": [],
+    "buckets": {
+      "turn": 0,
+      "working": 0,
+      "delegating": 0,
+      "resting": 0
+    },
+    "turns": {
+      "question": 0,
+      "approval": 0,
+      "error": 0,
+      "done": 0
+    },
+    "requests": {
+      "rows": [],
+      "groups": [],
+      "counts": {
+        "answer": 0,
+        "fix": 0,
+        "review": 0,
+        "stopped": 0,
+        "result": 0,
+        "working": 0,
+        "waiting": 0,
+        "idle": 0
+      },
+      "todo": 0,
+      "answer": 0
+    }
+  },
+  "device": {
+    "listed": [
+      {
+        "pane_id": "p-parent",
+        "device_id": "local",
+        "device_label": "This Mac",
+        "remote": false,
+        "index": 0
+      },
+      {
+        "pane_id": "p-child",
+        "device_id": "local",
+        "device_label": "This Mac",
+        "remote": false,
+        "index": 1
+      },
+      {
+        "pane_id": "p-dag",
+        "device_id": "local",
+        "device_label": "This Mac",
+        "remote": false,
+        "index": 2
+      }
+    ],
+    "places": {
+      "p-parent": {
+        "project_id": "w1",
+        "checkout_id": "c-main",
+        "kind": "checkout"
+      },
+      "p-dag": {
+        "project_id": "w1",
+        "checkout_id": "c-main",
+        "kind": "checkout"
+      },
+      "p-child": {
+        "project_id": "w1",
+        "checkout_id": "c-sand",
+        "kind": "checkout"
+      }
+    },
+    "places_live": true,
+    "graph": {
+      "attention": 4,
+      "recency": "",
+      "checkouts": {},
+      "variants": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "tucked": [
+        {}
+      ]
+    },
+    "closes": {},
+    "raised": [
+      {
+        "group": "done",
+        "shown": [
+          "p-child"
+        ],
+        "more": []
+      }
+    ],
+    "owners": {
+      "p-parent": "c-main",
+      "p-dag": "c-main",
+      "p-child": "c-sand"
+    },
+    "badge_total": 0,
+    "prs": {
+      "counts": {
+        "turn": 0,
+        "fixing": 0,
+        "blocked": 0,
+        "review": 0,
+        "draft": 0,
+        "look": 0
+      },
+      "rows": [],
+      "groups": [],
+      "open": 0
+    },
+    "pane_ids": [
+      "p-parent",
+      "p-child",
+      "p-dag"
+    ],
+    "group_rows": [
+      {
+        "group": "done",
+        "pane_ids": [
+          "p-child"
+        ]
+      },
+      {
+        "group": "working",
+        "pane_ids": [
+          "p-parent",
+          "p-dag"
+        ]
+      }
+    ],
+    "descendants": {
+      "p-parent": 1,
+      "p-child": 0,
+      "p-dag": 0
+    },
+    "children": {
+      "p-parent": [
+        "p-child"
+      ],
+      "p-child": [],
+      "p-dag": []
+    },
+    "folded": {
+      "p-parent": {
+        "tiers": [
+          [
+            {
+              "key": "local\u0000c-sand",
+              "candidates": [
+                "p-child"
+              ],
+              "branch": "fix/mailbox-sandbox-letters",
+              "pull_request": 275,
+              "device": null
+            }
+          ]
+        ],
+        "overflow": 0,
+        "badge_descendants": 0,
+        "badge_counts": {
+          "error": 0,
+          "approval": 0,
+          "question": 0,
+          "working": 0,
+          "done": 0
+        },
+        "badge_children": []
+      },
+      "p-child": {
+        "tiers": [],
+        "overflow": 0,
+        "badge_descendants": 0,
+        "badge_counts": {
+          "error": 0,
+          "approval": 0,
+          "question": 0,
+          "working": 0,
+          "done": 0
+        },
+        "badge_children": []
+      },
+      "p-dag": {
+        "tiers": [],
+        "overflow": 0,
+        "badge_descendants": 0,
+        "badge_counts": {
+          "error": 0,
+          "approval": 0,
+          "question": 0,
+          "working": 0,
+          "done": 0
+        },
+        "badge_children": []
+      }
+    },
+    "tree": {
+      "rows": [],
+      "visible_rows": [],
+      "shown": [],
+      "more": 0,
+      "needs_you": false,
+      "turn_kind": null
+    },
+    "global_tree": {
+      "rows": [],
+      "visible_rows": [],
+      "shown": [],
+      "more": 0,
+      "needs_you": false,
+      "turn_kind": null
+    },
+    "total": 3,
+    "overview_total": 3,
+    "roots": [
+      "p-parent",
+      "p-child",
+      "p-dag"
+    ],
+    "groups": {
+      "needs_you": 0,
+      "done": 1,
+      "working": 2,
+      "seen": 0
+    },
+    "marks": {
+      "error": 0,
+      "approval": 0,
+      "question": 0,
+      "working": 0,
+      "done": 0,
+      "idle": 0
+    },
+    "sections": [
+      {
+        "group": "done",
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0,
+            "descendants": 0
+          }
+        ],
+        "count": 1
+      },
+      {
+        "group": "working",
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0,
+            "descendants": 1
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0,
+            "descendants": 0
+          }
+        ],
+        "count": 3
+      }
+    ],
+    "members": [
+      {
+        "pane_id": "p-parent",
+        "project_id": "w1",
+        "checkout_id": "c-main"
+      },
+      {
+        "pane_id": "p-child",
+        "project_id": "w1",
+        "checkout_id": "c-sand"
+      },
+      {
+        "pane_id": "p-dag",
+        "project_id": "w1",
+        "checkout_id": "c-main"
+      }
+    ],
+    "buckets": {
+      "turn": 1,
+      "working": 2,
+      "delegating": 0,
+      "resting": 0
+    },
+    "turns": {
+      "question": 0,
+      "approval": 0,
+      "error": 0,
+      "done": 1
+    },
+    "requests": {
+      "rows": [
+        {
+          "member": 0,
+          "children": []
+        },
+        {
+          "member": 1,
+          "children": []
+        },
+        {
+          "member": 2,
+          "children": []
+        }
+      ],
+      "groups": [
+        {
+          "verb": "working",
+          "rows": [
+            0,
+            2
+          ]
+        },
+        {
+          "verb": "idle",
+          "rows": [
+            1
+          ]
+        }
+      ],
+      "counts": {
+        "answer": 0,
+        "fix": 0,
+        "review": 0,
+        "stopped": 0,
+        "result": 0,
+        "working": 2,
+        "waiting": 0,
+        "idle": 1
+      },
+      "todo": 0,
+      "answer": 0
+    }
+  },
+  "project": {
+    "listed": [],
+    "places": {
+      "p-parent": {
+        "project_id": "w1",
+        "checkout_id": "c-main",
+        "kind": "checkout"
+      },
+      "p-dag": {
+        "project_id": "w1",
+        "checkout_id": "c-main",
+        "kind": "checkout"
+      },
+      "p-child": {
+        "project_id": "w1",
+        "checkout_id": "c-sand",
+        "kind": "checkout"
+      }
+    },
+    "places_live": true,
+    "graph": {
+      "attention": 0,
+      "recency": "",
+      "checkouts": {
+        "c-main": {
+          "primary": false,
+          "cleanup": null,
+          "fold": null,
+          "members": [
+            "p-parent",
+            "p-dag"
+          ],
+          "rank": 1,
+          "resting": false
+        },
+        "c-sand": {
+          "primary": false,
+          "cleanup": null,
+          "fold": null,
+          "members": [
+            "p-child"
+          ],
+          "rank": 0,
+          "resting": false
+        }
+      },
+      "variants": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "tucked": [
+        {}
+      ]
+    },
+    "closes": {},
+    "raised": [],
+    "owners": {},
+    "badge_total": 0,
+    "prs": {
+      "counts": {
+        "turn": 1,
+        "fixing": 0,
+        "blocked": 0,
+        "review": 0,
+        "draft": 0,
+        "look": 1
+      },
+      "rows": [
+        {
+          "number": 275,
+          "checkout_id": "c-sand",
+          "agents": [
+            "p-child"
+          ],
+          "lineage": [
+            {
+              "pane_id": "p-parent",
+              "depth": 0
+            },
+            {
+              "pane_id": "p-child",
+              "depth": 1
+            }
+          ],
+          "needs_look": true,
+          "group": "turn",
+          "issue": {
+            "key": "github:acme/herdr-ide#273",
+            "label": "#273",
+            "url": "https://github.com/acme/herdr-ide/issues/273",
+            "task_key": "github:acme/herdr-ide#273"
+          }
+        },
+        {
+          "number": 260,
+          "checkout_id": null,
+          "agents": [],
+          "lineage": [],
+          "needs_look": false,
+          "group": "merged",
+          "issue": null
+        }
+      ],
+      "groups": [
+        {
+          "group": "turn",
+          "numbers": [
+            275
+          ]
+        },
+        {
+          "group": "merged",
+          "numbers": [
+            260
+          ]
+        }
+      ],
+      "open": 1
+    },
+    "pane_ids": [
+      "p-parent",
+      "p-child",
+      "p-dag"
+    ],
+    "group_rows": [
+      {
+        "group": "done",
+        "pane_ids": [
+          "p-child"
+        ]
+      },
+      {
+        "group": "working",
+        "pane_ids": [
+          "p-parent",
+          "p-dag"
+        ]
+      }
+    ],
+    "descendants": {
+      "p-parent": 1,
+      "p-child": 0,
+      "p-dag": 0
+    },
+    "children": {
+      "p-parent": [
+        "p-child"
+      ],
+      "p-child": [],
+      "p-dag": []
+    },
+    "folded": {},
+    "tree": {
+      "rows": [],
+      "visible_rows": [],
+      "shown": [],
+      "more": 0,
+      "needs_you": false,
+      "turn_kind": null
+    },
+    "global_tree": {
+      "rows": [],
+      "visible_rows": [],
+      "shown": [],
+      "more": 0,
+      "needs_you": false,
+      "turn_kind": null
+    },
+    "total": 3,
+    "overview_total": 3,
+    "roots": [
+      "p-parent",
+      "p-child",
+      "p-dag"
+    ],
+    "groups": {
+      "needs_you": 0,
+      "done": 1,
+      "working": 2,
+      "seen": 0
+    },
+    "marks": {
+      "error": 0,
+      "approval": 0,
+      "question": 0,
+      "working": 0,
+      "done": 0,
+      "idle": 0
+    },
+    "sections": [
+      {
+        "group": "done",
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0,
+            "descendants": 0
+          }
+        ],
+        "count": 1
+      },
+      {
+        "group": "working",
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0,
+            "descendants": 1
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0,
+            "descendants": 0
+          }
+        ],
+        "count": 3
+      }
+    ],
+    "members": [
+      {
+        "pane_id": "p-parent",
+        "project_id": "w1",
+        "checkout_id": "c-main"
+      },
+      {
+        "pane_id": "p-child",
+        "project_id": "w1",
+        "checkout_id": "c-sand"
+      },
+      {
+        "pane_id": "p-dag",
+        "project_id": "w1",
+        "checkout_id": "c-main"
+      }
+    ],
+    "buckets": {
+      "turn": 1,
+      "working": 2,
+      "delegating": 0,
+      "resting": 0
+    },
+    "turns": {
+      "question": 0,
+      "approval": 0,
+      "error": 0,
+      "done": 1
+    },
+    "requests": {
+      "rows": [
+        {
+          "member": 0,
+          "children": []
+        },
+        {
+          "member": 1,
+          "children": []
+        },
+        {
+          "member": 2,
+          "children": []
+        }
+      ],
+      "groups": [
+        {
+          "verb": "working",
+          "rows": [
+            0,
+            2
+          ]
+        },
+        {
+          "verb": "idle",
+          "rows": [
+            1
+          ]
+        }
+      ],
+      "counts": {
+        "answer": 0,
+        "fix": 0,
+        "review": 0,
+        "stopped": 0,
+        "result": 0,
+        "working": 2,
+        "waiting": 0,
+        "idle": 1
+      },
+      "todo": 0,
+      "answer": 0
+    }
+  },
+  "checkouts": {
+    "c-main": {
+      "listed": [],
+      "places": {},
+      "places_live": false,
+      "graph": {
+        "attention": 4,
+        "recency": "",
+        "checkouts": {},
+        "variants": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tucked": [
+          {}
+        ]
+      },
+      "closes": {},
+      "raised": [],
+      "owners": {},
+      "badge_total": 0,
+      "prs": {
+        "counts": {
+          "turn": 0,
+          "fixing": 0,
+          "blocked": 0,
+          "review": 0,
+          "draft": 0,
+          "look": 0
+        },
+        "rows": [],
+        "groups": [],
+        "open": 0
+      },
+      "pane_ids": [
+        "p-parent",
+        "p-dag"
+      ],
+      "group_rows": [
+        {
+          "group": "working",
+          "pane_ids": [
+            "p-parent",
+            "p-dag"
+          ]
+        }
+      ],
+      "descendants": {
+        "p-parent": 0,
+        "p-dag": 0
+      },
+      "children": {
+        "p-parent": [],
+        "p-dag": []
+      },
+      "folded": {},
+      "tree": {
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0
+          },
+          {
+            "pane_id": "p-child",
+            "depth": 1
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0
+          }
+        ],
+        "visible_rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0
+          }
+        ],
+        "shown": [
+          "p-child",
+          "p-parent"
+        ],
+        "more": 1,
+        "needs_you": false,
+        "turn_kind": null
+      },
+      "global_tree": {
+        "rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0
+          },
+          {
+            "pane_id": "p-child",
+            "depth": 1
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0
+          }
+        ],
+        "visible_rows": [
+          {
+            "pane_id": "p-parent",
+            "depth": 0
+          },
+          {
+            "pane_id": "p-dag",
+            "depth": 0
+          }
+        ],
+        "shown": [
+          "p-child",
+          "p-parent"
+        ],
+        "more": 1,
+        "needs_you": false,
+        "turn_kind": null
+      },
+      "total": 2,
+      "overview_total": 0,
+      "roots": [
+        "p-parent",
+        "p-dag"
+      ],
+      "groups": {
+        "needs_you": 0,
+        "done": 0,
+        "working": 2,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [
+        {
+          "group": "working",
+          "rows": [
+            {
+              "pane_id": "p-parent",
+              "depth": 0,
+              "descendants": 0
+            },
+            {
+              "pane_id": "p-dag",
+              "depth": 0,
+              "descendants": 0
+            }
+          ],
+          "count": 2
+        }
+      ],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    },
+    "c-sand": {
+      "listed": [],
+      "places": {},
+      "places_live": false,
+      "graph": {
+        "attention": 4,
+        "recency": "",
+        "checkouts": {},
+        "variants": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tucked": [
+          {}
+        ]
+      },
+      "closes": {},
+      "raised": [],
+      "owners": {},
+      "badge_total": 0,
+      "prs": {
+        "counts": {
+          "turn": 0,
+          "fixing": 0,
+          "blocked": 0,
+          "review": 0,
+          "draft": 0,
+          "look": 0
+        },
+        "rows": [],
+        "groups": [],
+        "open": 0
+      },
+      "pane_ids": [
+        "p-child"
+      ],
+      "group_rows": [
+        {
+          "group": "done",
+          "pane_ids": [
+            "p-child"
+          ]
+        }
+      ],
+      "descendants": {
+        "p-child": 0
+      },
+      "children": {
+        "p-child": []
+      },
+      "folded": {},
+      "tree": {
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0
+          }
+        ],
+        "visible_rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0
+          }
+        ],
+        "shown": [
+          "p-child"
+        ],
+        "more": 0,
+        "needs_you": true,
+        "turn_kind": "review"
+      },
+      "global_tree": {
+        "rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0
+          }
+        ],
+        "visible_rows": [
+          {
+            "pane_id": "p-child",
+            "depth": 0
+          }
+        ],
+        "shown": [
+          "p-child"
+        ],
+        "more": 0,
+        "needs_you": true,
+        "turn_kind": "review"
+      },
+      "total": 1,
+      "overview_total": 0,
+      "roots": [
+        "p-child"
+      ],
+      "groups": {
+        "needs_you": 0,
+        "done": 1,
+        "working": 0,
+        "seen": 0
+      },
+      "marks": {
+        "error": 0,
+        "approval": 0,
+        "question": 0,
+        "working": 0,
+        "done": 0,
+        "idle": 0
+      },
+      "sections": [
+        {
+          "group": "done",
+          "rows": [
+            {
+              "pane_id": "p-child",
+              "depth": 0,
+              "descendants": 0
+            }
+          ],
+          "count": 1
+        }
+      ],
+      "members": [],
+      "buckets": {
+        "turn": 0,
+        "working": 0,
+        "delegating": 0,
+        "resting": 0
+      },
+      "turns": {
+        "question": 0,
+        "approval": 0,
+        "error": 0,
+        "done": 0
+      },
+      "requests": {
+        "rows": [],
+        "groups": [],
+        "counts": {
+          "answer": 0,
+          "fix": 0,
+          "review": 0,
+          "stopped": 0,
+          "result": 0,
+          "working": 0,
+          "waiting": 0,
+          "idle": 0
+        },
+        "todo": 0,
+        "answer": 0
+      }
+    }
+  }
+}

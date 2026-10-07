@@ -2,12 +2,16 @@ import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest 
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentScope = {
+  listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];
+  places: Record<string, { project_id: string; checkout_id: string; kind: "home" | "folder" | "checkout" }>;
+  places_live: boolean;
   graph: AgentGraphScope;
   closes: Record<string, CloseScope>;
   raised: { group: "needs_you" | "done"; shown: string[]; more: string[] }[];
   owners: Record<string, string>;
   badge_total: number;
   prs: {
+    counts: Record<"turn" | "fixing" | "blocked" | "review" | "draft" | "look", number>;
     rows: { number: number; checkout_id: string | null; agents: string[]; lineage: { pane_id: string; depth: number }[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
     groups: { group: "turn" | "fixing" | "blocked" | "merged"; numbers: number[] }[];
     open: number;

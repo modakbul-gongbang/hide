@@ -4,6 +4,7 @@
 // agent in `main` outside that lineage.
 
 import type { AgentRow, GithubSearchResult, SnapshotRest } from "../snapshot";
+import scopes from "./cmdkScopes.json";
 import { galleryAgentState } from "./agentStates";
 
 /** When the fixture's projects were last read from GitHub; the gallery scene moves it to a few minutes before it opens. */
@@ -27,11 +28,13 @@ export const PR_260 = { number: 260, title: "Terminal links click path", url: "h
 
 export const RICH = {
   navigator: {
+    agent_scope: scopes.overall,
     focused_device_id: "local",
-    devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }],
+    devices: [{ agent_scope: scopes.device, id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }],
     agents: [PARENT, CHILD, OTHER],
     workspaces: [
       {
+        agent_scope: scopes.project,
         id: "w1",
         label: "herdr-ide",
         path: "/repo",
@@ -48,8 +51,8 @@ export const RICH = {
         pull_requests: [PR_275, PR_260],
         inactive_checkouts: { expanded: false, checkout_ids: [] },
         checkouts: [
-          { id: "c-main", workspace_id: "w1", label: "main", path: "/repo", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [tab("c-main", ["p-parent", "p-dag"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2", github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: READ_AT, unavailable_reason: null } },
-          { id: "c-sand", workspace_id: "w1", label: "mailbox-sandbox-letters", path: "/repo.worktrees/sand", branch: "fix/mailbox-sandbox-letters", purpose: null, is_worktree: true, exists: true, has_panes: true, pull_request: PR_275, task_key: `github:acme/herdr-ide${HASH}273`, closes_task_keys: [`github:acme/herdr-ide${HASH}273`], changed_file_count: 14, ahead: 1, tabs: [tab("c-sand", ["p-child"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2" },
+          { agent_scope: scopes.checkouts["c-main"], id: "c-main", workspace_id: "w1", label: "main", path: "/repo", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [tab("c-main", ["p-parent", "p-dag"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2", github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: READ_AT, unavailable_reason: null } },
+          { agent_scope: scopes.checkouts["c-sand"], id: "c-sand", workspace_id: "w1", label: "mailbox-sandbox-letters", path: "/repo.worktrees/sand", branch: "fix/mailbox-sandbox-letters", purpose: null, is_worktree: true, exists: true, has_panes: true, pull_request: PR_275, task_key: `github:acme/herdr-ide${HASH}273`, closes_task_keys: [`github:acme/herdr-ide${HASH}273`], changed_file_count: 14, ahead: 1, tabs: [tab("c-sand", ["p-child"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2" },
         ],
       },
     ],

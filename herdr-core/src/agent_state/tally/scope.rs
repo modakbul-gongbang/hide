@@ -114,6 +114,9 @@ pub struct Raised {
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub listed: Vec<Listed>,
+    pub places: BTreeMap<String, Place>,
+    pub places_live: bool,
     pub graph: super::graph::Graph,
     pub closes: BTreeMap<String, super::close::Consequence>,
     pub prs: crate::agent_state::work::board::Board,
@@ -137,6 +140,21 @@ pub struct Scope {
     pub folded: BTreeMap<String, super::lineage::Folded>,
     pub tree: super::lineage::Tree,
     pub global_tree: super::lineage::Tree,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Listed {
+    pub pane_id: String,
+    pub device_id: String,
+    pub device_label: Option<String>,
+    pub remote: bool,
+    pub index: usize,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Place {
+    pub project_id: String,
+    pub checkout_id: String,
+    pub kind: &'static str,
 }
 
 const GROUPS: [&str; 4] = ["needs_you", "done", "working", "seen"];
@@ -645,9 +663,10 @@ impl Cache {
                     .map(move |a| (a.pane_id.as_str(), (d.id, d.label)))
             })
             .collect();
+        let mut overall_listed = Vec::new();
         let mut overall_members = Vec::new();
         let mut overall_projects = Vec::new();
-        for device in &devices {
+        for (device_index, device) in devices.iter().enumerate() {
             for project in &device.projects {
                 let mut trees = super::lineage::checkout_trees(project, &device.agents);
                 let mut global_trees = super::lineage::checkout_trees(project, &live);
@@ -784,6 +803,56 @@ impl Cache {
             let device_scope = device_scopes
                 .get_mut(device.id)
                 .expect("device scope inserted");
+            device_scope.listed = physical
+                .iter()
+                .enumerate()
+                .map(|(index, a)| Listed {
+                    pane_id: a.pane_id.clone(),
+                    device_id: device.id.into(),
+                    device_label: if device.id.is_empty() && device.label.is_empty() {
+                        None
+                    } else {
+                        Some(device.label.into())
+                    },
+                    remote: device_index > 0,
+                    index,
+                })
+                .collect();
+            overall_listed.extend(device_scope.listed.iter().cloned());
+            device_scope.places_live = device.connected;
+            for project in &device.projects {
+                let folder = !project.is_git && project.checkouts.len() == 1;
+                for checkout in &project.checkouts {
+                    for pane in checkout.tabs.iter().flat_map(|t| &t.panes) {
+                        device_scope
+                            .places
+                            .entry(pane.id.clone())
+                            .or_insert_with(|| Place {
+                                project_id: project.id.clone(),
+                                checkout_id: checkout.id.clone(),
+                                kind: if project.is_home {
+                                    "home"
+                                } else if folder {
+                                    "folder"
+                                } else {
+                                    "checkout"
+                                },
+                            });
+                    }
+                }
+            }
+            for project in &device.projects {
+                let projection = projects
+                    .get_mut(&(project.device_id.clone(), project.id.clone()))
+                    .expect("project scope inserted");
+                projection.places_live = device.connected;
+                projection.places = device_scope
+                    .places
+                    .iter()
+                    .filter(|(_, place)| place.project_id == project.id)
+                    .map(|(id, place)| (id.clone(), place.clone()))
+                    .collect();
+            }
             device_scope.raised = raised;
             device_scope.owners = owners;
             device_scopes
@@ -798,6 +867,7 @@ impl Cache {
             project_marks(&overall_projects),
         );
         overall.folded = super::lineage::folded(&live, &live_projects, &places);
+        overall.listed = overall_listed;
         for device in &devices {
             super::close::add(&mut overall.closes, &device.projects, &device.agents, &live);
         }

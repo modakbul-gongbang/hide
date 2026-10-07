@@ -308,7 +308,7 @@ export function createActions(send: DispatchFn) {
   };
 
   /** Every current agent row, this machine's and each connected device's, as the lists draw them. */
-  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, rest()?.navigator?.devices, useShellStore.getState().agents).map((row) => row.agent);
+  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, useShellStore.getState().agents, rest()?.navigator?.agent_scope).map((row) => row.agent);
 
   const sendClose = (kind: "pane" | "tab", id: string, targetId: string | null, confirmed: boolean) => {
     if (targetId) {

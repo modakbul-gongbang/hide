@@ -549,7 +549,8 @@ The core never renames the Herdr tab for this; the Recent Panels label is projec
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
 Every entry opens the Agents graph with the checkout in front selected (PRD agents-graph-view D-22), except Recent Panels, which restores the lens and expanded rows as they were left; the request view is the tab beside it.
-The Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tab's bar and give the status chips their states (`web/src/overviewLens.ts`).
+The Agents view reads the core's four buckets: the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting.
+The core also supplies graph priorities, fold badges and tile counts; `web/src/agentGraph.ts` places rows and lines, and `web/src/overviewLens.ts` translates the bar and chip labels.
 The Issues view is the Tasks board below.
 Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.
@@ -616,3 +617,8 @@ The shell chooses the current target and translates the published states; runtim
 The three fold toggles and project/all selection have sixteen combinations, with identical badge maps shared in the snapshot.
 The renderer selects a combination, filters text and draws geometry; a filtered box reads the first remaining row in core priority order.
 `runtime::tests::agent_scopes::graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor` pins nested hidden marks and Git-only fold invalidation.
+
+Device scopes publish the current listed rows by source index, preserving duplicate physical rows and local-first order, and the first checkout place for each pane.
+The overall scope concatenates connected listings; a disconnected device keeps its catalog places but marks them unavailable to the live sidebar.
+The PR board publishes its turn/fixing/blocked counts and the review/draft/finished-agent breakdown, including the existing precedence of a finished agent over draft status.
+The scope ownership/disconnect and PR-board tests above assert these values.

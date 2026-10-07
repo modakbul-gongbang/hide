@@ -12,6 +12,16 @@ pub struct Board {
     pub rows: Vec<Row>,
     pub groups: Vec<Group>,
     pub open: usize,
+    pub counts: Counts,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct Counts {
+    pub turn: usize,
+    pub fixing: usize,
+    pub blocked: usize,
+    pub review: usize,
+    pub draft: usize,
+    pub look: usize,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Group {
@@ -181,6 +191,27 @@ pub(crate) fn project(
             issue,
         });
         result.open += usize::from(!merged);
+        match group {
+            "turn" => {
+                result.counts.turn += 1;
+                if result.rows.last().expect("row inserted").needs_look {
+                    result.counts.look += 1;
+                } else if pr.is_draft
+                    && !matches!(
+                        pr.badge,
+                        PullRequestBadge::Merged | PullRequestBadge::Closed
+                    )
+                {
+                    result.counts.draft += 1;
+                } else {
+                    result.counts.review += 1;
+                }
+            }
+            "fixing" => result.counts.fixing += 1,
+            "blocked" => result.counts.blocked += 1,
+            "merged" => {}
+            other => unreachable!("unknown PR group {other}"),
+        }
     }
     for group in ["turn", "fixing", "blocked", "merged"] {
         let mut prs: Vec<_> = workspace

@@ -591,11 +591,11 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const remoteStatuses = useShellStore((s) => s.rest?.status?.remote);
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const localAgents = useShellStore((s) => s.agents);
-  const listedAgents = useMemo(() => allAgents(remoteStatuses, devices, localAgents), [remoteStatuses, devices, localAgents]);
+  const agentScope = useShellStore((s) => s.rest?.navigator?.agent_scope);
+  const listedAgents = useMemo(() => allAgents(remoteStatuses, localAgents, agentScope), [remoteStatuses, localAgents, agentScope]);
   const agents = useMemo(() => listedAgents.map((row) => row.agent), [listedAgents]);
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
   const frontListed = useMemo(() => deviceListedAgents(remoteStatuses, devices, localAgents, frontId), [remoteStatuses, devices, localAgents, frontId]);
-  const agentScope = useShellStore((s) => s.rest?.navigator?.agent_scope);
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);

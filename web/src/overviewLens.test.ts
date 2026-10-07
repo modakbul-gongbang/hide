@@ -1,3 +1,4 @@
+import { legacyPrCounts } from "../test/legacyAgentScope";
 import { buildTasks } from "../test/legacyAgentScope";
 import { emptyScope } from "../test/legacyAgentScope";
 import { agentsTile, scopeAgents } from "../test/legacyAgentScope";
@@ -129,6 +130,7 @@ describe("the tiles", () => {
   it("counts open pull requests, badges the operator's turn with review, drafts and finished agents to look at, and bars turn, fixing and blocked (B1, B22)", () => {
     const row = (group: PrRow["group"], extra: Partial<PrRow> = {}) => ({ group, tone: "open", needsLook: false, ...extra }) as PrRow;
     const board = (rows: PrRow[], extra: Partial<PrBoard> = {}): PrBoard => ({
+      counts: legacyPrCounts({ groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, rows: rows.filter((r) => r.group === group) })) }),
       groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, rows: rows.filter((value) => value.group === group) })).filter((entry) => entry.rows.length > 0),
       open: rows.filter((value) => value.group !== "merged").length,
       reading: false,

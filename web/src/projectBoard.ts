@@ -1,4 +1,4 @@
-import { scopeRows, type AgentTreeScope } from "./agentScope";
+import { scopeRows, type AgentTreeScope, type AgentScope } from "./agentScope";
 // The Overview's Issues view (PRD task-agents-views, reworked issue-first
 // on 2026-09-28 and issues-only by PRD overview-lenses-issues) as pure
 // functions over the snapshot, for one Project or for All projects. Every
@@ -622,6 +622,7 @@ export type PrRow = {
 };
 
 export type PrBoard = {
+  counts: AgentScope["prs"]["counts"];
   groups: { group: PrGroup; rows: PrRow[] }[];
   /** Open pull requests, or null until GitHub has answered (B22). */
   open: number | null;
@@ -704,6 +705,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const age = status?.last_success_at_unix_ms != null ? Math.max(0, Math.floor((now - status.last_success_at_unix_ms) / 60_000)) : null;
   return {
     groups,
+    counts: board.counts,
     open: answered ? board.open : null,
     reading: !answered && !failed,
     failure: failed ? { project: null, source: "GitHub", value: age === null ? "none" : { minutes: age } } : null,
