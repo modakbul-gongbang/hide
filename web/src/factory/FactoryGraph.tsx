@@ -38,7 +38,7 @@ export function FactoryGraph({ factories, filtered }: { factories: FactoryView[]
       {graphs.map(({ factory, graph }) => (
         <section key={factory.id} className="flex flex-col gap-md" aria-label={factory.project_name} data-factory-graph-of={factory.id}>
           {many ? <h2 className="text-subhead font-semibold">{factory.project_name}</h2> : null}
-          {graph.layers.length > 0 ? <DependencyGraphView graph={graph} draw={draw} /> : null}
+          {graph.layers.length > 0 ? <DependencyGraphView graph={graph} draw={draw} idOf={(node) => node.id} /> : null}
           {graph.unrelated.length > 0 ? (
             <div className="flex flex-col gap-sm border-t border-border pt-md" data-factory-graph-unrelated="true">
               <h3 className="text-caption text-subtle-foreground">{t("factory.graph.unrelated")}</h3>

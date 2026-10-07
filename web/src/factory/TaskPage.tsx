@@ -111,7 +111,9 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
       <div className="grid grid-cols-2 gap-xl border-t border-border pt-lg">
         <div className="flex min-w-0 flex-col gap-lg" data-factory-card-fields="true">
           <Field title={t("factory.task.goal")}>
-            <p className="text-body [overflow-wrap:anywhere]">{detail.goal}</p>
+            <p className="text-body [overflow-wrap:anywhere]">
+              <ShortenedText text={detail.goal} />
+            </p>
           </Field>
           {detail.criteria.length > 0 ? (
             <Field title={t("factory.task.criteria")}>

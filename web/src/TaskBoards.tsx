@@ -48,7 +48,7 @@ import { previewRead, useCachedDetail } from "./issueDetails";
 import { markdownPlainText } from "./markdownPlain";
 import { cn } from "./lib/utils";
 import { useShellStore } from "./store";
-import { placeWithin, workerElk, type NodeBox, type PlacedNode } from "./dependencyLayout";
+import { placeWithin, workerElk, type GraphEdge, type NodeBox, type Placement } from "./dependencyLayout";
 import { useMeasuredPaths } from "./measuredPaths";
 import { AgentMessageHint, PullRequestChip } from "./OverviewLenses";
 import {
@@ -1232,7 +1232,7 @@ export function DependenciesView({ board, page, actions, handlers }: { board: Ta
         <ArrowRightIcon aria-hidden="true" className="size-(--size-icon) text-warning" />
         {t("board.dependencies.legend")}
       </p>
-      {graph.layers.length > 0 ? <DependencyGraphView graph={graph} draw={draw} /> : null}
+      {graph.layers.length > 0 ? <DependencyGraphView graph={graph} draw={draw} idOf={(value) => value.id} /> : null}
       {graph.unrelated.length > 0 ? (
         <section className="flex flex-col gap-sm" aria-label={t("board.dependencies.unrelated")} data-dependency-unrelated="true">
           {graph.layers.length > 0 ? <h2 className="text-subhead font-semibold text-subtle-foreground">{t("board.dependencies.unrelated")}</h2> : null}
@@ -1257,15 +1257,20 @@ export function DependenciesView({ board, page, actions, handlers }: { board: Ta
  * `data-dependency-node` with its id; the Factory graph draws its own cards
  * the same way (PRD software-factory-ui D-08).
  */
-export function DependencyGraphView<T>({ graph, draw }: { graph: LayeredGraph<T>; draw: (value: T) => ReactNode }) {
+export function DependencyGraphView<T>({ graph, draw, idOf }: { graph: LayeredGraph<T>; draw: (value: T) => ReactNode; idOf: (value: T) => string }) {
   const box = useRef<HTMLDivElement>(null);
   const marker = `dependency-arrow-${useId()}`;
-  const placement = useDependencyPlacement(box, graph);
+  const values = graph.layers.flat();
+  // What the layout depends on: the nodes and the edges, not the object a snapshot rebuilt.
+  const structure = JSON.stringify([values.map(idOf), graph.edges.map((edge) => `${edge.from}>${edge.to}`)]);
+  const placement = useDependencyPlacement(box, structure, graph.edges);
+  const places = placement ? values.map((value) => placement.nodes.get(idOf(value))) : [];
+  const placed = placement !== null && places.every((place) => place !== undefined);
   const arrows = useMeasuredPaths(
     box,
     "[data-dependency-node]",
     (origin, at) =>
-      placement
+      placed
         ? []
         : graph.edges.flatMap((edge) => {
             const from = at("data-dependency-node", edge.from);
@@ -1278,9 +1283,9 @@ export function DependencyGraphView<T>({ graph, draw }: { graph: LayeredGraph<T>
             const bend = (x2 - x1) / 2;
             return [{ id: `${edge.from}>${edge.to}`, d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` }];
           }),
-    [graph, placement],
+    [structure, placed],
   );
-  const lines = placement ? placement.edges : arrows;
+  const lines = placed ? placement.edges : arrows;
   const svg = (
     <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-warning">
       <defs>
@@ -1293,18 +1298,14 @@ export function DependencyGraphView<T>({ graph, draw }: { graph: LayeredGraph<T>
       ))}
     </svg>
   );
-  if (placement) {
-    const values = graph.layers.flat();
+  if (placed) {
     return (
       <div ref={box} className="relative" style={{ width: placement.width, height: placement.height }} data-dependency-graph="true" data-dependency-edges={graph.edges.length} data-dependency-layout="layered">
-        {values.map((value, index) => {
-          const place = placement.nodes[index];
-          return (
-            <div key={index} className="absolute" style={{ left: place?.x ?? 0, top: place?.y ?? 0 }} data-dependency-layer={place?.layer ?? 0}>
-              {draw(value)}
-            </div>
-          );
-        })}
+        {values.map((value, index) => (
+          <div key={idOf(value)} className="absolute" style={{ left: places[index]!.x, top: places[index]!.y }} data-dependency-layer={places[index]!.layer}>
+            {draw(value)}
+          </div>
+        ))}
         {svg}
       </div>
     );
@@ -1321,34 +1322,37 @@ export function DependencyGraphView<T>({ graph, draw }: { graph: LayeredGraph<T>
   );
 }
 
-/** A placement the view draws: each drawn node's place in drawing order (the graph's layers, flattened). */
-type DrawnPlacement = { width: number; height: number; nodes: (PlacedNode | undefined)[]; edges: { id: string; d: string }[] };
-
 /**
  * Measures the drawn cards and asks the layout worker where they go, again
- * whenever the graph changes or a card changes size. A refused layout keeps
- * the columns and goes to the diagnostic log once per graph.
+ * only when the graph's nodes or edges change or a card changes size: a
+ * snapshot that rebuilds the same graph keeps the placement it has. A
+ * structure the layout refused stays in columns without asking again, and
+ * the reason goes to the diagnostic log once.
  */
-function useDependencyPlacement<T>(box: RefObject<HTMLDivElement | null>, graph: LayeredGraph<T>): DrawnPlacement | null {
-  const [placed, setPlaced] = useState<{ graph: LayeredGraph<T>; sizes: string; placement: DrawnPlacement } | null>(null);
-  const [measured, setMeasured] = useState<{ graph: LayeredGraph<T>; nodes: NodeBox[]; sizes: string } | null>(null);
+function useDependencyPlacement(box: RefObject<HTMLDivElement | null>, structure: string, edges: readonly GraphEdge[]): Placement | null {
+  const [placed, setPlaced] = useState<{ key: string; placement: Placement } | null>(null);
+  const [measured, setMeasured] = useState<{ key: string; nodes: NodeBox[] } | null>(null);
+  const refused = useRef(new Set<string>());
+  const layout = placed?.key.startsWith(`${structure}|`) ? "layered" : "columns";
   useLayoutEffect(() => {
     const root = box.current;
     if (!root) return;
     const measure = () => {
       const nodes = [...root.querySelectorAll<HTMLElement>("[data-dependency-node]")].map((node) => ({ id: node.dataset.dependencyNode ?? "", width: node.offsetWidth, height: node.offsetHeight }));
-      const sizes = nodes.map((node) => `${node.id}:${node.width}x${node.height}`).join(",");
-      setMeasured((current) => (current && current.graph === graph && current.sizes === sizes ? current : { graph, nodes, sizes }));
+      const key = `${structure}|${nodes.map((node) => `${node.width}x${node.height}`).join(",")}`;
+      setMeasured((current) => (current?.key === key ? current : { key, nodes }));
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     for (const node of root.querySelectorAll("[data-dependency-node]")) observer.observe(node);
     return () => observer.disconnect();
-  }, [graph, placed]);
+  }, [structure, layout]);
+  const edgeList = useRef(edges);
+  edgeList.current = edges;
   useEffect(() => {
-    if (!measured || measured.graph !== graph || measured.nodes.length === 0) return;
-    if (placed && placed.graph === graph && placed.sizes === measured.sizes) return;
+    if (!measured || !measured.key.startsWith(`${structure}|`) || measured.nodes.length === 0) return;
+    if (placed?.key === measured.key || refused.current.has(measured.key)) return;
     const root = box.current;
     if (!root) return;
     // The same gaps the columns keep: between columns, and between cards in one.
@@ -1358,21 +1362,21 @@ function useDependencyPlacement<T>(box: RefObject<HTMLDivElement | null>, graph:
     workerElk()
       .then((elk) => {
         if (!Number.isFinite(spacing.betweenLayers) || !Number.isFinite(spacing.betweenNodes)) throw new Error("the graph's spacing tokens are not set");
-        return placeWithin(elk, measured.nodes, graph.edges, spacing);
+        return placeWithin(elk, measured.nodes, edgeList.current, spacing);
       })
       .then(
         (placement) => {
-          if (!current) return;
-          setPlaced({ graph, sizes: measured.sizes, placement: { width: placement.width, height: placement.height, nodes: measured.nodes.map((node) => placement.nodes.get(node.id)), edges: placement.edges } });
+          if (current) setPlaced({ key: measured.key, placement });
         },
         (error: unknown) => {
           if (!current) return;
+          refused.current.add(measured.key);
           useShellStore.getState().noteDiagnostic(`dependency graph stays in columns: ${error instanceof Error ? error.message : String(error)}`);
         },
       );
     return () => {
       current = false;
     };
-  }, [measured, graph]);
-  return placed && placed.graph === graph ? placed.placement : null;
+  }, [measured, structure]);
+  return placed?.key.startsWith(`${structure}|`) ? placed.placement : null;
 }
