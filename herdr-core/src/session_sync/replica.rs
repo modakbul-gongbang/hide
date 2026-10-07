@@ -65,6 +65,10 @@ pub(crate) struct SessionReplica {
     /// stream carries no sequence, so this is the only position a diagnostic
     /// can name.
     pub(crate) applied_events: u64,
+    /// Every `tab_focused` this replica applied, as moves. `state` is
+    /// Herdr's topology and carries none; each publish lays them on
+    /// `published_state`.
+    tab_moves: crate::sidebar::SessionTabMoves,
 }
 
 /// How an event that disagrees with the replica is treated.
@@ -113,9 +117,14 @@ impl SessionReplica {
     }
 
     pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
+        let generation = NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tab_moves = crate::sidebar::SessionTabMoves::new(generation);
         let replica = Self {
-            generation: NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            published_state: state.clone(),
+            generation,
+            published_state: ProjectionState {
+                tab_moves: Some(tab_moves.clone()),
+                ..state.clone()
+            },
             state,
             pending_layouts: BTreeSet::new(),
             pending_creation_focuses: BTreeSet::new(),
@@ -125,6 +134,7 @@ impl SessionReplica {
             early_focuses: Vec::new(),
             unconfirmed_cwds: BTreeSet::new(),
             applied_events: 0,
+            tab_moves,
         };
         replica.validate()?;
         replica.validate_active_tabs()?;
@@ -244,6 +254,8 @@ impl SessionReplica {
         .filter(|focus| focused_workspace_id.as_ref() == Some(&focus.workspace_id));
         ProjectionState {
             tab_focus,
+            // Laid on by `refresh_published_state`.
+            tab_moves: None,
             focused_pane_id: self.focused_pane_for_partial_publish(&blocked),
             focused_workspace_id,
             workspaces: Self::merge_by_workspace(
@@ -281,13 +293,24 @@ impl SessionReplica {
     }
 
     pub(crate) fn refresh_published_state(&mut self) -> Result<bool, SessionFetchError> {
-        if self.ready_to_publish() {
+        let ready = self.ready_to_publish();
+        let mut next = if ready {
             self.validate()?;
-            let changed = self.published_state != self.state;
-            self.published_state = self.state.clone();
-            return Ok(changed);
+            self.state.clone()
+        } else {
+            self.partial_published_state()
+        };
+        // Every move applied so far is published, held workspace or not: a
+        // move answers a request Hide sent and says nothing about a topology
+        // still settling. But a move alone never publishes a held state: it
+        // would publish the topology from before a workspace the creation
+        // worker has already projected, and retire that workspace's pane.
+        // The move rides on the next publish.
+        next.tab_moves = self.published_state.tab_moves.clone();
+        if !ready && next == self.published_state {
+            return Ok(false);
         }
-        let next = self.partial_published_state();
+        next.tab_moves = Some(self.tab_moves.clone());
         let changed = next != self.published_state;
         self.published_state = next;
         Ok(changed)
@@ -1203,6 +1226,7 @@ impl SessionReplica {
                     ));
                 }
                 workspace.active_tab_id = input_tab_id.clone();
+                self.tab_moves.record(input_tab_id.clone());
                 // A focus Herdr applied after a held one supersedes it.
                 self.early_focuses.retain(|held| {
                     !matches!(held, ReplicaEvent::TabFocused { workspace_id, .. } if workspace_id == &input_workspace_id)

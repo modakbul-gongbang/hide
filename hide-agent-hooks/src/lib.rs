@@ -33,7 +33,7 @@ pub mod spawn_guard;
 pub use counters::PaneCounters;
 pub use diagnosis::{
     Diagnosis, MemoryCompatibility, PaneInstrumentation, RuntimeDiagnosis, UninstrumentedReason,
-    cli_path, find_binary, program_version, runtime_compatibility, version_at_least,
+    cli_path, find_binary, runtime_compatibility, version_at_least,
 };
 pub use install::{
     HookStatus, InstallFailure, InstallOutcome, RemoveOutcome, install, installed_helper_path,

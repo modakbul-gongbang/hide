@@ -17,9 +17,9 @@ impl Runtime {
         }
         self.pane_focus_in_flight = None;
         let current_connection = control.live_generation == self.live_generation;
-        // The answer settles the tab move this focus makes, read before it
-        // updates where Hide knows Herdr is. A refusal moved nothing; a lost
-        // answer may still land, so its move waits out the deadline.
+        // The answer settles the tab move this focus makes when Herdr was
+        // already on its tab. A refusal moved nothing; a lost answer may
+        // still land, so its move waits out the deadline.
         if current_connection {
             match &result {
                 Ok(_) => self.answer_pane_focus_tab(control.serial),
@@ -1446,31 +1446,6 @@ impl Runtime {
     pub(super) fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
         self.clear_terminal_projection();
         self.select_terminal_pane(pane_id);
-    }
-    /// A launcher result is a local projection anchor, not a Herdr focus
-    /// request. Keep it authoritative over an older terminal pane while the
-    /// next event-stream projection catches up, and make the missing layout
-    /// visible instead of retaining unrelated same-cwd content.
-    pub(super) fn apply_selected_pane_anchor(&mut self, pane_id: Option<String>) {
-        let layout_contains_pane = pane_id
-            .as_deref()
-            .is_some_and(|selected_pane_id| self.layout_holding_pane(selected_pane_id).is_some());
-        self.snapshot.terminal.pane_id = pane_id.clone();
-        self.snapshot.focused.surface = Surface::Terminal;
-        self.snapshot.focused.pane_id = pane_id.clone();
-        if !layout_contains_pane {
-            self.clear_terminal_projection();
-            if let Some(pane_id) = pane_id.as_deref() {
-                self.set_error(
-                    "pane.projection_unavailable",
-                    format!(
-                        "Selected pane {pane_id} is not present in the Herdr session; terminal projection is waiting"
-                    ),
-                    true,
-                );
-            }
-        }
-        self.sync_focused_terminal_projection();
     }
     /// Opens or focuses the file tab for one path in a checkout Hide is
     /// already showing. The caller owns the context check and the persistence,

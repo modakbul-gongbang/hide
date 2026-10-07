@@ -150,3 +150,41 @@ fn the_path_a_program_runs_with_names_only_absolute_folders() {
     );
     assert!(folders.contains(&PathBuf::from("/shell/abs")));
 }
+
+#[test]
+fn a_slow_ask_for_one_home_does_not_hold_another_home_behind_it() {
+    let root = tempfile::tempdir().unwrap();
+    let release = root.path().join("release");
+    let entered = root.path().join("entered");
+    // The first shell says it was started and then does not answer until the
+    // release file exists, so its ask is under way for as long as the test says.
+    let slow = root.path().join("slow-shell");
+    fs::write(
+        &slow,
+        format!(
+            "#!/bin/sh\necho in > \"{}\"\nwhile [ ! -e \"{}\" ]; do sleep 0.01; done\n[ \"$1\" = -ilc ] || exit 64\neval \"$2\"\n",
+            entered.display(),
+            release.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
+    let quick = counting_shell(root.path(), &root.path().join("quick-starts"));
+    let stop = AtomicBool::new(false);
+
+    std::thread::scope(|scope| {
+        let waiting = scope
+            .spawn(|| programs::login_shell_path(&root.path().join("first"), Some(&slow), &stop));
+        while !entered.exists() {
+            std::thread::yield_now();
+        }
+        // The first ask is under way; another home answers without it.
+        let other = programs::login_shell_path(&root.path().join("second"), Some(&quick), &stop);
+        assert!(
+            other.is_some(),
+            "the second home was answered while the first was still asking"
+        );
+        fs::write(&release, "").unwrap();
+        assert!(waiting.join().unwrap().is_some());
+    });
+}

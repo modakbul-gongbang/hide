@@ -73,6 +73,7 @@ mod ssh_hosts_list;
 mod terminal;
 #[path = "tests/tree_close.rs"]
 mod tree_close;
+mod ui_state_focus;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
 mod view_bookmarks;
@@ -931,6 +932,55 @@ fn correlated_pane_focus_event(pane_id: &str, request_id: &str) -> Vec<u8> {
         }
     }))
     .expect("correlated pane focus event")
+}
+
+/// Herdr's event stream as the replica publishes it: each session carries
+/// the tab moves Herdr has made, so a test states which moves a session
+/// comes after instead of leaving the core to infer them from its state.
+struct HerdrMoves(crate::sidebar::SessionTabMoves);
+
+impl HerdrMoves {
+    fn new() -> Self {
+        Self(crate::sidebar::SessionTabMoves::new(1))
+    }
+
+    /// The stream of a new replica, built after a reconnect: its count
+    /// starts again.
+    fn reconnected(&self) -> Self {
+        Self(crate::sidebar::SessionTabMoves::new(self.0.generation + 1))
+    }
+
+    /// `payload` as the session published after Herdr moved to each of
+    /// `moves`, in order. Like the replica, it names the last move as the
+    /// session's focus event unless the test set one.
+    fn after(
+        &mut self,
+        moves: &[&str],
+        mut payload: SessionSnapshotPayload,
+    ) -> SessionSnapshotPayload {
+        for tab_id in moves {
+            self.0.record((*tab_id).to_owned());
+        }
+        if let Some(last) = moves.last()
+            && payload.tab_focus.is_none()
+        {
+            let workspace_id = payload
+                .tabs
+                .iter()
+                .find(|tab| tab.tab_id == *last)
+                .map(|tab| tab.workspace_id.clone())
+                .expect("a move to a tab the session lists");
+            payload.tab_focus = Some(crate::sidebar::SessionTabFocus {
+                generation: self.0.generation,
+                workspace_id,
+                tab_id: (*last).to_owned(),
+                revision: self.0.applied,
+                creation: false,
+            });
+        }
+        payload.tab_moves = Some(self.0.clone());
+        payload
+    }
 }
 
 /// The tabs of the moves sent to Herdr and not yet answered, oldest first.

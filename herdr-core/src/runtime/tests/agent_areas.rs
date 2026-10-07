@@ -1262,11 +1262,10 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
     close_tab(&mut runtime, "w-order:t3");
     answer_close(&mut runtime, Ok(()));
     let after_close = ["w-order:t1", "w-order:t2"];
-    runtime.ingest_session(Ok(tab_order_payload(
-        "/agent-groups",
-        &after_close,
-        &after_close,
-        "w-order:t1",
+    let mut herdr = HerdrMoves::new();
+    runtime.ingest_session(Ok(herdr.after(
+        &[],
+        tab_order_payload("/agent-groups", &after_close, &after_close, "w-order:t1"),
     )));
     action(
         &mut runtime,
@@ -1277,11 +1276,9 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
     // leaves, and only a request that has left is confirmed.
     let _ = runtime.advance_lane();
     // Herdr confirms the click on the right area's tab.
-    runtime.ingest_session(Ok(tab_order_payload(
-        "/agent-groups",
-        &after_close,
-        &after_close,
-        "w-order:t2",
+    runtime.ingest_session(Ok(herdr.after(
+        &["w-order:t2"],
+        tab_order_payload("/agent-groups", &after_close, &after_close, "w-order:t2"),
     )));
     let item = runtime.recent_closed.back().cloned().expect("t3 to reopen");
     reopen(&mut runtime);
@@ -1313,11 +1310,11 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
         revision: 1,
         creation: true,
     });
-    runtime.ingest_session(Ok(seed.clone()));
+    runtime.ingest_session(Ok(herdr.after(&[], seed.clone())));
     let focus = seed.tab_focus.as_mut().unwrap();
     focus.creation = false;
     focus.revision = 2;
-    runtime.ingest_session(Ok(seed));
+    runtime.ingest_session(Ok(herdr.after(&["w-order:t8"], seed)));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("w-order:t8:p"),
@@ -1327,11 +1324,9 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
     // The seed goes and the restored tab arrives, with Herdr's keyboard back
     // on the right area's tab.
     let restored = ["w-order:t1", "w-order:t2", "w-order:t4"];
-    runtime.ingest_session(Ok(tab_order_payload(
-        "/agent-groups",
-        &restored,
-        &restored,
-        "w-order:t2",
+    runtime.ingest_session(Ok(herdr.after(
+        &["w-order:t2"],
+        tab_order_payload("/agent-groups", &restored, &restored, "w-order:t2"),
     )));
     assert_eq!(
         drawn(&mut runtime),

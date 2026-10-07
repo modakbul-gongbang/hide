@@ -2,7 +2,7 @@
 //! it puts where each one reads it (issue #517).
 //!
 //! One data row per agent declares the programs it is found by, where its
-//! skills live, whether it has hooks, the oldest version the hook needs and
+//! skills live, whether it has hooks and
 //! the official page every one of those answers comes from. The content an
 //! agent reads is the same for all of them and is read from the `hide` binary
 //! at run time (`hide browser help`), so a new agent is a row here and a
