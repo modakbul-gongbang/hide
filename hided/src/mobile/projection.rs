@@ -445,6 +445,55 @@ mod tests {
         assert!(projection.agents().all(|agent| agent.device_id != "gone"));
     }
 
+    #[test]
+    fn read_questions_and_waiting_roots_keep_their_current_phone_presentation() {
+        let input = json!({"navigator": {"agents": [
+            agent("root", "working", json!({"waiting_on_descendants": true,
+                "activity": "stopped", "emphasized": true, "unread": true, "detail": "waiting"})),
+            agent("read-question", "seen", json!({"activity": "stopped", "demand": "question",
+                "emphasized": false, "unread": false, "detail": "  answer me  "})),
+            agent("child", "seen", json!({"lineage_parent_pane_id": "root", "delegated": true,
+                "activity": "stopped", "demand": "error", "emphasized": false, "detail": "failed"})),
+            agent("unknown", "seen", json!({"activity": "unknown", "detail": "quiet"})),
+        ]}});
+        let projection = project(&input, "local");
+        let rows: Vec<_> = projection
+            .agents()
+            .map(|row| {
+                (
+                    row.pane_id.as_str(),
+                    row.group.as_str(),
+                    row.root_pane_id.as_str(),
+                    row.tone,
+                    row.line
+                        .as_ref()
+                        .map(|line| (line.text.as_str(), line.tone)),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "root",
+                    "working",
+                    "root",
+                    "working",
+                    Some(("waiting", "news"))
+                ),
+                (
+                    "read-question",
+                    "seen",
+                    "read-question",
+                    "warning",
+                    Some(("answer me", "warning"))
+                ),
+                ("child", "seen", "root", "error", Some(("failed", "error"))),
+                ("unknown", "seen", "unknown", "subtle", None),
+            ]
+        );
+    }
+
     /// The request view's words (the operator's request, the agent's reply)
     /// stay on the desktop: the phone's rows carry none of them (PRD
     /// overview-request-view Risks).

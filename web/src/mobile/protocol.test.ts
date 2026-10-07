@@ -55,6 +55,11 @@ function agent(group: AgentGroup["group"], pane: string, root = pane, demand = "
 }
 
 describe("staleTags", () => {
+  it("retains a read root question even though its group is Seen", () => {
+    expect(staleTags(["local|root"], [{ group: "seen", agents: [agent("seen", "root", "root", "question")] }])).toEqual([]);
+    expect(staleTags(["local|root"], [{ group: "seen", agents: [agent("seen", "root")] }])).toEqual(["local|root"]);
+  });
+
   it("keeps the notification of a root still waiting or done, through a child's request", () => {
     const groups: AgentGroup[] = [
       { group: "needs_you", agents: [agent("needs_you", "child", "root")] },

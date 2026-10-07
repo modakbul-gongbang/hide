@@ -761,6 +761,42 @@ mod tests {
     }
 
     #[test]
+    fn a_read_root_question_clears_push_but_a_read_child_question_raises_its_root() {
+        let mut transitions = Transitions::default();
+        transitions.observe(&project(
+            &rest(json!([row("w1:p1", "needs_you", "question", None),])),
+            "local",
+        ));
+        let read = project(
+            &rest(json!([row("w1:p1", "seen", "question", None),])),
+            "local",
+        );
+        let (notices, cleared) = transitions.observe(&read);
+        assert!(notices.is_empty());
+        assert_eq!(
+            cleared
+                .iter()
+                .map(|key| key.pane_id.as_str())
+                .collect::<Vec<_>>(),
+            ["w1:p1"]
+        );
+
+        let child = project(
+            &rest(json!([
+                row("w1:p1", "seen", "question", None),
+                row("w1:p2", "seen", "question", Some("w1:p1")),
+            ])),
+            "local",
+        );
+        let (notices, cleared) = transitions.observe(&child);
+        assert!(cleared.is_empty());
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].key.pane_id, "w1:p1");
+        assert_eq!(notices[0].state, NoticeState::NeedsYou);
+        assert!(transitions.observe(&child).0.is_empty());
+    }
+
+    #[test]
     fn an_agent_that_comes_back_in_the_same_state_is_not_announced_again() {
         let mut transitions = Transitions::default();
         let start = std::time::Instant::now();
