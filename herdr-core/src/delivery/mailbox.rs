@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::answer::{Confirmed, InboxEntry};
 use super::ledger::{Ledger, Letter, State};
 use super::{Actor, BODY_LIMIT, HOOK_LETTERS, HOOK_LIMIT, LETTER_LIMIT, OPEN_LIMIT, RETENTION_MS};
 
@@ -242,15 +243,12 @@ pub fn apply(
                     .filter(|letter| letter.recipient.same_identity(actor)
                         && matches!(letter.state, State::Pending | State::Undelivered)
                         || letter.sender.same_identity(actor) && letter.state == State::Undelivered)
-                    .map(|letter| {
-                        let mut view = json!(letter);
-                        if acknowledges
+                    .map(|letter| InboxEntry {
+                        ack_command: (acknowledges
                             && letter.state == State::Pending
-                            && letter.recipient.same_identity(actor)
-                        {
-                            view["ack_command"] = json!(format!("hide request ack {}", letter.id));
-                        }
-                        view
+                            && letter.recipient.same_identity(actor))
+                        .then(|| format!("hide request ack {}", letter.id)),
+                        letter: letter.clone(),
                     })
                     .collect::<Vec<_>>()
             ))
@@ -280,7 +278,9 @@ pub fn apply(
             for report in reports {
                 end_report_watches(ledger, Some(report));
             }
-            Ok(json!({"confirmed":ids}))
+            Ok(json!(Confirmed {
+                confirmed: ids.clone()
+            }))
         }
         Command::Agents { .. }
         | Command::WatchStart { .. }
@@ -328,7 +328,7 @@ fn authorized<'a>(ledger: &'a Ledger, actor: &Actor, id: &str) -> Result<&'a Let
         .ok_or_else(|| "letter_unavailable".into())
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Intake {
     pub context: String,
     pub ids: Vec<String>,
