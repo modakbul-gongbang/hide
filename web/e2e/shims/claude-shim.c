@@ -67,6 +67,22 @@ static int provider(int argc, char **argv) {
   char *label = NULL;
   for (char *at = prompt; (at = strstr(at, "HIDE_E2E_LABEL ")) != NULL; at++) label = at;
   if (!label) {
+    /* A judgment's input is JSON, where a label cannot stand unescaped: a spec
+       that drives one names a file whose one-line answer every such call gets. */
+    const char *answer = getenv("HIDE_E2E_PROVIDER_ANSWER");
+    FILE *file = answer ? fopen(answer, "rb") : NULL;
+    if (file) {
+      static char fixed[1 << 16];
+      size_t got = fread(fixed, 1, sizeof fixed - 1, file);
+      fclose(file);
+      fixed[got] = 0;
+      char *line = strchr(fixed, '\n');
+      if (line) *line = 0;
+      if (got > 0) {
+        printf("{\"type\":\"result\",\"is_error\":false,\"structured_output\":%s}\n", fixed);
+        return 0;
+      }
+    }
     puts("{\"type\":\"result\",\"is_error\":true,\"subtype\":\"error_during_execution\"}");
     return 1;
   }

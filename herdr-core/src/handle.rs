@@ -330,6 +330,7 @@ impl Core {
                     state_dir,
                     environment_home.clone(),
                     Arc::downgrade(&runtime),
+                    notifier.clone(),
                 )
                 .map_err(|message| {
                     crate::diagnostic!(
@@ -338,6 +339,10 @@ impl Core {
                 })
                 .ok()
             });
+        // The screens reach the engine through the same bounded queue.
+        if let Some(factory) = &factory {
+            lock_recover(&runtime).set_factory_screen_port(factory.screen_port());
+        }
         let session_sync = if let (Some(socket_path), Some(own_herdr)) =
             (options.herdr_socket_path.as_deref(), own_herdr)
         {

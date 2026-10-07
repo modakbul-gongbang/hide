@@ -13,6 +13,9 @@ use crate::model::{Factory, IssueRef, MergeMethod, PullRequest, Runtime, Task, U
 
 pub trait Clock {
     fn now(&self) -> UnixMs;
+    /// The local time zone's offset from UTC in milliseconds, east positive;
+    /// the flow's 완료 오늘 counts by the local day it names.
+    fn utc_offset_ms(&self) -> i64;
 }
 
 /// A structured failure an adapter reports. `signal` is set only for the

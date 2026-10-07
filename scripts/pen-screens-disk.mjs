@@ -8,6 +8,27 @@
 
 import {frame, icon, num, text} from './pen-system.mjs';
 
+// Pen draws no ellipsis, so a name the web truncates is written already cut.
+export function textWidth(content, size, mono = false) {
+  let width = 0;
+  for (const character of content) {
+    const code = character.codePointAt(0);
+    if ((code >= 0xac00 && code <= 0xd7a3) || (code >= 0x3130 && code <= 0x318f)) width += size * 0.93;
+    else if (mono) width += size * 0.6;
+    else if (character === ' ') width += size * 0.28;
+    else if (/[A-Z#@%MW]/.test(character)) width += size * 0.68;
+    else if (/[il.,:;'|!/]/.test(character)) width += size * 0.28;
+    else width += size * 0.55;
+  }
+  return width;
+}
+export function fitText(content, max, size, mono = false) {
+  if (textWidth(content, size, mono) <= max) return content;
+  let cut = content;
+  while (cut.length && textWidth(`${cut}…`, size, mono) > max) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
 export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogSurface}, s) {
   const HAIR = num(tokens, '--size-hairline');
   const DIM = num(tokens, '--opacity-dimmed');
@@ -26,27 +47,6 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
     while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
     if (unit === 0) return `${Math.trunc(value)} B`;
     return `${value < 10 ? value.toFixed(1) : value.toFixed(0)} ${units[unit]}`;
-  }
-
-  // Pen draws no ellipsis, so a name the web truncates is written already cut.
-  function textWidth(content, size, mono = false) {
-    let width = 0;
-    for (const character of content) {
-      const code = character.codePointAt(0);
-      if ((code >= 0xac00 && code <= 0xd7a3) || (code >= 0x3130 && code <= 0x318f)) width += size * 0.93;
-      else if (mono) width += size * 0.6;
-      else if (character === ' ') width += size * 0.28;
-      else if (/[A-Z#@%MW]/.test(character)) width += size * 0.68;
-      else if (/[il.,:;'|!/]/.test(character)) width += size * 0.28;
-      else width += size * 0.55;
-    }
-    return width;
-  }
-  function fitText(content, max, size, mono = false) {
-    if (textWidth(content, size, mono) <= max) return content;
-    let cut = content;
-    while (cut.length && textWidth(`${cut}…`, size, mono) > max) cut = cut.slice(0, -1);
-    return `${cut.trimEnd()}…`;
   }
 
   // -- the model (web/src/diskCleanup.ts) ----------------------------------------------

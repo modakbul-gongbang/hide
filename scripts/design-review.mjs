@@ -295,6 +295,13 @@ async function enterState(page, state) {
   if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="herdr-ide:main"]').click();
   if (state === 'folded-parent' || state === 'checkout-closed') await page.mouse.move(0, 0);
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
+  // The Factory screen's other views, reached through its own tabs and cards.
+  if (state === 'board' || state === 'graph') await page.locator(`[data-factory-tab="${state}"]`).click();
+  if (state === 'task') {
+    await page.locator('[data-factory-tab="board"]').click();
+    await page.locator('[data-factory-card="t-412"]').click();
+    await page.locator('[data-factory-task-page]').waitFor();
+  }
   if (state === 'content-match') {
     await page.getByRole('searchbox', {name:'Search sessions'}).fill('화검');
     await page.locator('[data-content-match]').waitFor();
