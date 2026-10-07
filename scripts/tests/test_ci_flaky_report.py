@@ -353,7 +353,7 @@ class NightlyFailures(unittest.TestCase):
         github = nightly(self.package_failed())
         (issue,) = github.opened()
         self.assertEqual(issue["labels"], ["nightly-failure"])
-        self.assertEqual(issue["title"], "Nightly failure: server picker")
+        self.assertEqual(issue["title"], "Nightly failure (package / package (macos)): server picker")
         body = issue["body"]
         for text in ("<!-- nightly-failure:package / package (macos):desktop/e2e/s.spec.ts > server picker -->",
                      "`desktop/e2e/s.spec.ts:29` \"server picker\"", "actions/runs/100", HEAD[:12], GREEN[:12],
@@ -362,6 +362,18 @@ class NightlyFailures(unittest.TestCase):
         self.assertNotIn("#670", body, "it touched another file")
         self.assertNotIn("#600", body, "it merged outside the range")
         self.assertNotIn("alice", body)
+
+    def test_the_same_test_failing_in_two_lanes_is_two_issues_their_titles_tell_apart(self):
+        name = "a test whose name runs long " * 10
+        github = nightly(FakeGitHub(
+            [job(1, "web e2e (macOS @platform) / web e2e nightly-macos 1/1", "failure"),
+             job(2, "web e2e (Windows @platform) / web e2e nightly-windows 1/1", "failure")],
+            annotations={1: [failed_test("web/e2e/a.spec.ts", 3, name)], 2: [failed_test("web/e2e/a.spec.ts", 3, name)]}))
+        titles = [issue["title"] for issue in github.opened()]
+        self.assertEqual(len(titles), 2)
+        self.assertTrue(titles[0].startswith("Nightly failure (web e2e (macOS @platform) / web e2e nightly-macos): a test"))
+        self.assertTrue(titles[1].startswith("Nightly failure (web e2e (Windows @platform) / web e2e nightly-windows): a test"))
+        self.assertEqual([len(title) for title in titles], [200, 200])
 
     def test_the_same_failure_again_is_one_comment_per_attempt(self):
         marker = "<!-- nightly-failure:package / package (macos):desktop/e2e/s.spec.ts > server picker -->"

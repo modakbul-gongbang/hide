@@ -525,10 +525,11 @@ class Nightly:
                 listed = ", ".join(f"#{number}" for number in numbers) or "none"
             candidates = f"- Candidate pull requests (merged since then, touching {touched or 'nothing named'}): {listed}\n"
         what = f"- Test: {self.subject(failure)}\n" if failure["kind"] == "test" else f"- Step: \"{failure['step']}\"\n"
-        title = failure["name"] if failure["kind"] == "test" else f"{failure['lane']}: {failure['step']}"
+        # The lane is in the title: the same test failing on two systems is two issues, told apart in a list.
+        title = f"Nightly failure ({failure['lane']}): " + (failure["name"] if failure["kind"] == "test" else failure["step"])
         labels = [NIGHTLY_LABEL] + ([INFRA_LABEL] if failure["infra"] else [])
         return {
-            "title": f"Nightly failure: {title}"[:200],
+            "title": title[:200],
             "labels": labels,
             "body": (
                 f"{failure_marker(failure['key'])}\n{self.marker}\n"
