@@ -921,7 +921,7 @@ The core's own node is `hide_node::Local`, which answers in hided's process thro
 The SSH transport is the node's (`hide-node/src/ssh/`).
 The core reaches a device only through `hide_node_link::device::{DeviceConnector, DeviceTransport}` (`hided` builds the connector, `Core::create` takes it) and keeps the decoding of what a device's Herdr sends (`remote.rs`); the check bans `russh` by name.
 Until layer 3 the terminal attach child (`live.rs`) and pasted attachments stay listed, and until layer 4 the label generator's lock, which is keyed by the Herdr server it labels; an entry that no longer reaches a machine fails the check, so none outlives its layer.
-The Factory decides on the core's machine and its machine work is the core's own node's (D-01): one `Call::Factory` (`hide_node_link::factory`) carries its git and `gh` commands, each a typed shape the node turns into one fixed command line so a request names values and never arguments, the project's quick check, its verify bundles, which the node queues one at a time and ends with the engine (`hide-host/src/factory.rs`), the project files its probe and review judgments read, a Task's attached PRD, a worker's worktree removal and the memory and `hide` program reads; free space and installed runtimes reuse `Call::VolumeFree` and `Call::AgentInstalled`.
+The Factory decides on the core's machine and its machine work is the core's own node's (D-01): one `Call::Factory` (`hide_node_link::factory`) carries its git and `gh` commands, each a typed shape the node turns into one fixed command line so a request names values and never arguments, the project's quick check, its verify bundles, which the node queues one at a time and ends with the engine (`hide-host/src/factory.rs`), the project files its probe and review judgments read, a Task's attached PRD, a worker's worktree removal, and the memory, `hide` program and time zone offset reads (the summary's done-today day is the core machine's local day); free space and installed runtimes reuse `Call::VolumeFree` and `Call::AgentInstalled`.
 What an answer means for a Task stays the Factory's (`hide-factory/src/project.rs`), and its own store and the AI choice are core stores.
 hided runs both roles in one process, and its core role keeps two readers of its own.
 The Explorer watcher (`watch.rs`) asks a node by id, so a second node serves an Explorer on its machine without the watcher changing.
@@ -996,6 +996,13 @@ No file, SQLite, network or subprocess work happens under the runtime lock, and 
 `hided` routes `hide factory` over the pane-capability socket and refuses a device caller.
 `Core::drop` stops the Factory host first, so its verify runs and external calls end with the daemon.
 [factory.md](factory.md) owns the engine, the store, the roles and the read model.
+
+The Factory screens read two snapshot sections, `factory` (the engine's `FactorySummary` and the answers to the screen's own requests) and `factory_task` (the `TaskDetail` of the one Task page a shell opened), each with its own revision.
+Both are built and compared on the engine thread and handed to the runtime only when they differ from what it last held, so an idle tick takes no lock and publishes nothing, and the delta carries a section only on its own change.
+While a page is open it is read again after every command and tick, since a decision or a running attempt's log tail can change it without moving the summary; an unchanged page is still dropped.
+A screen action is the `factory_action` event, whose `command` is the stage-1 `Command` decoded strictly and limited to the verbs a person may send; the core runs it with the operator role relayed by `screen` and puts the answer in `factory.actions` under the event's request id, newest last and at most 16.
+`factory_task_open` and `factory_task_close` name the page the engine keeps building, and `factory_secretary_set` records the secretary's pane in the core's UI state.
+[UI_BEHAVIOR.md: Factory](UI_BEHAVIOR.md#factory) owns what the screens do.
 
 ### The mobile companion
 

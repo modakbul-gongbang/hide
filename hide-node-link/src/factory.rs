@@ -101,6 +101,9 @@ pub enum FactoryCall {
     /// The `hide` program beside the node's own program; answers
     /// `Option<String>`.
     HideProgram,
+    /// The offset from UTC the machine's local time zone applies now, in
+    /// milliseconds, east positive; answers `i64`.
+    UtcOffset,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

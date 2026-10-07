@@ -369,7 +369,12 @@ impl Engine {
     pub fn summary(&self) -> FactorySummary {
         let factories: Vec<&Factory> = self.factories.values().collect();
         let tasks: Vec<&Task> = self.all_tasks().collect();
-        summary::build(&factories, &tasks, self.now())
+        summary::build(
+            &factories,
+            &tasks,
+            self.now(),
+            self.ports.clock.utc_offset_ms(),
+        )
     }
 
     pub fn events(&self, factory: &str, task: Option<&str>, limit: usize) -> Vec<Event> {
@@ -4417,11 +4422,11 @@ impl Engine {
         self.store.records(factory, id, limit).unwrap_or_default()
     }
 
-    pub fn show(&mut self, factory: &str, id: &str) -> Option<summary::TaskDetail> {
+    pub fn show(&self, factory: &str, id: &str) -> Option<summary::TaskDetail> {
         let factory = self.factories.get(factory)?;
         let tasks = self.tasks.get(&factory.id)?;
         let task = tasks.get(id)?;
-        let verifier = &mut self.ports.verifier;
+        let verifier = &self.ports.verifier;
         Some(summary::detail(
             factory,
             task,
@@ -5967,6 +5972,7 @@ impl Engine {
             &[&factory],
             &self.tasks_of(factory_id).collect::<Vec<_>>(),
             now,
+            self.ports.clock.utc_offset_ms(),
         ))
         .unwrap_or_default();
         let judgment = Judgment {

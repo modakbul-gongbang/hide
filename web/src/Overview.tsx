@@ -16,13 +16,15 @@ import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { commandLabel } from "./shortcutLabels";
 import { projectEntryLens } from "./navigation";
+import { useFactoryWorkers } from "./factory/hooks";
 
-/** The same selected-device group that the Agents sidebar draws. */
+/** The same selected-device group that the Agents sidebar draws, less the Factory's workers, which 내 차례 counts (PRD software-factory-ui B13). */
 export function useOverviewCount() {
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
+  const workers = useFactoryWorkers();
   return useMemo(() => rest && sidebarBody(rest, "agents") !== "disconnected"
-    ? contextAgents(rest, agents).filter((agent) => agent.group === "needs_you").length : 0, [rest, agents]);
+    ? contextAgents(rest, agents).filter((agent) => agent.group === "needs_you" && !workers.has(agent.pane_id)).length : 0, [rest, agents, workers]);
 }
 
 export function OverviewButton({ actions }: { actions: Actions }) {

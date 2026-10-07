@@ -32,6 +32,8 @@ mod documents;
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
+#[path = "tests/factory_screen.rs"]
+mod factory_screen;
 #[path = "tests/github_reads.rs"]
 mod github_reads;
 #[path = "tests/home.rs"]

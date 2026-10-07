@@ -1,5 +1,5 @@
 import { useInterfaceTranslation } from "../i18n/client";
-import { ChevronDownIcon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon } from "lucide-react";
+import { ChevronDownIcon, FactoryIcon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon, SparkleIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Kbd } from "./ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -42,6 +42,7 @@ export function SidebarHeader({
   projectChord,
   agentChord,
   overview,
+  factory,
   compact = false,
   searchChord,
   newWorkspaceChord,
@@ -64,6 +65,12 @@ export function SidebarHeader({
   projectChord?: string | null;
   agentChord?: string | null;
   overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
+  /**
+   * The Factory place (PRD software-factory-ui D-02, B1, B12, B23): its row
+   * with the 내 차례 number, and the secretary's row under it once a Factory
+   * exists; `status` is the secretary agent's mark while its pane is listed.
+   */
+  factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; secretary: { status: ReactNode; onOpen: () => void } | null };
   searchChord: string | null;
   newWorkspaceChord: string | null;
   deviceMenu: DeviceMenu;
@@ -118,6 +125,26 @@ export function SidebarHeader({
             {overview.chord && !compact ? <Kbd className="sidebar-command-keycap">{overview.chord}</Kbd> : null}
           </button>
         </Hint>
+      ) : null}
+      {factory ? (
+        <>
+          <Hint label={factory.count > 0 ? t("factory.sidebar.turnHint", { count: factory.count }) : t("factory.title")} shortcut={factory.chord}>
+            <button type="button" aria-current={factory.selected ? "page" : undefined} data-sidebar-factory="true" onClick={factory.onOpen}
+              className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm px-md text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${factory.secretary ? "" : "border-b border-border"} ${factory.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+              <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-left">{t("factory.title")}</span>
+              {factory.count > 0 ? <span data-factory-badge={factory.count} className="text-caption text-warning">{factory.count}</span> : null}
+              {factory.chord && !compact ? <Kbd className="sidebar-command-keycap">{factory.chord}</Kbd> : null}
+            </button>
+          </Hint>
+          {factory.secretary ? (
+            <button type="button" data-sidebar-secretary="true" onClick={factory.secretary.onOpen}
+              className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-md pl-xl text-body text-subtle-foreground outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
+              <span className="flex w-(--size-agent-mark) shrink-0 justify-center">{factory.secretary.status ?? <SparkleIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />}</span>
+              <span className="min-w-0 flex-1 truncate text-left">{t("factory.secretary.name")}</span>
+            </button>
+          ) : null}
+        </>
       ) : null}
       {tabs ? (
         <Tabs value={mode} onValueChange={(value) => onMode(value as SidebarMode)} className="shrink-0 border-b border-border px-xs py-xxs" data-sidebar-strip="true">

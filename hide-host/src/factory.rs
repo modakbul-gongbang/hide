@@ -87,6 +87,10 @@ pub fn handle(
         }
         FactoryCall::MemoryPressure => to_value(memory_pressure()),
         FactoryCall::HideProgram => to_value(hide_program()),
+        FactoryCall::UtcOffset => to_value(
+            hide_platform::time::local_utc_offset_ms()
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
     }
 }
 

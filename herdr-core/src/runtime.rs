@@ -1069,6 +1069,9 @@ pub struct Runtime {
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
     factory_recipients: std::collections::BTreeMap<String, u64>,
+    /// The Factory screens' way to the engine thread; `None` when the host
+    /// did not start.
+    factory_screen: Option<crate::factory::ScreenPort>,
     delivery_overflow: HashSet<String>,
     delivery_connected: HashSet<String>,
     /// The machine this core runs on. Device labels are mutable
@@ -1865,6 +1868,7 @@ impl Runtime {
             delivery_client: None,
             delivery_observations: HashMap::new(),
             factory_recipients: std::collections::BTreeMap::new(),
+            factory_screen: None,
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),
             node: options.node_id.clone(),

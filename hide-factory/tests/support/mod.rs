@@ -121,6 +121,11 @@ impl Clock for Shared {
     fn now(&self) -> UnixMs {
         self.world().now
     }
+
+    /// The fixtures keep their days in UTC.
+    fn utc_offset_ms(&self) -> i64 {
+        0
+    }
 }
 
 impl TaskSource for Shared {
@@ -200,7 +205,7 @@ impl TaskSource for Shared {
 }
 
 impl Verifier for Shared {
-    fn log_tail(&mut self, _log: &str) -> Option<String> {
+    fn log_tail(&self, _log: &str) -> Option<String> {
         None
     }
     fn start(&mut self, _factory: &Factory, task: &Task) -> Result<VerifyRun, Failure> {

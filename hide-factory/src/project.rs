@@ -1511,7 +1511,7 @@ impl Verifier for SharedProjects {
         );
     }
 
-    fn log_tail(&mut self, log: &str) -> Option<String> {
+    fn log_tail(&self, log: &str) -> Option<String> {
         // A CI run's link is a page, not a log the node wrote.
         if !Path::new(log).is_absolute() {
             return None;
