@@ -855,7 +855,14 @@ pub fn establish(
         helper_path,
         upload,
     } = result?;
-    let host = spawn_host(client, channel, session_channel, panes.clone(), on_close);
+    let host = spawn_host(
+        client,
+        Arc::clone(&client.connection),
+        channel,
+        session_channel,
+        panes.clone(),
+        on_close,
+    );
     let hello: Hello = call_as(&host, Call::Hello, HELLO_TIMEOUT).map_err(|error| {
         EstablishError::Helper(format!("The device helper did not start: {error}"))
     })?;
@@ -1568,8 +1575,14 @@ async fn remote_digest(
         .collect())
 }
 
+/// Starts the link over `channel`. Its reader keeps `connection`, the
+/// device's connection the channel runs on, until the link ends: a device
+/// removed while a call is still out (its kit coming off) drops its own hold
+/// on the connection, which closes only when its last holder goes, and the
+/// call still gets its answer.
 fn spawn_host(
     client: &RusshRemoteClient,
+    connection: Arc<Connection>,
     channel: Channel<Msg>,
     session_channel: tokio::sync::OwnedSemaphorePermit,
     panes: Option<PaneHook>,
@@ -1591,6 +1604,7 @@ fn spawn_host(
     });
     let reader = Arc::downgrade(&inner);
     client.runtime.spawn(async move {
+        let _connection = connection;
         let mut channel = channel;
         let mut buffer: Vec<u8> = Vec::new();
         // How far `buffer` has been searched for a line end, so a large

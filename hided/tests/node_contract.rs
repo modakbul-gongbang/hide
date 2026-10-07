@@ -327,6 +327,24 @@ fn a_device_s_channels_share_its_one_connection() {
     assert_eq!(device.ssh.accepted(), 1);
 }
 
+/// A device removed while a call is still out drops its own hold on the
+/// connection; the link keeps the connection it runs on, so the call (the
+/// kit coming off) still gets its answer.
+#[test]
+fn a_link_outlives_its_device_s_hold_on_the_connection() {
+    let Device {
+        _root,
+        link,
+        transport,
+        ssh,
+        ..
+    } = Device::start();
+    drop(transport);
+    let answer = link.call(Call::Hello, Duration::from_secs(10));
+    assert!(answer.is_ok(), "{answer:?}");
+    assert_eq!(ssh.accepted(), 1);
+}
+
 /// A reporting call crosses the link both ways: the device's Git watch
 /// reports up as it runs, a report answered with false stops it on the
 /// device, and the call ends with the watch's own answer.
