@@ -1,3 +1,4 @@
+import { buildTasks } from "../test/legacyAgentScope";
 import { emptyScope } from "../test/legacyAgentScope";
 import { agentsTile, scopeAgents } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
@@ -9,7 +10,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { ageWords, bucketOf, issuesTile, prsTile, sessionsTile, startOfDay } from "./overviewLens";
-import { buildTasks, type BoardProject, type PrBoard, type PrRow } from "./projectBoard";
+import { type BoardProject, type PrBoard, type PrRow } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, PullRequest, SessionRow, Task, Workspace } from "./snapshot";
 
 

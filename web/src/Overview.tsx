@@ -1,10 +1,9 @@
 import { useInterfaceTranslation } from "./i18n/client";
-import { useMemo } from "react";
 import { LayoutDashboardIcon } from "lucide-react";
 import type { Actions } from "./actions";
 import { catalogWorkspaces, frontCheckout } from "./snapshot";
-import { contextAgents } from "./remote";
-import { sidebarBody } from "./devices";
+import { deviceScope } from "./agentScope";
+import { frontDeviceId } from "./devices";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { MainScreen } from "./MainScreen";
@@ -19,10 +18,7 @@ import { projectEntryLens } from "./navigation";
 
 /** The same selected-device group that the Agents sidebar draws. */
 export function useOverviewCount() {
-  const rest = useShellStore((s) => s.rest);
-  const agents = useShellStore((s) => s.agents);
-  return useMemo(() => rest && sidebarBody(rest, "agents") !== "disconnected"
-    ? contextAgents(rest, agents).filter((agent) => agent.group === "needs_you").length : 0, [rest, agents]);
+  return useShellStore((s) => deviceScope(s.rest, frontDeviceId(s.rest))?.groups.needs_you ?? 0);
 }
 
 export function OverviewButton({ actions }: { actions: Actions }) {

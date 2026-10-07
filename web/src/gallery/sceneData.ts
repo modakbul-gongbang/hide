@@ -323,7 +323,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     },
     ...(world ? { status: { remote: world.remote } } : {}),
   };
-  return { rest: galleryScopes(rest, `${content}:${devices}`), agents };
+  return { rest: galleryScopes(rest, `${content}:${devices}`, folds.expandedAgents), agents };
 }
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {

@@ -1,3 +1,4 @@
+import { buildTasks, buildPullRequests, shownAgents } from "../test/legacyAgentScope";
 import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
@@ -7,7 +8,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { allProjectsStats, boardLabels, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { allProjectsStats, boardLabels, buildDependencies, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;

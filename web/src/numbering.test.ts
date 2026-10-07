@@ -1,4 +1,4 @@
-import { emptyScope } from "../test/legacyAgentScope";
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
@@ -80,7 +80,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     ];
     const status = { remote: [{ target_id: "mini", state: "connected", session: { agents: [agent("r1", { group: "needs_you" })], workspaces: [] } }] };
     const local = [agent("l1")];
-    const at = (front: string) => agentListOrder({ rest: { navigator: { focused_device_id: front, devices }, status } as unknown as SnapshotRest, agents: local }).map((row) => row.agent.pane_id);
+    const at = (front: string) => agentListOrder({ rest: legacyRest({ navigator: { focused_device_id: front, devices }, status } as unknown as SnapshotRest, local), agents: local }).map((row) => row.agent.pane_id);
     expect(at("local")).toEqual(["l1"]);
     expect(at("mini")).toEqual(["r1"]);
   });
@@ -93,7 +93,7 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
       navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [{ id: "w1", label: "w", checkouts: [checkoutWith(["t1", "t2"])] }] },
       status: { remote: [] },
     } as unknown as SnapshotRest;
-    const state = { rest, agents: [parent, child, other] };
+    const state = { rest: legacyRest(rest, [parent, child, other]), agents: [parent, child, other] };
     expect(numberedTarget("tabs", 2, state)).toBe("t2");
     expect(numberedTarget("tabs", 3, state)).toBeNull();
     // Needs You draws first; the folded child is not a row, so p1 is second and 3 is empty.

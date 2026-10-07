@@ -1,3 +1,4 @@
+import { agentTree, groupCounts } from "../test/legacyAgentScope";
 import { emptyScope } from "../test/legacyAgentScope";
 import { agentsTile, scopeAgents, requestRows, requestGroups, requestsTile } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
@@ -6,7 +7,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 // in the Agents headings, physical group totals and the Requests tile.
 import { expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { agentTree, groupCounts } from "./navigation";
+
 
 
 import type { AgentRow, RequestVerb, Workspace } from "./snapshot";

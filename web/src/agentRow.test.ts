@@ -1,6 +1,7 @@
+import { sectionTree, sectionCount, directChildren, unfoldedRows } from "../test/legacyRowTree";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { badgeLabel, badgeParts, badgeWords, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree, sidebarLine, unfoldedRows } from "./agentRow";
+import { badgeLabel, badgeParts, badgeWords, branchChip, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine } from "./agentRow";
 import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow } from "./snapshot";
 

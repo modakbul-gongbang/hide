@@ -1,3 +1,4 @@
+import { scopeRows, type AgentTreeScope } from "./agentScope";
 // The Overview's Issues view (PRD task-agents-views, reworked issue-first
 // on 2026-09-28 and issues-only by PRD overview-lenses-issues) as pure
 // functions over the snapshot, for one Project or for All projects. Every
@@ -179,18 +180,9 @@ export type TasksBoard = {
   source: SourceState;
 };
 
-/** How much an agent needs the operator; lower first. */
-function attention(agent: AgentRow): number {
-  return agent.state.attention_rank;
-}
-
-/** The agents a card names: the two that need the operator most, in the core's order otherwise. */
-export function shownAgents(rows: BoardRow[]): { shown: AgentRow[]; more: number } {
-  const ranked = rows
-    .map((row, index) => ({ agent: row.agent, index }))
-    .sort((a, b) => attention(a.agent) - attention(b.agent) || a.index - b.index)
-    .map(({ agent }) => agent);
-  return { shown: ranked.slice(0, 2), more: Math.max(0, ranked.length - 2) };
+/** The representatives selected by the core for this tree. */
+export function shownAgents(tree: AgentTreeScope, agents: AgentRow[]): { shown: AgentRow[]; more: number } {
+  return { shown: scopeRows(tree.shown, agents), more: tree.more };
 }
 
 /** Needs-you cards first, each group in its original order; nothing else reorders a column. */
@@ -209,34 +201,17 @@ function prioritized<T extends { needsYou: boolean }>(cards: T[]): T[] {
  * first, whatever is folded; the Projects sidebar drops a folded row's
  * descendants itself (`unfoldedRows`).
  */
-export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
-  const owners = new Map<string, Checkout>();
-  for (const checkout of workspace.checkouts) {
-    for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
-  }
+export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[], context: "device" | "global" | "visible" = "device"): Map<string, BoardRow[]> {
   const byPane = new Map<string, AgentRow>();
   for (const agent of agents) if (!byPane.has(agent.pane_id)) byPane.set(agent.pane_id, agent);
-  const treeRows = (roots: AgentRow[]): BoardRow[] => {
-    const rows: BoardRow[] = [];
-    const seen = new Set<string>();
-    const append = (agent: AgentRow, depth: number) => {
-      if (seen.has(agent.pane_id)) return;
-      seen.add(agent.pane_id);
-      rows.push({ agent, depth });
-      for (const childId of agent.lineage_child_pane_ids ?? []) {
-        const child = byPane.get(childId);
-        if (child) append(child, depth + 1);
-      }
-    };
-    for (const root of roots) append(root, 0);
-    return rows;
-  };
-  const checkoutRows = (checkout: Checkout): BoardRow[] => {
-    const local = agents.filter((agent) => owners.get(agent.pane_id)?.id === checkout.id);
-    const localIds = new Set(local.map((agent) => agent.pane_id));
-    return treeRows(local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id)));
-  };
-  return new Map(workspace.checkouts.map((checkout) => [checkout.id, checkoutRows(checkout)]));
+  return new Map(workspace.checkouts.map((checkout) => {
+    const tree = context === "device" ? checkout.agent_scope.tree : checkout.agent_scope.global_tree;
+    return [checkout.id, (context === "visible" ? tree.visible_rows : tree.rows).map((row) => {
+      const agent = byPane.get(row.pane_id);
+      if (!agent) throw new Error(`Checkout tree references a missing row: ${row.pane_id}`);
+      return { agent, depth: row.depth };
+    })];
+  }));
 }
 
 function place(workspace: Workspace): BoardPlace {
@@ -271,7 +246,9 @@ function firstAction(stage: Stage, canStart: boolean, checkout: Checkout | null,
 }
 
 function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task, stage: Stage, rows: BoardRow[], now: number): TaskCard {
-  const { shown, more } = shownAgents(rows);
+  const tree = checkout?.agent_scope.tree;
+  const shown = tree ? scopeRows(tree.shown, rows.map((row) => row.agent)) : [];
+  const more = tree?.more ?? 0;
   const branch = checkout?.branch ?? checkout?.label ?? null;
   const sourceLabel = workspace.tasks?.source?.label ?? task.source;
   const local = !workspace.remote_target_id;
@@ -292,7 +269,7 @@ function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Che
     rows,
     shown,
     more,
-    needsYou: rows.some((row) => row.agent.group === "needs_you" || (row.depth === 0 && row.agent.group === "done")),
+    needsYou: tree?.needs_you ?? false,
     canStart,
     first: firstAction(stage, canStart, checkout, pr),
     editable: task.source === "local" && local,

@@ -144,3 +144,92 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
     assert_eq!(runtime.snapshot.navigator.agent_scope.overview_total, 1);
     assert!(!runtime.refresh_agent_scopes());
 }
+
+#[test]
+fn checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority() {
+    let mut runtime = runtime();
+    let mut agents = rows();
+    let mut done = agents[1].clone();
+    done.pane_id = "done".into();
+    done.group = "done".into();
+    done.demand = "none".into();
+    done.activity = "stopped".into();
+    done.state = crate::agent_state::turn::row_state(&done);
+    agents.push(done);
+    agents[0].lineage_child_pane_ids = vec!["child".into(), "done".into(), "gone".into()];
+    agents[0].lineage_collapsed = true;
+    agents[1].lineage_parent_pane_id = Some("root".into());
+    agents[1].delegated = true;
+    agents[1].group = "seen".into();
+    agents[1].demand = "question".into();
+    agents[1].state = crate::agent_state::turn::row_state(&agents[1]);
+    agents[2].lineage_parent_pane_id = Some("root".into());
+    let mut first = checkout(
+        "project",
+        "first",
+        "/fixture/first",
+        Some(pane("root", "/fixture/first")),
+    );
+    first.tabs[0].panes.push(pane("child", "/fixture/first"));
+    let second = checkout(
+        "project",
+        "second",
+        "/fixture/second",
+        Some(pane("done", "/fixture/second")),
+    );
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/fixture",
+        vec![first, second],
+    )];
+    runtime.snapshot.navigator.agents = agents;
+    assert!(runtime.refresh_agent_scopes());
+    let project = &runtime.snapshot.navigator.workspaces[0];
+    let tree = &project.checkouts[0].agent_scope.tree;
+    assert_eq!(
+        tree.rows
+            .iter()
+            .map(|r| (r.pane_id.as_str(), r.depth))
+            .collect::<Vec<_>>(),
+        vec![("root", 0), ("child", 1), ("done", 1)]
+    );
+    assert_eq!(
+        tree.visible_rows
+            .iter()
+            .map(|r| r.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root"]
+    );
+    assert_eq!(tree.shown, vec!["done", "root"]);
+    assert_eq!(tree.more, 1);
+    assert!(
+        !tree.needs_you,
+        "delegated question and a done descendant do not turn the card yellow"
+    );
+    assert!(
+        project.checkouts[1].agent_scope.tree.needs_you,
+        "that done row is a root relative to its own checkout"
+    );
+    let scope = &runtime.snapshot.navigator.agent_scope;
+    let folded = &scope.folded["root"];
+    assert_eq!(folded.badge_descendants, 1);
+    assert_eq!(folded.badge_counts.question, 1);
+    assert_eq!(folded.badge_children, vec!["child"]);
+    assert_eq!(scope.children["root"], vec!["child", "done"]);
+    assert_eq!(scope.descendants["root"], 2);
+    assert_eq!(folded.tiers.len(), 1);
+    assert_eq!(folded.tiers[0][0].candidates, vec!["done"]);
+    assert_eq!(folded.overflow, 0);
+    runtime.snapshot.navigator.agents[0].lineage_collapsed = false;
+    assert!(runtime.refresh_agent_scopes());
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .agent_scope
+            .tree
+            .visible_rows
+            .len(),
+        3
+    );
+    assert!(!runtime.refresh_agent_scopes());
+}

@@ -1,3 +1,4 @@
+import { scopeRows, type AgentScope } from "./agentScope";
 // All projects and Project Overview (PRD S6 D-02, B1-B3, B21): every registered
 // Project on every device, and one Project's Workspaces and agents, read from
 // the snapshot the core already publishes - the navigator for this machine,
@@ -6,7 +7,7 @@
 // carry, and a device that cannot answer says so instead of showing zeros.
 
 import type { TFunction } from "i18next";
-import { sectionCount, sectionTree, directChildren, type TreeRow } from "./agentRow";
+import type { TreeRow } from "./agentRow";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
@@ -63,10 +64,6 @@ export type DeviceSection = {
   projects: ProjectEntry[];
 };
 
-function emptyCounts(): GroupCounts {
-  return { needs_you: 0, done: 0, working: 0, seen: 0 };
-}
-
 /** The pane ids a Project's checkouts hold. */
 export function projectPaneIds(workspace: Workspace): Set<string> {
   const ids = new Set<string>();
@@ -82,13 +79,7 @@ export function projectAgents(workspace: Workspace, agents: AgentRow[]): AgentRo
   return agents.filter((agent) => panes.has(agent.pane_id));
 }
 
-export function groupCounts(agents: AgentRow[]): GroupCounts {
-  const counts = emptyCounts();
-  for (const agent of agents) {
-    if (agent.group in counts) counts[agent.group as AgentGroup] += 1;
-  }
-  return counts;
-}
+export function groupCounts(scope: AgentScope): GroupCounts { return scope.groups; }
 
 export type AgentSection = { group: string; agents: AgentRow[] };
 
@@ -98,19 +89,8 @@ export type AgentSection = { group: string; agents: AgentRow[] };
  * empty group left out. A group the core names that this list does not know
  * is still shown, under its own name, rather than dropping its rows.
  */
-export function agentSections(agents: AgentRow[]): AgentSection[] {
-  const known = new Set<string>(AGENT_GROUPS.map((row) => row.group));
-  const sections: AgentSection[] = AGENT_GROUPS.map(({ group }) => ({ group, agents: agents.filter((agent) => agent.group === group) }));
-  for (const agent of agents) {
-    if (known.has(agent.group)) continue;
-    let section = sections.find((row) => row.group === agent.group);
-    if (!section) {
-      section = { group: agent.group, agents: [] };
-      sections.push(section);
-    }
-    section.agents.push(agent);
-  }
-  return sections.filter((section) => section.agents.length > 0);
+export function agentSections(scope: AgentScope, agents: AgentRow[]): AgentSection[] {
+  return scope.group_rows.map((group) => ({ group: group.group, agents: scopeRows(group.pane_ids, agents) }));
 }
 
 /** An agent row and, for a row on an SSH device, the device's name. */
@@ -190,23 +170,8 @@ export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
  * How many live descendants each agent has among the rows the core lists
  * (B13), keyed by pane, from one index of the rows rather than one per row.
  */
-export function liveDescendantCounts(agents: AgentRow[]): Map<string, number> {
-  const byPane = new Map(agents.map((row) => [row.pane_id, row]));
-  return new Map(agents.map((agent) => [agent.pane_id, descendantsIn(agent, byPane)]));
-}
-
-function descendantsIn(agent: AgentRow, byPane: Map<string, AgentRow>): number {
-  const seen = new Set<string>();
-  const queue = [...(agent.lineage_child_pane_ids ?? [])];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id) || id === agent.pane_id) continue;
-    const row = byPane.get(id);
-    if (!row) continue;
-    seen.add(id);
-    queue.push(...(row.lineage_child_pane_ids ?? []));
-  }
-  return seen.size;
+export function liveDescendantCounts(scope: AgentScope): Map<string, number> {
+  return new Map(Object.entries(scope.descendants));
 }
 
 /**
@@ -454,28 +419,15 @@ export type AgentTree = {
   children: (device: string | null, agent: AgentRow) => AgentRow[];
 };
 
-export function agentTree(listed: ListedAgent[]): AgentTree {
-  const byDevice = new Map<string | null, AgentRow[]>();
-  for (const { agent, device } of listed) {
-    const rows = byDevice.get(device) ?? [];
-    rows.push(agent);
-    byDevice.set(device, rows);
-  }
-  const index = new Map([...byDevice].map(([device, rows]) => [device, new Map(rows.map((row) => [row.pane_id, row]))]));
-  const counts = new Map([...byDevice].map(([device, rows]) => [device, liveDescendantCounts(rows)]));
-  const deviceOf = new Map(listed.map((row) => [row.agent, row.device]));
-  const lookup = (device: string | null, paneId: string) => index.get(device)?.get(paneId);
-  const descendantsOf = (device: string | null, paneId: string) => counts.get(device)?.get(paneId) ?? 0;
-  const sections = agentSections(listed.map((row) => row.agent))
-    .map((section) => {
-      const roots = section.agents.filter((agent) => !agent.delegated);
-      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
-      return { group: section.group, rows, count: sectionCount(rows) };
-    })
-    .filter((section) => section.rows.length > 0);
+export function agentTree(listed: ListedAgent[], scope: AgentScope | null): AgentTree {
+  const index = new Map(listed.map((row) => [row.agent.pane_id, row]));
   return {
-    sections,
-    children: (device: string | null, agent: AgentRow) => directChildren(agent, (paneId) => lookup(device, paneId)),
+    sections: scope?.sections.map((section) => ({ ...section, rows: section.rows.map((row) => {
+      const listed = index.get(row.pane_id);
+      if (!listed) throw new Error(`Agent section references a missing row: ${row.pane_id}`);
+      return { ...listed, depth: row.depth, descendants: row.descendants };
+    }) })) ?? [],
+    children: (_device, agent) => scopeRows(scope?.children[agent.pane_id] ?? [], listed.map((r) => r.agent)),
   };
 }
 

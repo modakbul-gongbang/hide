@@ -1,3 +1,5 @@
+import { checkoutAgentRows as beforeCheckoutAgentRows } from "./legacyAgentTree";
+import { buildTasks as drawBuildTasks, buildPullRequests as drawBuildPullRequests, shownAgents as drawShownAgents, type BoardRow } from "../src/projectBoard";
 import { legacyAgentRow } from "./legacyAgentRow";
 // Frozen scope fixture adapter from main 9f144877. Test data only.
 // Assertions keep the old screen values; production reads the core wire.
@@ -10,7 +12,7 @@ import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, req
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { pane_ids: [], total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent)): AgentScope {
@@ -57,7 +59,17 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
     const marks = checkout.agent_summary?.marks;
     if (marks) for (const key of Object.keys(scope.marks) as (keyof AgentScope["marks"])[]) scope.marks[key] += marks[key];
   }
-  return { ...project, agent_scope: scope };
+  const treeProject = { ...project, checkouts: project.checkouts.map((c) => ({ ...c, tabs: c.tabs ?? [] })) };
+  const trees = beforeCheckoutAgentRows(treeProject, [...agents]);
+  const checkouts = project.checkouts.map((checkout) => {
+    const physical = agents.filter((agent) => (checkout.tabs ?? []).some((tab) => tab.panes.some((p) => p.id === agent.pane_id)));
+    const value = legacyPhysicalScope(physical);
+    value.marks = checkout.agent_summary?.marks ?? emptyScope().marks;
+    value.tree = legacyTree(trees.get(checkout.id) ?? []);
+    value.global_tree = value.tree;
+    return { ...checkout, agent_scope: value };
+  });
+  return { ...project, checkouts, agent_scope: scope };
 }
 
 function physicalScope(scope: AgentScope, agents: readonly AgentRow[]) {
@@ -65,6 +77,32 @@ function physicalScope(scope: AgentScope, agents: readonly AgentRow[]) {
   scope.total = agents.length;
   scope.roots = agents.filter((a) => !a.delegated).map((a) => a.pane_id);
   for (const agent of agents) if (agent.group in scope.groups) scope.groups[agent.group as keyof AgentScope["groups"]]++;
+  const byPane = new Map(agents.map((a) => [a.pane_id, a]));
+  for (const agent of agents) {
+    const queue = [...(agent.lineage_child_pane_ids ?? [])], seen = new Set<string>();
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (id === agent.pane_id || seen.has(id)) continue;
+      const child = byPane.get(id); if (!child) continue;
+      seen.add(id); queue.push(...(child.lineage_child_pane_ids ?? []));
+    }
+    scope.descendants[agent.pane_id] = seen.size;
+    scope.children[agent.pane_id] = (agent.lineage_child_pane_ids ?? []).filter((id) => byPane.has(id));
+  }
+  const names = [...new Set(["needs_you", "done", "working", "seen", ...agents.map((a) => a.group)])];
+  for (const group of names) {
+    const members = agents.filter((a) => a.group === group);
+    if (members.length) scope.group_rows.push({ group, pane_ids: members.map((a) => a.pane_id) });
+    const roots = members.filter((a) => !a.delegated), rows: AgentScope["sections"][number]["rows"] = [];
+    const visit = (agent: AgentRow, depth: number, seen: Set<string>) => {
+      if (seen.has(agent.pane_id)) return;
+      seen.add(agent.pane_id); rows.push({ pane_id: agent.pane_id, depth, descendants: scope.descendants[agent.pane_id]! });
+      if (agent.lineage_collapsed !== false) return;
+      for (const id of agent.lineage_child_pane_ids ?? []) { const child = byPane.get(id); if (child) visit(child, depth + 1, seen); }
+    };
+    for (const root of roots) visit(root, 0, new Set());
+    if (roots.length) scope.sections.push({ group, rows, count: roots.reduce((n, a) => n + 1 + scope.descendants[a.pane_id]!, 0) });
+  }
 }
 
 export function scopeAgents(projects: readonly BoardProject[]): LensAgent[] {
@@ -104,5 +142,61 @@ export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest
     physicalScope(scope, remote.state === "connected" ? all : []);
     deviceScopes.set(remote.target_id, scope);
   }
-  return { ...rest, navigator: { ...rest.navigator, workspaces: projects, devices: rest.navigator?.devices?.map((d) => ({ ...d, agent_scope: deviceScopes.get(d.id) ?? emptyScope() })) }, status: { ...rest.status, remote: remotes } };
+  const liveWorkspaces = [...projects, ...remotes.filter((r) => r.state === "connected").flatMap((r) => r.session?.workspaces ?? [])];
+  const localRows = agents.map((a) => ({ ...a, device_id: localId, device_label: rest.navigator?.devices?.find((d) => d.id === localId)?.label }));
+  const liveRows = [...localRows, ...remotes.filter((r) => r.state === "connected").flatMap((r) => (r.session?.agents ?? []).map((a) => ({ ...a, device_id: r.target_id, device_label: rest.navigator?.devices?.find((d) => d.id === r.target_id)?.label ?? r.target_id })))];
+  for (const project of liveWorkspaces) {
+    const trees = beforeCheckoutAgentRows(project, liveRows);
+    for (const checkout of project.checkouts) checkout.agent_scope.global_tree = legacyTree(trees.get(checkout.id) ?? []);
+  }
+  const overall = legacyPhysicalScope(liveRows);
+  overall.folded = foldedScopes(liveRows, liveWorkspaces);
+  local.folded = foldedScopes(localRows, liveWorkspaces);
+  for (const remote of remotes) deviceScopes.get(remote.target_id)!.folded = foldedScopes((remote.session?.agents ?? []).map((a) => ({ ...a, device_id: remote.target_id, device_label: rest.navigator?.devices?.find((d) => d.id === remote.target_id)?.label ?? remote.target_id })), liveWorkspaces);
+  return { ...rest, navigator: { ...rest.navigator, agent_scope: overall, workspaces: projects, devices: rest.navigator?.devices?.map((d) => ({ ...d, agent_scope: deviceScopes.get(d.id) ?? emptyScope() })) }, status: { ...rest.status, remote: remotes } };
 }
+
+export function legacyPhysicalScope(agents: readonly AgentRow[]): AgentScope {
+  const scope = emptyScope();
+  physicalScope(scope, agents);
+  return scope;
+}
+
+import { foldedLineage as beforeFoldedLineage } from "./legacyFoldedLineage";
+import { foldedLineage as drawFoldedLineage } from "../src/lineageSummary";
+import { agentTree as drawAgentTree, groupCounts as drawGroupCounts, agentSections as drawAgentSections, liveDescendantCounts as drawDescendantCounts, type ListedAgent } from "../src/navigation";
+
+function foldedScopes(agents: AgentRow[], workspaces: Workspace[]): AgentScope["folded"] {
+  return Object.fromEntries(agents.map((agent) => {
+    const value = beforeFoldedLineage(agent, agents, workspaces);
+    return [agent.pane_id, {
+      tiers: value.lines.map((line) => [{ key: line.key, candidates: [line.agent.pane_id], branch: line.branch, pull_request: line.pullRequest, device: line.device }]),
+      overflow: value.overflow, badge_descendants: value.badgeDescendants, badge_counts: value.badgeCounts, badge_children: value.badgeChildren.map((a) => a.pane_id),
+    }];
+  }));
+}
+export function foldedLineage(parent: AgentRow, agents: AgentRow[], workspaces: Workspace[]) {
+  const scope = emptyScope(); scope.folded = foldedScopes(agents, workspaces);
+  return drawFoldedLineage(parent, agents, scope);
+}
+export function agentTree(listed: ListedAgent[]) { return drawAgentTree(listed, legacyPhysicalScope(listed.map((r) => r.agent))); }
+export function groupCounts(agents: AgentRow[]) { return drawGroupCounts(legacyPhysicalScope(agents)); }
+export function agentSections(agents: AgentRow[]) { return drawAgentSections(legacyPhysicalScope(agents), agents); }
+export function liveDescendantCounts(agents: AgentRow[]) { return drawDescendantCounts(legacyPhysicalScope(agents)); }
+
+export function legacyTree(rows: readonly BoardRow[]): AgentScope["tree"] {
+  let foldedAt: number | null = null;
+  const visible = rows.filter((row) => {
+    if (foldedAt !== null && row.depth > foldedAt) return false;
+    foldedAt = row.agent.lineage_collapsed === false ? null : row.depth;
+    return true;
+  });
+  const ranked = [...rows].sort((a,b) => a.agent.state.attention_rank - b.agent.state.attention_rank);
+  const ids = (rows: readonly BoardRow[]) => rows.map((r) => ({ pane_id: r.agent.pane_id, depth: r.depth }));
+  return { rows: ids(rows), visible_rows: ids(visible), shown: ranked.slice(0,2).map((r) => r.agent.pane_id), more: Math.max(0, ranked.length-2), needs_you: rows.some((r) => r.agent.group === "needs_you" || (r.depth === 0 && r.agent.group === "done")) };
+}
+export function shownAgents(rows: BoardRow[]) { return drawShownAgents(legacyTree(rows), rows.map((r) => r.agent)); }
+export function buildTasks(projects: readonly BoardProject[], ...args: Parameters<typeof drawBuildTasks> extends [unknown, ...infer R] ? R : never) {
+  return drawBuildTasks(projects.map((p) => ({ ...p, workspace: legacyProject(p.workspace, p.agents) })), ...args);
+}
+export function buildPullRequests(project: BoardProject, now: number) { return drawBuildPullRequests({ ...project, workspace: legacyProject(project.workspace, project.agents) }, now); }

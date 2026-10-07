@@ -1,3 +1,4 @@
+import { deviceScope, type AgentScope } from "./agentScope";
 // What ⌘n and ⌥n select, and the number each tab and agent row carries
 // while a hold reveals it (PRD electron-digit-shortcuts-hints D-02). The
 // number is the screen order at that moment, first to ninth: the strip's
@@ -40,12 +41,12 @@ export function numberOf(numbered: Map<Digit, string>, id: string): Digit | null
 
 /** The Agents list's rows in draw order, the list ⌥n numbers whichever list is on screen (B2): the front device's. */
 export function agentListOrder(state: { rest: SnapshotRest | null; agents: AgentRow[] }): TreeRow[] {
-  return listedAgentOrder(deviceListedAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents, frontDeviceId(state.rest)));
+  return listedAgentOrder(deviceListedAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents, frontDeviceId(state.rest)), deviceScope(state.rest, frontDeviceId(state.rest)));
 }
 
 /** The Agents list's rows in draw order, from the agents it lists. */
-export function listedAgentOrder(listed: ListedAgent[]): TreeRow[] {
-  return agentListRows(agentTree(listed));
+export function listedAgentOrder(listed: ListedAgent[], scope: AgentScope | null): TreeRow[] {
+  return agentListRows(agentTree(listed, scope));
 }
 
 /**

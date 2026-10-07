@@ -1,4 +1,4 @@
-import { emptyScope } from "../test/legacyAgentScope";
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 // @vitest-environment jsdom
 import { act } from "react";
@@ -76,7 +76,7 @@ it("draws a selected SSH device's agent rows open under their checkout, with no 
   const thisMac = {
     navigator: { devices: [LOCAL, MINI], workspaces: [local.workspace], agents: [local.agent], focused_device_id: "local" },
   } as unknown as SnapshotRest;
-  useShellStore.setState({ rest: device, agents: [], connection: "live" });
+  useShellStore.setState({ rest: legacyRest(device, []), agents: [], connection: "live" });
   useUiStore.setState({ sidebarMode: "projects" });
   const actions = createActions(() => true);
   const container = document.createElement("div");
@@ -89,7 +89,7 @@ it("draws a selected SSH device's agent rows open under their checkout, with no 
     expect(open(remote.checkoutId)?.textContent).toContain("인사에 답하기");
     expect(toggle(remote.checkoutId)).toBeNull();
 
-    await act(async () => useShellStore.setState({ rest: thisMac, agents: [local.agent] }));
+    await act(async () => useShellStore.setState({ rest: legacyRest(thisMac, [local.agent]), agents: [local.agent] }));
     expect(open(local.checkoutId)).toBeNull();
     expect(toggle(local.checkoutId)?.getAttribute("aria-label")).toContain("main");
   } finally {

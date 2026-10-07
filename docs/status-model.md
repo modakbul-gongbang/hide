@@ -594,3 +594,9 @@ Requests exclude a delegated row only when its parent belongs to that scope, and
 Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
 The scope cache compares owned agent rows, device connection facts and checkout membership and marks; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
 The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.
+
+`agent_state/tally/lineage.rs` projects the list headings, direct-child membership, folded checkout badges and checkout trees with their two card representatives.
+The sidebar uses the connected-device tree; the Issues board uses the project device's tree, preserving the previous scope difference.
+A done descendant turns a card yellow only when it is a root relative to that checkout.
+Folded checkout lines carry status-priority tiers; the browser keeps its existing locale-aware alphabetical placement inside a tier so Korean and English labels keep their displayed order.
+The cross-checkout counts, relative-root highlight and fold transitions are asserted by `runtime::tests::agent_scopes::checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority`.

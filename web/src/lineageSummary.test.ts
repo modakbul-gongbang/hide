@@ -1,7 +1,8 @@
+import { foldedLineage } from "../test/legacyAgentScope";
 import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { foldedLineage } from "./lineageSummary";
+
 import type { AgentRow, Workspace } from "./snapshot";
 
 function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {

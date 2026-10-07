@@ -1,7 +1,8 @@
+import { agentSections, liveDescendantCounts } from "../test/legacyAgentScope";
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import { createInterfaceI18n } from "./i18n/instance";
-import { agentGroupTitle, agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections as drawMainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
+import { agentGroupTitle, allAgents, allProjectsCount, mainSections as drawMainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
 const project = (id: string, device: string, pinned = false) => ({ agent_scope: emptyScope(),

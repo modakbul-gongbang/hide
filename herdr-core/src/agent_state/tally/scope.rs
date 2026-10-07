@@ -25,6 +25,12 @@ impl GroupCounts {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GroupRows {
+    pub group: String,
+    pub pane_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Member {
     pub pane_id: String,
     pub project_id: String,
@@ -106,12 +112,18 @@ pub struct Scope {
     pub overview_total: usize,
     pub roots: Vec<String>,
     pub groups: GroupCounts,
+    pub group_rows: Vec<GroupRows>,
+    pub descendants: BTreeMap<String, usize>,
+    pub children: BTreeMap<String, Vec<String>>,
     pub marks: MarkCountsSnapshot,
     pub sections: Vec<Section>,
     pub members: Vec<Member>,
     pub buckets: Buckets,
     pub turns: TurnCounts,
     pub requests: Requests,
+    pub folded: BTreeMap<String, super::lineage::Folded>,
+    pub tree: super::lineage::Tree,
+    pub global_tree: super::lineage::Tree,
 }
 
 const GROUPS: [&str; 4] = ["needs_you", "done", "working", "seen"];
@@ -278,6 +290,51 @@ pub(super) fn scope(
             value.roots.push(row.pane_id.clone());
         }
     }
+    let mut groups: Vec<&str> = GROUPS.into();
+    for row in physical {
+        if !groups.contains(&row.group.as_str()) {
+            groups.push(&row.group);
+        }
+    }
+    value.group_rows = groups
+        .into_iter()
+        .filter_map(|group| {
+            let pane_ids: Vec<_> = physical
+                .iter()
+                .filter(|row| row.group == group)
+                .map(|row| row.pane_id.clone())
+                .collect();
+            if pane_ids.is_empty() {
+                None
+            } else {
+                Some(GroupRows {
+                    group: group.to_owned(),
+                    pane_ids,
+                })
+            }
+        })
+        .collect();
+    let physical_index: HashMap<_, _> = physical
+        .iter()
+        .map(|row| (row.pane_id.as_str(), *row))
+        .collect();
+    value.descendants = physical
+        .iter()
+        .map(|row| (row.pane_id.clone(), descendants(row, &physical_index).len()))
+        .collect();
+    value.children = physical
+        .iter()
+        .map(|row| {
+            (
+                row.pane_id.clone(),
+                row.lineage_child_pane_ids
+                    .iter()
+                    .filter(|id| physical_index.contains_key(id.as_str()))
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect();
     for (member, place) in members.iter().enumerate() {
         let row = by_pane[place.pane_id.as_str()];
         match row.state.bucket {
@@ -372,6 +429,7 @@ struct PlaceInput {
     device: String,
     project: String,
     home: bool,
+    checkout_labels: Vec<(String, Option<String>, Option<u32>)>,
     checkouts: Vec<(
         String,
         MarkCountsSnapshot,
@@ -473,6 +531,17 @@ impl Cache {
                     device: p.device_id.clone(),
                     project: p.id.clone(),
                     home: p.is_home,
+                    checkout_labels: p
+                        .checkouts
+                        .iter()
+                        .map(|c| {
+                            (
+                                c.label.clone(),
+                                c.branch.clone(),
+                                c.pull_request.as_ref().map(|p| p.number),
+                            )
+                        })
+                        .collect(),
                     checkouts: p
                         .checkouts
                         .iter()
@@ -510,10 +579,25 @@ impl Cache {
             .filter(|d| d.connected)
             .flat_map(|d| d.agents.iter().copied())
             .collect();
+        let live_projects: Vec<_> = devices
+            .iter()
+            .filter(|d| d.connected)
+            .flat_map(|d| d.projects.iter().copied())
+            .collect();
+        let places: HashMap<_, _> = devices
+            .iter()
+            .flat_map(|d| {
+                d.agents
+                    .iter()
+                    .map(move |a| (a.pane_id.as_str(), (d.id, d.label)))
+            })
+            .collect();
         let mut overall_members = Vec::new();
         let mut overall_projects = Vec::new();
         for device in &devices {
             for project in &device.projects {
+                let mut trees = super::lineage::checkout_trees(project, &device.agents);
+                let mut global_trees = super::lineage::checkout_trees(project, &live);
                 let pane_ids: HashSet<_> = project
                     .checkouts
                     .iter()
@@ -568,6 +652,13 @@ impl Cache {
                             checkout.agent_summary.marks,
                         ),
                     );
+                    let value = checkouts
+                        .get_mut(&(project.device_id.clone(), checkout.id.clone()))
+                        .expect("checkout scope just inserted");
+                    value.tree = trees.remove(&checkout.id).expect("checkout tree projected");
+                    value.global_tree = global_trees
+                        .remove(&checkout.id)
+                        .expect("global checkout tree projected");
                 }
             }
             let overview: Vec<_> = device
@@ -593,13 +684,18 @@ impl Cache {
                     project_marks(&device.projects),
                 ),
             );
+            device_scopes
+                .get_mut(device.id)
+                .expect("device scope just inserted")
+                .folded = super::lineage::folded(&device.agents, &live_projects, &places);
         }
-        let overall = scope(
+        let mut overall = scope(
             &live,
             overall_members,
             &all,
             project_marks(&overall_projects),
         );
+        overall.folded = super::lineage::folded(&live, &live_projects, &places);
         self.output = Output {
             projects,
             checkouts,
