@@ -63,11 +63,17 @@ def control_plane(table, root):
         excluded[ancestor.pid] = ancestor.birth
         if len(excluded) > MAX_DESCENDANTS:
             raise ProcessError("control_plane_ancestry_over_budget")
-        if ancestor.parent <= 1:
+        if ancestor.parent == 0:
             return excluded
-        ancestor = table.get(ancestor.parent)
-        if ancestor is None:
+        parent = table.get(ancestor.parent)
+        if parent is None:
+            # Darwin can positively identify its foreign-UID system init
+            # without full metadata. A same-UID namespace PID 1 is instead
+            # a real controller whose birth must be excluded like any other.
+            if ancestor.parent == 1 and 1 in getattr(table, "foreign_uid_pids", ()):
+                return excluded
             raise ProcessError("control_plane_ancestry_unavailable")
+        ancestor = parent
     raise ProcessError("control_plane_ancestry_cycle")
 
 

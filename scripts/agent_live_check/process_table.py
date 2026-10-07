@@ -22,6 +22,7 @@ class ProcessTable(dict):
         super().__init__()
         self.unavailable = []
         self.vanished = []
+        self.foreign_uid_pids = set()
 
 
 def require_complete(table):
@@ -146,6 +147,7 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
                     # earlier disappearance before excluding that replacement.
                     result.vanished.append(pid)
                 if group is None and read == ctypes.sizeof(short) and short.uid != os.getuid():
+                    result.foreign_uid_pids.add(pid)
                     continue
                 if error == errno.ESRCH and (read == ctypes.sizeof(short) or short_error == errno.ESRCH):
                     continue

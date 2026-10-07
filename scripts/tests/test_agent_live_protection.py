@@ -132,6 +132,12 @@ class ProcessProtection(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "control_plane_ancestry_unavailable"):
             control_plane(table, 100)
         table[200] = Process(200, 1, 200, 20, 0, False, os.getuid())
+        table[1] = Process(1, 0, 1, 1, 0, False, os.getuid())
+        self.assertEqual(control_plane(table, 100), {100: 10, 200: 20, 1: 1})
+        del table[1]
+        with self.assertRaisesRegex(ProcessError, "control_plane_ancestry_unavailable"):
+            control_plane(table, 100)
+        table.foreign_uid_pids.add(1)
         self.assertEqual(control_plane(table, 100), {100: 10, 200: 20})
 
     def test_missing_or_unconfirmed_receipt_cannot_confirm_cleanup(self):
