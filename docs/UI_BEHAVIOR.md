@@ -835,6 +835,15 @@ A PDF (recognised by its signature whatever its name) shows in a continuous, wid
 Its toolbar keeps the breadcrumb and the two reveals, shows Find disabled with the reason that Find is unavailable for PDF, and hides Wrap, the Markdown mode group, and Unsaved, which a PDF can never earn.
 A PDF that cannot be decoded, cannot be read, or is password-protected shows a `PDF unavailable` state with the reason under the same toolbar.
 An image hides Wrap as well; a file that is not UTF-8 shows a `Preview only` state explaining the file type cannot be shown as text, and keeps Wrap disabled beside a disabled Find.
+An image opens whole inside its display and never larger than its own pixels; an image that does not decode shows the `Image unavailable` state.
+
+An image or a PDF zooms the way a browser page does, from 25% to 800% of the size it opened at.
+A trackpad pinch, or a mouse wheel with Ctrl held, zooms around the pointer, so the point under it stays there while the content can still scroll that far.
+While its display holds the keyboard (after a click in it), ⌘= and ⌘- step through Chrome's zoom levels around the middle of the display and ⌘0 returns to the size it opened at; the same chords size a text document's text and a terminal's, as before.
+A zoomed document scrolls with the trackpad or wheel, and a zoomed image also moves under a drag, with the grab cursor while it can.
+A PDF page is drawn again at the scale it is shown at and the screen's pixel density once the pinch or keys have rested, so it stays sharp; until then the page already drawn is stretched.
+Only the pages in view and one view either side are drawn, ten at most, and a page that leaves gives its drawing back.
+The zoom belongs to the display showing the file: nothing on screen reports it, another display of the same file keeps its own, and opening a file, or a preview moving to another file, starts at the fit.
 
 Markdown files alone show the centered Live/Source choice, and Live is the default.
 Both are editors over the same draft: Live draws the formatting in place and hides the markup on every line the caret is not on (the way Obsidian's Live Preview does); Source is the monospaced editor with its line-number ruler and Wrap toggle.
