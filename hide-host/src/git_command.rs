@@ -14,7 +14,9 @@ use crate::error::{ErrorCode, HostError, HostResult};
 /// branch check and a fetch are bounded (`worktrees::git`); a checkout and a
 /// branch setting run as the operator's git would.
 pub fn run(root: &Path, command: &GitCommand) -> HostResult<String> {
-    let args = command.args();
+    let args = command
+        .args()
+        .map_err(|reason| HostError::new(ErrorCode::InvalidRequest, reason))?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let failed = |message: String| HostError::new(ErrorCode::Io, message);
     match command {

@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::gh::is_repository;
+use crate::git::{branch_name, revision_name};
 
 /// The longest one git or `gh` command may run on the node.
 pub const RUN_DEADLINE_MS: u64 = 120_000;
@@ -705,28 +706,6 @@ impl FactoryGh {
             ]),
         }
     }
-}
-
-/// A revision git reads as one: never an option, never a refspec or range.
-fn revision_name(value: &str) -> Result<&str, String> {
-    let valid = !value.is_empty()
-        && value.len() <= 255
-        && !value.starts_with('-')
-        && !value.contains("..")
-        && value
-            .chars()
-            .all(|c| !c.is_control() && !c.is_whitespace() && !matches!(c, ':' | '\\'));
-    valid
-        .then_some(value)
-        .ok_or_else(|| format!("not a revision: {value:?}"))
-}
-
-/// A branch name as a revision, which also cannot leave `refs/heads/`.
-pub fn branch_name(value: &str) -> Result<&str, String> {
-    let value = revision_name(value)?;
-    (!value.starts_with('/') && !value.ends_with('/'))
-        .then_some(value)
-        .ok_or_else(|| format!("not a branch: {value:?}"))
 }
 
 /// `base...HEAD`, the changes HEAD made since it left `base`.

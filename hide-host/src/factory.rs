@@ -15,9 +15,10 @@ use hide_node_link::factory::{
     COMMAND_TEXT_LIMIT, FactoryCall, FactoryGh, LOG_TAIL_LIMIT, MemoryPressure, PRD_LIMIT,
     PROJECT_ENTRY_LIMIT, PROJECT_MARKERS, PROJECT_READ_LIMIT, PROJECT_READS, ProjectFiles,
     RUN_DEADLINE_MS, RunAnswer, VERIFY_COMMAND_LIMIT, VERIFY_QUEUE_LIMIT, VerifyJob, VerifyOutcome,
-    VerifyStep, branch_name,
+    VerifyStep,
 };
 use hide_node_link::git::GitCommand;
+use hide_node_link::git::branch_name;
 use hide_node_link::{ErrorCode, HostError, HostResult};
 use hide_platform::process::{OwnedChild, RunFailure, run_to_end};
 use serde_json::{Value, json};
