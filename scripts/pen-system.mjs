@@ -781,8 +781,9 @@ function buildAgentGraphBox(tokens) {
   ]);
 
   // A row: the mark, provider, title and age on one line; a step in with a
-  // corner arrow for a delegation inside the checkout; the tucked badge before
-  // the age; and the question as a second line, only while the agent asks.
+  // corner arrow for a delegation inside the checkout; the chip of a
+  // delegation into or from another project and the tucked badge before the
+  // age; and the question as a second line, only while the agent asks.
   function rowMaster(n) {
     const p = `agb-row${n}`;
     return frame(p, `Row ${n}`, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
@@ -797,6 +798,12 @@ function buildAgentGraphBox(tokens) {
         frame(`${p}-provider`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         text(`${p}-title`, 'agent title'),
         grow(`${p}-sp`),
+        frame(`${p}-cross`, 'Cross-project chip', {
+          layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: ROW_LINE, cornerRadius: '$--radius-xs',
+          stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', enabled: false,
+        }, [
+          icon(`${p}-cross-g`, 'arrow-right', {size: ICON, fill: '$--muted-foreground'}), caption(`${p}-cross-p`, 'project', '$--muted-foreground'), caption(`${p}-cross-n`, '2', '$--muted-foreground', true),
+        ]),
         frame(`${p}-tucked`, 'Tucked badge', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: ROW_LINE, cornerRadius: '$--radius-sm', fill: '$--secondary', enabled: false}, [
           caption(`${p}-tk-g`, '✓', '$--success', true), caption(`${p}-tk-n`, '2', '$--foreground', true),
         ]),
@@ -819,7 +826,7 @@ function buildAgentGraphBox(tokens) {
     : symbol === '○'
       ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: true, stroke: fill}, [`${p}-glyph`]: {enabled: false}}
       : {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: true, content: symbol, fill}};
-  const row = (n, {symbol, fill, provider = 'claude', title, age, line, depth = 0, tucked, asking = false}) => {
+  const row = (n, {symbol, fill, provider = 'claude', title, age, line, depth = 0, tucked, cross, asking = false}) => {
     const p = `agb-row${n}`;
     return {
       ...mark(p, symbol, fill),
@@ -830,6 +837,10 @@ function buildAgentGraphBox(tokens) {
       [`${p}-arrow`]: {enabled: depth > 0},
       [`${p}-tucked`]: tucked ? {enabled: true} : {enabled: false},
       [`${p}-tk-n`]: {content: String(tucked ?? 0)},
+      [`${p}-cross`]: {enabled: Boolean(cross)},
+      [`${p}-cross-g`]: {icon: cross?.direction === 'in' ? 'arrow-left' : 'arrow-right'},
+      [`${p}-cross-p`]: {content: cross?.project ?? ''},
+      [`${p}-cross-n`]: {enabled: (cross?.count ?? 0) > 1, content: String(cross?.count ?? 0)},
       [`${p}-q`]: line ? {enabled: true, padding: [0, '$--spacing-sm', 0, SM + MARK + depth * INDENT]} : {enabled: false},
       [`${p}-q-t`]: {content: line ?? ''},
     };
@@ -877,6 +888,14 @@ function buildAgentGraphBox(tokens) {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 1}),
         ...rowsOn({symbol: '●', fill: '$--agent-working', title: 'agent-tab-groups', age: '8m', tucked: 2}),
       }),
+      // A delegation into another project (issue 718): `→ sasu 2` on the parent's row, `← herdr-ide` on a child's.
+      state('cross', 'Rows with cross-project chips', {}, {
+        ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2}),
+        ...rowsOn(
+          {symbol: '●', fill: '$--agent-working', title: 'Lead', age: '1m', cross: {direction: 'out', project: 'sasu', count: 2}},
+          {symbol: '○', fill: '$--muted-foreground', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'herdr-ide', count: 1}},
+        ),
+      }),
       state('selected', 'Selected', {stroke: '$--primary'}, {
         ...headOf({glyph: 'git-branch', tone: '$--muted-foreground', branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', distance: '↑39 ↓17'}),
         ...rowsOn({symbol: '○', fill: '$--muted-foreground', provider: 'codex', title: 'Agent tab groups 구현', age: '8m'}),
@@ -889,7 +908,7 @@ function buildAgentGraphBox(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent graph box', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     masterCard(`${id}-master-card`, 'Master', master),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

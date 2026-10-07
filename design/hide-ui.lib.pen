@@ -35666,7 +35666,7 @@
           "type": "text",
           "id": "cmp-agent-graph-box-spec",
           "name": "A checkout in the Agents gra",
-          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
+          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -36024,6 +36024,57 @@
                         },
                         {
                           "type": "frame",
+                          "id": "agb-row1-cross",
+                          "name": "Cross-project chip",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "agb-row1-cross-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "arrow-right",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row1-cross-p",
+                              "name": "project",
+                              "content": "project",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row1-cross-n",
+                              "name": "2",
+                              "content": "2",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "enabled": false
+                        },
+                        {
+                          "type": "frame",
                           "id": "agb-row1-tucked",
                           "name": "Tucked badge",
                           "children": [
@@ -36217,6 +36268,57 @@
                           "children": [],
                           "width": "fill_container",
                           "height": 1
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row2-cross",
+                          "name": "Cross-project chip",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "agb-row2-cross-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "arrow-right",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row2-cross-p",
+                              "name": "project",
+                              "content": "project",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row2-cross-n",
+                              "name": "2",
+                              "content": "2",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "enabled": false
                         },
                         {
                           "type": "frame",
@@ -36414,6 +36516,57 @@
                           "children": [],
                           "width": "fill_container",
                           "height": 1
+                        },
+                        {
+                          "type": "frame",
+                          "id": "agb-row3-cross",
+                          "name": "Cross-project chip",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "agb-row3-cross-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "arrow-right",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row3-cross-p",
+                              "name": "project",
+                              "content": "project",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "agb-row3-cross-n",
+                              "name": "2",
+                              "content": "2",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "enabled": false
                         },
                         {
                           "type": "frame",
@@ -36633,6 +36786,19 @@
                     "agb-row1-tk-n": {
                       "content": "0"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": false
                     },
@@ -36676,6 +36842,19 @@
                       "enabled": false
                     },
                     "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
                       "content": "0"
                     },
                     "agb-row2-q": {
@@ -36810,6 +36989,19 @@
                     "agb-row1-tk-n": {
                       "content": "0"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": true,
                       "padding": [
@@ -36859,6 +37051,19 @@
                       "enabled": false
                     },
                     "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
                       "content": "0"
                     },
                     "agb-row2-q": {
@@ -36990,6 +37195,19 @@
                     "agb-row1-tk-n": {
                       "content": "0"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": false
                     },
@@ -37107,6 +37325,19 @@
                     "agb-row1-tk-n": {
                       "content": "2"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": false
                     },
@@ -37115,6 +37346,191 @@
                     },
                     "agb-row2": {
                       "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-cross-l-cell",
+              "name": "Rows with cross-project chips",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-cross-l-cap",
+                  "name": "Rows with cross-project chip",
+                  "content": "Rows with cross-project chips",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-cross-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Rows with cross-project chips",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "house",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "main"
+                    },
+                    "agb-purpose": {
+                      "content": "Observer · 계획과 위임"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": true,
+                      "content": "에이전트 2"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "Lead"
+                    },
+                    "agb-row1-age": {
+                      "content": "1m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": true
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": "sasu"
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": true,
+                      "content": "2"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": false
+                    },
+                    "agb-row2-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "명세 정리"
+                    },
+                    "agb-row2-age": {
+                      "content": "3m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": true
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-left"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": "herdr-ide"
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
+                      "content": "1"
+                    },
+                    "agb-row2-q": {
+                      "enabled": false
+                    },
+                    "agb-row2-q-t": {
+                      "content": ""
                     },
                     "agb-row3": {
                       "enabled": false
@@ -37223,6 +37639,19 @@
                       "enabled": false
                     },
                     "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
                       "content": "0"
                     },
                     "agb-row1-q": {
@@ -37359,6 +37788,19 @@
                     "agb-row1-tk-n": {
                       "content": "0"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": false
                     },
@@ -37402,6 +37844,19 @@
                       "enabled": false
                     },
                     "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
                       "content": "0"
                     },
                     "agb-row2-q": {
@@ -37536,6 +37991,19 @@
                     "agb-row1-tk-n": {
                       "content": "0"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": true,
                       "padding": [
@@ -37585,6 +38053,19 @@
                       "enabled": false
                     },
                     "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
                       "content": "0"
                     },
                     "agb-row2-q": {
@@ -37716,6 +38197,19 @@
                     "agb-row1-tk-n": {
                       "content": "0"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": false
                     },
@@ -37833,6 +38327,19 @@
                     "agb-row1-tk-n": {
                       "content": "2"
                     },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
                     "agb-row1-q": {
                       "enabled": false
                     },
@@ -37841,6 +38348,191 @@
                     },
                     "agb-row2": {
                       "enabled": false
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-cross-d-cell",
+              "name": "Rows with cross-project chips",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-cross-d-cap",
+                  "name": "Rows with cross-project chip",
+                  "content": "Rows with cross-project chips",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-cross-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Rows with cross-project chips",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "house",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "main"
+                    },
+                    "agb-purpose": {
+                      "content": "Observer · 계획과 위임"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": false,
+                      "content": ""
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": true,
+                      "content": "에이전트 2"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": true,
+                      "fill": "$--agent-working"
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "Lead"
+                    },
+                    "agb-row1-age": {
+                      "content": "1m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": true
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": "sasu"
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": true,
+                      "content": "2"
+                    },
+                    "agb-row1-q": {
+                      "enabled": false
+                    },
+                    "agb-row1-q-t": {
+                      "content": ""
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": false
+                    },
+                    "agb-row2-ring": {
+                      "enabled": true,
+                      "stroke": "$--muted-foreground"
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "명세 정리"
+                    },
+                    "agb-row2-age": {
+                      "content": "3m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": true
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-left"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": "herdr-ide"
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
+                      "content": "1"
+                    },
+                    "agb-row2-q": {
+                      "enabled": false
+                    },
+                    "agb-row2-q-t": {
+                      "content": ""
                     },
                     "agb-row3": {
                       "enabled": false
@@ -37949,6 +38641,19 @@
                       "enabled": false
                     },
                     "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
                       "content": "0"
                     },
                     "agb-row1-q": {
