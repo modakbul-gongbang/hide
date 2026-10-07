@@ -332,9 +332,9 @@ fn factory_view(
         outside_read_at: factory.outside_read_at,
         stale: factory.outside_read_failures >= 3,
         main_broken: factory.main.broken,
-        auto_merge_available: factory.config.verification.exists(),
+        auto_merge_available: factory.config.verification.configured(),
         merge_mode: match factory.config.merge_mode {
-            MergeMode::Auto if factory.config.verification.exists() => "auto".into(),
+            MergeMode::Auto if factory.config.verification.configured() => "auto".into(),
             _ => "manual".into(),
         },
     }
@@ -701,6 +701,7 @@ pub fn detail(
     tasks: &BTreeMap<String, Task>,
     allowed: Vec<&str>,
     now: UnixMs,
+    log_tail: &mut dyn FnMut(&str) -> Option<String>,
 ) -> TaskDetail {
     let name = |id: &String| {
         tasks
@@ -740,7 +741,11 @@ pub fn detail(
                 started_at: attempt.started_at,
                 outcome: outcome.into(),
                 check,
-                log_tail: attempt.log.as_deref().and_then(log_tail),
+                log_tail: attempt
+                    .log
+                    .as_deref()
+                    .and_then(&mut *log_tail)
+                    .map(|tail| last_bytes(&tail, LOG_TAIL)),
                 link,
             }
         })
@@ -756,7 +761,7 @@ pub fn detail(
         after,
         attachments: task.attachments.clone(),
         pr: task.pr.clone(),
-        verification: if factory.config.verification.exists() {
+        verification: if factory.config.verification.configured() {
             format!("{}/{}", task.failures, factory.config.verify_failure_limit)
         } else {
             "검증 없음".into()
@@ -781,16 +786,13 @@ pub fn detail(
     }
 }
 
-/// The last few KiB of a local log; a link that is not a file has none.
-fn log_tail(path: &str) -> Option<String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(path).ok()?;
-    let length = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(length.saturating_sub(LOG_TAIL as u64)))
-        .ok()?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).ok()?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
+/// The last `limit` bytes of `text`, from a character boundary.
+fn last_bytes(text: &str, limit: usize) -> String {
+    let mut start = text.len().saturating_sub(limit);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
 }
 
 #[cfg(test)]

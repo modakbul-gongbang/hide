@@ -18,12 +18,14 @@ use hide_factory::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, Removal,
     WorkerRuntime, WorkerSpawn, WorkerStatus,
 };
-use hide_factory::exec::SystemRunner;
+use hide_factory::exec::Machine;
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentOutcome};
 use hide_factory::model::{Runtime as AgentRuntime, UnixMs, WorkerRef};
 use hide_factory::project::{IssueBook, SharedProjects};
 use hide_factory::role::Role;
 use hide_factory::{Command, Engine, Inbound, Ports, Refusal};
+use hide_node_link::factory::{FactoryCall, MemoryPressure as NodeMemoryPressure};
+use hide_node_link::protocol::Call;
 use serde_json::{Value, json};
 
 use crate::delivery;
@@ -360,13 +362,14 @@ fn run(
     let mut engine: Option<Engine> = None;
     let mut judge: Option<JudgeThread> = None;
     let open = |judge: &mut Option<JudgeThread>| -> Option<Engine> {
+        // The Factory decides here; its machine work is the core's own
+        // node's (PRD core-host-node D-01).
+        let machine = Machine::new(guard(&lock(&runtime)?).own_node(), Arc::clone(&runner_stop));
         let started = JudgeThread::start(runtime.clone(), home.clone());
         let port = started.port();
         *judge = Some(started);
         let projects = SharedProjects::new(
-            Box::new(SystemRunner {
-                stop: Arc::clone(&runner_stop),
-            }),
+            machine.clone(),
             Box::new(CoreIssues {
                 runtime: runtime.clone(),
             }),
@@ -382,15 +385,21 @@ fn run(
                 state: Arc::clone(&workers),
             }),
             judge: Box::new(port),
-            environment: Box::new(MachineEnvironment),
+            environment: Box::new(MachineEnvironment(machine.clone())),
             notifier: Box::new(CoreNotifier {
                 runtime: runtime.clone(),
             }),
         };
         match Engine::open(&paths.store, &paths.files, ports) {
             Ok(mut engine) => {
-                if let Some(program) = hide_program() {
-                    engine.set_hide_program(program);
+                match machine.call::<Option<String>>("hide_program", FactoryCall::HideProgram) {
+                    Ok(Some(program)) => engine.set_hide_program(program),
+                    Ok(None) => {}
+                    Err(failure) => crate::diagnostic!(json!({
+                        "component": "factory",
+                        "kind": "hide_program.unread",
+                        "error": failure.detail,
+                    })),
                 }
                 Some(engine)
             }
@@ -524,16 +533,6 @@ fn report_intent(pane: &str, epoch: u64, body: &str) -> String {
         "factory-{}",
         &hide_factory::store::sha256_hex(format!("{pane}\n{epoch}\n{body}").as_bytes())[..24]
     )
-}
-
-/// The `hide` program beside the running daemon (the app bundle's
-/// Resources, or a build's target folder).
-fn hide_program() -> Option<String> {
-    let name = if cfg!(windows) { "hide.exe" } else { "hide" };
-    let program = std::env::current_exe().ok()?.parent()?.join(name);
-    program
-        .is_file()
-        .then(|| program.to_string_lossy().into_owned())
 }
 
 /// Runs one command with the caller's role (D-33). A worker's report travels
@@ -1073,16 +1072,6 @@ impl WorkerRuntime for CoreWorkers {
 
     fn remove_worktree(&mut self, worker: &WorkerRef, removal: Removal) -> Result<(), Failure> {
         let discard = removal == Removal::Discarded;
-        let checkout = Path::new(&worker.worktree);
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        // The repository the worktree belongs to, read before it goes; a
-        // folder already gone leaves only the branch to delete.
-        let root = match checkout.exists() {
-            true => Some(repository_root(&mut runner, checkout)?),
-            false => None,
-        };
         let runtime = self.runtime()?;
         let (connector, node) = {
             let guard = guard(&runtime);
@@ -1092,6 +1081,15 @@ impl WorkerRuntime for CoreWorkers {
             )
         };
         drop(runtime);
+        let machine = Machine::new(Arc::clone(&node), Arc::new(AtomicBool::new(false)));
+        // The repository the worktree belongs to, read before it goes; a
+        // folder already gone leaves nothing to remove.
+        let root: Option<String> = machine.call(
+            "worktree.root",
+            FactoryCall::WorktreeRoot {
+                checkout: worker.worktree.clone(),
+            },
+        )?;
         let connector = connector
             .ok_or_else(|| Failure::environment("worktree", EnvSignal::HerdrSocket, "no Herdr"))?;
         let panes: Vec<String> = worker.pane.iter().cloned().collect();
@@ -1109,42 +1107,22 @@ impl WorkerRuntime for CoreWorkers {
             return Ok(());
         };
         // Leftovers in a finished Task's worktree are the operator's to look
-        // at: only a discarded one is forced (D-58).
-        hide_host::worktrees::remove_worktree(&root, checkout, discard)
-            .map_err(|reason| Failure::task("worktree.remove", reason))?;
-        if discard {
-            hide_factory::exec::checked(
-                &mut runner,
-                "branch.delete",
-                "git",
-                &["branch", "-D", "--", &worker.branch],
-                Some(&root),
-            )?;
-        }
-        Ok(())
+        // at: only a discarded one is forced, with its branch (D-58).
+        machine.call(
+            "worktree.remove",
+            FactoryCall::RemoveWorktree {
+                root,
+                checkout: worker.worktree.clone(),
+                branch: worker.branch.clone(),
+                discard,
+            },
+        )
     }
 
     fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
         let core = self.runtime().ok()?;
         guard(&core).factory_usage_limit(runtime.as_str(), now_ms())
     }
-}
-
-/// The main checkout of the repository a linked worktree belongs to.
-fn repository_root(runner: &mut SystemRunner, checkout: &Path) -> Result<PathBuf, Failure> {
-    let output = hide_factory::exec::checked(
-        runner,
-        "worktree.root",
-        "git",
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        Some(checkout),
-    )?;
-    let common = PathBuf::from(output.trim());
-    common
-        .parent()
-        .filter(|_| common.file_name().is_some_and(|name| name == ".git"))
-        .map(Path::to_path_buf)
-        .ok_or_else(|| Failure::task("worktree.root", "the repository has no main checkout"))
 }
 
 /// One worker start through the coordination path, on the starter thread.
@@ -1322,34 +1300,32 @@ impl IssueBook for CoreIssues {
     }
 }
 
-struct MachineEnvironment;
+/// The machine the Factory's projects live on, as its node reports it.
+struct MachineEnvironment(Machine);
 
 impl Environment for MachineEnvironment {
     fn disk_free(&mut self, project: &str) -> Option<u64> {
-        hide_platform::fs::space::free_bytes(Path::new(project)).ok()
+        self.0
+            .node_call::<Option<u64>>(
+                "disk",
+                Call::VolumeFree {
+                    path: project.to_owned(),
+                },
+            )
+            .ok()
+            .flatten()
     }
 
-    /// macOS reports 1 (normal), 2 (warn) or 4 (critical).
+    /// A reading the node cannot give is normal pressure, as on a system
+    /// without one.
     fn memory_pressure(&mut self) -> MemoryPressure {
-        if !cfg!(target_os = "macos") {
-            return MemoryPressure::Normal;
-        }
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        match hide_factory::exec::checked(
-            &mut runner,
-            "memory",
-            "/usr/sbin/sysctl",
-            &["-n", "kern.memorystatus_vm_pressure_level"],
-            None,
-        )
-        .ok()
-        .and_then(|text| text.trim().parse::<u32>().ok())
+        match self
+            .0
+            .call::<NodeMemoryPressure>("memory", FactoryCall::MemoryPressure)
         {
-            Some(4) => MemoryPressure::Critical,
-            Some(2) => MemoryPressure::Warn,
-            _ => MemoryPressure::Normal,
+            Ok(NodeMemoryPressure::Critical) => MemoryPressure::Critical,
+            Ok(NodeMemoryPressure::Warn) => MemoryPressure::Warn,
+            Ok(NodeMemoryPressure::Normal) | Err(_) => MemoryPressure::Normal,
         }
     }
 }
@@ -1800,59 +1776,5 @@ mod tests {
         assert!(busy.starting && busy.signal.is_none());
         assert_eq!(busy.again_in_ms, Some(2_000));
         assert!(!spawn_failure("worktree_create_failed").starting);
-    }
-
-    fn git(cwd: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
-    }
-
-    #[test]
-    fn a_worker_worktree_outside_its_repository_resolves_to_the_main_checkout() {
-        let root = tempfile::tempdir().unwrap();
-        let main = root.path().join("project");
-        std::fs::create_dir(&main).unwrap();
-        git(&main, &["init", "--quiet", "-b", "main"]);
-        git(
-            &main,
-            &[
-                "-c",
-                "user.email=f@example.com",
-                "-c",
-                "user.name=F",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--quiet",
-                "--allow-empty",
-                "-m",
-                "base",
-            ],
-        );
-        // Spawned worktrees live in a folder of their own, not in the repository.
-        let worktree = root.path().join("worktrees/project/factory-l1-task");
-        git(
-            &main,
-            &[
-                "worktree",
-                "add",
-                "--quiet",
-                "-b",
-                "factory/1-task",
-                worktree.to_str().unwrap(),
-            ],
-        );
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        let found = repository_root(&mut runner, &worktree).unwrap();
-        assert_eq!(found.canonicalize().unwrap(), main.canonicalize().unwrap());
-        hide_host::worktrees::remove_worktree(&found, &worktree, true).unwrap();
-        assert!(!worktree.exists());
     }
 }

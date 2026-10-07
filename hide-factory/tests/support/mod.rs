@@ -124,6 +124,12 @@ impl Clock for Shared {
 }
 
 impl TaskSource for Shared {
+    fn repo_context(&mut self, _project: &str) -> RepoContext {
+        RepoContext::default()
+    }
+    fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String> {
+        std::fs::read(path).map_err(|error| error.to_string())
+    }
     fn probe(&mut self, _project: &str) -> Result<ProjectProbe, Failure> {
         let github = self.world().github;
         Ok(ProjectProbe {
@@ -194,6 +200,9 @@ impl TaskSource for Shared {
 }
 
 impl Verifier for Shared {
+    fn log_tail(&mut self, _log: &str) -> Option<String> {
+        None
+    }
     fn start(&mut self, _factory: &Factory, task: &Task) -> Result<VerifyRun, Failure> {
         let mut world = self.world();
         if let Some(failure) = world.verify_start_failure.take() {

@@ -182,6 +182,19 @@ pub trait TaskSource {
     fn read_issue(&mut self, factory: &Factory, issue: &IssueRef) -> Result<IssueText, Failure>;
     fn observe(&mut self, factory: &Factory, tasks: &[&Task])
     -> Result<Vec<OutsideEvent>, Failure>;
+    /// The names in the project's top folder and its guide, for a review
+    /// judgment; a project that cannot be read answers neither.
+    fn repo_context(&mut self, project: &str) -> RepoContext;
+    /// The PRD file at `path` a Task attaches; `Err` names why it cannot be
+    /// read.
+    fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String>;
+}
+
+/// What a review judgment is told of a project (`repo_context`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepoContext {
+    pub files: Vec<String>,
+    pub guide: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,6 +232,8 @@ pub trait Verifier {
     fn start_premerge(&mut self, factory: &Factory, task: &Task) -> Result<VerifyRun, Failure>;
     fn poll(&mut self, factory: &Factory, run: &VerifyRun) -> VerifyPoll;
     fn cancel(&mut self, run: &VerifyRun);
+    /// The end of a run's log, where the run wrote one.
+    fn log_tail(&mut self, log: &str) -> Option<String>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -244,6 +244,9 @@ pub struct Env {
     pub stop: Arc<AtomicBool>,
     /// The background AI backends this node keeps for its core.
     pub ai: Arc<crate::ai::Backends>,
+    /// The verify bundles this node runs for its core's Factory, ended when
+    /// the last copy of the environment is dropped.
+    pub factory: Arc<crate::factory::Verifies>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -275,6 +278,7 @@ impl Env {
             kit: KitPlace::Installed,
             stop: crate::kit::process_stop(),
             ai: process_ai(),
+            factory: Arc::default(),
         }
     }
 
@@ -286,6 +290,7 @@ impl Env {
             kit: KitPlace::Standalone,
             stop: Arc::default(),
             ai: Arc::default(),
+            factory: Arc::default(),
         }
     }
 
@@ -744,6 +749,7 @@ pub fn handle_with_progress(
                 &expected_revision,
             )?)
         }
+        Call::Factory { call } => crate::factory::handle(call, &env.factory, progress),
     }
 }
 

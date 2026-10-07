@@ -491,6 +491,12 @@ pub enum Call {
     StreamClose {
         stream: u64,
     },
+    /// The Software Factory's machine work on the core's own node
+    /// ([`crate::factory::FactoryCall`]). A git, `gh` or check run reports
+    /// while it runs, and a report answered with false stops it.
+    Factory {
+        call: crate::factory::FactoryCall,
+    },
 }
 
 /// What a `kit` request does. `apply` and `reinstall` answer a
