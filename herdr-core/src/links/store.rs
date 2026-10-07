@@ -139,6 +139,14 @@ fn sidecars(path: &Path) -> [PathBuf; 2] {
 /// Which of the asked paths the store's own node still holds.
 pub type FilesPresent<'a> = dyn FnMut(&[String]) -> Result<BTreeSet<String>, String> + 'a;
 
+/// This machine's device id and how to ask its node which session files it
+/// still holds, for the reads that show a session's file state.
+#[derive(Clone, Copy)]
+pub struct LocalFiles<'a> {
+    pub device: &'a str,
+    pub present: &'a dyn Fn(&[String]) -> Result<BTreeSet<String>, String>,
+}
+
 impl LinkStore {
     /// Opens the writer's connection, making the file private when it is
     /// new. A file that fails its integrity check is set aside once and made
@@ -1113,7 +1121,7 @@ impl LinkStore {
         &self,
         project: &ProjectRow,
         pr: &PrRow,
-        local_device: Option<&str>,
+        local: Option<LocalFiles<'_>>,
     ) -> Result<Vec<LinkedSession>, String> {
         let names = self.repo_names(&pr.repo)?;
         let mut printed: BTreeMap<SessionKey, (u64, Option<String>)> = BTreeMap::new();
@@ -1241,7 +1249,7 @@ impl LinkStore {
             };
             members.push((session, role, request, worked.contains_key(&key)));
         }
-        self.lines(members, pr.number, local_device)
+        self.lines(members, pr.number, local)
     }
 
     /// Joins sessions that continue one another into one line each (B17),
@@ -1250,16 +1258,39 @@ impl LinkStore {
         &self,
         members: Vec<Member>,
         pr: u64,
-        local_device: Option<&str>,
+        local: Option<LocalFiles<'_>>,
     ) -> Result<Vec<LinkedSession>, String> {
         let mut groups: BTreeMap<SessionKey, Vec<Member>> = BTreeMap::new();
         for member in members {
             let root = self.chain_root(&member.0)?;
             groups.entry(root).or_default().push(member);
         }
-        let mut lines = Vec::new();
-        for (_, mut group) in groups {
+        let mut groups = groups.into_values().collect::<Vec<_>>();
+        for group in &mut groups {
             group.sort_by_key(|(session, _, _, _)| session.started_at.unwrap_or(0));
+        }
+        // This machine's files are asked about once, together, through its
+        // node; an OpenCode session lives in OpenCode's database, not a file.
+        let held = |session: &SessionRow| -> Option<String> {
+            let local = local?;
+            session.path.clone().filter(|path| {
+                session.key.device == local.device
+                    && !session.file_gone
+                    && !path.starts_with(hide_session::links::OPENCODE_PREFIX)
+            })
+        };
+        let asked = groups
+            .iter()
+            .filter_map(|group| held(&group[group.len() - 1].0))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let present = match local {
+            Some(local) if !asked.is_empty() => Some((local.present)(&asked)),
+            _ => None,
+        };
+        let mut lines = Vec::new();
+        for group in groups {
             let last = &group[group.len() - 1].0;
             let role = if group
                 .iter()
@@ -1274,14 +1305,17 @@ impl LinkStore {
                 .rev()
                 .find(|(_, member_role, request, _)| *member_role == role && request.is_some())
                 .and_then(|(_, _, request, _)| request.clone());
-            let file = match (last.path.as_deref(), local_device) {
+            let file = match (last.path.as_deref(), local) {
                 (None, _) => FileState::Unknown,
                 (Some(_), _) if last.file_gone => FileState::Missing,
-                (Some(path), Some(local)) if last.key.device == local => {
-                    if path.starts_with("opencode/") || Path::new(path).is_file() {
-                        FileState::Present
-                    } else {
-                        FileState::Missing
+                (Some(path), Some(local)) if last.key.device == local.device => {
+                    match (held(last), &present) {
+                        (None, _) => FileState::Present,
+                        (Some(_), Some(Ok(present))) if present.contains(path) => {
+                            FileState::Present
+                        }
+                        (Some(_), Some(Ok(_))) => FileState::Missing,
+                        (Some(_), _) => FileState::Unknown,
                     }
                 }
                 (Some(_), _) => FileState::Unknown,
@@ -1406,7 +1440,7 @@ impl LinkStore {
         &self,
         project: &str,
         number: u64,
-        local_device: Option<&str>,
+        local: Option<LocalFiles<'_>>,
     ) -> Result<Option<PrLinks>, String> {
         let Some(project) = self.project(project)? else {
             return Ok(None);
@@ -1414,7 +1448,7 @@ impl LinkStore {
         let Some(pr) = self.pr(&project.key, number)? else {
             return Ok(None);
         };
-        let mut sessions = self.pr_lines(&project, &pr, local_device)?;
+        let mut sessions = self.pr_lines(&project, &pr, local)?;
         let total = sessions.len();
         sessions.truncate(PANEL_SESSION_LIMIT);
         Ok(Some(PrLinks {
@@ -1432,7 +1466,7 @@ impl LinkStore {
         &self,
         project: &str,
         issue: &str,
-        local_device: Option<&str>,
+        local: Option<LocalFiles<'_>>,
     ) -> Result<IssueLinks, String> {
         let Some(project) = self.project(project)? else {
             return Ok(IssueLinks::default());
@@ -1440,7 +1474,7 @@ impl LinkStore {
         let prs = self.issue_prs(&project.key, &super::issue_key(issue))?;
         let mut sessions: Vec<LinkedSession> = Vec::new();
         for pr in &prs {
-            for line in self.pr_lines(&project, pr, local_device)? {
+            for line in self.pr_lines(&project, pr, local)? {
                 match sessions.iter_mut().find(|held| {
                     held.device_id == line.device_id
                         && held.agent == line.agent
@@ -1516,7 +1550,7 @@ impl LinkStore {
         &self,
         project: &str,
         branch: &str,
-        local_device: Option<&str>,
+        local: Option<LocalFiles<'_>>,
     ) -> Result<Option<BranchLinks>, String> {
         let Some(row) = self.project(project)? else {
             return Ok(None);
@@ -1533,7 +1567,7 @@ impl LinkStore {
             closed_at: None,
             merged_at: None,
         };
-        let sessions = self.pr_lines(&row, &whole, local_device)?;
+        let sessions = self.pr_lines(&row, &whole, local)?;
         if prs.is_empty() && sessions.is_empty() {
             return Ok(None);
         }
@@ -1547,7 +1581,7 @@ impl LinkStore {
         &self,
         project: &str,
         session_id: &str,
-        local_device: Option<&str>,
+        local: Option<LocalFiles<'_>>,
     ) -> Result<Option<SessionLinks>, String> {
         let Some(row) = self.project(project)? else {
             return Ok(None);
@@ -1580,7 +1614,7 @@ impl LinkStore {
         };
         let on_branch = prs.iter().any(|(_, line)| line.on_branch);
         let line = self
-            .lines(vec![(session, role, request, on_branch)], 0, local_device)?
+            .lines(vec![(session, role, request, on_branch)], 0, local)?
             .remove(0);
         Ok(Some((line, prs)))
     }

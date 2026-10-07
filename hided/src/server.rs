@@ -1118,7 +1118,11 @@ async fn scoped_client_loop(
                                         "links_unavailable".to_owned(),
                                         "Retry; the reason is in Hide's diagnostic log",
                                     ))?;
-                                    herdr_core::links::query::run(&scope, &query)
+                                    let own = core.node_link(&scope.local_device).map_err(|_| (
+                                        "links_unavailable".to_owned(),
+                                        "Retry; the reason is in Hide's diagnostic log",
+                                    ))?;
+                                    herdr_core::links::query::run(&scope, &query, own.as_ref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
                                 }
                                 ScopedRequest::Query(query) => {

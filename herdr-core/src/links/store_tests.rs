@@ -138,7 +138,7 @@ fn rows(store: &LinkStore, table: &str) -> i64 {
 
 fn panel(store: &LinkStore, number: u64) -> Vec<LinkedSession> {
     store
-        .pr_panel(PROJECT, number, Some(DEVICE))
+        .pr_panel(PROJECT, number, Some(here()))
         .unwrap()
         .unwrap()
         .sessions
@@ -192,6 +192,24 @@ fn the_session_that_printed_a_pull_request_when_github_made_it_is_its_creator() 
         ]
     );
     assert_eq!(lines[1].file, FileState::Present);
+
+    // The file's state is what this machine's node answers: a removed file
+    // is missing, and a node that cannot answer leaves it unknown.
+    fs::remove_file(&maker).unwrap();
+    assert_eq!(panel(&store, 7)[1].file, FileState::Missing);
+    let silent = |_: &[String]| Err("node_not_connected".to_owned());
+    let unanswered = store
+        .pr_panel(
+            PROJECT,
+            7,
+            Some(LocalFiles {
+                device: DEVICE,
+                present: &silent,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(unanswered.sessions[1].file, FileState::Unknown);
 }
 
 #[test]
@@ -437,7 +455,7 @@ fn a_printer_in_a_folder_holding_another_project_does_not_widen_this_one() {
     assert_eq!(ids, vec!["s-above".to_owned()]);
     assert!(
         store
-            .session_links(PROJECT, "s-other", Some(DEVICE))
+            .session_links(PROJECT, "s-other", Some(here()))
             .unwrap()
             .is_none()
     );
@@ -574,7 +592,7 @@ fn the_issue_panel_joins_its_pull_requests_and_names_which_one_a_session_made() 
     ingest(&mut store, home.path(), &maker);
 
     let links = store
-        .issue_panel(PROJECT, "github:acme/app#3", Some(DEVICE))
+        .issue_panel(PROJECT, "github:acme/app#3", Some(here()))
         .unwrap();
     assert_eq!(links.prs, vec![8, 7]);
     assert_eq!(links.sessions.len(), 1);
@@ -1070,4 +1088,16 @@ fn an_address_read_after_its_request_keeps_that_request() {
         (lines[0].role, lines[0].request.as_deref()),
         (SessionRole::Created, Some("PR 올려 줘"))
     );
+}
+
+/// This machine as the panel reads see it: `DEVICE`, whose node is this
+/// process.
+fn here() -> LocalFiles<'static> {
+    fn present(asked: &[String]) -> Result<std::collections::BTreeSet<String>, String> {
+        crate::links::files_present(&hide_node::Local::of_process(), asked)
+    }
+    LocalFiles {
+        device: DEVICE,
+        present: &present,
+    }
 }

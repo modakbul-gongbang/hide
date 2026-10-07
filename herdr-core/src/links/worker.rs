@@ -9,12 +9,14 @@
 //! backfill never competes with input, and from every other connected node
 //! a batch a minute.
 
-use super::store::{IssueLinks, LinkStore, Opened, PrLinks};
-use super::{BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, now_ms};
-use crate::node_access::{LinkError, NodeLink, call_as};
+use super::store::{IssueLinks, LinkStore, LocalFiles, Opened, PrLinks};
+use super::{
+    BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, files_present, link_code,
+    now_ms,
+};
+use crate::node_access::{NodeLink, call_as};
 use hide_node_link::protocol::Call;
 use hide_session::links::{self, Candidate, ReadRequest};
-use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
@@ -419,7 +421,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             state.dirty_at.get_or_insert_with(Instant::now);
         }
         if state.panel.is_some() && state.panel_answer.is_none() {
-            answer_panel(store, paths, &mut state, sink);
+            answer_panel(store, own, paths, &mut state, sink);
         }
         if state.queue.is_empty() {
             let next_page = state.listing.as_ref().and_then(|listing| listing.next);
@@ -459,7 +461,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
             state.dirty_at = None;
             publish_summaries(store, &mut state, sink);
             if state.panel.is_some() {
-                answer_panel(store, paths, &mut state, sink);
+                answer_panel(store, own, paths, &mut state, sink);
             }
         }
     }
@@ -888,18 +890,6 @@ fn finish_device(store: &LinkStore, device: &str, entry: &mut DeviceQueue) {
 }
 
 /// A failed link call as a diagnostic code, prefixed by who was asked.
-fn link_code(error: &LinkError, who: &str) -> String {
-    match error {
-        LinkError::NotConnected(_) => format!("{who}_not_connected"),
-        LinkError::Busy => format!("{who}_busy"),
-        LinkError::Unknown(_) => format!("{who}_unknown"),
-        // A helper older than protocol 18 does not know the call.
-        LinkError::Refused(error) if error.code == hide_node_link::ErrorCode::InvalidRequest => {
-            format!("{who}_unsupported")
-        }
-        LinkError::Refused(error) => error.message.clone(),
-    }
-}
 
 fn log_device(device: &str, what: &str, code: &str) {
     crate::diagnostic!(serde_json::json!({
@@ -930,28 +920,6 @@ fn prune(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths) {
     }
 }
 
-/// Which of `asked` the own node still holds; one it cannot read is kept.
-fn files_present(own: &dyn NodeLink, asked: &[String]) -> Result<BTreeSet<String>, String> {
-    use hide_node_link::cleanup::PathState;
-    let states = call_as::<Vec<PathState>>(
-        own,
-        Call::RealPaths {
-            paths: asked.to_vec(),
-        },
-        DEVICE_TIMEOUT,
-    )
-    .map_err(|error| link_code(&error, "node"))?;
-    if states.len() != asked.len() {
-        return Err("node_answer_mismatched".to_owned());
-    }
-    Ok(asked
-        .iter()
-        .zip(states)
-        .filter(|(_, state)| !matches!(state, PathState::Missing))
-        .map(|(path, _)| path.clone())
-        .collect())
-}
-
 fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     let mut summaries = BTreeMap::new();
     for project in state.projects.iter() {
@@ -976,11 +944,21 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     }
 }
 
-fn answer_panel(store: &LinkStore, paths: &Paths, state: &mut State, sink: &impl Sink) {
+fn answer_panel(
+    store: &LinkStore,
+    own: &dyn NodeLink,
+    paths: &Paths,
+    state: &mut State,
+    sink: &impl Sink,
+) {
     let Some(request) = state.panel.as_ref() else {
         return;
     };
-    let local = Some(paths.local_device.as_str());
+    let present = |asked: &[String]| files_present(own, asked);
+    let local = Some(LocalFiles {
+        device: &paths.local_device,
+        present: &present,
+    });
     let answer = if let Some(code) = &state.write_failure {
         Err(code.clone())
     } else {
@@ -1009,7 +987,7 @@ fn answer_panel(store: &LinkStore, paths: &Paths, state: &mut State, sink: &impl
 mod tests {
     use super::*;
     use crate::links::{FileState, PrFact, ProjectFacts, SessionRole, WorktreeFact};
-    use crate::node_access::LinkAnswer;
+    use crate::node_access::{LinkAnswer, LinkError};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const CREATED: u64 = 1_790_000_000_000;
