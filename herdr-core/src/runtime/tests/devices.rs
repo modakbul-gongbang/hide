@@ -76,6 +76,8 @@ fn removing_devices_retires_only_their_pane_reads_and_rejects_late_publications(
     use crate::delivery::{Actor, ledger::Ledger};
 
     let mut runtime = runtime();
+    let mut ledger = Ledger::default();
+    runtime.delivery_ledger = Ok(Arc::new(ledger.clone()));
     let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
         "agents": [], "panes": [{"pane_id": "child"}]
     }))
@@ -107,7 +109,6 @@ fn removing_devices_retires_only_their_pane_reads_and_rejects_late_publications(
         device_id: crate::node::TEST_NODE.into(),
         session: Some("parent-native".into()),
     };
-    let mut ledger = Ledger::default();
     for index in 0..8 {
         let id = format!("device-{index}");
         assert!(register_device(&mut runtime, &id, "fixture-host"));
