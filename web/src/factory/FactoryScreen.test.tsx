@@ -12,6 +12,7 @@ import { createActions } from "../actions";
 import { english } from "../i18n/catalogs";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { useShellStore } from "../store";
+import type { SnapshotRest } from "../snapshot";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace } from "../ui";
 import type { DispatchFn } from "../ws";
 import { InitFailure } from "./CreateSheet";
@@ -383,10 +384,11 @@ it("keeps the graph in columns and logs why when the layout worker cannot start 
 it.each([
   ["blocked", { ...MERGE, group: "answer", kind: "blocking", question: "q1", suggestion: "WS", choices: ["REST"], text: "Which endpoint?" }, { verb: "answer", task: "f1/T-1", question: "q1", choice: "suggestion", text: null }],
   ["merge_waiting", MERGE, { verb: "merge", task: "f1/T-1" }],
-  ["stopped", { ...MERGE, group: "stopped", kind: "action", suggestion: "approve", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
+  ["stopped", { ...MERGE, group: "stopped", kind: "stopped", suggestion: "retry", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
 ] as const)("sends the %s card's canonical command once, preserves a refusal and allows retry", async (state, item, expected) => {
   const task = card("T-1", state, { column: "stuck", waiting_group: "person", needs_person: true, stop: state === "stopped" ? "verify_failed" : null });
   const summary = { my_turn: 1, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [{ ...item, choices: [...item.choices], gates: [...item.gates], unblocks: [...item.unblocks] } as InboxItem] };
+  if (state === "merge_waiting" || state === "stopped") summary.inbox.unshift({ ...MERGE, kind: "action", question: "older-question", suggestion: "approve", gates: [] });
   const { container, events } = await mount(summary, { tab: "board" });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-card-send]")!;
   await act(async () => send.click());
@@ -416,4 +418,17 @@ it("opens the corresponding inbox item for another answer and keeps issue/PR con
   await act(async () => other.click());
   expect(container.querySelector("[data-factory-item-open='true']")!.getAttribute("data-factory-item")).toBe("f1/T-1/q1");
   expect(useUiStore.getState().screen).toMatchObject({ place: { tab: "turn", task: null } });
+});
+
+it("opens a local issue through its catalog identity without opening the Factory task", async () => {
+  const rest = { navigator: { focused_device_id: "local", workspaces: [{ id: "project", path: "/fixture", device_id: "local", tasks: { tasks: [{ id: "L-7", key: "local:/fixture#7", source: "local" }] } }] } } as unknown as SnapshotRest;
+  useShellStore.setState({ rest });
+  const task = card("T-1", "running", { issue: "L-7" });
+  const { container } = await mount({ my_turn: 0, factories: [factory({ columns: [{ column: "moving", label: "", cards: [task] }] })], inbox: [] }, { tab: "board" });
+  useUiStore.setState({ overviewProjectId: "project" });
+  const issue = [...container.querySelectorAll<HTMLButtonElement>("[data-factory-card] button")].find((button) => button.textContent === "L-7")!;
+  await act(async () => issue.click());
+  expect(useUiStore.getState().overviewLens.panel).toBe("local:/fixture#7");
+  expect(useUiStore.getState().screen).toMatchObject({ kind: "main", deviceId: "local" });
+  useShellStore.setState({ rest: null });
 });

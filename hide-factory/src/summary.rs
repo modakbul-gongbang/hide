@@ -314,13 +314,15 @@ fn factory_view(
             let mut cards = columns.remove(&column).unwrap_or_default();
             // Person cards first, longest waiting first; then priority, then age (D-47).
             cards.sort_by(|(a, a_view), (b, b_view)| {
-                (b_view.waiting_group.as_deref() == Some("person") || b_view.needs_person)
-                    .cmp(
-                        &(a_view.waiting_group.as_deref() == Some("person") || a_view.needs_person),
-                    )
+                let a_person =
+                    a_view.waiting_group.as_deref() == Some("person") || a_view.needs_person;
+                let b_person =
+                    b_view.waiting_group.as_deref() == Some("person") || b_view.needs_person;
+                b_person
+                    .cmp(&a_person)
                     .then((b.state == TaskState::Stopped).cmp(&(a.state == TaskState::Stopped)))
                     .then_with(|| {
-                        if a_view.needs_person {
+                        if a_person {
                             a.state_since.cmp(&b.state_since)
                         } else {
                             dag::slot_order(a, b)

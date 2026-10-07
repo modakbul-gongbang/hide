@@ -88,7 +88,7 @@ function herdrSpecs(content: SceneContent): CardSpec[] {
     { number: 422, summary: "보드 카드를 누르면 Task 상세를 연다", title: "보드에서 Task 상세 패널 열기", state: "waiting", column: "before", ago: 3 * HOUR, waitingFor: issue(421) },
     { number: 431, summary: "docs/ 안의 깨진 링크를 고친다", title: "문서 깨진 링크 정리", state: "waiting", column: "before", ago: 5 * HOUR, priority: 1 },
     { number: long ? 123456 : 420, summary: "Task 상세를 읽는 API 형식을 정한다", title: long ? LONG_TITLE : "Task 상세 API 응답 형식", state: "blocked", column: "stuck", worker: "worker-420", runtime: "claude", ago: 3 * DAY, needsPerson: true },
-    { number: 412, summary: "Issues 보드에서 정렬 기준을 고르게 한다", title: "Issues 보드에 정렬 추가", state: "running", column: "moving", ago: 2 * MINUTE, worker: "worker-412", pr: 563, failures: 1 },
+    { number: 412, summary: "Issues 보드에서 정렬 기준을 고르게 한다", title: long ? "FactorySnapshotDependencyGraphProjectionWithAnUnbrokenIdentifierThatMustWrapWithoutOverflowAtEveryCardWidth" : "Issues 보드에 정렬 추가", state: "running", column: "moving", ago: 2 * MINUTE, worker: "worker-412", pr: 563, failures: 1 },
     { number: 415, summary: "마지막 정렬 기준을 다음 실행에도 유지한다", title: "보드 정렬 상태 기억", state: "running", column: "moving", ago: MINUTE, worker: "worker-415", pr: 564, runtime: "claude" },
     { number: 417, summary: "디스크 정리 표를 크기순으로 다시 그린다", title: "디스크 정리 표 다시 그리기", state: "stopped", column: "stuck", worker: "worker-417", runtime: "claude", pr: 560, ago: 40 * MINUTE, needsPerson: true, failures: 3 },
     { number: 405, summary: "hide-ai가 하루에 호출하는 횟수를 제한한다", title: "hide-ai 호출 상한 조정", state: "merge_waiting", column: "stuck", pr: 561, worker: "worker-405", runtime: "claude", ago: HOUR, needsPerson: true },

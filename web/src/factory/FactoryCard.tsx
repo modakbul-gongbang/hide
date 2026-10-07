@@ -46,6 +46,9 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
   const { t, i18n } = useInterfaceTranslation();
   const main = useRef<HTMLButtonElement>(null);
   const agents = useShellStore((state) => state.agents);
+  const navigator = useShellStore((state) => state.rest?.navigator);
+  const localProject = navigator?.workspaces?.find((project) => project.path === factory.project);
+  const localIssue = localProject?.tasks?.tasks.find((issue) => issue.source === "local" && issue.id === card.issue);
   const summaries = useShellStore((state) => state.rest?.ui_state?.agent_summary !== false);
   const byPane = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, agent])), [agents]);
   const worker = card.worker_pane ? byPane.get(card.worker_pane) : undefined;
@@ -71,7 +74,7 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
       {person ? <span role="img" aria-label={t("factory.board.person")} className={cn("factory-card-band pointer-events-none absolute inset-y-0 left-0", card.state === "stopped" ? "bg-destructive" : "bg-warning")} /> : null}
       <div className="factory-card-content pointer-events-none relative flex min-w-0 flex-col gap-sm px-md py-sm">
         <div className="flex min-w-0 items-center gap-xs text-caption" data-factory-card-top="true">
-          {card.issue ? card.issue_url ? <a className="factory-card-control min-w-0 truncate font-mono hover:underline" href={card.issue_url} target="_blank" rel="noreferrer">{card.issue}</a> : <span className="min-w-0 truncate font-mono">{card.issue}</span> : null}
+          {card.issue ? card.issue_url ? <a className="factory-card-control min-w-0 truncate font-mono hover:underline" href={card.issue_url} target="_blank" rel="noreferrer">{card.issue}</a> : localIssue && localProject && actions ? <button type="button" className="factory-card-control min-w-0 truncate font-mono hover:underline" onClick={() => actions.openOverview(localProject.device_id, localProject.id, { issue: localIssue.key })}>{card.issue}</button> : <span className="min-w-0 truncate font-mono">{card.issue}</span> : null}
           {card.pr ? <a className="factory-card-control flex min-w-0 items-center gap-xxs font-mono hover:underline" href={card.pr.url} target="_blank" rel="noreferrer" aria-label={`PR ${card.pr.number}`}><GitPullRequestIcon className="size-(--size-icon-sm) shrink-0" /><span className="truncate">{card.pr.number}</span></a> : null}
           <span className="flex-1" />
           {card.worker_runtime ? <span role="img" aria-label={card.worker_runtime} title={card.worker_runtime} className="factory-card-logo shrink-0"><AgentLogo agent={card.worker_runtime} label={card.worker_runtime} /></span> : null}

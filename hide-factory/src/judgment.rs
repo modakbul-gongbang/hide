@@ -154,7 +154,42 @@ impl Judgment {
         if let Some(card) = value.get_mut("card").and_then(Value::as_object_mut) {
             card.remove("summary");
         }
+        if let Some(factories) = value
+            .pointer_mut("/board/factories")
+            .and_then(Value::as_array_mut)
+        {
+            for factory in factories {
+                if let Some(columns) = factory.get_mut("columns").and_then(Value::as_array_mut) {
+                    for column in columns {
+                        strip_display_cards(&mut column["cards"]);
+                    }
+                }
+                strip_display_cards(&mut factory["cancelled"]);
+            }
+        }
         cut(&value.to_string(), INPUT_LIMIT)
+    }
+}
+
+fn strip_display_cards(cards: &mut Value) {
+    for card in cards
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object_mut)
+    {
+        for field in [
+            "summary",
+            "issue",
+            "issue_url",
+            "pr",
+            "worker_runtime",
+            "resume_at",
+            "waiting_group",
+            "stage",
+        ] {
+            card.remove(field);
+        }
     }
 }
 

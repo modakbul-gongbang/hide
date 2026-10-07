@@ -3380,6 +3380,57 @@ fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {
 
 // Movement/stage expectations are the operator's board contract, independent of lifecycle transitions.
 #[test]
+fn person_waits_sort_by_age_even_when_paused_has_higher_priority() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let id = h.ready("Base", &[]);
+    let base = h.task(&f, &id);
+    let factory = h.engine.factory_for_project(PROJECT).unwrap();
+    for reverse_ids in [false, true] {
+        let tasks: Vec<_> = [
+            ("paused", TaskState::Paused, 30, 100),
+            ("blocked", TaskState::Blocked, 10, 0),
+            ("stopped", TaskState::Stopped, 50, -1),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (title, state, since, priority))| {
+            let mut task = base.clone();
+            task.id = format!("task-{}", if reverse_ids { 2 - index } else { index });
+            task.card.title = title.into();
+            task.state = state;
+            task.state_since = since;
+            task.human.priority = priority;
+            task
+        })
+        .collect();
+        let summary = hide_factory::summary::build(
+            &[factory],
+            &tasks.iter().collect::<Vec<_>>(),
+            h.world().now,
+            0,
+            &BTreeMap::new(),
+        );
+        let stuck = &summary.factories[0].columns[2].cards;
+        assert_eq!(
+            stuck
+                .iter()
+                .map(|card| card.title.as_str())
+                .collect::<Vec<_>>(),
+            ["stopped", "blocked", "paused"]
+        );
+        let mut answer = serde_json::to_value(summary).unwrap();
+        answer["ok"] = json!(true);
+        let rendered = hide_factory::command::render_human("status", &answer);
+        assert!(
+            rendered.contains("시작 전 0 · 진행 중 0 · 멈춤 3 · 완료 오늘 0"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("null"), "{rendered}");
+    }
+}
+
+#[test]
 fn movement_columns_and_stages_follow_execution_history_without_changing_state() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -3534,6 +3585,52 @@ fn intake_summary_is_persisted_and_goal_edits_replace_it_without_growing_judgmen
             !judgment.render_input().contains("\"summary\""),
             "summary is output-only metadata"
         );
+    }
+}
+
+#[test]
+fn periodic_watch_keeps_display_metadata_out_of_provider_input() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    h.ready("Watch", &[]);
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let world = h.world();
+    let watches: Vec<_> = world
+        .judged
+        .iter()
+        .chain(&world.submitted)
+        .filter(|judgment| matches!(judgment.input, JudgmentInput::Watch { .. }))
+        .collect();
+    assert!(!watches.is_empty(), "the actual periodic watch ran");
+    for judgment in watches {
+        let input: serde_json::Value = serde_json::from_str(&judgment.render_input()).unwrap();
+        let cards: Vec<_> = input["board"]["factories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|factory| factory["columns"].as_array().unwrap())
+            .flat_map(|column| column["cards"].as_array().unwrap())
+            .collect();
+        assert!(!cards.is_empty());
+        for card in cards {
+            for field in [
+                "summary",
+                "issue",
+                "issue_url",
+                "pr",
+                "worker_runtime",
+                "resume_at",
+                "waiting_group",
+                "stage",
+            ] {
+                assert!(
+                    card.get(field).is_none(),
+                    "display field {field} reached Watch input"
+                );
+            }
+        }
     }
 }
 

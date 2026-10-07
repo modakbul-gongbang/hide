@@ -59,7 +59,7 @@ export function FactoryBoard({ factories, place, actions, inbox }: { factories: 
                   {waiting !== null ? <h3 className="text-caption text-muted-foreground">{t(waiting === "person" ? "factory.board.person" : "factory.board.other")} {count}</h3> : null}
                   {groups.map((group) => <div key={group.factory.id} className="flex min-w-0 flex-col gap-sm">
                     {many && group.cards.length + group.folded.length > 0 ? <span className="truncate text-caption text-muted-foreground">{group.factory.project_name}</span> : null}
-                    {group.cards.map((card) => <TaskCardView key={card.task} factory={group.factory} card={card} showProject={false} actions={actions} item={inbox.find((item) => item.factory === group.factory.id && item.task === card.task && item.kind !== "notice")} />)}
+                    {group.cards.map((card) => <TaskCardView key={card.task} factory={group.factory} card={card} showProject={false} actions={actions} item={inbox.find((item) => item.factory === group.factory.id && item.task === card.task && (card.state === "merge_waiting" ? item.kind === "merge" : card.state === "stopped" ? item.kind === "stopped" : item.kind !== "notice"))} />)}
                     {waiting === null && group.folded.length > 0 ? <FoldedDone factory={group.factory} cards={group.folded} /> : null}
                   </div>)}
                 </div>;
