@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { HIDE_CLI, isolate, launchShell, screenshot, test } from "./fixture";
+import { HIDE_CLI, isolate, launchShell, nodeOf, screenshot, test } from "./fixture";
 import { captureNativeWindow } from "./native-window";
 import { installSpawnProvider, prepareSpawnCommand, waitForSpawnShell } from "./agent-spawn-fixture";
 
@@ -52,7 +52,7 @@ test("a spawned child appears in the native delegation tree", async () => {
       return answer.value;
     };
     const registered = await command(["agent", "register", "--host-scope", herdr.socket, "--session", native.agent_session!.value, "--instance", native.terminal_id, "--name", "parent", "--pane", parent]);
-    expect(registered.machine).toBe("local");
+    expect(registered.machine).toBe(nodeOf(run.env));
     const child = await command(["agent", "spawn", "--parent", "here", "--name", "child", "--intent", "native-delegation", "--kind", "claude", "--repo", repo, "--branch", "child-task"]);
     expect(child.parent).toBe(registered.id);
     expect(child.watch).toBeTruthy();

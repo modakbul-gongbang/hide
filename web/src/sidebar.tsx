@@ -49,7 +49,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
-import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
+import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -81,7 +81,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const remoteStatus = useShellStore((s) => s.rest?.status?.remote);
   const deviceMenu = useMemo<DeviceMenu>(() => {
     const list = devices ?? [];
-    const localId = list.find((device) => device.kind !== "remote")?.id ?? "local";
+    const localId = list.find((device) => device.kind !== "remote")?.id ?? "";
     return {
       devices: list.map((device) => ({
         id: device.id,
@@ -567,7 +567,7 @@ function AgentList({ actions }: { actions: Actions }) {
             <ul aria-labelledby={`agent-group-${section.group}`}>
               {section.rows.map((row) => (
                 <SidebarAgentRow
-                  key={`${row.device ?? "local"}:${row.agent.id}`}
+                  key={`${row.device ?? ""}:${row.agent.id}`}
                   agent={row.agent}
                   device={null}
                   place={row.depth === 0 ? placeOf(row.device, row.agent.pane_id) : null}
@@ -860,7 +860,7 @@ function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "rai
       </div>
       <ul aria-labelledby={`raised-group-${row.group}`}>
         {row.agents.map((listed) => (
-          <RaisedAgentRow key={`${listed.device ?? "local"}:${listed.agent.id}`} listed={listed} context={context} />
+          <RaisedAgentRow key={`${listed.device ?? ""}:${listed.agent.id}`} listed={listed} context={context} />
         ))}
         {row.more.length > 0 ? (
           <li>
@@ -875,7 +875,7 @@ function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "rai
           </li>
         ) : null}
         {row.expanded
-          ? row.more.map((listed) => <RaisedAgentRow key={`${listed.device ?? "local"}:${listed.agent.id}`} listed={listed} context={context} />)
+          ? row.more.map((listed) => <RaisedAgentRow key={`${listed.device ?? ""}:${listed.agent.id}`} listed={listed} context={context} />)
           : null}
       </ul>
     </li>
@@ -1134,7 +1134,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const { t } = useInterfaceTranslation();
   const { actions } = context;
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
-  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path));
+  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path, localDeviceId(s.rest)));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
@@ -1491,7 +1491,7 @@ const NO_AGENT_ROWS: AgentRow[] = [];
 
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {
-  return { reveal: revealHost(), newTabChord: commandLabel("new_tab") };
+  return { reveal: revealHost(), newTabChord: commandLabel("new_tab"), node: localDeviceId(useShellStore.getState().rest) };
 }
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {

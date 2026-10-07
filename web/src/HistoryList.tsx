@@ -4,7 +4,7 @@ import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Hint } from "./components/ui/tooltip";
-import { changesFor, explorerContext, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
+import { changesFor, explorerContext, frontCheckout, localDeviceId, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { revealHost } from "./host";
 import { revealExternalEntry } from "./revealExternal";
 import { useShellStore } from "./store";
@@ -51,7 +51,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
     const rest = useShellStore.getState().rest;
     return [
       { id: "open_beside", label: t("history.openBeside"), unavailable: besideUnavailable(workspaceViewOf(rest)?.layout, drawnViews()) },
-      ...revealExternalEntry(revealHost(), explorerContext(rest).device, t, entry.status === "deleted" ? t("history.fileDeleted") : null, true),
+      ...revealExternalEntry(revealHost(), explorerContext(rest).device, localDeviceId(rest), t, entry.status === "deleted" ? t("history.fileDeleted") : null, true),
     ];
   };
   return (

@@ -66,8 +66,9 @@ fn guard(runtime: &Arc<Mutex<Runtime>>) -> MutexGuard<'_, Runtime> {
 pub struct FactoryCaller {
     pub pane: Option<String>,
     pub cwd: Option<String>,
-    /// A pane the caller named but could not be checked against: it can only
-    /// make the caller a worker, never an operator.
+    /// Another pane a pane-bound caller's hint named, which cannot be checked
+    /// against its credential: it can only make the caller a worker, never an
+    /// operator. A checkout-bound caller's hint is never read.
     pub claimed: Option<String>,
     /// The agents above the caller in the spawn lineage: a worker's child is
     /// a worker of the same Task (D-33).
@@ -1234,7 +1235,10 @@ impl WorkerRuntime for CoreWorkers {
             false => None,
         };
         let runtime = self.runtime()?;
-        let connector = guard(&runtime).delivery_connector("local");
+        let connector = {
+            let guard = guard(&runtime);
+            guard.delivery_connector(guard.node().as_str())
+        };
         drop(runtime);
         let connector = connector
             .ok_or_else(|| Failure::environment("worktree", EnvSignal::HerdrSocket, "no Herdr"))?;
@@ -1506,7 +1510,10 @@ impl Notifier for CoreNotifier {
         let Some(runtime) = lock(&self.runtime) else {
             return;
         };
-        let connector = guard(&runtime).delivery_connector("local");
+        let connector = {
+            let guard = guard(&runtime);
+            guard.delivery_connector(guard.node().as_str())
+        };
         drop(runtime);
         if let Some(connector) = connector {
             let _ = hide_herdr_client::request_small_response(

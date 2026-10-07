@@ -143,17 +143,17 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
     const remoteA = "ssh-a\u0000/a";
     const remoteB = "ssh-a\u0000/b";
     const otherDevice = "ssh-b\u0000/a";
-    const web = browserPartition(localA, "https://example.com/");
-    expect(browserPartition(localB, "https://example.com/")).toBe(web);
-    expect(browserPartition(remoteA, "https://example.com/")).toBe(web);
-    expect(browserPartition(localA, "http://localhost:3000/")).toBe(web);
-    const remoteLoopback = browserPartition(remoteA, "http://localhost:3000/");
-    expect(browserPartition(remoteB, "http://127.0.0.1:3000/")).toBe(remoteLoopback);
-    expect(browserPartition(remoteB, "http://[::ffff:127.0.0.1]:3000/")).toBe(remoteLoopback);
-    expect(browserPartition(otherDevice, "http://localhost:3000/")).not.toBe(remoteLoopback);
+    const web = browserPartition(localA, "https://example.com/", "local");
+    expect(browserPartition(localB, "https://example.com/", "local")).toBe(web);
+    expect(browserPartition(remoteA, "https://example.com/", "local")).toBe(web);
+    expect(browserPartition(localA, "http://localhost:3000/", "local")).toBe(web);
+    const remoteLoopback = browserPartition(remoteA, "http://localhost:3000/", "local");
+    expect(browserPartition(remoteB, "http://127.0.0.1:3000/", "local")).toBe(remoteLoopback);
+    expect(browserPartition(remoteB, "http://[::ffff:127.0.0.1]:3000/", "local")).toBe(remoteLoopback);
+    expect(browserPartition(otherDevice, "http://localhost:3000/", "local")).not.toBe(remoteLoopback);
     expect(remoteLoopback).not.toBe(web);
-    expect(browserPartition(localA, "file:///a/report.html")).not.toBe(web);
-    expect(browserPartition(localB, "file:///b/report.html")).not.toBe(browserPartition(localA, "file:///a/report.html"));
+    expect(browserPartition(localA, "file:///a/report.html", "local")).not.toBe(web);
+    expect(browserPartition(localB, "file:///b/report.html", "local")).not.toBe(browserPartition(localA, "file:///a/report.html", "local"));
   });
 
   it("keeps absolute remote loopback requests on the View's SSH route", () => {

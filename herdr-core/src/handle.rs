@@ -258,6 +258,7 @@ impl Core {
                 .filter(|directory| !directory.as_os_str().is_empty()),
             environment_home.clone(),
             Arc::downgrade(&runtime),
+            &options.node_id,
         ) {
             Ok(services) => {
                 let services = Arc::new(services);
@@ -395,8 +396,12 @@ impl Core {
         ) {
             Ok(target) => {
                 lock_recover(&runtime).queue_local_kit_launch();
-                match crate::kit::KitPump::spawn(Arc::downgrade(&runtime), notifier.clone(), target)
-                {
+                match crate::kit::KitPump::spawn(
+                    Arc::downgrade(&runtime),
+                    notifier.clone(),
+                    target,
+                    options.node_id.clone(),
+                ) {
                     Ok(pump) => Some(pump),
                     Err(error) => {
                         lock_recover(&runtime).set_local_kit_unavailable(&format!(
@@ -472,11 +477,13 @@ impl Core {
         if !check_owner_thread(self, "factory.prepare") {
             return Err("factory_unavailable".into());
         }
-        if device != "local" {
+        let runtime = lock_recover(&self.runtime);
+        if device != runtime.node().as_str() {
             return Err("factory_local_only".into());
         }
         let factory = self.factory.as_ref().ok_or("factory_unavailable")?;
-        let caller = lock_recover(&self.runtime).factory_caller(caller, expected, hint)?;
+        let caller = runtime.factory_caller(caller, expected, hint)?;
+        drop(runtime);
         Ok(factory.prepare(caller, command))
     }
 

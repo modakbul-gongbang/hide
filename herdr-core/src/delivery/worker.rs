@@ -213,10 +213,21 @@ pub(crate) struct WatchWork {
     pub status: String,
     pub state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
-    pub home: Option<PathBuf>,
-    pub channel: Option<Arc<dyn crate::host_access::HostChannel>>,
+    pub source: ActivitySource,
     /// The watching Factory's own stall window, when it set one.
     pub inactivity_ms: Option<u64>,
+}
+
+/// Where a watched agent's session activity is read: the core's own node
+/// reads the conversation files under its home, a device through its helper.
+#[derive(Clone)]
+pub(crate) enum ActivitySource {
+    Node {
+        home: Option<PathBuf>,
+    },
+    Device {
+        channel: Option<Arc<dyn crate::host_access::HostChannel>>,
+    },
 }
 
 fn read_activity(work: WatchWork) -> watch::Reading {
@@ -243,23 +254,26 @@ fn read_activity(work: WatchWork) -> watch::Reading {
     reading.status_changed_at_unix_ms = observation.status_changed_at_unix_ms;
     let result = (|| {
         let request = observation.session.ok_or("session_reference_missing")?;
-        if observation.actor.device_id == "local" {
-            let home = work.home.ok_or("session_home_unavailable")?;
-            hide_session::session_activity::read(&home, &request)
-                .map_err(|_| "session_activity_failed")
-        } else {
-            let channel = work.channel.ok_or("helper_unavailable")?;
-            crate::host_access::call_as::<hide_session::session_activity::SessionActivity>(
-                channel.as_ref(),
-                hide_host::protocol::Call::SessionActivity { request },
-                Duration::from_secs(5),
-            )
-            .map_err(|error| match error {
-                crate::host_access::HostCallError::NotConnected(_) => "helper_unavailable",
-                crate::host_access::HostCallError::Busy => "helper_busy",
-                crate::host_access::HostCallError::Refused(_) => "session_activity_refused",
-                crate::host_access::HostCallError::Unknown(_) => "helper_timeout_or_format",
-            })
+        match work.source {
+            ActivitySource::Node { home } => {
+                let home = home.ok_or("session_home_unavailable")?;
+                hide_session::session_activity::read(&home, &request)
+                    .map_err(|_| "session_activity_failed")
+            }
+            ActivitySource::Device { channel } => {
+                let channel = channel.ok_or("helper_unavailable")?;
+                crate::host_access::call_as::<hide_session::session_activity::SessionActivity>(
+                    channel.as_ref(),
+                    hide_host::protocol::Call::SessionActivity { request },
+                    Duration::from_secs(5),
+                )
+                .map_err(|error| match error {
+                    crate::host_access::HostCallError::NotConnected(_) => "helper_unavailable",
+                    crate::host_access::HostCallError::Busy => "helper_busy",
+                    crate::host_access::HostCallError::Refused(_) => "session_activity_refused",
+                    crate::host_access::HostCallError::Unknown(_) => "helper_timeout_or_format",
+                })
+            }
         }
     })();
     match result {
@@ -282,10 +296,18 @@ fn same_target(left: &WatchWork, right: &WatchWork) -> bool {
         && left_observed.status == right_observed.status
         && left_observed.state_change_seq == right_observed.state_change_seq
         && left_observed.status_changed_at_unix_ms == right_observed.status_changed_at_unix_ms
-        && left.home == right.home
-        && match (&left.channel, &right.channel) {
-            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-            (None, None) => true,
+        && match (&left.source, &right.source) {
+            (ActivitySource::Node { home: left }, ActivitySource::Node { home: right }) => {
+                left == right
+            }
+            (
+                ActivitySource::Device { channel: left },
+                ActivitySource::Device { channel: right },
+            ) => match (left, right) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            },
             _ => false,
         }
 }
@@ -578,7 +600,9 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
         }
         Command::WatchStop { id } => {
             watch::stop(ledger, actor, id)?;
-            Ok(json!({"stopped":id}))
+            Ok(json!(super::answer::Stopped {
+                stopped: id.clone()
+            }))
         }
         Command::WatchAssign {
             id,
@@ -734,18 +758,17 @@ fn run(
                                     return Err("caller_identity_changed".into());
                                 }
                             } else {
-                                for caller in [&authority.caller, &actor.pane_id] {
-                                    let current = guard
-                                        .workspace_control_query(
-                                            &actor.device_id,
-                                            caller,
-                                            Query::Info,
-                                        )
-                                        .map_err(|_| "caller_context_changed")?
-                                        .context;
-                                    if current != authority.context {
-                                        return Err("caller_context_changed".into());
-                                    }
+                                // The caller is the agent's own pane.
+                                let current = guard
+                                    .workspace_control_query(
+                                        &actor.device_id,
+                                        &authority.caller,
+                                        Query::Info,
+                                    )
+                                    .map_err(|_| "caller_context_changed")?
+                                    .context;
+                                if current != authority.context {
+                                    return Err("caller_context_changed".into());
                                 }
                                 actor.require_native_identity()?;
                                 if !guard.delivery_identity_current(actor) {
@@ -853,14 +876,14 @@ mod tests {
             pane_id: "parent".into(),
             name: "parent".into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some("parent-session".into()),
         };
         let child = Actor {
             pane_id: "child".into(),
             name: "child".into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some("child-session".into()),
         };
         let mut ledger = Ledger::default();
@@ -925,7 +948,7 @@ mod tests {
             pane_id: id.into(),
             name: id.into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some(format!("native-{id}")),
         };
         let target = Actor {
@@ -966,8 +989,9 @@ mod tests {
                     status: "idle".into(),
                     state_change_seq: Some(1),
                     status_changed_at_unix_ms: 1,
-                    home: None,
-                    channel: Some(channel.clone()),
+                    source: ActivitySource::Device {
+                        channel: Some(channel.clone()),
+                    },
                     inactivity_ms: None,
                 })
                 .collect();
@@ -993,7 +1017,7 @@ mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":1,"lineage_session":native,"agent_session":reference},
         ]})).unwrap();
-        runtime.observe_delivery("local", &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
     }
 
     #[test]
@@ -1085,7 +1109,7 @@ mod tests {
             } else {
                 let empty: SessionSnapshotPayload =
                     serde_json::from_value(json!({"agents":[]})).unwrap();
-                guard.observe_delivery("local", &empty, None);
+                guard.observe_delivery(crate::node::TEST_NODE, &empty, None);
             }
             let work = guard.delivery_watch_work();
             drop(guard);
@@ -1190,7 +1214,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &changed, None);
+                .observe_delivery(crate::node::TEST_NODE, &changed, None);
             let (worker, client) = Worker::spawn(
                 Arc::downgrade(&runtime),
                 ChangeNotifier::noop(),
@@ -1234,7 +1258,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &present, None);
+                .observe_delivery(crate::node::TEST_NODE, &present, None);
             let first = client
                 .submit(
                     Effect::Command {
@@ -1251,7 +1275,7 @@ mod tests {
             runtime
                 .lock()
                 .unwrap()
-                .observe_delivery("local", &absent, None);
+                .observe_delivery(crate::node::TEST_NODE, &absent, None);
             let replay = client
                 .submit(
                     Effect::Command {

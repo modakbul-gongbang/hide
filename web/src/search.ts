@@ -162,8 +162,8 @@ export type SearchDevice = { device: Device; agents: AgentRow[]; workspaces: Wor
 /** This machine and each connected device, in the rail's order; a device that is not connected has no current agents or projects to find. */
 export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   const rows: SearchDevice[] = [];
-  // A snapshot that names no device is this machine's alone.
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: "local", label: translate("common.thisMac"), kind: "local" } as Device];
+  // A snapshot that names no device is the core's own node alone, by the id it has before the snapshot names it.
+  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: localDeviceId(rest), label: translate("common.thisMac"), kind: "local" } as Device];
   for (const device of devices) {
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];
@@ -196,12 +196,19 @@ function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" 
   return { tone, label: statusText(t, agent.status_code) };
 }
 
+/**
+ * An agent row: titled by the name every surface calls it, with its Herdr
+ * name (`agent start --name`, `agent rename`), its place and its state
+ * sentence under it, so a query finds it by any of them. A Herdr name the
+ * title already reads as is not drawn twice.
+ */
 export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string | null, front: string, t: TFunction<"translation">): SearchEntry {
   const sentence = agent.detail || statusText(t, agent.status_code);
+  const name = agent.herdr_name && agent.herdr_name.toLowerCase() !== agent.identity_label.toLowerCase() ? agent.herdr_name : null;
   return {
     id: `agent:${agent.pane_id}`,
     title: agent.identity_label,
-    subtitle: place ? `${place} · ${sentence}` : sentence,
+    subtitle: [name, place, sentence].filter(Boolean).join(" · "),
     place: place ?? undefined,
     kind: "agent",
     group: AGENTS_GROUP,

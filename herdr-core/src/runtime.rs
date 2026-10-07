@@ -1069,9 +1069,10 @@ pub struct Runtime {
     factory_screen: Option<crate::factory::ScreenPort>,
     delivery_overflow: HashSet<String>,
     delivery_connected: HashSet<String>,
-    /// Stable identities are separate from device labels: labels are mutable
-    /// presentation, while lineage is keyed by operating-system id.
-    local_machine_id: Option<String>,
+    /// The machine this core runs on. Device labels are mutable
+    /// presentation, while lineage and every key naming this machine use
+    /// this operating-system id.
+    node: crate::node::NodeId,
     device_machine_ids: HashMap<String, String>,
     unresolved_machine_lineage: HashSet<String>,
     file_roots: Option<crate::files::FileRoots>,
@@ -1196,7 +1197,8 @@ pub struct Runtime {
     /// yet" rather than as "not installed".
     hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
     /// Each machine's install kit as its last check found it, keyed by
-    /// device id (`local` for this Mac); `runtime/kit.rs` owns it.
+    /// device id (the core's own node id for this Mac); `runtime/kit.rs`
+    /// owns it.
     kit_states: BTreeMap<String, crate::model::KitSnapshot>,
     /// The install this Mac's kit worker runs next, merged across requests.
     local_kit_pending: Option<hide_kit::Scope>,
@@ -1214,6 +1216,13 @@ pub struct Runtime {
     device_first_run_choice: BTreeMap<String, kit::FirstRunChoice>,
     /// Devices whose kit worker is running; at most one per device.
     device_kit_running: BTreeSet<String>,
+    /// The numbered run of each device's shared-server turn-off its worker
+    /// took: only the answer for the run still current settles the request,
+    /// so a late answer from a connection that ended changes nothing (PRD
+    /// codex-daemon-apply B11).
+    codex_daemon_off_running: BTreeMap<String, u64>,
+    /// The last turn-off run handed out.
+    codex_daemon_off_runs: u64,
     /// The removal each removed device's kit worker runs next, holding the
     /// helper connection it runs on.
     device_kit_removals: BTreeMap<String, DeviceKitCall>,
@@ -1663,14 +1672,15 @@ impl Runtime {
             .shortcut_import_path
             .as_deref()
             .is_some_and(|source| import_native_app_shortcuts(&mut snapshot, Path::new(source)));
-        snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
+        snapshot.navigator.devices =
+            workspace::devices(&options.node_id, &snapshot.ui_state.device_registrations);
         // This machine's row names the root a device consent would name, so
         // the add form can show it before the first device exists.
         if let Some(local) = snapshot
             .navigator
             .devices
             .iter_mut()
-            .find(|device| device.kind != "remote")
+            .find(|device| options.node_id == device.id)
         {
             local.host.helper_root = Some(host_helper_root.clone());
             local.host.cli_dir = Some(host_cli_dir.clone());
@@ -1680,10 +1690,11 @@ impl Runtime {
                 .ui_state
                 .focused_device_id
                 .clone()
-                .unwrap_or_else(|| workspace::LOCAL_DEVICE_ID.to_owned()),
+                .unwrap_or_else(|| options.node_id.to_string()),
         );
         snapshot.navigator.focused_checkout_id = snapshot.ui_state.focused_checkout_id.clone();
         snapshot.navigator.workspaces = workspace::build_catalog(
+            &options.node_id,
             &snapshot.ui_state.workspace_registrations,
             &[],
             &crate::model::WorktreeCatalogSnapshot::default(),
@@ -1788,7 +1799,7 @@ impl Runtime {
             factory_screen: None,
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),
-            local_machine_id: options.machine_id.clone(),
+            node: options.node_id.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),
             file_roots: None,
@@ -1848,6 +1859,8 @@ impl Runtime {
             device_kit_pending: BTreeMap::new(),
             device_first_run_choice: BTreeMap::new(),
             device_kit_running: BTreeSet::new(),
+            codex_daemon_off_running: BTreeMap::new(),
+            codex_daemon_off_runs: 0,
             device_kit_removals: BTreeMap::new(),
             device_kit_removing: BTreeSet::new(),
             ai_settings: None,
@@ -2034,6 +2047,11 @@ impl Runtime {
 
     pub(crate) fn take_state_save_worker(&mut self) -> Option<thread::JoinHandle<()>> {
         self.state_save_worker.take()
+    }
+
+    /// The machine this core runs on.
+    pub(crate) fn node(&self) -> &crate::node::NodeId {
+        &self.node
     }
 
     pub fn snapshot(&self) -> &Snapshot {
@@ -2318,6 +2336,7 @@ fn project_layout_panes(
 }
 
 fn find_workspace_for_context<'a>(
+    node: &crate::node::NodeId,
     workspaces: &'a mut Vec<crate::model::WorkspaceSnapshot>,
     context_path: Option<&str>,
     session_workspace_id: &str,
@@ -2386,7 +2405,7 @@ fn find_workspace_for_context<'a>(
     }) {
         return workspaces.get_mut(index);
     }
-    let mut temporary = workspace::inspect_temporary(Path::new(&root), workspace::LOCAL_DEVICE_ID);
+    let mut temporary = workspace::inspect_temporary(Path::new(&root), node.as_str());
     temporary.session_workspace_ids = vec![session_workspace_id.to_owned()];
     workspaces.push(temporary);
     workspaces.last_mut()

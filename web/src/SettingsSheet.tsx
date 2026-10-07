@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MobileTab } from "./MobileTab";
+import { frontDeviceId } from "./devices";
 import { SETTINGS_TABS, type SettingsTab } from "./settings";
 import { AgentsTab } from "./settings/AgentsTab";
 import { DevicesTab } from "./settings/DevicesTab";
@@ -33,7 +34,7 @@ function SettingsSheet({ actions }: { actions: Actions }) {
   const [tab, setTab] = useState<SettingsTab>(() => useUiStore.getState().settingsTab);
   const subtitle = t(`settings.tabs.${tab}Description`);
   const selected = useShellStore((s) => {
-    const id = s.rest?.navigator?.focused_device_id ?? "local";
+    const id = frontDeviceId(s.rest);
     return s.rest?.navigator?.devices?.find((device) => device.id === id) ?? null;
   });
   return (

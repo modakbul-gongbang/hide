@@ -70,7 +70,13 @@ fn a_projection_from_another_path_keeps_the_published_label_of_its_session() {
 fn an_operator_submit_is_recorded_for_the_agent_pane_and_an_approval_enter_is_not() {
     let mut runtime = runtime();
     let services = std::sync::Arc::new(
-        crate::labels::LabelServices::start(None, None, std::sync::Weak::new()).unwrap(),
+        crate::labels::LabelServices::start(
+            None,
+            None,
+            std::sync::Weak::new(),
+            &crate::node::test_node(),
+        )
+        .unwrap(),
     );
     runtime.install_label_services(std::sync::Arc::clone(&services));
     runtime.ingest_session(Ok(projection(SESSION)));

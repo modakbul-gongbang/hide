@@ -43,6 +43,8 @@ export type BrowserSync = {
   attachment_epoch?: string;
   /** Positive core area authority, including empty areas; absent grants no debugger access. Incarnation changes on revoke/regrant. */
   authorized_scopes?: { workspace: string; area_id: string; incarnation: number }[];
+  /** The core's own node id, whose pages load this computer's loopback directly; absent until the snapshot names it. */
+  node?: string;
 };
 
 export type BrowserCommand = "back" | "forward" | "reload" | "stop" | "focus";

@@ -36,7 +36,7 @@ const AGENT_SURFACE = "herdr";
 export type Surface = {
   key: string;
   kind: SurfaceKind;
-  /** The device the checkout is on; `local` for this machine's. */
+  /** The device the checkout is on; the core's own node id for this machine's. */
   deviceId: string;
   workspaceId: string;
   checkoutId: string;
@@ -46,12 +46,12 @@ export type Surface = {
   label: string;
 };
 
-export function tabSurface(checkout: Checkout, tabId: string, deviceId = "local"): Surface {
+export function tabSurface(checkout: Checkout, tabId: string, deviceId: string): Surface {
   return { key: `tab\u0000${checkout.id}\u0000${tabId}`, kind: AGENT_SURFACE, deviceId, workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: tabId, label: "" };
 }
 
-export function displaySurface(checkout: Checkout, display: ViewDisplaySnapshot): Surface {
-  return { key: `display\u0000${checkout.id}\u0000${display.id}`, kind: display.kind, deviceId: "local", workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: display.id, label: display.label };
+export function displaySurface(checkout: Checkout, display: ViewDisplaySnapshot, deviceId: string): Surface {
+  return { key: `display\u0000${checkout.id}\u0000${display.id}`, kind: display.kind, deviceId, workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: display.id, label: display.label };
 }
 
 /** A screen of the page's own: a device's Home Overview, or one Project's Overview. */
@@ -81,12 +81,12 @@ export function isScreenVisit(entry: RecentEntry): entry is ScreenVisit {
 
 /** A device's Home Overview while the device is registered; an Overview while its Project is in the catalog, on any device. */
 function screenExists(rest: SnapshotRest | null, screen: PageScreen): boolean {
-  return (rest?.navigator?.devices ?? []).some((device) => device.id === (screen.deviceId ?? "local"));
+  return (rest?.navigator?.devices ?? []).some((device) => device.id === (screen.deviceId ?? localDeviceId(rest)));
 }
 
-/** This machine's checkouts, in the navigator's order. */
+/** The core's own node's checkouts, in the navigator's order. */
 function localCheckouts(rest: SnapshotRest | null): Checkout[] {
-  return (rest?.navigator?.workspaces ?? []).filter((workspace) => workspace.device_id === "local").flatMap((workspace) => workspace.checkouts);
+  return (rest?.navigator?.workspaces ?? []).filter((workspace) => workspace.device_id === localDeviceId(rest)).flatMap((workspace) => workspace.checkouts);
 }
 
 /** A checkout with the device it is on. */
@@ -100,7 +100,7 @@ type DeviceCheckout = { deviceId: string; workspace: Workspace; checkout: Checko
 function allCheckouts(rest: SnapshotRest | null): DeviceCheckout[] {
   const local = localDeviceId(rest);
   const rows: DeviceCheckout[] = (rest?.navigator?.workspaces ?? [])
-    .filter((workspace) => workspace.device_id === "local")
+    .filter((workspace) => workspace.device_id === local)
     .flatMap((workspace) => workspace.checkouts.map((checkout) => ({ deviceId: local, workspace, checkout })));
   for (const status of rest?.status?.remote ?? []) {
     if (status.state !== "connected") continue;
@@ -114,7 +114,7 @@ function allCheckouts(rest: SnapshotRest | null): DeviceCheckout[] {
 /** The Workspace in front when it is this checkout's, which is the only one whose displays the snapshot carries. */
 function frontLayoutOf(rest: SnapshotRest | null, checkout: Checkout) {
   const view = workspaceViewOf(rest);
-  return view && view.device_id === "local" && view.path === checkout.path ? (view.layout ?? null) : null;
+  return view && view.device_id === localDeviceId(rest) && view.path === checkout.path ? (view.layout ?? null) : null;
 }
 
 /**
@@ -135,8 +135,8 @@ export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): S
   if (!checkout) return null;
   const layout = frontLayoutOf(rest, checkout);
   const display = viewInUse && layout ? activeDisplay(layout) : null;
-  if (display) return displaySurface(checkout, display.display);
-  return checkout.active_tab_id ? tabSurface(checkout, checkout.active_tab_id) : null;
+  if (display) return displaySurface(checkout, display.display, localDeviceId(rest));
+  return checkout.active_tab_id ? tabSurface(checkout, checkout.active_tab_id, localDeviceId(rest)) : null;
 }
 
 /**
@@ -182,7 +182,7 @@ export function availableEntries(rest: SnapshotRest | null, remembered: readonly
     if (deviceId !== localDeviceId(rest)) continue;
     const layout = frontLayoutOf(rest, checkout);
     if (layout) {
-      for (const area of areasOf(layout.root)) for (const display of area.displays) entries.push(displaySurface(checkout, display));
+      for (const area of areasOf(layout.root)) for (const display of area.displays) entries.push(displaySurface(checkout, display, deviceId));
     } else {
       entries.push(...remembered.filter((entry) => !isScreenVisit(entry) && entry.kind !== AGENT_SURFACE && entry.checkoutId === checkout.id));
     }

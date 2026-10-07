@@ -6384,8 +6384,8 @@ pub fn issue_body(task: &Task, factory: &Factory) -> String {
 pub struct Caller<'a> {
     pub pane: Option<&'a str>,
     pub cwd: Option<&'a str>,
-    /// A pane the caller named but could not be checked against: it can only
-    /// make the caller a worker, never an operator.
+    /// Another pane the caller named, which the host could not check against
+    /// its credential: it can only make the caller a worker, never an operator.
     pub claimed: Option<&'a str>,
     /// The agents above the caller in the spawn lineage, nearest first.
     pub ancestor_agents: &'a [String],

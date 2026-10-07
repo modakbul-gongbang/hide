@@ -38,7 +38,7 @@ It clears inherited `HERDR_*` and needs no server; the full zsh contract check d
 The schema digest is canonical JSON (sorted keys, UTF-8, two-space indentation and a trailing newline).
 A configured nightly matrix proves no executed job, native input or package launch by itself.
 Record the actual head, attempt, job URLs, failures and skips; a package smoke with a private HOME or simulated hook does not prove a physical IME, an operator PATH or a real agent session.
-The macOS nightly package lane extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
+The macOS package job (nightly, and a pull request's `package` lane) extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
 The Windows/Linux package lanes check the real archive's headless daemon/kit behavior; their actual GUI and physical input still need device evidence.
 
 `hide-platform/tests/process.rs` exercises `run_to_end` with a real parent that starts a same-group helper inheriting both outputs and exits 0.
@@ -46,7 +46,7 @@ The call must return the parent's code and both markers within the original five
 This regression checks process and pipe ownership, not a native app window or Unix crash containment.
 
 CI retries a failed e2e or Rust test once, so a green lane can hide a test whose first attempt failed.
-The `Report flaky tests` step and the open `quarantine` issues say which; read them before claiming a flow verified, and treat a flaky test as unproven ([TESTING.md](TESTING.md#flaky-tests) owns the policy).
+The `Report flaky and failed tests` step and the open `quarantine` issues say which; read them before claiming a flow verified, and treat a flaky test as unproven ([TESTING.md](TESTING.md#flaky-tests) owns the policy).
 
 A scenario someone would check by hand becomes a spec when it can; [TESTING.md](TESTING.md) says how to write it.
 Playwright drives the renderer over its own connection rather than through OS input, so a spec needs no keyboard focus and cannot type into another app.

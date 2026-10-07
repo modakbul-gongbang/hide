@@ -14,7 +14,7 @@ import { enterWorkspace } from "../../web/e2e/wire";
 import {
   claudeSettings, codexDaemonWritten, codexHooks, readSettings, seedAgentFiles,
 } from "./device-home";
-import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
+import { hostLog, isolate, nodeOf, relaunch, screenshot, shellPage, test } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
@@ -24,10 +24,10 @@ const LABELS_ID = "hide.agent-context-labels";
 
 type Applied = { kind?: string; device_id?: string; components?: { id: string; state: string; reason: string | null }[] };
 
-function applied(log: string): Applied[] {
+function applied(log: string, node: string): Applied[] {
   return fs.readFileSync(log, "utf8").split("\n").filter((line) => line.startsWith("{"))
     .map((line) => JSON.parse(line) as Applied)
-    .filter((line) => line.kind === "apply.completed" && line.device_id === "local");
+    .filter((line) => line.kind === "apply.completed" && line.device_id === node);
 }
 
 test("the app's daemon installs this Mac's kit into its HOME at launch and changes nothing the next time", async () => {
@@ -54,8 +54,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
   try {
     await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
     // B1: the first launch installs every part, asking nothing.
-    await expect.poll(() => applied(daemonLog).length, { timeout: 120_000 }).toBeGreaterThan(0);
-    expect(applied(daemonLog)[0]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
+    await expect.poll(() => applied(daemonLog, nodeOf(run.env)).length, { timeout: 120_000 }).toBeGreaterThan(0);
+    expect(applied(daemonLog, nodeOf(run.env))[0]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
     expect(fs.readlinkSync(path.join(home, ".local", "bin", "hide"))).toBe(path.join(resources, "hide"));
     // PRD settings-cleanup D-14: the kit reads Codex's daemon setting and never turns it off on its own.
     expect(codexDaemonWritten(home)).toBe(false);
@@ -77,13 +77,13 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     await expect(page.locator('[data-settings="true"]')).toBeVisible();
     await page.locator('[data-settings-tab="devices"]').click();
     // PRD settings-cleanup B54: the healthy kit is on request in Connection details, never on the row.
-    await page.locator('[data-device-menu="local"]').click();
-    await page.locator('[data-device-details="local"]').click();
-    for (const id of PARTS) await expect(page.locator(`[data-kit-part="local:${id}:installed"]`)).toBeVisible();
+    await page.locator(`[data-device-menu="${nodeOf(run.env)}"]`).click();
+    await page.locator(`[data-device-details="${nodeOf(run.env)}"]`).click();
+    for (const id of PARTS) await expect(page.locator(`[data-kit-part="${nodeOf(run.env)}:${id}:installed"]`)).toBeVisible();
     await screenshot(page, "this-mac-kit-installed");
     await page.keyboard.press("Escape");
-    await expect(page.locator('[data-device-details-dialog="local"]')).toHaveCount(0);
-    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
+    await expect(page.locator(`[data-device-details-dialog="${nodeOf(run.env)}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-kit-reinstall="${nodeOf(run.env)}"]`)).toHaveCount(0);
     await page.locator('[data-settings-tab="agents"]').click();
     await expect(page.locator('[data-settings-tab="agents"]')).toHaveAttribute("data-state", "active");
     await screenshot(page, "this-mac-hooks");
@@ -95,8 +95,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     expect(run.hide(["stop"]).status).toBe(0);
     await expect.poll(() => daemon.exitCode !== null || daemon.signalCode !== null, { timeout: 30_000 }).toBe(true);
     daemon = startDaemon();
-    await expect.poll(() => applied(daemonLog).length, { timeout: 120_000 }).toBe(2);
-    expect(applied(daemonLog)[1]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
+    await expect.poll(() => applied(daemonLog, nodeOf(run.env)).length, { timeout: 120_000 }).toBe(2);
+    expect(applied(daemonLog, nodeOf(run.env))[1]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
     expect([claudeSettings(home), codexHooks(home)].map((file) => fs.statSync(file).mtimeMs)).toEqual(written);
   } catch (error) {
     errors.push(error);

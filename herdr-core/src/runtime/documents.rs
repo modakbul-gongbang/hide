@@ -197,8 +197,8 @@ impl Runtime {
             .navigator
             .focused_device_id
             .as_deref()
-            .unwrap_or(workspace::LOCAL_DEVICE_ID);
-        if device == workspace::LOCAL_DEVICE_ID {
+            .unwrap_or(self.node.as_str());
+        if device == self.node.as_str() {
             return self
                 .snapshot
                 .navigator
@@ -249,7 +249,7 @@ impl Runtime {
             .catalog_checkout(workspace_id, checkout_id)
             .ok_or_else(|| "The file's project or checkout is no longer available".to_owned())?;
         let device_id = workspace.device_id.clone();
-        if device_id == workspace::LOCAL_DEVICE_ID
+        if device_id == self.node.as_str()
             && let Some(roots) = self.file_roots.as_ref()
         {
             let not_opened =

@@ -523,7 +523,7 @@ fn search_progress_has_its_own_small_idempotent_delta_and_shares_history_rows() 
         unavailable_reason: None,
     };
     r.snapshot.project_sessions = Some(crate::model::ProjectSessionsSnapshot {
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         workspace_id: "p".into(),
         unavailable_reason: None,
         loading: false,

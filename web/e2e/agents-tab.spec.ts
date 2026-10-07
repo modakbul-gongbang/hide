@@ -39,7 +39,7 @@ async function openAgents(page: Page, daemon: Daemon) {
   await enterWorkspace(page, "fixture");
   await page.locator("[data-open-settings]").click();
   await page.locator('[data-settings-tab="agents"]').click();
-  return page.locator('[data-agents-machine-list="local"]');
+  return page.locator(`[data-agents-machine-list="${daemon.node}"]`);
 }
 
 test("lists the installed agents with a status and a switch, and folds the others under Not installed with an install link", async ({ page }) => {
@@ -52,18 +52,18 @@ test("lists the installed agents with a status and a switch, and folds the other
     await expect(list).toContainText("Installed 4");
     await expect(list).toContainText("Not installed 3");
     const rows = await list.locator("[data-agent-row]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-agent-row")));
-    expect(rows).toEqual(["local:claude-code:on", "local:codex:on", "local:gemini-cli:off", "local:grok:off", "opencode:not-installed", "pi:not-installed", "cursor:not-installed"]);
+    expect(rows).toEqual([`${daemon.node}:claude-code:on`, `${daemon.node}:codex:on`, `${daemon.node}:gemini-cli:off`, `${daemon.node}:grok:off`, "opencode:not-installed", "pi:not-installed", "cursor:not-installed"]);
     // One machine: no switch at the top, and no 'Skill and session hook' line on any row (B11, B12).
     await expect(page.locator("[data-agents-machines]")).toHaveCount(0);
     await expect(list).not.toContainText("Skill and session hook");
 
     // B16: an agent that is on and has no session is Ready; one that is off has no status.
-    await expect(list.locator('[data-agent-status="local:codex:ready"]')).toHaveText(/Ready/);
-    await expect(list.locator('[data-agent-row="local:gemini-cli:off"] [data-agent-status]')).toHaveCount(0);
+    await expect(list.locator(`[data-agent-status="${daemon.node}:codex:ready"]`)).toHaveText(/Ready/);
+    await expect(list.locator(`[data-agent-row="${daemon.node}:gemini-cli:off"] [data-agent-status]`)).toHaveCount(0);
 
     // B16: the fixture's two Claude Code panes are running sessions, and the row says how many and nothing more.
-    await expect(list.locator('[data-agent-status="local:claude-code:sessions"]')).toHaveText(/2 sessions/);
-    await expect(list.locator('[data-agent-row="local:claude-code:on"]')).not.toContainText("connected");
+    await expect(list.locator(`[data-agent-status="${daemon.node}:claude-code:sessions"]`)).toHaveText(/2 sessions/);
+    await expect(list.locator(`[data-agent-row="${daemon.node}:claude-code:on"]`)).not.toContainText("connected");
 
     // B8: Not installed is closed until opened and each row's Install opens the vendor's guide.
     const fold = list.locator("[data-agents-not-installed]");
@@ -122,21 +122,21 @@ test("a switch installs and takes out Hide's own entries, and a hook the operato
     const list = await openAgents(page, daemon);
     const gemini = path.join(home, ".gemini", "settings.json");
     const claude = path.join(home, ".claude", "settings.json");
-    await expect(list.locator('[data-agent-switch="local:gemini-cli:off"]')).toBeVisible({ timeout: 60_000 });
+    await expect(list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:off"]`)).toBeVisible({ timeout: 60_000 });
     // B13: turning an agent on writes its hook on this machine.
-    await list.locator('[data-agent-switch="local:gemini-cli:off"]').click();
-    await expect(list.locator('[data-agent-switch="local:gemini-cli:on"]')).toBeVisible();
+    await list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:off"]`).click();
+    await expect(list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:on"]`)).toBeVisible();
     await expect.poll(() => read(gemini), { timeout: 60_000 }).toContain("hide-guidance@");
     // B14: turning it off takes out what Hide wrote.
-    await list.locator('[data-agent-switch="local:gemini-cli:on"]').click();
-    await expect(list.locator('[data-agent-switch="local:gemini-cli:off"]')).toBeVisible();
+    await list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:on"]`).click();
+    await expect(list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:off"]`)).toBeVisible();
     await expect.poll(() => read(gemini), { timeout: 60_000 }).not.toContain("hide-guidance@");
 
     // B20: a hook the operator took out is not put back; its row says so with Reinstall, on that row only.
     await expect.poll(() => read(claude), { timeout: 60_000 }).toContain("hide-subagents@");
     fs.writeFileSync(claude, "{}\n");
     await list.locator("[data-agents-check]").click();
-    const problem = list.locator('[data-agent-problem="local:claude-code"]');
+    const problem = list.locator(`[data-agent-problem="${daemon.node}:claude-code"]`);
     await expect(problem).toContainText("Hook: Removed", { timeout: 60_000 });
     await expect(list.locator("[data-agent-problem]")).toHaveCount(1);
     await screenshot(page, "agents-problem");

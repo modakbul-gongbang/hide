@@ -19,7 +19,7 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 The repository-invariant Python tests run in the `policy` lane of `pr.yml`, which every plan includes.
 Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
-The per-OS schema/runtime contracts and two package lanes are nightly configuration; actual executed jobs, failures and skips establish a particular head's coverage.
+The per-OS schema/runtime contracts and the package jobs run in a pull request only when its plan names them; actual executed jobs, failures and skips establish a particular head's coverage.
 PR macOS queue comparisons use actual executed jobs (exclude skipped reusable placeholders), recorded SHA/time windows and sample counts, and report run wall time and runner cost separately.
 A before/after observational sample with different workloads or little concurrent queueing does not establish the concurrent-PR p90 target.
 Hosted desktop automation and private hook fixtures do not establish physical IME, first-launch security prompts or real agent hook behavior.

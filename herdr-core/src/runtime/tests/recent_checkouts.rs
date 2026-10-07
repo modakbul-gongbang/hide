@@ -49,7 +49,7 @@ fn restart(path: &str) -> Runtime {
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
             herdr_bin_path: None,
             app_state_path: path.to_owned(),
@@ -101,7 +101,7 @@ fn a_record_carries_the_names_a_row_is_drawn_from() {
     assert_eq!(
         runtime.snapshot().ui_state.recent_checkouts,
         [RecentCheckout {
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             checkout_id: "c-alpha".to_owned(),
             project_name: "alpha".to_owned(),
             branch: "branch-alpha".to_owned(),
@@ -190,7 +190,7 @@ fn removing_a_project_or_a_worktree_drops_its_records() {
             id: "w-alpha".to_owned(),
             label: "alpha".to_owned(),
             path: "/fixture/alpha".to_owned(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         });

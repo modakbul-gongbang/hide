@@ -9,7 +9,7 @@ import { StatusMark } from "./components/status-mark";
 import { DeviceChip } from "./components/device-chip";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
 import { herdrPaneId } from "./remote";
-import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
+import { localDeviceId, type PaneRow, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { copySelection, pasteClipboard, selectAllText } from "./terminals";
 import { useUiStore } from "./ui";
@@ -116,7 +116,7 @@ function paneLocation(rest: SnapshotRest | null, paneId: string, t: TFunction<"t
   for (const workspace of workspaces) {
     for (const checkout of workspace.checkouts) {
       if (!checkout.tabs.some((tab) => tab.panes.some((candidate) => candidate.id === paneId))) continue;
-      const deviceLabel = rest?.navigator?.devices?.find((device) => device.id === workspace.device_id)?.label ?? (workspace.device_id === "local" ? t("common.thisMac") : workspace.device_id);
+      const deviceLabel = rest?.navigator?.devices?.find((device) => device.id === workspace.device_id)?.label ?? (workspace.device_id === localDeviceId(rest) ? t("common.thisMac") : workspace.device_id);
       return { checkout: checkout.id, deviceId: workspace.device_id, deviceLabel };
     }
   }

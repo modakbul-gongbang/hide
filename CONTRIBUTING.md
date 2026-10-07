@@ -30,7 +30,6 @@ bash scripts/check-agent-asset-committed.sh
 bash scripts/check-capability-readers-off-lock.sh
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 python3 scripts/ci-plan.py plan --event pull_request --base origin/main --head HEAD   # the lanes CI would plan, only when HEAD is a merge commit; otherwise it plans every lane
-node --test scripts/tests/nightly-report.test.cjs
 bash scripts/check-no-workstation-identity.sh
 bash scripts/check-worktree-removal-boundary.sh
 zsh scripts/check-herdr-pin-single-source.sh
@@ -83,8 +82,8 @@ The desktop suite is written against macOS: it presses ⌘ chords, reads macOS's
 A desktop e2e test that checks what the desktop host does differently on another system is tagged `{ tag: "@platform" }` with a comment saying what, and the Linux and Windows nightly run `desktop e2e --grep @platform`: the host's processes and local stream (`hide connect`, a daemon ending and the next one, whether closing the last window ends the app), the CLI's name and places, the path it hands the wire, the file manager's reveal.
 A test is chosen by whether it checks such a difference, never by whether it passes there; a tagged test that fails on Linux or Windows is fixed under the same assertion (its fixture in `web/e2e/platform-fixture.ts` or `desktop/e2e/fixture.ts`, or a product issue), and gets no deadline, retry, skip or `@flaky`.
 A test with no such difference, or one for a macOS-only behavior, stays untagged and runs on macOS only; the chord a tagged test presses comes from `web/e2e/chords.ts`, not from a spelled `Meta`: the attach test is the one that reads the host's accelerators for the system, and the tests that press a ⌘ chord by name stay macOS only.
-Every failed, cancelled or skipped dependency reaches the nightly report on main, which opens one `bug` issue or comments once per run attempt on the existing thread.
-The reporter's API failures fail its job, and its bounded issue/comment search fails on overflow instead of creating another thread.
+Each failed test and each failed job that annotated no test reaches the nightly report on main, which opens one `nightly-failure` issue per failure, comments once per run attempt on the issue already open for it, and closes a lane's issues when a scheduled run passes it ([docs/TESTING.md](docs/TESTING.md#nightly-failures)).
+The reporter's API failures fail its job, and every listing it reads fails on overflow instead of filing a duplicate.
 Package smoke and simulated hooks prove private fixture behavior; physical IME/candidate windows, real agent hook sessions, first-launch OS security prompts and operator PATH remain device QA.
 Run the platform set after the web build with `bash scripts/verify-web.sh web e2e --grep @platform`.
 Press an editor or clipboard chord in a spec with `ControlOrMeta`: Playwright binds its editing commands (copy, start of document) to the host system, so a `Meta` press only works on macOS.
@@ -185,7 +184,8 @@ The writer adds only missing assets to its exact verified draft and never delete
 A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
 A package checksum or headless daemon smoke check does not provide that native evidence.
 The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.
-`package.yml` also runs on a pull request that changes what goes into a package (`desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows) and keeps the packages for a week as the run's artifacts; it is not part of `verify`, because a check that runs on some pull requests only cannot be required.
+`package.yml` also runs as `pr.yml`'s `package` lane on a pull request that changes what goes into a package (`PACKAGE_PATHS` in `scripts/ci-plan.py`: `desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows).
+There it also builds the macOS archive and runs the packaged app's own specs on it, keeps the packages for a week as the run's artifacts, and `verify` requires it like any planned lane.
 
 ## Bundled Herdr runtime
 

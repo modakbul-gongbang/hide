@@ -180,6 +180,38 @@ describe("an agent by its pane's Herdr id", () => {
   });
 });
 
+describe("an agent by its Herdr name", () => {
+  // Names as `hide agent spawn --name` and `herdr agent rename` give them; mini's agent is that device's own.
+  const named = (local: string | undefined, mini: string | undefined) => {
+    const rest = structuredClone(TWO_DEVICES);
+    rest.navigator!.agents = [{ ...REST.navigator!.agents![0]!, herdr_name: local }, REST.navigator!.agents![1]!];
+    rest.status!.remote![0]!.session!.agents![0]!.herdr_name = mini;
+    return searchEntries(rest, t);
+  };
+  const agentIds = (entries: SearchEntry[], query: string) => filterEntries(entries, query).flatMap((entry) => (entry.kind === "agent" ? [entry.id] : []));
+
+  it("finds an agent by its Herdr name on this Mac and on a device, and shows the name under the title", () => {
+    const entries = named("observer-instant-pane-topology", "nightly-watch");
+    expect(agentIds(entries, "observer-instant-pane-topology")).toEqual(["agent:p1"]);
+    expect(agentIds(entries, "nightly-watch")).toEqual(["agent:remote:mini:pane:1"]);
+    expect(entries.find((entry) => entry.id === "agent:p1")).toMatchObject({ title: "Agent one", subtitle: "observer-instant-pane-topology · fixture · Working" });
+    expect(entries.find((entry) => entry.id === "agent:remote:mini:pane:1")).toMatchObject({ title: "배치 감시", subtitle: "nightly-watch · web · Working" });
+  });
+
+  it("draws no name for an agent Herdr has none for, and finds nothing by one", () => {
+    const entries = named(undefined, undefined);
+    expect(agentIds(entries, "observer-instant-pane-topology")).toEqual([]);
+    expect(entries.find((entry) => entry.id === "agent:p1")).toMatchObject({ title: "Agent one", subtitle: "fixture · Working" });
+    expect(entries.find((entry) => entry.id === "agent:remote:mini:pane:1")).toMatchObject({ subtitle: "web · Working" });
+  });
+
+  it("does not repeat a name the title already reads as", () => {
+    const entries = named("agent one", undefined);
+    expect(entries.find((entry) => entry.id === "agent:p1")).toMatchObject({ title: "Agent one", subtitle: "fixture · Working" });
+    expect(agentIds(entries, "agent one")[0]).toBe("agent:p1");
+  });
+});
+
 describe("grouping (issue 154)", () => {
   const agentsHere = { id: "agents:w1", label: "overview.agents" } as const;
   const agentsThere = { id: "agents:w2", label: "overview.issues" } as const;

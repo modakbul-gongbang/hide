@@ -211,7 +211,8 @@ The one exception is a Mac the kit has never run on: it holds Claude Code's and 
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
 - for each of the seven supported agents that is on and installed (Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor), Herdr's own integration, installed with the bundled Herdr (`herdr integration install <agent>`) so Herdr learns the agent's session; one the operator installed before is left as it is, and Hide removes only what it installed;
 - a one-time removal of what an earlier Hide put down for thirteen agents it no longer supports (GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code and Mistral Vibe): only its marked skill and hook entries come out, and a file you wrote stays;
-- the Codex daemon setting is no longer touched: a Mac where an earlier Hide ran `codex features disable daemon_auto_start` keeps it off, and Hide only reads it so every Codex it starts gets `--no-daemon`.
+- the Codex daemon setting is not touched by an install: a Mac where an earlier Hide ran `codex features disable daemon_auto_start` keeps it off, and Hide reads it so every Codex it starts gets `--no-daemon`.
+  Only the operator's confirmed "Turn off Codex's shared server…" in a not connected Codex pane changes it, and that also stops the shared daemon running now, which disconnects every Codex attached to it until it is continued with `codex resume`.
 
 ### Coordination retirement
 
@@ -264,6 +265,12 @@ The first launch of a newer app moves them once:
 
 - the state folder is renamed to `~/.hide/state` as a whole after the daemon running from it is stopped; a `~/.hide/state` that already exists is used, the old folder is left untouched, and the daemon's log records `state.legacy_left` with both paths;
 - `~/.local/state/hide-plugin-upgrade`, `~/.local/share/hide/agent-context-labels`, and then `~/.local/share/hide` if it is empty, are removed; `~/.local/state` and `~/.local/share` stay.
+
+A build that names this machine by its own id rather than `local` converts the state folder once, when its daemon first starts (see [ARCHITECTURE.md](ARCHITECTURE.md#the-cores-node-id)).
+The files it rewrites are copied first to `~/.hide/state/node-migration-backup/<time>/`, the Project Memory under `~/Library/Application Support/hide` among them, except the session search index, which is rebuilt from the session files; `~/.hide/state/node.json` records the machine the folder belongs to.
+An older app started on a converted folder reads this Mac's projects as another device's; to go back, stop the daemon and copy the backup's files over the converted ones.
+A state folder whose `node.json` names another machine is not started, nor is one with a store that cannot be converted: the daemon stops, the app's window names the file, and the log records the reason with both machines.
+A Mac whose machine id changed (a new Mac set up from this one, or a reinstall that changes it) reads its own old folder as another machine's; until a core can read another node's state, start it with a fresh state folder and keep the old one.
 
 
 Settings > Devices shows each of these on This Mac's row, with where it is or why it is not.
@@ -326,7 +333,7 @@ The coordination transition has no rollback; the preserved old folders remain av
 
 ### The window shows a connection failure instead of the app
 
-The desktop host shows a status page while it is connecting, and a failure page with a `Retry` button when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, and `no_response` when it started but never answered.
+The desktop host shows a status page while it is connecting, and a failure page with a `Retry` button when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, `no_response` when it started but never answered, and `state_refused`, with the file's path under the reason, when the daemon stopped on a stored file it could not make this machine's.
 Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/Application Support/hide-desktop`, or `HIDE_DESKTOP_USER_DATA_DIR`) for the detail behind whichever reason the page shows.
 
 ### No Herdr session

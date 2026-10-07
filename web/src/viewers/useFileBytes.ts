@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { requestFileBytes, type FileSource } from "../fileBytes";
-import { explorerContext } from "../snapshot";
+import { explorerContext, localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 
 export type FileBytesState =
@@ -19,7 +19,8 @@ export type FileBytesState =
 export function useFileSource(): FileSource {
   const device = useShellStore((s) => explorerContext(s.rest).device);
   const root = useShellStore((s) => explorerContext(s.rest).checkout?.path ?? null);
-  return device === "local" || !root ? null : { device, root };
+  const node = useShellStore((s) => localDeviceId(s.rest));
+  return device === node || !root ? null : { device, root };
 }
 
 export function useFileBytes(path: string): FileBytesState {

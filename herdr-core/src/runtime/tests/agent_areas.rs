@@ -17,7 +17,8 @@ fn ingest(runtime: &mut Runtime, tabs: &[&str]) {
     runtime.sync_workspace_view();
 }
 fn action(runtime: &mut Runtime, mut payload: serde_json::Value) {
-    payload["workspace"] = serde_json::json!({"device_id":"local","path":"/agent-groups"});
+    payload["workspace"] =
+        serde_json::json!({"device_id":crate::node::TEST_NODE,"path":"/agent-groups"});
     runtime.dispatch_json(&explorer_event("agent_layout", payload));
 }
 fn layout(runtime: &Runtime) -> crate::agent_layout::Layout {
@@ -26,7 +27,7 @@ fn layout(runtime: &Runtime) -> crate::agent_layout::Layout {
         .as_ref()
         .unwrap()
         .views
-        .get("local", "/agent-groups")
+        .get(crate::node::TEST_NODE, "/agent-groups")
         .unwrap()
         .agent_layout
         .clone()
@@ -80,7 +81,7 @@ fn agent_last_member_departure_collapses_its_area_and_stale_workspace_does_nothi
     );
     assert_eq!(layout(&runtime).tree.area_count(), 1);
     let before = layout(&runtime);
-    runtime.dispatch_json(&explorer_event("agent_layout", serde_json::json!({"workspace":{"device_id":"local","path":"/other"},"action":"split","tab_id":"w-order:t1","area_id":"a1","edge":"right","request_id":"stale"})));
+    runtime.dispatch_json(&explorer_event("agent_layout", serde_json::json!({"workspace":{"device_id":crate::node::TEST_NODE,"path":"/other"},"action":"split","tab_id":"w-order:t1","area_id":"a1","edge":"right","request_id":"stale"})));
     assert_eq!(layout(&runtime), before);
 }
 
@@ -377,7 +378,7 @@ fn pending_agent_admissions_are_counted_before_the_next_effect() {
         .unwrap()
         .agent_admissions
         .insert(
-            ("local".into(), "/agent-groups".into()),
+            (crate::node::TEST_NODE.into(), "/agent-groups".into()),
             HashSet::from(["create:1".into()]),
         );
     assert!(!runtime.admit_agent_tab("/agent-groups"));
@@ -487,7 +488,7 @@ fn admitted_tab_keeps_its_slot_when_external_topology_arrives_first() {
         .unwrap()
         .agent_admissions
         .insert(
-            ("local".into(), "/agent-groups".into()),
+            (crate::node::TEST_NODE.into(), "/agent-groups".into()),
             HashSet::from(["create:71".into()]),
         );
     ids.push("w-order:external".into());
@@ -541,7 +542,7 @@ fn uncertain_create_retains_its_own_claim_until_a_definite_result() {
         .unwrap()
         .agent_admissions
         .insert(
-            ("local".into(), "/agent-groups".into()),
+            (crate::node::TEST_NODE.into(), "/agent-groups".into()),
             HashSet::from(["create:71".into(), "create:72".into()]),
         );
     let create = |id| RemoteControlAction::CreateTab {
@@ -568,7 +569,7 @@ fn uncertain_create_retains_its_own_claim_until_a_definite_result() {
     let pending = &runtime.workspace_views.as_ref().unwrap().agent_admissions;
     assert_eq!(
         pending
-            .get(&("local".into(), "/agent-groups".into()))
+            .get(&(crate::node::TEST_NODE.into(), "/agent-groups".into()))
             .unwrap(),
         &HashSet::from(["create:71".into()])
     );

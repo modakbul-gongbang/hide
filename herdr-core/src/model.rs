@@ -15,10 +15,10 @@ pub struct CoreOptions {
     /// (a test daemon) names it so nothing reaches the operator's.
     #[serde(default)]
     pub home: Option<String>,
-    /// The stable operating-system machine identity, read by the host before
-    /// the core is placed behind its runtime mutex.
-    #[serde(default)]
-    pub machine_id: Option<String>,
+    /// The machine this core runs on (`node::NodeId`), read by the host
+    /// before the core is placed behind its runtime mutex. Every key naming
+    /// this machine, in the snapshot and in stored state, is this id.
+    pub node_id: crate::node::NodeId,
     pub herdr_socket_path: Option<String>,
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
@@ -666,6 +666,15 @@ pub struct KitSnapshot {
     /// with no answer or an older Codex). With it on, a Codex pane that
     /// reports nothing is read as running on the shared server (B27).
     pub codex_daemon_on: Option<bool>,
+    /// Whether a shared daemon answers now (`None` with no readable answer).
+    /// With the setting already off, a daemon that still answers keeps a
+    /// Codex pane on the shared server (PRD codex-daemon-apply D-07, B9). The
+    /// core reads it into the pane's reason; the shell never does.
+    #[serde(skip)]
+    pub codex_daemon_running: Option<bool>,
+    /// The daemon answer the kit could not read, for the log only.
+    #[serde(skip)]
+    pub codex_daemon_unreadable: Option<String>,
     /// How the last turn-off of the shared server ended, until the next one
     /// starts; the pane popover reads it (B30).
     pub codex_daemon_off: Option<CodexDaemonOffSnapshot>,
@@ -846,11 +855,13 @@ impl KitSnapshot {
             shares_account_with: None,
             codex_daemon: report.codex_daemon,
             codex_daemon_on: report.codex_daemon_on,
+            codex_daemon_running: report.codex_daemon_running,
+            codex_daemon_unreadable: report.codex_daemon_unreadable.clone(),
             codex_daemon_off: report
                 .codex_daemon_off
                 .as_ref()
                 .map(|outcome| match outcome {
-                    hide_kit::CodexDaemonOff::Done => CodexDaemonOffSnapshot::Done,
+                    hide_kit::CodexDaemonOff::Done { .. } => CodexDaemonOffSnapshot::Done,
                     hide_kit::CodexDaemonOff::Failed { reason, .. } => {
                         CodexDaemonOffSnapshot::Failed { reason: *reason }
                     }
@@ -865,6 +876,25 @@ impl KitSnapshot {
             unavailable: Some(reason.into()),
             ..Self::default()
         }
+    }
+
+    /// Whether a Codex started by hand on this machine joins the shared
+    /// server: the setting starts it, or a daemon still answers after the
+    /// setting went off (PRD settings-cleanup B27; codex-daemon-apply D-07,
+    /// B9). After a stop that did not take effect, only a read that says no
+    /// daemon answers ends it, so an answer Hide could not read keeps the
+    /// retry on offer (B7). The pane popover's turn-off is offered exactly
+    /// while this holds.
+    pub fn shares_codex_server(&self) -> bool {
+        let stop_failed = matches!(
+            self.codex_daemon_off,
+            Some(CodexDaemonOffSnapshot::Failed {
+                reason: CodexDaemonOffFailure::StopFailed
+            })
+        );
+        self.codex_daemon_on == Some(true)
+            || self.codex_daemon_running == Some(true)
+            || stop_failed && self.codex_daemon_running.is_none()
     }
 }
 
@@ -925,6 +955,13 @@ pub struct DeviceTestStageSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub id: String,
+    /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
+    /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
+    /// none or only one Hide made up from its pane (`fork::hide_made_name`).
+    /// `id` falls back to the pane id and a device's row replaces it, so it
+    /// cannot stand in for this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub herdr_name: Option<String>,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -3166,7 +3203,8 @@ pub struct WorkspaceRegistration {
     pub id: String,
     pub label: String,
     pub path: String,
-    #[serde(default = "default_local_device_id")]
+    /// The node id for this machine. Stores written before node ids are
+    /// converted once at launch (`node_migration`), so none is missing.
     pub device_id: String,
     /// Absent in a store written before projects could be pinned, which
     /// loads as unpinned without a warning (D-07). Removing the registration
@@ -3225,10 +3263,6 @@ pub struct HostIdentity {
     pub hostname: String,
     pub port: u16,
     pub host_key_sha256: String,
-}
-
-pub(crate) fn default_local_device_id() -> String {
-    "local".to_owned()
 }
 
 pub(crate) fn default_accent_hex() -> String {
@@ -4320,7 +4354,7 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![crate::workspace::local_device()],
+                devices: vec![crate::workspace::local_device(&options.node_id)],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
@@ -5171,13 +5205,15 @@ mod wire_enum_tests {
             CodexDaemonOffFailure::CodexRefused,
             CodexDaemonOffFailure::TimedOut,
             CodexDaemonOffFailure::Unreachable,
+            CodexDaemonOffFailure::StopFailed,
         ];
         for variant in daemon_failures {
             match variant {
                 CodexDaemonOffFailure::CodexMissing
                 | CodexDaemonOffFailure::CodexRefused
                 | CodexDaemonOffFailure::TimedOut
-                | CodexDaemonOffFailure::Unreachable => {}
+                | CodexDaemonOffFailure::Unreachable
+                | CodexDaemonOffFailure::StopFailed => {}
             }
         }
         assert_wire(&contract, "codex_daemon_off_failure", &daemon_failures);

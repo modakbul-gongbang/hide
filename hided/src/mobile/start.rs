@@ -15,8 +15,6 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::projection::LOCAL_DEVICE;
-
 /// The agent kinds a phone may start; `terminal` is a desktop-only start.
 pub const KINDS: [&str; 2] = ["claude", "codex"];
 /// How long a start may wait for the core's creation receipt: longer than a
@@ -80,8 +78,9 @@ fn array_of(value: Option<&Value>) -> &[Value] {
 }
 
 impl Catalog {
-    /// The catalog of a merged `rest` section.
-    pub fn of(rest: &Value) -> Self {
+    /// The catalog of a merged `rest` section; `node` is the core's own
+    /// machine.
+    pub fn of(rest: &Value, node: &str) -> Self {
         let mut catalog = Self {
             remembered: rest
                 .pointer("/ui_state/agent_start")
@@ -96,10 +95,10 @@ impl Catalog {
             .iter()
             .filter(|workspace| workspace.get("remote_target_id").is_none_or(Value::is_null))
             .collect();
-        catalog.add_device(LOCAL_DEVICE, None, true, &local_workspaces);
+        catalog.add_device(node, None, true, true, &local_workspaces);
         for device in devices {
             let id = str_of(device, "id");
-            if id == LOCAL_DEVICE || id.is_empty() || str_of(device, "kind") != "remote" {
+            if id == node || id.is_empty() || str_of(device, "kind") != "remote" {
                 continue;
             }
             if str_of(device, "state") == "disabled" {
@@ -119,7 +118,7 @@ impl Catalog {
             let label = Some(str_of(device, "label"))
                 .filter(|label| !label.is_empty())
                 .unwrap_or(id);
-            catalog.add_device(id, Some(label), connected, &workspaces);
+            catalog.add_device(id, Some(label), false, connected, &workspaces);
         }
         for kind in KINDS {
             let provider = array_of(rest.pointer("/status/background_ai/providers"))
@@ -141,10 +140,10 @@ impl Catalog {
         &mut self,
         device_id: &str,
         device_label: Option<&str>,
+        local: bool,
         connected: bool,
         workspaces: &[&Value],
     ) {
-        let local = device_id == LOCAL_DEVICE;
         let route_device = (!local).then(|| device_id.to_owned());
         let push = |catalog: &mut Self, id: String, place: Option<String>, path: Option<String>| {
             if catalog.targets.len() >= MAX_TARGETS {
@@ -228,7 +227,7 @@ pub enum Answer {
 
 /// The answers a snapshot carries: the task slot's finished agent start and
 /// the last error, each with the request id it answers.
-pub fn answers_of(rest: &Value) -> Vec<(String, Answer)> {
+pub fn answers_of(rest: &Value, node: &str) -> Vec<(String, Answer)> {
     let mut answers = Vec::new();
     if let Some(operation) = rest.get("task_operation").filter(|op| op.is_object())
         && str_of(operation, "kind") == "agent_start"
@@ -244,7 +243,7 @@ pub fn answers_of(rest: &Value) -> Vec<(String, Answer)> {
             ("ready", _) => Some(Answer::Started {
                 device_id: Some(str_of(operation, "device_id"))
                     .filter(|device| !device.is_empty())
-                    .unwrap_or(LOCAL_DEVICE)
+                    .unwrap_or(node)
                     .to_owned(),
                 pane_id: str_of(operation, "pane_id").to_owned(),
             }),
@@ -587,7 +586,7 @@ mod tests {
 
     #[test]
     fn targets_are_this_mac_first_then_devices_with_home_leading_each() {
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let ids: Vec<_> = catalog.targets.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["home:local", "c1", "c2", "c4", "home:mini", "rc1"]);
         let places: Vec<_> = catalog.targets.iter().map(|t| t.place.as_deref()).collect();
@@ -611,7 +610,7 @@ mod tests {
     fn a_disconnected_device_is_listed_unconnected() {
         let mut value = rest();
         value["status"]["remote"][0]["state"] = json!("unreachable");
-        let catalog = Catalog::of(&value);
+        let catalog = Catalog::of(&value, "local");
         let mini = catalog
             .targets
             .iter()
@@ -622,7 +621,7 @@ mod tests {
 
     #[test]
     fn the_frame_never_carries_a_path() {
-        let text = Catalog::of(&rest()).frame().to_string();
+        let text = Catalog::of(&rest(), "local").frame().to_string();
         assert!(!text.contains("/Users"), "{text}");
         assert!(!text.contains("/srv"), "{text}");
         assert!(!text.contains("path"), "{text}");
@@ -630,7 +629,7 @@ mod tests {
 
     #[test]
     fn kinds_carry_the_catalog_and_the_remembered_choice() {
-        let frame = Catalog::of(&rest()).frame();
+        let frame = Catalog::of(&rest(), "local").frame();
         assert_eq!(
             frame["kinds"][0],
             json!({"id": "claude", "models": ["opus", "sonnet"]})
@@ -638,7 +637,7 @@ mod tests {
         assert_eq!(frame["kinds"][1], json!({"id": "codex", "models": []}));
         assert!(!frame.to_string().contains("/Users/example"), "{frame}");
         assert_eq!(frame["remembered"]["kind"], "codex");
-        let empty = Catalog::of(&json!({})).frame();
+        let empty = Catalog::of(&json!({}), "local").frame();
         assert_eq!(empty["remembered"], json!({"kind": null, "models": {}}));
         assert_eq!(empty["kinds"][0]["models"], json!([]));
         assert_eq!(
@@ -660,7 +659,7 @@ mod tests {
 
     #[test]
     fn a_checkout_target_resolves_to_its_path_and_device() {
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let local = event(&request("c2", Some("opus")), &catalog).unwrap();
         assert_eq!(local["kind"], "agent_start_in_checkout");
         assert_eq!(
@@ -678,7 +677,7 @@ mod tests {
 
     #[test]
     fn home_targets_carry_home_and_no_folder() {
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let local = event(&request("home:local", None), &catalog).unwrap();
         assert_eq!(local["payload"]["home"], true);
         assert!(local["payload"].get("device_id").is_none());
@@ -689,7 +688,7 @@ mod tests {
 
     #[test]
     fn a_request_the_core_should_never_see_is_refused_here() {
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let refuse = |request: Request<'_>| event(&request, &catalog).unwrap_err();
         assert_eq!(refuse(request("/etc", None)), "unknown_target");
         assert_eq!(refuse(request("home:gone", None)), "unknown_target");
@@ -737,9 +736,12 @@ mod tests {
 
     #[test]
     fn answers_come_from_the_task_slot_and_the_last_error() {
-        let started = answers_of(&json!({"task_operation": {
-            "kind": "agent_start", "phase": "ready", "request_id": "r1", "pane_id": "remote:mini:pane:1", "device_id": "mini",
-        }}));
+        let started = answers_of(
+            &json!({"task_operation": {
+                "kind": "agent_start", "phase": "ready", "request_id": "r1", "pane_id": "remote:mini:pane:1", "device_id": "mini",
+            }}),
+            "local",
+        );
         assert_eq!(
             started,
             [(
@@ -750,9 +752,12 @@ mod tests {
                 }
             )]
         );
-        let local = answers_of(&json!({"task_operation": {
-            "kind": "agent_start", "phase": "ready", "request_id": "r2", "pane_id": "w1:p1", "device_id": null,
-        }}));
+        let local = answers_of(
+            &json!({"task_operation": {
+                "kind": "agent_start", "phase": "ready", "request_id": "r2", "pane_id": "w1:p1", "device_id": null,
+            }}),
+            "local",
+        );
         assert_eq!(
             local[0].1,
             Answer::Started {
@@ -762,14 +767,17 @@ mod tests {
         );
         let working = answers_of(
             &json!({"task_operation": {"kind": "agent_start", "phase": "working", "request_id": "r3"}}),
+            "local",
         );
         assert!(working.is_empty());
         let other = answers_of(
             &json!({"task_operation": {"kind": "worktree_create", "phase": "ready", "request_id": "r4"}}),
+            "local",
         );
         assert!(other.is_empty());
         let refused = answers_of(
             &json!({"status": {"last_error": {"kind": "task_operation.busy", "request_id": "r5"}}}),
+            "local",
         );
         assert_eq!(
             refused,
@@ -780,8 +788,10 @@ mod tests {
                 }
             )]
         );
-        let unlabeled =
-            answers_of(&json!({"status": {"last_error": {"kind": "x", "request_id": null}}}));
+        let unlabeled = answers_of(
+            &json!({"status": {"last_error": {"kind": "x", "request_id": null}}}),
+            "local",
+        );
         assert!(unlabeled.is_empty());
     }
 
@@ -829,7 +839,7 @@ mod tests {
     #[tokio::test]
     async fn a_repeated_request_id_starts_once_and_returns_the_first_answer() {
         let desk = Desk::default();
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let (sender, receiver) = channel();
         let (count, dispatch) = counter();
         sender.send_replace(Arc::new(vec![(
@@ -879,7 +889,7 @@ mod tests {
     #[tokio::test]
     async fn a_repeat_while_the_first_waits_joins_its_answer() {
         let desk = Arc::new(Desk::default());
-        let catalog = Arc::new(Catalog::of(&rest()));
+        let catalog = Arc::new(Catalog::of(&rest(), "local"));
         let (sender, receiver) = channel();
         let (count, dispatch) = counter();
         let waiting = {
@@ -937,7 +947,7 @@ mod tests {
     #[tokio::test]
     async fn a_silent_core_times_out_and_a_repeat_waits_for_the_late_answer() {
         let desk = Desk::default();
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let (sender, receiver) = channel();
         let (count, dispatch) = counter();
         let first = desk
@@ -996,7 +1006,7 @@ mod tests {
     #[tokio::test]
     async fn a_dispatch_that_failed_frees_the_id_for_a_retry() {
         let desk = Desk::default();
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let (_sender, receiver) = channel();
         let failed = desk
             .start(
@@ -1026,7 +1036,7 @@ mod tests {
     #[tokio::test]
     async fn an_invalid_request_dispatches_nothing() {
         let desk = Desk::default();
-        let catalog = Catalog::of(&rest());
+        let catalog = Catalog::of(&rest(), "local");
         let (_sender, receiver) = channel();
         let (count, dispatch) = counter();
         let answer = desk

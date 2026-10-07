@@ -13,7 +13,7 @@ import type { BoardProject } from "./projectBoard";
 import { folderCheckout } from "./projects";
 import { projectsOf } from "./remote";
 import { entryBox } from "./agentGraph";
-import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
+import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type OverviewLens } from "./ui";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
@@ -125,7 +125,7 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
 export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[]): ListedAgent[] {
   const local = devices?.find((row) => row.kind !== "remote");
   const listed: ListedAgent[] = localAgents.map((agent) => ({
-    agent: { ...agent, device_id: local?.id ?? "local", device_label: local?.label ?? translate("common.thisMac") },
+    agent: { ...agent, device_id: local?.id ?? "", device_label: local?.label ?? translate("common.thisMac") },
     device: null,
   }));
   for (const status of remote ?? []) {
@@ -323,7 +323,7 @@ export function allProjectsCount(rest: SnapshotRest | null, deviceId?: string): 
  * has no catalog rows to draw, and its section says why on the Projects view.
  */
 export function boardProjects(rest: SnapshotRest | null, localAgents: AgentRow[], deviceId?: string): BoardProject[] {
-  const localId = rest?.navigator?.devices?.find((row) => row.kind !== "remote")?.id ?? "local";
+  const localId = localDeviceId(rest);
   const projects: BoardProject[] =
     deviceId === undefined || deviceId === localId
       ? projectsOf(rest?.navigator?.workspaces ?? []).map((workspace) => ({ workspace, agents: localAgents, device: null }))
@@ -430,13 +430,13 @@ export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): bo
   if (target.expanded !== undefined && (rest?.ui_state?.expanded_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
   if (front.id === target.checkoutId) return true;
   // A device project with no Herdr workspace yet gets one at its folder, under a new id.
-  return target.path !== null && front.path === target.path && (rest?.navigator?.focused_device_id ?? "local") === target.deviceId;
+  return target.path !== null && front.path === target.path && (rest?.navigator?.focused_device_id ?? localDeviceId(rest)) === target.deviceId;
 }
 
 /** A vanished local target is cancelled silently; other refusals keep their existing message. */
 export function openingProgress(rest: SnapshotRest | null, opening: Opening): "landed" | string | null {
   const target = opening.target;
-  if (rest?.navigator?.workspaces && "checkoutId" in target && target.deviceId === "local" && target.workspaceId !== undefined
+  if (rest?.navigator?.workspaces && "checkoutId" in target && target.deviceId === localDeviceId(rest) && target.workspaceId !== undefined
     && !rest.navigator.workspaces.some((workspace) => workspace.id === target.workspaceId && workspace.checkouts.some((checkout) => checkout.id === target.checkoutId))) return "cancelled";
   if (openingLanded(rest, target)) return "landed";
   const error = rest?.status?.last_error;

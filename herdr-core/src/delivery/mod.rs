@@ -6,6 +6,8 @@ pub mod mailbox;
 pub mod watch;
 pub mod worker;
 
+pub mod answer;
+
 pub use mailbox::Command;
 
 pub const DELIVERY_EXPIRY_MS: u64 = 60 * 60 * 1_000;
@@ -22,7 +24,9 @@ pub const FILE_LIMIT: usize = 16 * 1_024 * 1_024;
 pub const HOOK_LIMIT: usize = 8 * 1_024;
 pub const HOOK_LETTERS: usize = 5;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct Actor {
     pub pane_id: String,
     pub name: String,
@@ -41,14 +45,14 @@ pub const FACTORY_PREFIX: &str = "factory:";
 pub const FACTORY_INACTIVITY_MS: u64 = 30 * 60_000;
 
 impl Actor {
-    /// The code-owned recipient `factory:<id>` on this machine.
-    pub fn factory(id: &str) -> Self {
+    /// The code-owned recipient `factory:<id>` on `node`, the core's own.
+    pub fn factory(id: &str, node: &str) -> Self {
         let name = format!("{FACTORY_PREFIX}{id}");
         Self {
             pane_id: name.clone(),
             name: name.clone(),
             kind: FACTORY_KIND.into(),
-            device_id: "local".into(),
+            device_id: node.into(),
             session: crate::wire::session_digest(&name),
         }
     }

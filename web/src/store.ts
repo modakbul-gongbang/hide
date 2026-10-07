@@ -1,6 +1,7 @@
 import type { StoredBuffer } from "./buffers";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
+import { frontDeviceId, localDeviceId } from "./devices";
 import { appliedAfter } from "./operatorFocus";
 import { remoteContext, remoteView } from "./remote";
 import { share } from "./share";
@@ -66,7 +67,7 @@ export type ProjectTarget = {
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
 export type FileIndexResult = {
-  /** The device the root is on; `local` for this Hide host. */
+  /** The device the root is on; the core's own node id for this Hide host. */
   device_id: string;
   root_path: string;
   query: string;
@@ -425,7 +426,7 @@ export const useShellStore = create<Store>((set, get) => ({
       if (listing.kind === "file_list") {
         // A listing belongs to the device that answered it; one for a device
         // no longer selected would show its rows under this device's paths.
-        if ((payload.device_id ?? "local") !== (get().rest?.navigator?.focused_device_id ?? "local")) return [];
+        if ((payload.device_id || localDeviceId(get().rest)) !== frontDeviceId(get().rest)) return [];
         const unavailable = get().directoryUnavailable;
         set({
           listings: withListing(get().listings, listing),
@@ -483,8 +484,8 @@ export const useShellStore = create<Store>((set, get) => ({
       // Listings are the shown device's, so another device's frame names a
       // path that is not the one listed here (S5.5 B2).
       const path = payload.path;
-      const shownDevice = get().rest?.navigator?.focused_device_id ?? "local";
-      if (path && (payload.device_id ?? "local") === shownDevice) {
+      const shownDevice = frontDeviceId(get().rest);
+      if (path && (payload.device_id || localDeviceId(get().rest)) === shownDevice) {
         get().refreshListings([path]);
         // A bounded map ordered by recency: the count is re-inserted so a
         // folder that keeps changing is the last one evicted.
@@ -510,7 +511,7 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "file_index_result") {
       set({
         fileIndex: {
-          device_id: payload.device_id ?? "local",
+          device_id: payload.device_id || localDeviceId(get().rest),
           unavailable: payload.unavailable ?? null,
           root_path: payload.root_path ?? "",
           query: payload.query ?? "",
@@ -556,7 +557,7 @@ export const useShellStore = create<Store>((set, get) => ({
         diagnostics.push(`${lastError.kind}: ${lastError.message}`);
       }
       // Listings are one device's folders; switching devices starts empty.
-      const deviceChanged = (rest.navigator?.focused_device_id ?? "local") !== (previous?.navigator?.focused_device_id ?? "local");
+      const deviceChanged = frontDeviceId(rest) !== frontDeviceId(previous ?? null);
       set({
         rest,
         agents,

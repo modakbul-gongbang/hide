@@ -556,7 +556,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
@@ -667,6 +667,57 @@ fn agent_projection_keeps_the_herdr_name_as_its_control_identifier() {
     let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
 
     assert_eq!(replica.project().agents[0].id.as_deref(), Some("observer"));
+}
+
+/// ⌘K finds an agent by its Herdr name, so the snapshot's agent row carries
+/// it, on this machine and on a device, whose row replaces `id`; an agent
+/// given no name carries none rather than its pane id.
+#[test]
+fn the_snapshot_agent_row_carries_the_herdr_name_when_herdr_has_one() {
+    fn wire_rows(name: Option<&str>) -> (Value, Value) {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let mut agent = json!({
+            "pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1",
+            "terminal_id": "fixture-terminal", "focused": false, "revision": 1,
+            "agent": "claude", "agent_status": "working", "state_change_seq": 1, "tokens": {}
+        });
+        if let Some(name) = name {
+            agent["name"] = json!(name);
+        }
+        let agents = wire::agents_response(json!({"type": "agent_list", "agents": [agent]}))
+            .expect("an agent list");
+        replica.replace_agents(agents);
+        replica.refresh_published_state().expect("published");
+        let local = crate::sidebar::project_agents(replica.project()).agents;
+        let (remote, _) = replica
+            .project_remote("mini", replica.project())
+            .expect("remote projection");
+        (
+            serde_json::to_value(&local[0]).expect("local row"),
+            serde_json::to_value(&remote.agents[0]).expect("remote row"),
+        )
+    }
+
+    let (local, remote) = wire_rows(Some("observer-instant-pane-topology"));
+    assert_eq!(local["herdr_name"], json!("observer-instant-pane-topology"));
+    assert_eq!(
+        remote["herdr_name"],
+        json!("observer-instant-pane-topology")
+    );
+    assert_eq!(remote["pane_id"], json!("remote:mini:pane:w1:p1"));
+
+    // No name, and the names Hide makes up from a pane id (a task's, a
+    // wake's, a fork's), which would only spell the pane id.
+    for name in [
+        None,
+        Some(crate::fork::task_agent_name("claude", "w1:p1")),
+        Some(crate::fork::wake_name("w1:p1")),
+        Some(crate::fork::fork_name("w1:p9", "3-1788624371518")),
+    ] {
+        let (local, remote) = wire_rows(name.as_deref());
+        assert!(local.get("herdr_name").is_none(), "{name:?}: {local}");
+        assert!(remote.get("herdr_name").is_none(), "{name:?}: {remote}");
+    }
 }
 
 /// B3, D-03. A remote device's project list follows the same activity
@@ -918,7 +969,7 @@ fn official_remote_session_coordinator_probe() {
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),

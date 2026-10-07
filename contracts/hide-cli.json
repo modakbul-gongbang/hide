@@ -1,0 +1,1674 @@
+{
+    "answers": {
+        "agent": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {
+                "Actor": {
+                    "properties": {
+                        "device_id": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane_id": {
+                            "type": "string"
+                        },
+                        "session": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "pane_id",
+                        "name",
+                        "kind",
+                        "device_id",
+                        "session"
+                    ],
+                    "type": "object"
+                },
+                "Connection": {
+                    "enum": [
+                        "connected",
+                        "disconnected"
+                    ],
+                    "type": "string"
+                },
+                "Runtime": {
+                    "enum": [
+                        "running",
+                        "ended"
+                    ],
+                    "type": "string"
+                },
+                "Watch": {
+                    "properties": {
+                        "activity_failures": {
+                            "format": "uint32",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "first_warning_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "generation": {
+                            "default": 0,
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "id": {
+                            "type": "string"
+                        },
+                        "last_activity_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "last_state_change_seq": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "last_status": {
+                            "type": "string"
+                        },
+                        "parent": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "status_changed_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "target": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "warning_count": {
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "parent",
+                        "target",
+                        "last_activity_at_unix_ms",
+                        "first_warning_at_unix_ms",
+                        "warning_count",
+                        "activity_failures",
+                        "last_status",
+                        "last_state_change_seq",
+                        "status_changed_at_unix_ms",
+                        "generation"
+                    ],
+                    "type": "object"
+                }
+            },
+            "description": "One registered agent, as `hide agent show`, `register`, `end` and `spawn` answer it.",
+            "properties": {
+                "connection": {
+                    "$ref": "#/definitions/Connection"
+                },
+                "hostScope": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instance": {
+                    "type": "string"
+                },
+                "machine": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pane": {
+                    "type": "string"
+                },
+                "parent": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "project": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "registered": {
+                    "type": "boolean"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/Runtime"
+                },
+                "session": {
+                    "type": "string"
+                },
+                "watch": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/Watch"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "description": "The watch on this agent, if one is running."
+                }
+            },
+            "required": [
+                "id",
+                "name",
+                "machine",
+                "hostScope",
+                "session",
+                "instance",
+                "pane",
+                "parent",
+                "project",
+                "runtime",
+                "connection",
+                "registered",
+                "watch"
+            ],
+            "title": "AgentView",
+            "type": "object"
+        },
+        "agent_list": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {
+                "Actor": {
+                    "properties": {
+                        "device_id": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane_id": {
+                            "type": "string"
+                        },
+                        "session": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "pane_id",
+                        "name",
+                        "kind",
+                        "device_id",
+                        "session"
+                    ],
+                    "type": "object"
+                },
+                "AgentView": {
+                    "description": "One registered agent, as `hide agent show`, `register`, `end` and `spawn` answer it.",
+                    "properties": {
+                        "connection": {
+                            "$ref": "#/definitions/Connection"
+                        },
+                        "hostScope": {
+                            "type": "string"
+                        },
+                        "id": {
+                            "type": "string"
+                        },
+                        "instance": {
+                            "type": "string"
+                        },
+                        "machine": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane": {
+                            "type": "string"
+                        },
+                        "parent": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "project": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "registered": {
+                            "type": "boolean"
+                        },
+                        "runtime": {
+                            "$ref": "#/definitions/Runtime"
+                        },
+                        "session": {
+                            "type": "string"
+                        },
+                        "watch": {
+                            "anyOf": [
+                                {
+                                    "$ref": "#/definitions/Watch"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "The watch on this agent, if one is running."
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "name",
+                        "machine",
+                        "hostScope",
+                        "session",
+                        "instance",
+                        "pane",
+                        "parent",
+                        "project",
+                        "runtime",
+                        "connection",
+                        "registered",
+                        "watch"
+                    ],
+                    "type": "object"
+                },
+                "Connection": {
+                    "enum": [
+                        "connected",
+                        "disconnected"
+                    ],
+                    "type": "string"
+                },
+                "Runtime": {
+                    "enum": [
+                        "running",
+                        "ended"
+                    ],
+                    "type": "string"
+                },
+                "Watch": {
+                    "properties": {
+                        "activity_failures": {
+                            "format": "uint32",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "first_warning_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "generation": {
+                            "default": 0,
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "id": {
+                            "type": "string"
+                        },
+                        "last_activity_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "last_state_change_seq": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "last_status": {
+                            "type": "string"
+                        },
+                        "parent": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "status_changed_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "target": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "warning_count": {
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "parent",
+                        "target",
+                        "last_activity_at_unix_ms",
+                        "first_warning_at_unix_ms",
+                        "warning_count",
+                        "activity_failures",
+                        "last_status",
+                        "last_state_change_seq",
+                        "status_changed_at_unix_ms",
+                        "generation"
+                    ],
+                    "type": "object"
+                }
+            },
+            "description": "`hide agent list`.",
+            "properties": {
+                "items": {
+                    "items": {
+                        "$ref": "#/definitions/AgentView"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "items"
+            ],
+            "title": "AgentList",
+            "type": "object"
+        },
+        "agent_register_check": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "description": "`hide agent register --check` for a caller not yet registered.",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "pane": {
+                    "type": "string"
+                },
+                "registered": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "registered",
+                "name",
+                "pane"
+            ],
+            "title": "RegisterCheck",
+            "type": "object"
+        },
+        "confirmed": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "description": "`hide inbox --confirm`.",
+            "properties": {
+                "confirmed": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                }
+            },
+            "required": [
+                "confirmed"
+            ],
+            "title": "Confirmed",
+            "type": "object"
+        },
+        "inbox": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {
+                "Actor": {
+                    "properties": {
+                        "device_id": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane_id": {
+                            "type": "string"
+                        },
+                        "session": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "pane_id",
+                        "name",
+                        "kind",
+                        "device_id",
+                        "session"
+                    ],
+                    "type": "object"
+                },
+                "InboxEntry": {
+                    "description": "One letter of `hide inbox`.",
+                    "properties": {
+                        "ack_command": {
+                            "description": "The command that acknowledges the letter, for an agent with no prompt hook to confirm it.",
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "bell_attempts": {
+                            "default": null,
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "bell_errors": {
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "bell_sent": {
+                            "type": "boolean"
+                        },
+                        "body": {
+                            "type": "string"
+                        },
+                        "created_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "finished_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "hook_confirmed": {
+                            "default": null,
+                            "type": [
+                                "boolean",
+                                "null"
+                            ]
+                        },
+                        "human_notified": {
+                            "default": false,
+                            "type": "boolean"
+                        },
+                        "id": {
+                            "type": "string"
+                        },
+                        "intent": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "recipient": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "reply_to": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "sender": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "state": {
+                            "$ref": "#/definitions/State"
+                        },
+                        "waiting_answer": {
+                            "type": "boolean"
+                        },
+                        "watch_warning": {
+                            "anyOf": [
+                                {
+                                    "$ref": "#/definitions/WarningReceipt"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "default": null
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "intent",
+                        "sender",
+                        "recipient",
+                        "kind",
+                        "body",
+                        "state",
+                        "hook_confirmed",
+                        "waiting_answer",
+                        "reply_to",
+                        "created_at_unix_ms",
+                        "finished_at_unix_ms",
+                        "bell_errors",
+                        "bell_sent",
+                        "bell_attempts",
+                        "human_notified",
+                        "watch_warning"
+                    ],
+                    "type": "object"
+                },
+                "State": {
+                    "enum": [
+                        "pending",
+                        "delivered",
+                        "acknowledged",
+                        "cancelled",
+                        "expired",
+                        "undelivered"
+                    ],
+                    "type": "string"
+                },
+                "WarningReceipt": {
+                    "description": "The inactivity episode and external notification reservation survive the watch itself, so stopping/restarting or sibling watches cannot resend.",
+                    "properties": {
+                        "activity_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "ordinal": {
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "parent_notified": {
+                            "default": false,
+                            "type": "boolean"
+                        },
+                        "target": {
+                            "$ref": "#/definitions/Actor"
+                        }
+                    },
+                    "required": [
+                        "target",
+                        "activity_at_unix_ms",
+                        "ordinal",
+                        "parent_notified"
+                    ],
+                    "type": "object"
+                }
+            },
+            "items": {
+                "$ref": "#/definitions/InboxEntry"
+            },
+            "title": "Array_of_InboxEntry",
+            "type": "array"
+        },
+        "intake": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "properties": {
+                "context": {
+                    "type": "string"
+                },
+                "ids": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "remaining": {
+                    "format": "uint",
+                    "minimum": 0.0,
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "context",
+                "ids",
+                "remaining"
+            ],
+            "title": "Intake",
+            "type": "object"
+        },
+        "letter": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {
+                "Actor": {
+                    "properties": {
+                        "device_id": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane_id": {
+                            "type": "string"
+                        },
+                        "session": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "pane_id",
+                        "name",
+                        "kind",
+                        "device_id",
+                        "session"
+                    ],
+                    "type": "object"
+                },
+                "State": {
+                    "enum": [
+                        "pending",
+                        "delivered",
+                        "acknowledged",
+                        "cancelled",
+                        "expired",
+                        "undelivered"
+                    ],
+                    "type": "string"
+                },
+                "WarningReceipt": {
+                    "description": "The inactivity episode and external notification reservation survive the watch itself, so stopping/restarting or sibling watches cannot resend.",
+                    "properties": {
+                        "activity_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "ordinal": {
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "parent_notified": {
+                            "default": false,
+                            "type": "boolean"
+                        },
+                        "target": {
+                            "$ref": "#/definitions/Actor"
+                        }
+                    },
+                    "required": [
+                        "target",
+                        "activity_at_unix_ms",
+                        "ordinal",
+                        "parent_notified"
+                    ],
+                    "type": "object"
+                }
+            },
+            "properties": {
+                "bell_attempts": {
+                    "default": null,
+                    "format": "uint8",
+                    "minimum": 0.0,
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "bell_errors": {
+                    "format": "uint8",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
+                "bell_sent": {
+                    "type": "boolean"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "created_at_unix_ms": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
+                "finished_at_unix_ms": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "hook_confirmed": {
+                    "default": null,
+                    "type": [
+                        "boolean",
+                        "null"
+                    ]
+                },
+                "human_notified": {
+                    "default": false,
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "intent": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "recipient": {
+                    "$ref": "#/definitions/Actor"
+                },
+                "reply_to": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "sender": {
+                    "$ref": "#/definitions/Actor"
+                },
+                "state": {
+                    "$ref": "#/definitions/State"
+                },
+                "waiting_answer": {
+                    "type": "boolean"
+                },
+                "watch_warning": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/WarningReceipt"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null
+                }
+            },
+            "required": [
+                "id",
+                "intent",
+                "sender",
+                "recipient",
+                "kind",
+                "body",
+                "state",
+                "hook_confirmed",
+                "waiting_answer",
+                "reply_to",
+                "created_at_unix_ms",
+                "finished_at_unix_ms",
+                "bell_errors",
+                "bell_sent",
+                "bell_attempts",
+                "human_notified",
+                "watch_warning"
+            ],
+            "title": "Letter",
+            "type": "object"
+        },
+        "stopped": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "description": "`hide watch stop`.",
+            "properties": {
+                "stopped": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "stopped"
+            ],
+            "title": "Stopped",
+            "type": "object"
+        },
+        "watch": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {
+                "Actor": {
+                    "properties": {
+                        "device_id": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane_id": {
+                            "type": "string"
+                        },
+                        "session": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "pane_id",
+                        "name",
+                        "kind",
+                        "device_id",
+                        "session"
+                    ],
+                    "type": "object"
+                }
+            },
+            "properties": {
+                "activity_failures": {
+                    "format": "uint32",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
+                "first_warning_at_unix_ms": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "generation": {
+                    "default": 0,
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_activity_at_unix_ms": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
+                "last_state_change_seq": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": [
+                        "integer",
+                        "null"
+                    ]
+                },
+                "last_status": {
+                    "type": "string"
+                },
+                "parent": {
+                    "$ref": "#/definitions/Actor"
+                },
+                "status_changed_at_unix_ms": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                },
+                "target": {
+                    "$ref": "#/definitions/Actor"
+                },
+                "warning_count": {
+                    "format": "uint8",
+                    "minimum": 0.0,
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "id",
+                "parent",
+                "target",
+                "last_activity_at_unix_ms",
+                "first_warning_at_unix_ms",
+                "warning_count",
+                "activity_failures",
+                "last_status",
+                "last_state_change_seq",
+                "status_changed_at_unix_ms",
+                "generation"
+            ],
+            "title": "Watch",
+            "type": "object"
+        },
+        "watch_list": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {
+                "Actor": {
+                    "properties": {
+                        "device_id": {
+                            "type": "string"
+                        },
+                        "kind": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "pane_id": {
+                            "type": "string"
+                        },
+                        "session": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "pane_id",
+                        "name",
+                        "kind",
+                        "device_id",
+                        "session"
+                    ],
+                    "type": "object"
+                },
+                "Watch": {
+                    "properties": {
+                        "activity_failures": {
+                            "format": "uint32",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "first_warning_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "generation": {
+                            "default": 0,
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "id": {
+                            "type": "string"
+                        },
+                        "last_activity_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "last_state_change_seq": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "last_status": {
+                            "type": "string"
+                        },
+                        "parent": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "status_changed_at_unix_ms": {
+                            "format": "uint64",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        },
+                        "target": {
+                            "$ref": "#/definitions/Actor"
+                        },
+                        "warning_count": {
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "parent",
+                        "target",
+                        "last_activity_at_unix_ms",
+                        "first_warning_at_unix_ms",
+                        "warning_count",
+                        "activity_failures",
+                        "last_status",
+                        "last_state_change_seq",
+                        "status_changed_at_unix_ms",
+                        "generation"
+                    ],
+                    "type": "object"
+                }
+            },
+            "items": {
+                "$ref": "#/definitions/Watch"
+            },
+            "title": "Array_of_Watch",
+            "type": "array"
+        }
+    },
+    "commands": [
+        {
+            "answers": [
+                "agent",
+                "agent_register_check"
+            ],
+            "arguments": [],
+            "command": "agent register",
+            "options": [
+                {
+                    "name": "--check",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                },
+                {
+                    "name": "--machine",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--host-scope",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--session",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--instance",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--name",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--pane",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--parent",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--project",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "agent_list"
+            ],
+            "arguments": [],
+            "command": "agent list",
+            "options": [
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "agent"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "text"
+                    }
+                }
+            ],
+            "command": "agent show",
+            "options": [
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "agent"
+            ],
+            "arguments": [],
+            "command": "agent show here",
+            "options": [
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "refusals": [
+                "agent_pane_required",
+                "caller_identity_conflict",
+                "participant_unavailable",
+                "participant_ended",
+                "participant_session_changed",
+                "ambiguous_participant"
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "agent"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "text"
+                    }
+                }
+            ],
+            "command": "agent end",
+            "options": [
+                {
+                    "name": "--actor",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "agent"
+            ],
+            "arguments": [],
+            "command": "agent spawn",
+            "options": [
+                {
+                    "name": "--parent",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--name",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--intent",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--kind",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--repo",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--branch",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--path",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--no-watch",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                },
+                {
+                    "name": "--json",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": "the agent's own arguments"
+        },
+        {
+            "answers": [
+                "letter"
+            ],
+            "arguments": [
+                {
+                    "name": "target",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "request send",
+            "options": [
+                {
+                    "name": "--intent",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                },
+                {
+                    "name": "--body",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "body"
+                    }
+                },
+                {
+                    "name": "--kind",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "one_of",
+                        "values": [
+                            "request",
+                            "block",
+                            "report"
+                        ]
+                    }
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "letter"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "request reply",
+            "options": [
+                {
+                    "name": "--intent",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                },
+                {
+                    "name": "--body",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "body"
+                    }
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "letter"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "request ack",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "letter"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "request cancel",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "letter"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "request show",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "inbox"
+            ],
+            "arguments": [],
+            "command": "inbox",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "intake"
+            ],
+            "arguments": [],
+            "command": "inbox --hook",
+            "options": [
+                {
+                    "name": "--bell",
+                    "required": false,
+                    "requires": [],
+                    "value": null
+                },
+                {
+                    "name": "--session",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "confirmed"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "inbox --confirm",
+            "options": [],
+            "repeats_at_most": 5,
+            "rest": null
+        },
+        {
+            "answers": [
+                "watch"
+            ],
+            "arguments": [
+                {
+                    "name": "target",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "watch start",
+            "options": [
+                {
+                    "name": "--observer",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                },
+                {
+                    "name": "--actor",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "watch"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "watch assign",
+            "options": [
+                {
+                    "name": "--observer",
+                    "required": true,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                },
+                {
+                    "name": "--actor",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "key"
+                    }
+                },
+                {
+                    "name": "--expected-generation",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "unsigned"
+                    }
+                },
+                {
+                    "name": "--approval",
+                    "required": false,
+                    "requires": [
+                        "--expected-generation"
+                    ],
+                    "value": {
+                        "type": "approval"
+                    }
+                }
+            ],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "stopped"
+            ],
+            "arguments": [
+                {
+                    "name": "id",
+                    "value": {
+                        "type": "key"
+                    }
+                }
+            ],
+            "command": "watch stop",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        },
+        {
+            "answers": [
+                "watch_list"
+            ],
+            "arguments": [],
+            "command": "watch list",
+            "options": [],
+            "repeats_at_most": null,
+            "rest": null
+        }
+    ],
+    "digest": "sha256:004d10ca60636b6045e225f820929d8f3143cd04de0c2a42112648656bcd1a25",
+    "envelopes": {
+        "agent": {
+            "answer": "value",
+            "code": "error.code",
+            "ok": "ok"
+        },
+        "inbox": {
+            "answer": "result",
+            "code": "reason",
+            "ok": "ok"
+        },
+        "request": {
+            "answer": "result",
+            "code": "reason",
+            "ok": "ok"
+        },
+        "watch": {
+            "answer": "result",
+            "code": "reason",
+            "ok": "ok"
+        }
+    },
+    "format": 1,
+    "value_types": {
+        "approval": "not blank, at most 256 bytes, no control characters",
+        "body": "not blank, at most 16384 bytes",
+        "key": "non-empty, at most 256 bytes, no control characters, does not start with -",
+        "one_of": "one of the listed values",
+        "text": "non-empty, no control characters, does not start with --",
+        "unsigned": "a decimal integer from 0 to 18446744073709551615"
+    }
+}

@@ -16,6 +16,12 @@ pub enum CommandKind {
     /// `hide factory ...`
     Factory(crate::factory_cli::FactoryRequest),
     Help,
+    /// `hide version [--json]`: this build's version, commit and contract.
+    Version {
+        json: bool,
+    },
+    /// `hide contract --json`: the contract of the commands tools call.
+    Contract,
     Open,
     /// `hide connect`: `open` without the browser, answered as one JSON line
     /// for a host that loads the shell itself (the desktop app).
@@ -59,10 +65,30 @@ const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | bran
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
+/// The version this build reports: `HIDE_VERSION` when it was built (a
+/// package passes the version it ships), else the crate's own.
+pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
+
+/// The commit this build was made from, when it was built from a checkout.
+pub const COMMIT: Option<&str> = match env!("HIDE_BUILD_COMMIT").as_bytes() {
+    [] => None,
+    _ => Some(env!("HIDE_BUILD_COMMIT")),
+};
+
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
     match iter.next().map(String::as_str) {
         Some("help" | "--help" | "-h") if iter.next().is_none() => Ok(CommandKind::Help),
+        Some("--version") if iter.next().is_none() => Ok(CommandKind::Version { json: false }),
+        Some("version") => match (iter.next().map(String::as_str), iter.next()) {
+            (None, _) => Ok(CommandKind::Version { json: false }),
+            (Some("--json"), None) => Ok(CommandKind::Version { json: true }),
+            _ => Err("usage: hide version [--json]".to_owned()),
+        },
+        Some("contract") => match (iter.next().map(String::as_str), iter.next()) {
+            (Some("--json"), None) => Ok(CommandKind::Contract),
+            _ => Err("usage: hide contract --json".to_owned()),
+        },
         None | Some("open") => Ok(CommandKind::Open),
         Some("connect") => Ok(CommandKind::Connect),
         Some("status") => {
@@ -75,8 +101,14 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Serve { keep_alive })
         }
         Some("dev") => Ok(CommandKind::Dev),
-        Some("agent") => crate::agent_cli::parse(iter).map(CommandKind::Delivery),
+        Some("agent") => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", crate::agent_cli::USAGE))?;
+            crate::agent_cli::parse(iter).map(CommandKind::Delivery)
+        }
         Some(topic @ ("request" | "inbox" | "watch")) => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", crate::delivery_cli::USAGE))?;
             crate::delivery_cli::parse(topic, iter).map(CommandKind::Delivery)
         }
         Some("factory") => crate::factory_cli::parse(iter).map(CommandKind::Factory),
@@ -317,7 +349,28 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 }
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
+    // Neither reads the environment nor needs a daemon.
+    if let CommandKind::Version { json } = kind {
+        let digest = crate::cli_contract::digest();
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"version": VERSION, "commit": COMMIT, "contract": digest})
+            );
+        } else {
+            match COMMIT {
+                Some(commit) => println!("hide {VERSION} {commit}"),
+                None => println!("hide {VERSION}"),
+            }
+        }
+        return Ok(());
+    }
+    if kind == CommandKind::Contract {
+        println!("{}", crate::cli_contract::document());
+        return Ok(());
+    }
     if kind == CommandKind::Help {
+        println!("hide version [--json]\nhide contract --json");
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
@@ -371,7 +424,10 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             }
         }
         CommandKind::Factory(request) => crate::factory_cli::run(&env, request),
-        CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
+        CommandKind::Help
+        | CommandKind::BrowserHelp
+        | CommandKind::Version { .. }
+        | CommandKind::Contract => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
         CommandKind::Status { json: true } => status_json(&env.state_dir),
@@ -409,20 +465,14 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
 /// Prints the record's answer as one line; a refusal prints its reason and
 /// next action and exits non-zero (B42, B43).
 fn links(env: &Env, query: &herdr_core::links::query::LinksQuery) -> Result<(), String> {
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => return query_refusal(&reason, bootstrap_next_action(&reason), true),
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request_links(&reference, query) {
+    let answer = match crate::workspace_cli::request_links(&mut credential, query) {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                true,
-            );
+            return query_refusal(&reason, request_next_action(&reason), true);
         }
     };
     println!("{answer}");
@@ -491,14 +541,15 @@ fn workspace_action_value(
             Err(reason) => return workspace_refusal(&reason, "Check the local runtime and retry"),
         },
     };
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => return workspace_action_before_send_refusal(&request_id, &reason),
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request_action(&reference, action, &request_id) {
+    let answer = match crate::workspace_cli::request_action(&mut credential, action, &request_id) {
         Ok(answer) => answer,
+        Err(reason) if bootstrap_refused(&reason) => {
+            return workspace_action_before_send_refusal(&request_id, &reason);
+        }
         Err(reason) => return workspace_action_refusal(&request_id, &reason),
     };
     if answer["ok"] == true {
@@ -519,6 +570,21 @@ pub(crate) fn bootstrap_next_action(reason: &str) -> &'static str {
         "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
         _ => "Open Hide, reconnect this pane, and retry the same command",
+    }
+}
+
+/// A bootstrap refusal reaches a request when the reference `HIDE_CAP_REF`
+/// named was gone and the bare bootstrap that replaces it was refused;
+/// nothing was sent, and the bootstrap's next step still applies.
+fn bootstrap_refused(reason: &str) -> bool {
+    matches!(reason, "checkout_not_registered" | "caller_unavailable")
+}
+
+fn request_next_action(reason: &str) -> &'static str {
+    if bootstrap_refused(reason) {
+        bootstrap_next_action(reason)
+    } else {
+        "Check Hide status, reconnect the pane, and retry"
     }
 }
 
@@ -595,14 +661,6 @@ fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, Stri
     Err(reason.to_owned())
 }
 
-pub(crate) fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> {
-    match std::env::var(env::HIDE_CAP_REF) {
-        Ok(value) if !value.is_empty() => Ok((std::path::PathBuf::from(value), false)),
-        Ok(_) => Err("invalid_reference".to_owned()),
-        Err(_) => crate::workspace_cli::bootstrap(env, true).map(|path| (path, true)),
-    }
-}
-
 fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
     let answer = workspace_query_value(env, query, true)?;
     println!("{answer}");
@@ -631,27 +689,21 @@ fn workspace_query_options(
     display_id: Option<&str>,
     report: bool,
 ) -> Result<serde_json::Value, String> {
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => {
             return query_refusal(&reason, bootstrap_next_action(&reason), report);
         }
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
     let requested = if query == "browser_connect" {
-        crate::workspace_cli::browser_connect(&reference, display_id)
+        crate::workspace_cli::browser_connect(&mut credential, display_id)
     } else {
-        crate::workspace_cli::request(&reference, query)
+        crate::workspace_cli::request(&mut credential, query)
     };
     let answer = match requested {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                report,
-            );
+            return query_refusal(&reason, request_next_action(&reason), report);
         }
     };
     if answer["ok"] == true {
@@ -838,6 +890,9 @@ pub enum ConnectError {
     /// A daemon of another build runs here and this `hide` is not the app's,
     /// so it neither replaces nor attaches to it.
     OtherBuild(String),
+    /// The daemon stopped because a stored file could not be made this
+    /// machine's (PRD core-host-node B2); the host names the file.
+    StateRefused { file: String, detail: String },
 }
 
 impl ConnectError {
@@ -846,6 +901,7 @@ impl ConnectError {
             ConnectError::StartFailed(_) => "start_failed",
             ConnectError::NoResponse(_) => "no_response",
             ConnectError::OtherBuild(_) => "other_build",
+            ConnectError::StateRefused { .. } => "state_refused",
         }
     }
 
@@ -853,7 +909,8 @@ impl ConnectError {
         match self {
             ConnectError::StartFailed(detail)
             | ConnectError::NoResponse(detail)
-            | ConnectError::OtherBuild(detail) => detail,
+            | ConnectError::OtherBuild(detail)
+            | ConnectError::StateRefused { detail, .. } => detail,
         }
     }
 }
@@ -924,8 +981,12 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
             ConnectError::StartFailed(detail)
         })?;
     }
-    spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
-    wait_healthy(env).map_err(ConnectError::NoResponse)
+    let spawned_at = unix_ms();
+    let mut daemon = spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
+    let started = wait_healthy(env, &mut daemon, spawned_at);
+    // The daemon outlives this command; nothing waits for it.
+    std::mem::forget(daemon);
+    started
 }
 
 /// Moves the legacy default state folder into place before anything looks
@@ -968,11 +1029,19 @@ fn connect_json(env: &Env) -> Result<(), String> {
     let (line, result) = match connect(env) {
         Ok(state) => (attached_json(&state, "ok"), Ok(())),
         Err(error) => (
-            serde_json::json!({
-                "ok": false,
-                "reason": error.reason(),
-                "detail": error.detail(),
-            }),
+            match &error {
+                ConnectError::StateRefused { file, .. } => serde_json::json!({
+                    "ok": false,
+                    "reason": error.reason(),
+                    "detail": error.detail(),
+                    "file": file,
+                }),
+                _ => serde_json::json!({
+                    "ok": false,
+                    "reason": error.reason(),
+                    "detail": error.detail(),
+                }),
+            },
             Err(format!("{}: {}", error.reason(), error.detail())),
         ),
     };
@@ -1153,7 +1222,7 @@ fn daemon_binary() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| format!("no hided beside {}", exe.display()))
 }
 
-fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
+fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<std::process::Child, String> {
     // The daemon would refuse the same value after it is spawned; checking
     // here answers `start_failed` with the path instead of a ten-second
     // `no_response` that names nothing.
@@ -1174,9 +1243,7 @@ fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
     if let Some(origin) = &env.vite_origin {
         command.env("HIDE_VITE_ORIGIN", origin);
     }
-    let child = spawn_owned(&mut command).map_err(|error| error.to_string())?;
-    std::mem::forget(child);
-    Ok(())
+    spawn_owned(&mut command).map_err(|error| error.to_string())
 }
 
 /// How long `hide connect` waits for the daemon it started to answer, on
@@ -1189,26 +1256,74 @@ const HEALTH_REQUEST: Duration = Duration::from_secs(1);
 /// The pause between two looks at a daemon that has not answered yet.
 const HEALTH_PAUSE: Duration = Duration::from_millis(100);
 
+/// Waits for the daemon `hide connect` started. One that exits first ends
+/// the wait at once, with the reason it logged when it refused its state
+/// folder (PRD core-host-node B2), since its stderr goes nowhere.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
-    wait_healthy_within(
+fn wait_healthy(
+    env: &Env,
+    daemon: &mut std::process::Child,
+    spawned_at: u64,
+) -> Result<DaemonState, ConnectError> {
+    let pid = daemon.id();
+    let waited = wait_started(
         HEALTHY_WITHIN,
         std::time::Instant::now,
         std::thread::sleep,
+        || daemon.try_wait().ok().flatten(),
         |timeout| probe_daemon(&env.state_dir, timeout).map(|(state, _)| state),
-    )
+    );
+    match waited {
+        Ok(state) => Ok(state),
+        Err(Waited::Timeout(detail)) => Err(ConnectError::NoResponse(detail)),
+        Err(Waited::Exited(status)) => {
+            let refusal = herdr_core::diagnostics::newest_record(
+                &env.state_dir.join("core-state.json"),
+                |record| refused_by(record, pid, spawned_at),
+            );
+            Err(match refusal {
+                Some(record) => ConnectError::StateRefused {
+                    file: record["file"].as_str().unwrap_or_default().to_owned(),
+                    detail: record["reason"].as_str().unwrap_or_default().to_owned(),
+                },
+                None => ConnectError::StartFailed(format!(
+                    "hided exited with {status} before it answered"
+                )),
+            })
+        }
+    }
 }
 
-/// Looks at the started daemon until it answers or `within` has passed on
-/// `now`'s clock. No request may outlast the time left, so the wait ends at
-/// the bound it names, and the error says what was last seen, so a slow
-/// start names its stage.
-fn wait_healthy_within(
+/// The refusal this start's daemon logged: its pid, written no earlier
+/// than it was spawned, so a record an earlier daemon with a reused pid
+/// left in the same Logs file is not read as this one's.
+fn refused_by(record: &serde_json::Value, pid: u32, spawned_at: u64) -> bool {
+    record["kind"] == "node_migration.refused"
+        && record["pid"].as_u64() == Some(u64::from(pid))
+        && record["at_unix_ms"]
+            .as_u64()
+            .is_some_and(|at| at >= spawned_at)
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+enum Waited {
+    Timeout(String),
+    Exited(std::process::ExitStatus),
+}
+
+fn wait_started(
     within: Duration,
     now: impl Fn() -> std::time::Instant,
     mut pause: impl FnMut(Duration),
+    mut exited: impl FnMut() -> Option<std::process::ExitStatus>,
     mut probe: impl FnMut(Duration) -> Result<DaemonState, String>,
-) -> Result<DaemonState, String> {
+) -> Result<DaemonState, Waited> {
     let deadline = now() + within;
     loop {
         let left = deadline.saturating_duration_since(now());
@@ -1216,14 +1331,34 @@ fn wait_healthy_within(
             Ok(state) => return Ok(state),
             Err(seen) => seen,
         };
+        if let Some(status) = exited() {
+            return Err(Waited::Exited(status));
+        }
         let left = deadline.saturating_duration_since(now());
         if left.is_zero() {
-            return Err(format!(
+            return Err(Waited::Timeout(format!(
                 "hided did not become healthy within {within:?}; last waited on {seen}"
-            ));
+            )));
         }
         pause(left.min(HEALTH_PAUSE));
     }
+}
+
+/// Looks at the started daemon until it answers or `within` has passed on
+/// `now`'s clock. No request may outlast the time left, so the wait ends at
+/// the bound it names, and the error says what was last seen, so a slow
+/// start names its stage.
+#[cfg(test)]
+fn wait_healthy_within(
+    within: Duration,
+    now: impl Fn() -> std::time::Instant,
+    pause: impl FnMut(Duration),
+    probe: impl FnMut(Duration) -> Result<DaemonState, String>,
+) -> Result<DaemonState, String> {
+    wait_started(within, now, pause, || None, probe).map_err(|waited| match waited {
+        Waited::Timeout(detail) => detail,
+        Waited::Exited(status) => format!("exited with {status}"),
+    })
 }
 
 /// The live daemon of this state folder and what its `/health` answered.
@@ -1299,6 +1434,20 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_is_read_only_from_the_daemon_this_start_spawned() {
+        let record = |pid: u32, at: u64| serde_json::json!({"kind": "node_migration.refused", "pid": pid, "at_unix_ms": at, "file": "/s/node.json"});
+        assert!(refused_by(&record(42, 1_000), 42, 1_000));
+        // Another daemon's, or one an earlier daemon with the same pid left.
+        assert!(!refused_by(&record(43, 1_000), 42, 1_000));
+        assert!(!refused_by(&record(42, 999), 42, 1_000));
+        assert!(!refused_by(
+            &serde_json::json!({"kind": "node_migration.refused", "pid": 42}),
+            42,
+            0
+        ));
+    }
 
     fn recorded(pid: u32, pid_started: Option<u64>) -> DaemonState {
         DaemonState {

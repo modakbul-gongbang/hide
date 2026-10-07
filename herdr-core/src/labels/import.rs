@@ -142,13 +142,19 @@ mod tests {
         assert_eq!(record.analysis_turn_end, Some(7));
 
         let state_dir = tempfile::tempdir().unwrap();
-        let store =
-            super::super::store::LabelStore::open(Some(state_dir.path()), Some(home.path()));
+        let store = super::super::store::LabelStore::open(
+            Some(state_dir.path()),
+            Some(home.path()),
+            crate::node::TEST_NODE,
+        );
         assert_eq!(store.target(super::super::store::LOCAL_TARGET), imported);
         // A store that exists is never re-imported over.
         std::fs::remove_dir_all(&state).unwrap();
-        let reopened =
-            super::super::store::LabelStore::open(Some(state_dir.path()), Some(home.path()));
+        let reopened = super::super::store::LabelStore::open(
+            Some(state_dir.path()),
+            Some(home.path()),
+            crate::node::TEST_NODE,
+        );
         assert_eq!(reopened.target(super::super::store::LOCAL_TARGET), imported);
     }
 }
