@@ -1246,6 +1246,8 @@ fn publish_replica(
                 "message": exclusion.reason,
             }));
         }
+        #[cfg(test)]
+        coordinator_fence_tests::before_remote_ingest();
         let Some(runtime) = context.runtime.upgrade() else {
             return false;
         };
@@ -2899,3 +2901,7 @@ mod cwd_stand_in_tests {
         assert_eq!(cwd(&payload, "w1:p3").as_deref(), Some("/tmp"));
     }
 }
+
+#[cfg(test)]
+#[path = "coordinator_fence_tests.rs"]
+mod coordinator_fence_tests;
