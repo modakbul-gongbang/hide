@@ -353,8 +353,8 @@ A count Hide cannot read is reported as unknown and never as zero, because a zer
 ### Not connected, and what fixes it
 
 A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the mark above (PRD settings-cleanup D-09, D-11, B26 to B31).
+It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by nothing else, for an agent that is awake: a sleeping agent has ended its process, so no hook can speak from its pane, and it carries no connection until it wakes.
 Settings counts sessions and never these connections, so a pane that needs a Reopen says so only in its own header.
-It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by nothing else:
 
 | Instrumentation | Connection |
 | --- | --- |
@@ -362,7 +362,7 @@ It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by no
 | `session_predates_install`, a Codex and the machine's shared server on | `codex_shared_server` |
 | `session_predates_install`, any other | `started_before_hide` |
 | `hooks_not_installed`, `config_unreadable`, `hook_outdated` | `setup_needed` (fix it in the agent's row in Settings; Reopen would change nothing) |
-| `hooks_switched_off`, `unknown`, or an agent with no hook | no connection, so no chip |
+| `hooks_switched_off`, `unknown`, an agent with no hook, or an agent asleep | no connection, so no chip |
 
 `can_reopen` is false for `setup_needed` and for a pane on another device, because a Reopen restarts the session through this Mac's Herdr.
 The shared server's setting is the machine's last kit read (`KitSnapshot.codex_daemon_on`): a read that says it is on is what turns a Codex pane's reason into the shared server, and a later read that says it is off turns it back into `started_before_hide` at once.
