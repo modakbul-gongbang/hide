@@ -487,8 +487,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hide and hided for the desktop app
         # hide-agent-hooks too, which the fixture's app bundle links beside
-        # them, and hide-host-helper: the home-layout spec stages every binary
-        # the packaged app carries.
+        # them: the home-layout spec stages every binary the packaged app
+        # carries, and a device runs hided itself as its node.
         run: bash scripts/verify-cargo.sh cli
       - name: Install dependencies
         run: bash scripts/verify-web.sh install
