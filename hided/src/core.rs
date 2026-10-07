@@ -152,9 +152,6 @@ impl CoreHandle {
         hint: Option<String>,
         command: hide_factory::Command,
     ) -> Result<herdr_core::factory::PreparedFactory, String> {
-        if device != self.node.as_str() {
-            return Err("factory_local_only".into());
-        }
         let (reply, result) = mpsc::channel();
         self.commands
             .send(Command::FactoryPrepare {

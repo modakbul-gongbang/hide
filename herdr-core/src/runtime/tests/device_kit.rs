@@ -1200,7 +1200,7 @@ fn device_kit_worker_sends_only_its_registered_checkout_paths() {
     {
         let mut runtime = shared.lock().unwrap();
         for (device, path) in [
-            ("local", "/local-checkout"),
+            (crate::node::TEST_NODE, "/local-checkout"),
             (DEVICE, "/device-checkout"),
             ("other", "/other-checkout"),
         ] {
