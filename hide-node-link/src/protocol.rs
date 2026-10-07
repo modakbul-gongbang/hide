@@ -64,7 +64,10 @@ use crate::error::HostError;
 /// 23: the device runs this program in its node role (`hided node serve`)
 /// instead of `hide-host-helper`, so the payload carries `hided` (PRD
 /// core-host-node D-02); a device still running a helper answers Hello with
-/// 22, is refused, and the next connection installs the new payload.
+/// 22, is refused, and the next connection installs the new payload. Its
+/// panes ask for credentials and run `hide` commands over this link
+/// (`panes_start`, `pane_proof_answer`, `pane_inspect`, the stream calls and
+/// [`crate::panes::NodeEvent`]) instead of a separate bridge.
 pub const PROTOCOL_VERSION: u32 = 23;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -460,6 +463,33 @@ pub enum Call {
     /// `hide_session::SESSION_READ_LIMIT_BYTES`, as text.
     SessionText {
         path: String,
+    },
+    /// Starts this node's pane service for the Herdr at `herdr_socket`: the
+    /// bootstrap socket a device pane's `hide` asks on. Answered with
+    /// [`crate::panes::PanesStarted`]; asking again for the same Herdr
+    /// answers the same socket.
+    PanesStart {
+        herdr_socket: String,
+    },
+    /// The core's answer to the pane proof `request` the node sent up.
+    PaneProofAnswer {
+        request: u64,
+        answer: crate::panes::ProofAnswer,
+    },
+    /// `pane_id`'s identity now, read from this node's Herdr and kernel, so
+    /// the core can tell a credential's pane from a replaced one.
+    PaneInspect {
+        pane_id: String,
+    },
+    /// Base64 bytes for the `hide` command on `stream`; answered once they
+    /// are written to it.
+    StreamWrite {
+        stream: u64,
+        data: String,
+    },
+    /// Ends `stream` from the core's side.
+    StreamClose {
+        stream: u64,
     },
 }
 

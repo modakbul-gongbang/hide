@@ -20,6 +20,7 @@ mod retirement;
 use hide_node_link::HostError;
 pub use hide_node_link::LinkError;
 use hide_node_link::device::{HostConsent, HostIdentity};
+use hide_node_link::panes::{NodeEvent, PanesStarted};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use hide_node_link::{LinkAnswer, NodeLink, call_as};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
@@ -255,6 +256,29 @@ fn platform_of(uname: &str) -> Result<(String, String), String> {
     Ok((os.to_owned(), arch.to_owned()))
 }
 
+/// What a device's node sends without being asked: its panes' credential
+/// proofs and `hide` command streams (`hide_node_link::panes`). hided hears
+/// them; the core never does. Both calls come from the link's reader, on the
+/// transport's runtime: an implementation hands the work to its own thread
+/// and returns, and never calls the link from inside them.
+pub trait PaneEvents: Send + Sync {
+    /// `event` arrived on `link`, the link of the device `node`.
+    fn event(&self, node: &str, link: &RemoteHost, event: NodeEvent);
+    /// `link` ended: nothing it vouched for holds any more (B18).
+    fn closed(&self, node: &str, link: &RemoteHost);
+}
+
+/// Where a connector's links send their pane events, filled once hided's
+/// server exists; events before that find it empty and are refused.
+pub type PaneEventsSlot = Arc<std::sync::OnceLock<Arc<dyn PaneEvents>>>;
+
+/// Which device a link serves and where its pane events go.
+#[derive(Clone)]
+pub struct PaneHook {
+    pub node: String,
+    pub events: PaneEventsSlot,
+}
+
 /// A live helper connection. Cloning shares it; the SSH connection ends when
 /// the last clone is dropped or [`RemoteHost::close`] is called.
 #[derive(Clone)]
@@ -405,6 +429,18 @@ impl Drop for Inner {
 impl RemoteHost {
     pub fn target(&self) -> &str {
         &self.inner.target
+    }
+
+    /// Whether `other` is this same connection, not a later one to the
+    /// same device.
+    pub fn same_link(&self, other: &RemoteHost) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// A number that names this connection while it lives, for keying what
+    /// belongs to it.
+    pub fn identity(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
     }
 
     /// Why the connection ended, once it has.
@@ -591,11 +627,11 @@ pub fn establish(
     packages: &HelperPackages,
     consent: &HostConsent,
     retirement_projects: &[String],
+    panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
     let observed_key = Arc::new(Mutex::new(None));
-    let handler =
-        KnownHostHandler::new(&client.host, None).with_observed_key(Arc::clone(&observed_key));
+    let handler = KnownHostHandler::new(&client.host).with_observed_key(Arc::clone(&observed_key));
     let session = client
         .runtime
         .block_on(async {
@@ -662,13 +698,16 @@ pub fn establish(
             return Err(error);
         }
     };
-    let host = spawn_host(client, session, channel, on_close);
+    let host = spawn_host(client, session, channel, panes.clone(), on_close);
     let hello: Hello = call_as(&host, Call::Hello, HELLO_TIMEOUT).map_err(|error| {
         EstablishError::Helper(format!("The device helper did not start: {error}"))
     })?;
     if let Some(reason) = helper_protocol_refusal(&hello) {
         host.close("helper protocol mismatch");
         return Err(EstablishError::Helper(reason));
+    }
+    if panes.is_some() {
+        start_panes(client, &host);
     }
     Ok(Established {
         host: Arc::new(host),
@@ -678,6 +717,33 @@ pub fn establish(
         helper_path,
         upload,
     })
+}
+
+/// Starts the node's pane service for the device's Herdr, so its panes'
+/// `hide` reaches the core over this link. A device whose Herdr cannot be
+/// found keeps its files and Git; its panes' `hide` answers that the node is
+/// unavailable, and the reason goes to the log.
+fn start_panes(client: &RusshRemoteClient, host: &RemoteHost) {
+    let started = client
+        .herdr_socket_path()
+        .map_err(|error| error.to_string())
+        .and_then(|herdr_socket| {
+            call_as::<PanesStarted>(host, Call::PanesStart { herdr_socket }, HELLO_TIMEOUT)
+                .map_err(|error| error.to_string())
+        });
+    match started {
+        Ok(_) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.panes_started",
+            "target": host.inner.target,
+        })),
+        Err(reason) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.panes_unstarted",
+            "target": host.inner.target,
+            "reason": reason,
+        })),
+    }
 }
 
 /// Why a started helper is not used: one that answers another protocol reads
@@ -1319,6 +1385,7 @@ fn spawn_host(
     client: &RusshRemoteClient,
     session: Handle<KnownHostHandler>,
     channel: Channel<Msg>,
+    panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> RemoteHost {
     let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(channel.make_writer());
@@ -1350,6 +1417,10 @@ fn spawn_host(
                         scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
+                        if line.starts_with(b"{\"event\":") {
+                            deliver_event(&inner, panes.as_ref(), &line);
+                            continue;
+                        }
                         // The answer is only tokenized here and kept as its
                         // own text; one nobody waits for is never copied.
                         match serde_json::from_slice::<AnswerLine<'_>>(&line) {
@@ -1423,10 +1494,48 @@ fn spawn_host(
                 "stderr_tail": String::from_utf8_lossy(&stderr).chars().rev().take(400).collect::<String>().chars().rev().collect::<String>(),
             }));
             mark_closed(&inner, reason.clone());
+            if let Some(hook) = &panes
+                && let Some(events) = hook.events.get()
+            {
+                events.closed(&hook.node, &RemoteHost { inner });
+            }
         }
         on_close(reason);
     });
     RemoteHost { inner }
+}
+
+/// Hands one event line to hided's pane events. A node that sends events
+/// on a link nobody listens to, or a line that is not one, is logged and
+/// dropped; the requests on the link go on.
+fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
+    let event = match serde_json::from_slice::<NodeEvent>(line) {
+        Ok(event) => event,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.event_unreadable",
+                "target": inner.target,
+                "class": format!("{:?}", error.classify()),
+                "bytes": line.len(),
+            }));
+            return;
+        }
+    };
+    match panes.and_then(|hook| Some((hook, hook.events.get()?))) {
+        Some((hook, events)) => events.event(
+            &hook.node,
+            &RemoteHost {
+                inner: Arc::clone(inner),
+            },
+            event,
+        ),
+        None => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.event_unheard",
+            "target": inner.target,
+        })),
+    }
 }
 
 #[cfg(test)]
@@ -1779,6 +1888,7 @@ mod probe {
             &packages,
             &consent,
             &[],
+            None,
             Box::new(move |reason| {
                 let _ = seen.send(reason);
             }),

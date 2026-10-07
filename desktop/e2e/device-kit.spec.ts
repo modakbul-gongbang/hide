@@ -11,7 +11,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
-  claudeSettings, codexHooks, deviceHome,
+  claudeSettings, codexHooks, deviceBridges, deviceHome,
   codexAutostart, codexDaemonAnswers, codexDaemonWritten, proveDeviceHome, startCodexDaemon, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
 import { endChild, hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
@@ -65,10 +65,9 @@ async function startDeviceRun(name: string, aliases: string[]) {
   const local = await startHerdr({ agents: false });
   const device = await startHerdr({ agents: false });
   const run = isolate(local, name);
-  const bridge = fs.mkdtempSync("/tmp/hide-kb-");
+  const bridge = deviceBridges(home);
   const helper = path.join(run.root, "device-helper");
   const cliDir = path.join(run.root, "device-bin");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
   run.env.HIDE_HOST_HELPER_ROOT = helper;
   run.env.HIDE_HOST_CLI_DIR = cliDir;
   writeSshConfig(run.env.HOME!, aliases);
@@ -88,14 +87,12 @@ async function stopDeviceRun(setup: DeviceRun): Promise<void> {
   const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (evidence) fs.copyFileSync(setup.daemonLog, path.join(evidence, `${path.basename(setup.run.root)}-daemon.jsonl`));
   setup.run.cleanup();
-  // The daemon keeps its bridge sockets until it exits; remove the folder after that.
   try {
     await endChild(setup.daemon);
   } finally {
     setup.device.stop();
     setup.local.stop();
   }
-  fs.rmSync(setup.bridge, { recursive: true, force: true });
 }
 
 /** The files Herdr's integrations for Claude Code and Codex leave in an account's home. */
@@ -195,7 +192,7 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     await screenshot(page, "agents-hooks-per-machine");
 
     // B25, B26: the hook the kit installed runs in a device pane and names that device's Workspace, with no Memory there.
-    const session = await inDevicePane(device, `printf '{}' | HIDE_STATE_DIR=${quote(path.join(run.root, "device-cli-state"))} HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} sh -c ${quote(hideCommand(readSettings(claudeSettings(home)), "SessionStart", hooks))}`, "device-session-start");
+    const session = await inDevicePane(device, `printf '{}' | HIDE_STATE_DIR=${quote(path.dirname(bridge))} sh -c ${quote(hideCommand(readSettings(claudeSettings(home)), "SessionStart", hooks))}`, "device-session-start");
     expect(session.status).toBe(0);
     const context = (JSON.parse(session.stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
     expect(context).toContain("Hide Workspace control is available for this session's checkout");

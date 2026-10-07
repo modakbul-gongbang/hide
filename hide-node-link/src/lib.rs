@@ -26,6 +26,7 @@ pub mod index;
 pub mod link;
 pub mod list;
 pub mod mutate;
+pub mod panes;
 pub mod ports;
 pub mod process;
 pub mod project;

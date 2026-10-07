@@ -5235,7 +5235,7 @@ mod tests {
         let home = std::env::var_os("HOME").expect("HOME is configured");
         use crate::remote::DeviceConnector as _;
         let connector = hide_node::ssh::Connector::new(None)
-            .transport(std::path::Path::new(&home), &alias_name, None)
+            .transport(std::path::Path::new(&home), "probe", &alias_name, None)
             .expect("SSH alias resolves")
             .herdr_api_connector();
         let connector = &*connector;

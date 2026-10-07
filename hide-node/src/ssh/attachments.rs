@@ -43,7 +43,7 @@ impl RusshRemoteClient {
         let result = self.runtime.block_on(async {
             let session = tokio::time::timeout(
                 SSH_OPERATION_TIMEOUT,
-                self.connect(KnownHostHandler::new(&self.host, None)),
+                self.connect(KnownHostHandler::new(&self.host)),
             )
             .await
             .map_err(|_| "Cleanup connection timed out".to_owned())?
@@ -131,7 +131,7 @@ impl RusshRemoteClient {
         }
         check_cancelled(cancelled)?;
         self.runtime.block_on(async {
-            let mut session = tokio::time::timeout(SSH_OPERATION_TIMEOUT, self.connect(KnownHostHandler::new(&self.host, None)))
+            let mut session = tokio::time::timeout(SSH_OPERATION_TIMEOUT, self.connect(KnownHostHandler::new(&self.host)))
                 .await.map_err(|_| "Attachment connection timed out. Check the device and retry.".to_owned())?
                 .map_err(transport_failure)?;
             let result = self.stage_on_session(&mut session, request_id, files, cancelled).await;

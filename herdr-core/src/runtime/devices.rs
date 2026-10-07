@@ -111,6 +111,7 @@ impl Runtime {
             })?;
             let transport = self.devices.transport(
                 home_path,
+                &device_id,
                 &ssh_alias,
                 registration.herdr_socket_path.clone(),
             )?;

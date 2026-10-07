@@ -29,6 +29,11 @@ function assertTestHome(home: string): void {
   if (!fs.existsSync(path.join(home, MARKER))) throw new Error(`${home} has no ${MARKER}, so it is not declared a test HOME`);
 }
 
+/** The device's own state folder, where its node binds the socket a device pane's `hide` reaches the daemon through. */
+export const deviceState = (home: string) => path.join(home, ".hide", "state");
+/** The folder holding one `bridge-*` folder per daemon that has the device open. */
+export const deviceBridges = (home: string) => path.join(deviceState(home), "workspace-bridges");
+
 /** An SSH config and known_hosts under the run's local HOME, one host entry per alias for the isolated server. */
 export function writeSshConfig(localHome: string, aliases: string[]): void {
   const ssh = path.join(localHome, ".ssh");

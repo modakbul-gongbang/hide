@@ -281,7 +281,7 @@ impl BrowserRoutes {
                 RouteKind::File(stop),
             )
         } else if let Some((scheme, remote_port, host, tail)) = loopback_target(&source.url) {
-            let client = crate::remote_bridge::ssh_client(&route).ok_or("host_unavailable")?;
+            let client = ssh_client(&route).ok_or("host_unavailable")?;
             let remote_ip = crate::browser_cli::loopback_ip(&host).ok_or("invalid_loopback")?;
             let remote = SocketAddr::new(remote_ip, remote_port);
             let alternate = (host == "localhost").then_some(SocketAddr::new(
@@ -685,6 +685,19 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
 
 fn decoded_path_for_mime(path: &str) -> String {
     percent_decode_str(path).decode_utf8_lossy().into_owned()
+}
+
+/// The SSH client behind a route's device transport, for the loopback
+/// forward this daemon opens itself. Every device this daemon builds is an
+/// `SshDevice`, so `None` means a transport this daemon did not build.
+fn ssh_client(
+    route: &herdr_core::WorkspaceRemoteRoute,
+) -> Option<Arc<hide_node::ssh::RusshRemoteClient>> {
+    Arc::clone(&route.transport)
+        .into_any()
+        .downcast::<hide_node::ssh::SshDevice>()
+        .ok()
+        .map(|device| Arc::clone(device.client()))
 }
 
 #[cfg(test)]

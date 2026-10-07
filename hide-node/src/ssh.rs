@@ -12,7 +12,7 @@ use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ use russh::keys::{
     PrivateKeyWithHashAlg, PublicKeyOrCertificate, agent::client::AgentClient,
     check_known_hosts_path, load_secret_key,
 };
-use russh::{Channel, ChannelMsg, ChannelOpenFailure, Disconnect, Pty};
+use russh::{Channel, ChannelMsg, Disconnect, Pty};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
@@ -40,13 +40,13 @@ pub mod host;
 mod hosts;
 
 pub use device::{Connector, SshDevice};
+pub use host::{PaneEvents, PaneEventsSlot, RemoteHost};
 
 use hide_node_link::device::{
     CapabilityReport, HOST_KEY_CHANGED, HOST_KEY_UNKNOWN, RemoteError, RemoteHostIdentity,
     RemoteResult, RemoteStage, SnapshotCheck, valid_remote_socket_path,
 };
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
-type ReverseForwardParts = (Handle<KnownHostHandler>, u16, Arc<Mutex<Option<String>>>);
 
 // Russh spawns its session task after receiving the server's SSH banner but
 // before returning a Handle. If the caller cancels during key exchange, its
@@ -508,11 +508,6 @@ pub enum RemoteReadCommand {
     HerdrServerStatus {
         socket: Option<String>,
     },
-    WorkspacePane {
-        helper_path: String,
-        socket: String,
-        pane_id: String,
-    },
 }
 
 /// Where a non-login SSH exec finds `herdr` on the remote host: the
@@ -525,7 +520,6 @@ impl RemoteReadCommand {
         match self {
             Self::GitStatus { .. } => "remote-git-status",
             Self::HerdrServerStatus { .. } => "remote-herdr-status",
-            Self::WorkspacePane { .. } => "workspace-pane-inspect",
         }
     }
 
@@ -533,40 +527,11 @@ impl RemoteReadCommand {
         match self {
             Self::GitStatus { .. } => RemoteStage::Git,
             Self::HerdrServerStatus { .. } => RemoteStage::Herdr,
-            Self::WorkspacePane { .. } => RemoteStage::Herdr,
         }
     }
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
-            Self::WorkspacePane {
-                helper_path,
-                socket,
-                pane_id,
-            } => {
-                if !helper_path.starts_with('/')
-                    || helper_path.bytes().any(|byte| byte.is_ascii_control())
-                    || !valid_remote_socket_path(socket)
-                    || pane_id.is_empty()
-                    || pane_id.len() > 256
-                    || pane_id.bytes().any(|byte| byte.is_ascii_control())
-                {
-                    return Err(remote_error(
-                        self.operation_id(),
-                        pane_id,
-                        self.stage(),
-                        "invalid pane inspection path or id",
-                        false,
-                        true,
-                    ));
-                }
-                Ok(format!(
-                    "{} node pane-inspect {} {}",
-                    shell_quote(helper_path),
-                    shell_quote(socket),
-                    shell_quote(pane_id)
-                ))
-            }
             Self::HerdrServerStatus { socket: None } => Ok(format!(
                 "PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json"
             )),
@@ -817,7 +782,7 @@ impl RusshApiConnection {
                     .runtime
                     .block_on(
                         self.client
-                            .connect(KnownHostHandler::new(&self.client.host, None)),
+                            .connect(KnownHostHandler::new(&self.client.host)),
                     )
                     .map_err(|error| ApiError::Transport(error.to_string()))?,
             );
@@ -1140,46 +1105,6 @@ impl RusshRemoteClient {
         Ok(socket)
     }
 
-    /// Rechecks a remote pane's Herdr terminal and OS process identity.
-    /// The helper's output is read over a fresh, host-key-checked SSH exec;
-    /// an earlier bootstrap response is never enough to authorize a command.
-    pub fn workspace_pane_identity(
-        &self,
-        helper_path: &str,
-        pane_id: &str,
-    ) -> RemoteResult<hide_host::pane_peer::PaneIdentity> {
-        let socket = self.herdr_socket_path()?;
-        let output = self.exec_read_only(RemoteReadCommand::WorkspacePane {
-            helper_path: helper_path.to_owned(),
-            socket,
-            pane_id: pane_id.to_owned(),
-        })?;
-        if output.exit_status != 0 {
-            return Err(remote_error(
-                "workspace-pane-inspect",
-                pane_id,
-                RemoteStage::Herdr,
-                format!(
-                    "remote pane inspection exited {}: {}",
-                    output.exit_status,
-                    output.stderr.trim()
-                ),
-                true,
-                false,
-            ));
-        }
-        serde_json::from_str(output.stdout.trim()).map_err(|error| {
-            remote_error(
-                "workspace-pane-inspect",
-                pane_id,
-                RemoteStage::Herdr,
-                format!("remote pane inspection returned invalid data: {error}"),
-                true,
-                false,
-            )
-        })
-    }
-
     pub(crate) fn cached_herdr_version(&self) -> Option<String> {
         lock_recover(&self.herdr_status)
             .as_ref()
@@ -1210,7 +1135,7 @@ impl RusshRemoteClient {
         let command = remote_terminal_command(&socket_path, pane_id, mode, rows, cols)?;
         let session = self
             .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
+            .block_on(self.connect(KnownHostHandler::new(&self.host)))?;
         let operation = self.runtime.block_on(async {
             let channel = session.channel_open_session().await.map_err(|error| {
                 remote_error(
@@ -1291,7 +1216,7 @@ impl RusshRemoteClient {
         let mut report = CapabilityReport::new(operation_id, self.host.identity());
         let connection = self
             .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)));
+            .block_on(self.connect(KnownHostHandler::new(&self.host)));
         match connection {
             Ok(session) => {
                 report.pass(
@@ -1439,7 +1364,7 @@ impl RusshRemoteClient {
     fn probe_pty(&self) -> RemoteResult<()> {
         let session = self
             .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
+            .block_on(self.connect(KnownHostHandler::new(&self.host)))?;
         let result = self.runtime.block_on(async {
             let channel = session.channel_open_session().await.map_err(|error| {
                 remote_error(
@@ -1520,7 +1445,7 @@ impl RusshRemoteClient {
         let command_line = command.command_line()?;
         let mut session = self
             .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
+            .block_on(self.connect(KnownHostHandler::new(&self.host)))?;
         let output = self.runtime.block_on(async {
             tokio::time::timeout(
                 SSH_OPERATION_TIMEOUT,
@@ -1610,7 +1535,7 @@ impl RusshRemoteClient {
     fn probe_sftp(&self) -> RemoteResult<String> {
         let session = self
             .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
+            .block_on(self.connect(KnownHostHandler::new(&self.host)))?;
         let operation = self.runtime.block_on(async {
             let channel = session.channel_open_session().await.map_err(|error| {
                 remote_error(
@@ -1781,36 +1706,6 @@ impl RusshRemoteClient {
         })?
     }
 
-    /// A daemon-owned return path from the SSH device to this daemon's
-    /// loopback listener. The remote port is assigned by sshd and is never
-    /// exposed beyond remote loopback.
-    pub fn start_reverse_workspace_forward(
-        &self,
-        local_port: u16,
-    ) -> RemoteResult<RemoteWorkspaceForward> {
-        if local_port == 0 {
-            return Err(remote_error(
-                "workspace-forward",
-                &self.host.host_id,
-                RemoteStage::Tunnel,
-                "local port is zero",
-                false,
-                true,
-            ));
-        }
-        let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), local_port);
-        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let (session, remote_port, forward_error) =
-            self.open_reverse_loopback(local, remote, "workspace-forward")?;
-        Ok(RemoteWorkspaceForward {
-            runtime: Arc::clone(&self.runtime),
-            session: Mutex::new(Some(session)),
-            remote_port,
-            forward_error,
-            closed: AtomicBool::new(false),
-        })
-    }
-
     /// A browser view on this Mac reaches a loopback server on the device.
     /// One owner holds the listener; dropping it disconnects every channel.
     pub fn start_local_workspace_forward(
@@ -1853,7 +1748,7 @@ impl RusshRemoteClient {
                     "workspace-browser-forward", &self.host.host_id, RemoteStage::Tunnel,
                     "browser route was canceled", true, false,
                 )),
-                result = self.connect(KnownHostHandler::new(&self.host, None)) => result,
+                result = self.connect(KnownHostHandler::new(&self.host)) => result,
             }
         })?);
         if !matches!(
@@ -2012,205 +1907,6 @@ impl RusshRemoteClient {
             task: Mutex::new(Some(task)),
             failure,
         })
-    }
-
-    fn open_reverse_loopback(
-        &self,
-        local: SocketAddr,
-        remote: SocketAddr,
-        operation: &'static str,
-    ) -> RemoteResult<ReverseForwardParts> {
-        if !local.ip().is_loopback() || !remote.ip().is_loopback() || local.port() == 0 {
-            return Err(remote_error(
-                operation,
-                &self.host.host_id,
-                RemoteStage::Tunnel,
-                "reverse forward must use a local loopback target and remote loopback bind",
-                false,
-                true,
-            ));
-        }
-        let forward_error = Arc::new(Mutex::new(None));
-        let handler = KnownHostHandler::new(&self.host, Some(local))
-            .with_forward_error(Arc::clone(&forward_error));
-        let session = self.runtime.block_on(self.connect(handler))?;
-        let forward = self
-            .runtime
-            .block_on(session.tcpip_forward(remote.ip().to_string(), u32::from(remote.port())));
-        let remote_port = match forward {
-            Ok(port) if port <= u32::from(u16::MAX) => port,
-            Ok(port) => {
-                let primary = remote_error(
-                    operation,
-                    &self.host.host_id,
-                    RemoteStage::Tunnel,
-                    format!("remote forward port exceeds u16: {port}"),
-                    false,
-                    true,
-                );
-                let cleanup = self
-                    .runtime
-                    .block_on(session.disconnect(
-                        Disconnect::ByApplication,
-                        "invalid remote forward port",
-                        "en",
-                    ))
-                    .map_err(|error| {
-                        remote_error(
-                            operation,
-                            &self.host.host_id,
-                            RemoteStage::Cleanup,
-                            error,
-                            true,
-                            false,
-                        )
-                    });
-                return combine_cleanup(operation, &self.host.host_id, Err(primary), cleanup);
-            }
-            Err(error) => {
-                let primary = remote_error(
-                    operation,
-                    &self.host.host_id,
-                    RemoteStage::Tunnel,
-                    error,
-                    true,
-                    false,
-                );
-                let cleanup = self
-                    .runtime
-                    .block_on(session.disconnect(
-                        Disconnect::ByApplication,
-                        "forward setup failed",
-                        "en",
-                    ))
-                    .map_err(|error| {
-                        remote_error(
-                            "remote-browser-tunnel",
-                            &self.host.host_id,
-                            RemoteStage::Cleanup,
-                            error,
-                            true,
-                            false,
-                        )
-                    });
-                return combine_cleanup(operation, &self.host.host_id, Err(primary), cleanup);
-            }
-        };
-        Ok((session, remote_port as u16, forward_error))
-    }
-
-    /// Starts the already consented helper on one SSH exec channel. Only
-    /// this channel owns the helper process; closing it ends the bridge.
-    pub fn open_workspace_bridge(
-        &self,
-        helper_path: &str,
-    ) -> RemoteResult<RemoteWorkspaceBridgeProcess> {
-        if !helper_path.starts_with('/') || helper_path.bytes().any(|byte| byte.is_ascii_control())
-        {
-            return Err(remote_error(
-                "workspace-bridge",
-                &self.host.host_id,
-                RemoteStage::Ssh,
-                "invalid helper path",
-                false,
-                true,
-            ));
-        }
-        let session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let command = format!("{} node workspace-bridge", shell_quote(helper_path));
-        let operation = self.runtime.block_on(async {
-            let channel = session.channel_open_session().await.map_err(|error| {
-                remote_error(
-                    "workspace-bridge",
-                    &self.host.host_id,
-                    RemoteStage::Ssh,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            channel.exec(true, command).await.map_err(|error| {
-                remote_error(
-                    "workspace-bridge",
-                    &self.host.host_id,
-                    RemoteStage::Ssh,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            let writer = Box::new(RemoteTerminalWriter {
-                runtime: Arc::clone(&self.runtime),
-                writer: Box::pin(channel.make_writer()),
-            }) as Box<dyn Write + Send>;
-            let reader = Box::new(RemoteTerminalReader {
-                runtime: Arc::clone(&self.runtime),
-                channel,
-                pending: Vec::new(),
-                pending_offset: 0,
-            }) as Box<dyn Read + Send>;
-            Ok::<_, RemoteError>((reader, writer))
-        });
-        match operation {
-            Ok((reader, writer)) => {
-                let connection = RemoteTerminalConnection {
-                    runtime: Arc::clone(&self.runtime),
-                    session: Some(session),
-                    target_id: self.host.host_id.clone(),
-                    pane_id: "workspace-bridge".to_owned(),
-                };
-                Ok(RemoteWorkspaceBridgeProcess {
-                    reader,
-                    writer,
-                    shutdown: Box::new(move || connection.shutdown()),
-                })
-            }
-            Err(primary) => {
-                let cleanup = self
-                    .runtime
-                    .block_on(session.disconnect(
-                        Disconnect::ByApplication,
-                        "workspace bridge open failed",
-                        "en",
-                    ))
-                    .map_err(|error| {
-                        remote_error(
-                            "workspace-bridge",
-                            &self.host.host_id,
-                            RemoteStage::Cleanup,
-                            error,
-                            true,
-                            false,
-                        )
-                    });
-                combine_cleanup(
-                    "workspace-bridge",
-                    &self.host.host_id,
-                    Err(primary),
-                    cleanup,
-                )
-            }
-        }
-    }
-}
-
-pub struct RemoteWorkspaceBridgeProcess {
-    reader: Box<dyn Read + Send>,
-    writer: Box<dyn Write + Send>,
-    shutdown: Box<dyn FnOnce() + Send>,
-}
-
-pub type WorkspaceBridgeParts = (
-    Box<dyn Read + Send>,
-    Box<dyn Write + Send>,
-    Box<dyn FnOnce() + Send>,
-);
-
-impl RemoteWorkspaceBridgeProcess {
-    pub fn into_parts(self) -> WorkspaceBridgeParts {
-        (self.reader, self.writer, self.shutdown)
     }
 }
 
@@ -2628,34 +2324,23 @@ struct KnownHostHandler {
     host: String,
     port: u16,
     known_hosts_file: PathBuf,
-    local_forward: Option<SocketAddr>,
-    forward_error: Option<Arc<Mutex<Option<String>>>>,
-    active_forwards: Arc<AtomicUsize>,
     /// Receives the SHA-256 fingerprint of a host key known_hosts accepted,
     /// the identity a device's helper consent is bound to.
     observed_key: Option<Arc<Mutex<Option<String>>>>,
 }
 
 impl KnownHostHandler {
-    fn new(host: &SshAlias, local_forward: Option<SocketAddr>) -> Self {
+    fn new(host: &SshAlias) -> Self {
         Self {
             host: host.hostname.clone(),
             port: host.port,
             known_hosts_file: host.known_hosts_file.clone(),
-            local_forward,
-            forward_error: None,
-            active_forwards: Arc::new(AtomicUsize::new(0)),
             observed_key: None,
         }
     }
 
     fn with_observed_key(mut self, observed_key: Arc<Mutex<Option<String>>>) -> Self {
         self.observed_key = Some(observed_key);
-        self
-    }
-
-    fn with_forward_error(mut self, forward_error: Arc<Mutex<Option<String>>>) -> Self {
-        self.forward_error = Some(forward_error);
         self
     }
 }
@@ -2703,63 +2388,6 @@ impl Handler for KnownHostHandler {
         }
         Ok(true)
     }
-
-    async fn server_channel_open_forwarded_tcpip(
-        &mut self,
-        channel: Channel<Msg>,
-        _connected_address: &str,
-        _connected_port: u32,
-        _originator_address: &str,
-        _originator_port: u32,
-        reply: client::ChannelOpenHandle,
-        _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
-        let Some(local_forward) = self.local_forward else {
-            reply
-                .reject(ChannelOpenFailure::AdministrativelyProhibited)
-                .await;
-            return Ok(());
-        };
-        const MAX_FORWARD_CONNECTIONS: usize = 8;
-        if self
-            .active_forwards
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (current < MAX_FORWARD_CONNECTIONS).then_some(current + 1)
-            })
-            .is_err()
-        {
-            reply.reject(ChannelOpenFailure::ResourceShortage).await;
-            return Ok(());
-        }
-        reply.accept().await;
-        let active = Arc::clone(&self.active_forwards);
-        let forward_error = self.forward_error.clone();
-        tokio::spawn(async move {
-            let result = async {
-                let mut remote = channel.into_stream();
-                let mut local = TcpStream::connect(local_forward).await?;
-                tokio::io::copy_bidirectional(&mut remote, &mut local).await?;
-                Ok::<(), anyhow::Error>(())
-            }
-            .await;
-            active.fetch_sub(1, Ordering::AcqRel);
-            if let Err(error) = result
-                && let Some(forward_error) = forward_error.as_ref()
-                && let Ok(mut slot) = forward_error.lock()
-            {
-                *slot = Some(error.to_string());
-            }
-        });
-        Ok(())
-    }
-}
-
-pub struct RemoteWorkspaceForward {
-    runtime: Arc<RemoteRuntime>,
-    session: Mutex<Option<Handle<KnownHostHandler>>>,
-    remote_port: u16,
-    forward_error: Arc<Mutex<Option<String>>>,
-    closed: AtomicBool,
 }
 
 pub struct RemoteLocalForward {
@@ -2824,77 +2452,6 @@ impl RemoteLocalForward {
 impl Drop for RemoteLocalForward {
     fn drop(&mut self) {
         self.close();
-    }
-}
-
-impl RemoteWorkspaceForward {
-    pub fn remote_port(&self) -> u16 {
-        self.remote_port
-    }
-
-    pub fn failure(&self) -> Option<String> {
-        self.forward_error
-            .lock()
-            .ok()
-            .and_then(|error| error.clone())
-    }
-
-    pub fn close(&self) -> RemoteResult<()> {
-        if self.closed.swap(true, Ordering::AcqRel) {
-            return Ok(());
-        }
-        let session = self
-            .session
-            .lock()
-            .map_err(|_| {
-                remote_error(
-                    "workspace-forward-close",
-                    "workspace",
-                    RemoteStage::Cleanup,
-                    "session lock poisoned",
-                    false,
-                    true,
-                )
-            })?
-            .take();
-        if let Some(session) = session {
-            let cancel = self.runtime.block_on(session.cancel_tcpip_forward(
-                Ipv4Addr::LOCALHOST.to_string(),
-                u32::from(self.remote_port),
-            ));
-            let disconnect = self.runtime.block_on(session.disconnect(
-                Disconnect::ByApplication,
-                "workspace forward closed",
-                "en",
-            ));
-            cancel.map_err(|error| {
-                remote_error(
-                    "workspace-forward-close",
-                    "workspace",
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            disconnect.map_err(|error| {
-                remote_error(
-                    "workspace-forward-close",
-                    "workspace",
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for RemoteWorkspaceForward {
-    fn drop(&mut self) {
-        let _ = self.close();
     }
 }
 
@@ -3007,7 +2564,7 @@ mod tests {
             let client = Arc::new(RusshRemoteClient::new(alias).unwrap());
             for attempt in 0..6 {
                 let connecting = Arc::clone(&client);
-                let handler = KnownHostHandler::new(&client.host, None);
+                let handler = KnownHostHandler::new(&client.host);
                 let task = tokio::spawn(async move { connecting.connect(handler).await });
                 let (mut socket, _) =
                     tokio::time::timeout(Duration::from_secs(2), listener.accept())
@@ -3063,7 +2620,7 @@ mod tests {
             std::fs::write(&file, known_hosts).unwrap();
             let mut alias = host();
             alias.known_hosts_file = file;
-            let mut handler = KnownHostHandler::new(&alias, None);
+            let mut handler = KnownHostHandler::new(&alias);
             let key = PublicKeyOrCertificate::PublicKey {
                 key: offered.clone(),
                 hash_alg: None,

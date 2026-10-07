@@ -27,7 +27,7 @@ pub struct Environment {
 }
 
 impl Environment {
-    fn new(root: &Path, socket: &Path, bin: &Path, bridge: &Path) -> Result<Self> {
+    fn new(root: &Path, socket: &Path, bin: &Path, state_dir: Option<&Path>) -> Result<Self> {
         let home = root.join("home");
         for folder in [
             &home,
@@ -99,9 +99,11 @@ impl Environment {
             ("XDG_STATE_HOME", root.join("state").into_os_string()),
             ("HERDR_DISABLE_SOUND", "1".into()),
             ("skip_global_compinit", "1".into()),
-            ("HIDE_WORKSPACE_BRIDGE_DIR", bridge.as_os_str().to_owned()),
         ] {
             values.insert(name.into(), value);
+        }
+        if let Some(state_dir) = state_dir {
+            values.insert("HIDE_STATE_DIR".into(), state_dir.as_os_str().to_owned());
         }
         Ok(Self { home, values })
     }
@@ -417,14 +419,20 @@ impl Fixture {
             .tempdir_in(artifacts)?
             .keep();
         let ipc = tempfile::Builder::new().prefix("rd-").tempdir_in("/tmp")?;
-        let bridge = ipc.path().join("b");
-        hide_platform::fs::private::create_dir_all(&bridge)?;
+        // The device's node binds its pane socket under the device's state
+        // folder, which must stay short enough for a Unix socket path.
+        let device_state = ipc.path().join("d");
+        hide_platform::fs::private::create_dir_all(&device_state)?;
         let state = root.join("s");
         hide_platform::fs::private::create_dir_all(&state)?;
         let mut local_env =
-            Environment::new(&root.join("l"), &ipc.path().join("l.sock"), &bin, &bridge)?;
-        let remote_env =
-            Environment::new(&root.join("r"), &ipc.path().join("r.sock"), &bin, &bridge)?;
+            Environment::new(&root.join("l"), &ipc.path().join("l.sock"), &bin, None)?;
+        let remote_env = Environment::new(
+            &root.join("r"),
+            &ipc.path().join("r.sock"),
+            &bin,
+            Some(&device_state),
+        )?;
         // The device installs shipped executables, which carry no debug
         // data. Stage this candidate's code with the same property: hashing
         // and uploading a CI debug image can exhaust helper setup's bound.
@@ -649,7 +657,7 @@ impl Fixture {
     }
 
     pub fn wait_bridge(&self, minimum: usize) -> Result<()> {
-        wait_for("private reverse-forward route ready", || {
+        wait_for("device node pane service ready", || {
             let path = self.state.join("Logs/core.jsonl");
             if !path.exists() {
                 return Ok(None);
@@ -658,9 +666,7 @@ impl Fixture {
                 .lines()
                 .filter_map(|line| serde_json::from_str::<Value>(line).ok())
                 .filter(|row| {
-                    row["component"] == "workspace_bridge"
-                        && row["kind"] == "route.ready"
-                        && row["device_id"] == "remote"
+                    row["component"] == "remote_host" && row["kind"] == "host.panes_started"
                 })
                 .count();
             Ok((count >= minimum).then_some(()))

@@ -203,7 +203,6 @@ fn daemon_env(root: &Path, herdr: &PrivateHerdr) -> Env {
         host_helper_root: None,
         host_cli_dir: None,
         pane_id: None,
-        workspace_bridge_dir: None,
         // A missing path: this test reaches no Tailscale.
         tailscale_bin: Some(root.join("no-tailscale")),
         search_path: None,

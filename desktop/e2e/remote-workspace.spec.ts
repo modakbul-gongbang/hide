@@ -18,7 +18,7 @@ import type { Duplex } from "node:stream";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { claudeSettings, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
+import { claudeSettings, deviceBridges, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
 import { endChild, HIDE_CLI, hostLog, isolate, launch, nodeOf, test, type Isolated } from "./fixture";
 
 const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
@@ -89,7 +89,7 @@ async function commandFromPane(herdr: HerdrFixture, run: Isolated, bridge: strin
   const result = path.join(herdr.root, `${label}.json`);
   const exit = path.join(herdr.root, `${label}.exit`);
   const variables = bridge
-    ? `HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} HIDE_STATE_DIR=${quote(path.join(run.root, "remote-cli-state"))}`
+    ? `HIDE_STATE_DIR=${quote(path.dirname(bridge))}`
     : `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)}`;
   const cli = bridge ? path.join(run.env.HIDE_HOST_CLI_DIR!, "hide") : HIDE_CLI;
   const command = `${variables} ${[cli, ...args].map(quote).join(" ")} > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
@@ -99,14 +99,10 @@ async function commandFromPane(herdr: HerdrFixture, run: Isolated, bridge: strin
   return { status: Number(fs.readFileSync(exit, "utf8")), answer: JSON.parse(fs.readFileSync(result, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown> };
 }
 
-async function hookFromPane(herdr: HerdrFixture, stateDir: string, bridge: string | null, runtime: "claude-code" | "codex", label: string) {
+async function hookFromPane(herdr: HerdrFixture, stateDir: string, runtime: "claude-code" | "codex", label: string) {
   const result = path.join(herdr.root, `${label}.json`);
   const exit = path.join(herdr.root, `${label}.exit`);
-  const variables = [
-    `HIDE_STATE_DIR=${quote(stateDir)}`,
-    ...(bridge ? [`HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)}`] : []),
-  ];
-  const command = `printf '{}' | ${variables.join(" ")} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@6 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const command = `printf '{}' | HIDE_STATE_DIR=${quote(stateDir)} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@6 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
   await expect.poll(() => fs.existsSync(exit), { timeout: 30_000 }).toBe(true);
@@ -120,9 +116,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
   const localFile = changedCheckout(local, "local-change.md");
   const remoteFile = changedCheckout(remote, "보고서-mixed-2026.md");
   const run = isolate(local, "ssh");
-  const bridge = fs.mkdtempSync("/tmp/hide-wc-");
   const helper = path.join(run.root, "remote-helper");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
   run.env.HIDE_HOST_HELPER_ROOT = helper;
   // The device's `hide` link goes here, never the account's own ~/.local/bin.
   run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "remote-bin");
@@ -130,6 +124,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
   // the second, with its own Herdr server, id and connections.
   writeSshConfig(run.env.HOME!, ["isolated-workspace", "isolated-workspace-2"]);
   const deviceAccount = deviceHome();
+  const bridge = deviceBridges(deviceAccount);
   proveDeviceHome(run.env, "isolated-workspace", deviceAccount);
   resetDeviceHome(deviceAccount);
   const daemonLog = path.join(run.root, "daemon.log");
@@ -162,12 +157,12 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       expect(result.answer).toMatchObject({ ok: true, result: { context: { device_id: nodeOf(run.env) } } });
     }
     for (const runtime of ["claude-code", "codex"] as const) {
-      const localContext = await hookFromPane(local, run.env.HIDE_STATE_DIR!, null, runtime, `local-${runtime}-hook`);
+      const localContext = await hookFromPane(local, run.env.HIDE_STATE_DIR!, runtime, `local-${runtime}-hook`);
       expect(localContext.status).toBe(0);
       expect(localContext.context).toContain("Hide Workspace control is available for this session's checkout");
       expect(localContext.context).toContain("file open <path>");
       expect(localContext.context).toContain("browser open <url-or-path>");
-      const remoteBeforeConnection = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `disconnected-${runtime}-hook`);
+      const remoteBeforeConnection = await hookFromPane(remote, path.dirname(bridge), runtime, `disconnected-${runtime}-hook`);
       expect(remoteBeforeConnection.status).toBe(0);
       expect(remoteBeforeConnection.context).not.toContain("Hide Workspace control is available");
     }
@@ -217,7 +212,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     expect(fs.realpathSync(deviceCli).startsWith(fs.realpathSync(helper) + path.sep)).toBe(true);
     const sessionReferences: string[] = [];
     for (const runtime of ["claude-code", "codex"] as const) {
-      const session = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `remote-${runtime}-hook`);
+      const session = await hookFromPane(remote, path.dirname(bridge), runtime, `remote-${runtime}-hook`);
       expect(session.status).toBe(0);
       expect(session.context).toContain("Hide Workspace control is available for this session's checkout");
       expect(session.context).toContain("browser open <url-or-path>");
@@ -246,7 +241,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       `  HIDE_CAP_REF="$reference" ${quote(HIDE_CLI)} workspace info >/dev/null`,
       "  printf '%s\\n' \"$reference\"", "done", "",
     ].join("\n"), { mode: 0o700 });
-    const stressCommand = `HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} HIDE_STATE_DIR=${quote(path.join(run.root, "remote-cli-state"))} bash ${quote(stressScript)} > ${quote(stressOutput)} 2> ${quote(stressError)}; printf '%s' "$?" > ${quote(stressExit)}\n`;
+    const stressCommand = `HIDE_STATE_DIR=${quote(path.dirname(bridge))} bash ${quote(stressScript)} > ${quote(stressOutput)} 2> ${quote(stressError)}; printf '%s' "$?" > ${quote(stressExit)}\n`;
     const stressSent = spawnSync(remote.bin, ["pane", "send-text", remote.panes[0], stressCommand], { env: remote.env, encoding: "utf8", timeout: 10_000 });
     expect(stressSent.status, stressSent.stderr).toBe(0);
     await expect.poll(() => fs.existsSync(stressExit), { timeout: 180_000 }).toBe(true);
@@ -254,44 +249,31 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     const repeatedReferences = fs.readFileSync(stressOutput, "utf8").trim().split("\n");
     expect(repeatedReferences).toHaveLength(65);
     expect(new Set(repeatedReferences)).toEqual(new Set(sessionReferences));
-    const ready = fs.readFileSync(daemonLog, "utf8").split("\n").filter(Boolean)
-      .map((line) => JSON.parse(line) as { kind?: string; remote_port?: number })
-      .findLast((line) => line.kind === "route.ready");
-    expect(ready?.remote_port).toBeGreaterThan(0);
-    const probe = spawnSync("ssh", ["-F", "/dev/null", "-p", process.env.HIDE_E2E_SSH_PORT!,
-      "-i", process.env.HIDE_E2E_SSH_KEY!, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
-      "-o", `UserKnownHostsFile=${process.env.HIDE_E2E_SSH_KNOWN_HOSTS!}`, "127.0.0.1",
-      `curl --max-time 5 -fsS http://127.0.0.1:${ready!.remote_port}/health`],
-    { encoding: "utf8", timeout: 10_000 });
-    expect(probe.status, `${probe.stderr} ${probe.stdout}`).toBe(0);
-    expect(JSON.parse(probe.stdout)).toMatchObject({ schema_version: 2 });
     const info = await commandFromPane(remote, run, bridge, ["workspace", "info"], "remote-info");
     expect(info.status, JSON.stringify(info.answer)).toBe(0);
     expect(info.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e", checkout_path: fs.realpathSync(path.join(remote.root, "fixture")) } } });
 
-    // The device's helper connection ends while its return route is still
-    // open, and the device comes back on a new connection generation
-    // (Settings > Retry). The stale route is stopped rather than left to take
-    // the supervisor down, a new one opens, and the pane reaches its
-    // Workspace again through the same installed command.
+    // The device's node ends, which closes its link and revokes what it
+    // vouched for, and the device comes back on a new connection
+    // (Settings > Retry) whose node opens a new pane socket; the pane
+    // reaches its Workspace again through the same installed command.
     const firstBridges = liveBridges(bridge);
     const serving = spawnSync("pgrep", ["-f", `${path.basename(run.root)}/remote-helper/.*/hided node serve`], { encoding: "utf8" })
       .stdout.trim().split("\n").filter(Boolean);
     expect(serving).toHaveLength(1);
     process.kill(Number(serving[0]), "SIGTERM");
-    await expect.poll(() => daemonEvents(daemonLog).some((line) => line.kind === "route.stopped" && line.reason === "route_withdrawn"), { timeout: 30_000 }).toBe(true);
+    await expect.poll(() => daemonEvents(daemonLog).some((line) => line.kind === "host.closed"), { timeout: 30_000 }).toBe(true);
     await sendFrame(page, state, { kind: "device_host_retry", payload: { device_id: "ssh-e2e" } });
     await expect.poll(() => liveBridges(bridge).filter((name) => !firstBridges.includes(name)).length, { timeout: 60_000 }).toBe(1);
     const reconnected = await commandFromPane(remote, run, bridge, ["workspace", "info"], "remote-info-reconnected");
     expect(reconnected.status, JSON.stringify(reconnected.answer)).toBe(0);
     expect(reconnected.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" } } });
-    const bridgeEvents = daemonEvents(daemonLog);
-    expect(new Set(bridgeEvents.filter((line) => line.kind === "route.ready").map((line) => line.generation)).size).toBe(2);
-    expect(bridgeEvents.some((line) => line.kind === "supervisor.stopped")).toBe(false);
+    // Each connection started the device's pane service on its own link.
+    expect(daemonEvents(daemonLog).filter((line) => line.kind === "host.panes_started").length).toBe(2);
     // The same records reach the Logs file a detached daemon writes.
     const coreLog = fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "Logs", "core.jsonl"), "utf8");
-    expect(coreLog).toContain('"kind":"route.stopped"');
-    expect(coreLog).toContain('"kind":"route.ready"');
+    expect(coreLog).toContain('"kind":"host.closed"');
+    expect(coreLog).toContain('"kind":"host.panes_started"');
 
     // A second device at once. Each gets its own route; a pane on either
     // reaches only its own device's Workspace, even though both bridges sit
@@ -349,8 +331,6 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     expect((await commandFromPane(second, run, bridge, ["view", "close", secondTwin.view_id], "twin-second-close")).status).toBe(0);
     const beforeRemoval = daemonEvents(daemonLog).length;
     await sendFrame(page, state, { kind: "remove_device", payload: { device_id: "ssh-e2e-2" } });
-    await expect.poll(() => daemonEvents(daemonLog).slice(beforeRemoval).some((line) =>
-      line.kind === "route.stopped" && (line as { device_id?: string }).device_id === "ssh-e2e-2"), { timeout: 30_000 }).toBe(true);
     await expect.poll(() => liveBridges(bridge).length, { timeout: 30_000 }).toBe(1);
     // Both registrations reach this one account, so the kit stays for the survivor.
     expect(daemonEvents(daemonLog).slice(beforeRemoval).find((line) => line.kind === "device.kit_left" && line.device_id === "ssh-e2e-2")?.reason)
@@ -812,7 +792,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       try { await fetch(ownedUrl, { signal: AbortSignal.timeout(500) }); return false; }
       catch { return true; }
     }, { timeout: 10_000 }).toBe(true);
-    const noRenderer = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, "codex", "remote-no-renderer-hook");
+    const noRenderer = await hookFromPane(remote, path.dirname(bridge), "codex", "remote-no-renderer-hook");
     expect(noRenderer.status).toBe(0);
     expect(noRenderer.context).not.toContain("Hide Workspace control is available");
   } catch (error) {
@@ -829,8 +809,6 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await new Promise<void>((resolve) => egressServer?.close(() => resolve()) ?? resolve());
     await new Promise<void>((resolve) => twinServer?.close(() => resolve()) ?? resolve());
     run.cleanup();
-    // The daemon keeps its bridge sockets until it exits; remove the folder after that.
     await endChild(daemon).finally(() => { remote.stop(); second?.stop(); local.stop(); });
-    fs.rmSync(bridge, { recursive: true, force: true });
   }
 });

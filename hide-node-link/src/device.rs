@@ -453,12 +453,13 @@ pub struct SshHostListing {
 /// configuration and keys implements it (`hide_node::ssh`); the core asks it
 /// by alias and never reads `~/.ssh` itself (PRD core-host-node D-21).
 pub trait DeviceConnector: Send + Sync {
-    /// The transport for the device behind `alias`, resolved through the SSH
-    /// configuration of the account at `home`; nothing connects until it is
-    /// used. A refusal is the sentence the device row shows.
+    /// The transport for the device `node` behind `alias`, resolved through
+    /// the SSH configuration of the account at `home`; nothing connects until
+    /// it is used. A refusal is the sentence the device row shows.
     fn transport(
         &self,
         home: &std::path::Path,
+        node: &str,
         alias: &str,
         herdr_socket: Option<String>,
     ) -> Result<std::sync::Arc<dyn DeviceTransport>, String>;

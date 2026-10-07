@@ -585,6 +585,69 @@ async fn ws_upgrade(
     ws.on_upgrade(move |socket| client_loop(socket, state, origin, user_agent, proxied))
 }
 
+/// Serves one device pane's command stream (`node_panes`): HTTP over the
+/// bytes the device's node relays up its link, with one route, `/ws`, which
+/// takes only a credential `node` vouched for over `link`. A browser never
+/// reaches it, so it has no Origin to check, and the shell's token, a phone
+/// and a credential of this machine or of another device are refused.
+pub async fn serve_link_connection(
+    state: AppState,
+    node: String,
+    link: hide_node::ssh::RemoteHost,
+    io: tokio::io::DuplexStream,
+) {
+    let route = LinkRoute { state, node, link };
+    let router = Router::new()
+        .route("/ws", get(link_ws_upgrade))
+        .with_state(route);
+    let service = hyper_util::service::TowerToHyperService::new(router);
+    let _ = hyper::server::conn::http1::Builder::new()
+        .serve_connection(hyper_util::rt::TokioIo::new(io), service)
+        .with_upgrades()
+        .await;
+}
+
+#[derive(Clone)]
+struct LinkRoute {
+    state: AppState,
+    node: String,
+    link: hide_node::ssh::RemoteHost,
+}
+
+async fn link_ws_upgrade(ws: WebSocketUpgrade, State(route): State<LinkRoute>) -> Response {
+    ws.on_upgrade(move |socket| link_client_loop(socket, route))
+}
+
+async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
+    let LinkRoute { state, node, link } = route;
+    let handshake = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
+        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Handshake>(&text).ok(),
+        _ => None,
+    };
+    let Some(handshake) = handshake else {
+        refuse(&mut socket, CloseReason::InvalidToken, None).await;
+        return;
+    };
+    if handshake.schema_version != SCHEMA_VERSION {
+        refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
+        return;
+    }
+    match state.pane_capabilities.get(&handshake.token) {
+        Some(capability) if capability.vouched_by(&node, &link) => {
+            let connection = state.connections.fetch_add(1, Ordering::SeqCst);
+            scoped_client_loop(
+                socket,
+                state,
+                connection,
+                handshake.token,
+                capability.one_shot,
+            )
+            .await;
+        }
+        _ => refuse(&mut socket, CloseReason::InvalidToken, None).await,
+    }
+}
+
 /// The largest message a WebSocket that came through `tailscale serve` may send.
 const TAILNET_MAX_MESSAGE: usize = 64 * 1024;
 /// How long a new WebSocket may wait before its first frame.

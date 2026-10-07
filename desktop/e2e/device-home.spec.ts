@@ -109,8 +109,6 @@ test("a device's Home is made on its first start, the rail follows registration,
   fs.rmSync(path.join(deviceHome, ".local", "bin", "herdr"), { force: true });
   fs.symlinkSync(device.bin, path.join(deviceHome, ".local", "bin", "herdr"));
   const run = isolate(local, "device-home");
-  const bridge = fs.mkdtempSync("/tmp/hide-dh-");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
   run.env.HIDE_HOST_HELPER_ROOT = path.join(run.root, "remote-helper");
   run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "remote-bin");
   run.env.PATH = `${path.join(local.root, "bin")}:${run.env.PATH ?? "/usr/bin:/bin"}`;
@@ -221,6 +219,5 @@ test("a device's Home is made on its first start, the rail follows registration,
     run.cleanup();
     local.stop();
     device.stop();
-    fs.rmSync(bridge, { recursive: true, force: true });
   }
 });

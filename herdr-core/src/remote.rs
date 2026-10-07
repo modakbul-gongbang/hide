@@ -282,7 +282,7 @@ mod tests {
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is configured"));
         let transport = hide_node::ssh::Connector::new(None)
-            .transport(&home, &alias_name, None)
+            .transport(&home, "probe", &alias_name, None)
             .expect("SSH alias resolves");
         let decoded = Mutex::new(None);
         let report =
@@ -347,7 +347,7 @@ mod tests {
 
         let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is configured"));
         let transport = hide_node::ssh::Connector::new(None)
-            .transport(&home, &alias_name, None)
+            .transport(&home, "probe", &alias_name, None)
             .expect("SSH alias resolves");
         let snapshot = hide_herdr_client::request_with_connector(
             &*transport.herdr_api_connector(),

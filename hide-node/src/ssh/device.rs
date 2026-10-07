@@ -2,7 +2,7 @@
 //! the account's SSH configuration and keys reaches each registered device
 //! with it, and the core sees only the traits.
 
-use super::host::{self, HelperPackages};
+use super::host::{self, HelperPackages, PaneEventsSlot, PaneHook};
 use super::*;
 use hide_node_link::attachments::AttachmentFile;
 use hide_node_link::device::{
@@ -16,6 +16,9 @@ pub struct Connector {
     packages: HelperPackages,
     /// The `ssh` program that resolves an alias for Add device's list.
     ssh: PathBuf,
+    /// Where each device's pane events go; none for a connector whose
+    /// devices' panes do not reach this process.
+    panes: Option<PaneEventsSlot>,
 }
 
 impl Connector {
@@ -25,7 +28,15 @@ impl Connector {
         Self {
             packages: HelperPackages::new(helper_dir),
             ssh: PathBuf::from("ssh"),
+            panes: None,
         }
+    }
+
+    /// Each device's node serves its panes' `hide` over its link, and what
+    /// they send goes to `events`.
+    pub fn with_pane_events(mut self, events: PaneEventsSlot) -> Self {
+        self.panes = Some(events);
+        self
     }
 
     /// Resolves aliases for Add device's list with `ssh` instead of the
@@ -40,6 +51,7 @@ impl DeviceConnector for Connector {
     fn transport(
         &self,
         home: &Path,
+        node: &str,
         alias: &str,
         herdr_socket: Option<String>,
     ) -> Result<Arc<dyn DeviceTransport>, String> {
@@ -58,6 +70,10 @@ impl DeviceConnector for Connector {
         Ok(Arc::new(SshDevice {
             client: Arc::new(client),
             packages: self.packages.clone(),
+            panes: self.panes.clone().map(|events| PaneHook {
+                node: node.to_owned(),
+                events,
+            }),
         }))
     }
 
@@ -70,6 +86,7 @@ impl DeviceConnector for Connector {
 pub struct SshDevice {
     client: Arc<RusshRemoteClient>,
     packages: HelperPackages,
+    panes: Option<PaneHook>,
 }
 
 impl SshDevice {
@@ -103,6 +120,7 @@ impl DeviceTransport for SshDevice {
             &self.packages,
             consent,
             retirement_projects,
+            self.panes.clone(),
             on_close,
         )
     }

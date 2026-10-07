@@ -29,25 +29,48 @@ const MAX_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
     let output = Mutex::new(output);
+    let panes = crate::panes::Panes::new();
+    // Where a pane's `hide` on this machine finds the node's bootstrap
+    // socket; read once, so every start of the service agrees.
+    let bridges = hide_platform::host::home_dir().map(|home| {
+        hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(&home))
+    });
     let (sender, receiver) = mpsc::sync_channel::<Request>(0);
     // Only the workers hold the receiver. A worker stops when its answer
     // cannot be written, which means the SSH channel is gone; once the last
     // one has stopped, the next request's send fails and the helper exits,
     // rather than waiting on a rendezvous no worker will ever take.
     let receiver = Arc::new(Mutex::new(receiver));
-    std::thread::scope(|scope| {
+    let result = std::thread::scope(|scope| {
         for _ in 0..CONCURRENCY {
             let receiver = Arc::clone(&receiver);
             let output = &output;
+            let panes = &panes;
+            let bridges = &bridges;
             scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
                         Ok(Ok(request)) => request,
                         _ => return,
                     };
+                    let outcome = match request.call {
+                        Call::PanesStart { herdr_socket } => match bridges {
+                            Ok(bridges) => panes
+                                .start(scope, output, bridges, &herdr_socket)
+                                .and_then(to_value),
+                            Err(error) => Err(HostError::new(ErrorCode::Io, error.to_string())),
+                        },
+                        Call::PaneProofAnswer { request, answer } => {
+                            panes.answer_proof(request, answer)
+                        }
+                        Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
+                        Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
+                        Call::StreamClose { stream } => panes.close_stream(stream),
+                        call => handle(call),
+                    };
                     let response = Response {
                         id: request.id,
-                        outcome: match handle(request.call) {
+                        outcome: match outcome {
                             Ok(value) => Outcome::Ok(value),
                             Err(error) => Outcome::Error(error),
                         },
@@ -62,10 +85,14 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
         let result = read_requests(input, &sender, &output);
         drop(sender);
         // The connection is gone: a kit step still running ends its child
-        // rather than keep the helper alive after it.
+        // rather than keep the helper alive after it, and the pane service
+        // ends its listener and streams so the scope can close.
         crate::kit::stop();
+        panes.stop();
         result
-    })
+    });
+    panes.remove_folder();
+    result
 }
 
 fn read_requests(
@@ -613,6 +640,14 @@ pub fn handle_with_progress(
             crate::sessions::chunk(&absolute(&path)?, checkpoint)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
+        Call::PanesStart { .. }
+        | Call::PaneProofAnswer { .. }
+        | Call::PaneInspect { .. }
+        | Call::StreamWrite { .. }
+        | Call::StreamClose { .. } => Err(HostError::new(
+            ErrorCode::Unsupported,
+            "Only a device node's link carries its panes' credentials and commands",
+        )),
         Call::SessionText { path } => to_value(
             hide_session::read_bounded(&absolute(&path)?, hide_session::SESSION_READ_LIMIT_BYTES)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
