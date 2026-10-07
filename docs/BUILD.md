@@ -32,6 +32,7 @@ An agent worktree is built a few times and discarded, which never repays an incr
 Debug output is what makes a stale worktree expensive, because nothing strips it: a debug `hided` measures around 115 MB against 24 MB for the release binary.
 The workspace's own crates build with `debug = "line-tables-only"` (one `[profile.dev.package.<crate>]` entry per member): a panic's backtrace keeps its files and lines, and the rest of their debug info, which is most of what their build writes and links, is left out.
 Dependencies keep the default, so changing it would not invalidate the dependency builds CI restores from its cache.
+The one exception is the SSH transport's crates (`russh`, `russh-sftp` and the ciphers and hashes it runs), built at `opt-level = 3` in dev builds too: a development daemon installs its own debug `hided` on a device over SSH, and unoptimized those crates moved about 4 MiB a second, so the remote mailbox lane's device was not ready within its bound; optimized, its install takes about 6 seconds.
 
 ## The toolchain is never copied
 
