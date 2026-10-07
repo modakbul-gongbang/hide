@@ -419,12 +419,18 @@ mod tests {
     #[test]
     fn commands_run_in_order_one_run_at_a_time_and_name_the_failing_command() {
         let dir = tempfile::tempdir().unwrap();
+        // A pump moves past every command that has already exited, so a's
+        // first command reads a FIFO the test opens after the first look:
+        // until then a cannot finish, whatever the machine's speed.
+        let gate = dir.path().join("gate");
+        let made = Command::new("mkfifo").arg(&gate).status().unwrap();
+        assert!(made.success());
         let mut runner = VerifyRunner::new(dir.path().join("logs"));
         runner
             .submit(job(
                 "a",
                 dir.path(),
-                &["echo one > a.txt", "test -f a.txt"],
+                &["cat gate", "echo one > a.txt", "test -f a.txt"],
                 Duration::from_secs(60),
             ))
             .unwrap();
@@ -438,9 +444,12 @@ mod tests {
             .unwrap();
         runner.pump(&mut NoRunner);
         assert!(
-            runner.running.as_ref().is_some_and(|r| r.job.id == "a"),
+            runner.running.as_ref().is_some_and(|r| r.job.id == "a")
+                && runner.queue.front().is_some_and(|job| job.id == "b"),
             "one run at a time"
         );
+        // Opening the FIFO waits for a's `cat`, which the first pump started.
+        std::fs::write(&gate, "open\n").unwrap();
         assert_eq!(wait(&mut runner, "a"), VerifyPoll::Passed);
         match wait(&mut runner, "b") {
             VerifyPoll::Failed { check, link } => {

@@ -27,7 +27,8 @@ const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
     /// Checks a local caller like a delivery request does and names the pane
-    /// and checkout it speaks from.
+    /// and checkout it speaks from. A checkout-bound caller is the operator
+    /// acting without a pane: its hint is never identity or lineage.
     pub(crate) fn factory_caller(
         &self,
         caller: &str,
@@ -43,19 +44,17 @@ impl Runtime {
         }
         let pane = match crate::workspace_control::Caller::parse(caller) {
             crate::workspace_control::Caller::Pane(pane) => Some(pane.to_owned()),
-            crate::workspace_control::Caller::Checkout { .. } => hint
-                .filter(|pane| {
-                    self.workspace_control_query("local", pane, Query::Info)
-                        .is_ok_and(|answer| answer.context == context)
-                })
-                .map(str::to_owned),
+            crate::workspace_control::Caller::Checkout { .. } => None,
         };
-        let claimed = hint
+        // A hint naming another pane than a pane caller's own can only make
+        // the caller a worker, never an operator.
+        let claimed = pane
+            .as_deref()
+            .and(hint)
             .filter(|hint| pane.as_deref() != Some(*hint))
             .map(str::to_owned);
         let ancestors = pane
             .as_deref()
-            .or(claimed.as_deref())
             .map_or_else(crate::factory::Lineage::none, |pane| {
                 self.factory_lineage(pane)
             });
@@ -401,6 +400,48 @@ mod tests {
         );
         assert!(!looped.complete, "a loop cannot rule out a worker above");
         assert!(!looped.factory_spawned);
+    }
+
+    #[test]
+    fn a_checkout_bound_caller_is_the_operator_and_its_hint_is_ignored() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let context = crate::runtime::delivery::tests::authority(&actor).context;
+        let mut runtime = runtime.lock().unwrap();
+        // The hinted pane is a worker's child with a lineage of its own; a
+        // checkout caller's hint is not read, so none of it applies.
+        runtime.delivery_ledger = Ok(Arc::new(Ledger {
+            agents: vec![
+                agent("agent-worker", "w1:p1", None),
+                agent("agent-sender", "sender", Some("agent-worker")),
+            ],
+            ..Ledger::default()
+        }));
+        let checkout = crate::workspace_control::checkout_caller_id("cap", "/checkouts/fixture");
+        for hint in [None, Some("sender"), Some("w1:p1")] {
+            let caller = runtime.factory_caller(&checkout, &context, hint).unwrap();
+            assert_eq!(caller.pane, None, "hint {hint:?}");
+            assert_eq!(caller.claimed, None, "hint {hint:?}");
+            assert_eq!(
+                caller.ancestors,
+                crate::factory::Lineage::none(),
+                "hint {hint:?}"
+            );
+            assert_eq!(caller.cwd.as_deref(), Some("/checkouts/fixture"));
+        }
+        // A pane caller keeps its own pane and lineage; a hint naming another
+        // pane can only make it that pane's worker.
+        let own = runtime
+            .factory_caller("sender", &context, Some("sender"))
+            .unwrap();
+        assert_eq!(own.pane.as_deref(), Some("sender"));
+        assert_eq!(own.claimed, None);
+        assert_eq!(own.ancestors.agents, vec!["agent-worker"]);
+        let other = runtime
+            .factory_caller("sender", &context, Some("w1:p1"))
+            .unwrap();
+        assert_eq!(other.pane.as_deref(), Some("sender"));
+        assert_eq!(other.claimed.as_deref(), Some("w1:p1"));
     }
 
     #[test]

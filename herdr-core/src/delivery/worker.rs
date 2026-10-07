@@ -736,18 +736,17 @@ fn run(
                                     return Err("caller_identity_changed".into());
                                 }
                             } else {
-                                for caller in [&authority.caller, &actor.pane_id] {
-                                    let current = guard
-                                        .workspace_control_query(
-                                            &actor.device_id,
-                                            caller,
-                                            Query::Info,
-                                        )
-                                        .map_err(|_| "caller_context_changed")?
-                                        .context;
-                                    if current != authority.context {
-                                        return Err("caller_context_changed".into());
-                                    }
+                                // The caller is the agent's own pane.
+                                let current = guard
+                                    .workspace_control_query(
+                                        &actor.device_id,
+                                        &authority.caller,
+                                        Query::Info,
+                                    )
+                                    .map_err(|_| "caller_context_changed")?
+                                    .context;
+                                if current != authority.context {
+                                    return Err("caller_context_changed".into());
                                 }
                                 actor.require_native_identity()?;
                                 if !guard.delivery_identity_current(actor) {

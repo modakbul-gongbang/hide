@@ -16,9 +16,17 @@ fn git(dir: &Path, args: &[&str]) {
     // pack and prune the fixture's loose objects while the next `git clone
     // --bare` is still copying them ("failed to copy file to ...").
     // `maintenance.auto=false` stops that run; `gc.auto=0` does the same for a
-    // Git older than 2.29, whose commit ran `gc --auto` itself.
+    // Git older than 2.29, whose commit ran `gc --auto` itself. A signing
+    // setting in the account's own Git config never reaches the fixture.
     let status = Command::new("git")
-        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
+        .args([
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+            "-c",
+            "commit.gpgsign=false",
+        ])
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "t")

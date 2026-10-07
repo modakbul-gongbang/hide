@@ -1208,13 +1208,12 @@ fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage
         ..caller
     };
     assert_eq!(h.engine.caller_role(&helper, &merge).unwrap(), worker);
-    // A checkout caller that names a worker's pane is that worker.
-    let checkout = Caller {
-        pane: None,
+    // A caller that names a worker's pane besides its own is that worker.
+    let claiming = Caller {
         claimed: Some(&worker_pane),
         ..caller
     };
-    assert_eq!(h.engine.caller_role(&checkout, &merge).unwrap(), worker);
+    assert_eq!(h.engine.caller_role(&claiming, &merge).unwrap(), worker);
     // A lineage cut short reads, and acts as no operator.
     let cut = Caller {
         lineage_complete: false,

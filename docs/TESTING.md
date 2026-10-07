@@ -315,13 +315,14 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `web/src`, `web/public`, `web/index.html`, `web/mobile.html` | `checks` (the web shell's and the desktop app's typecheck, lint and unit suites in one job) and the Linux `web-e2e` |
 | Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-e2e` and `windows-e2e` |
 | A `web/e2e` spec | `checks` and `web-e2e`; a spec tagged `@platform` also runs `windows-e2e` (the whole suite runs on Linux, so the Linux leg of `@platform` is `web-e2e`) |
-| `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `checks` and `desktop-e2e`, the only macOS job a change outside the two crates below asks for; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
+| `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `checks` and `desktop-e2e`, the only macOS job a change outside the two crates and the package inputs below asks for; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
 | A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, the Linux `web-e2e`, since every crate reaches `hided`, and `remote-mailbox` when the crate reaches `herdr-core`, `hided`, `hide-agent-hooks` or `hide-host` |
-| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs) and `windows-e2e`; no macOS job |
+| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs) and `windows-e2e`; no macOS job but `package` for the package inputs among them |
 | `hide-platform`, `hide-herdr-client` | also `os-contract-macos`, the OS contract's macOS leg, which tests exactly these two crates |
-| The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `package`, `release`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts and the design, release and measurement scripts, and Markdown below a folder no rule claims | `policy` alone |
-| The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts` | the lanes that read it, listed in the script and its test; never `rust`, `os-contract` or `os-contract-macos` |
-| `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane a pull request can plan (all but `web-e2e-platform`) |
+| What goes into a package (`PACKAGE_PATHS` in the script): `desktop/scripts`, `desktop/package.json`, `desktop/resources`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh`, `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit`, `hide-agent-hooks`, `package.yml` and `release.yml` | also `package`: `package.yml`'s Windows and Linux packages, and the macOS archive with the packaged app's own specs |
+| The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts and the design, release and measurement scripts, and Markdown below a folder no rule claims | `policy` alone |
+| The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts`, `package.yml` and `release.yml` | the lanes that read it, listed in the script and its test; never `rust`, `os-contract` or `os-contract-macos` |
+| `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane but `package`, which only the package inputs add |
 
 Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
@@ -332,9 +333,9 @@ The nightly runs the `@platform` web tests on macOS and Windows (`web e2e (<syst
 Tag a `desktop/e2e` test `{ tag: "@platform" }`, with a comment saying what differs, when it checks what the desktop host does differently on another system: its processes and local stream (including whether closing the last window ends the app), the CLI's name and places, the path it hands the wire, the file manager's reveal, the accelerators it registers for the system (one test reads them through `web/e2e/chords.ts`).
 Choose by that difference, not by whether the test passes on Linux or Windows; a tagged test that fails there is fixed (its fixture or the product), never skipped, retried on a deadline or marked `@flaky`.
 A test for a macOS-only behavior, or one that checks no OS difference, carries no tag and runs on macOS only; `CONTRIBUTING.md` lists what the tag covers.
-A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
+A push to main plans every lane but `package`, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
 Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
-Nightly calls `verify` on main with every lane too: a lane it fails opens the nightly issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
+Nightly calls `verify` on main with the same lanes, and `package.yml` on its own: a lane it fails opens a `nightly-failure` issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 A path is narrower than every lane only by being named in `POLICY_ONLY` or `NAMED_LANES`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
 ### Where the macOS runners went
@@ -345,16 +346,17 @@ The organization runs 20 jobs at once and five of them on macOS, so a pull reque
 | --- | --- | --- |
 | `desktop e2e` (the Electron app) | a change to `desktop/` or to the web code the app drives (`SHARED_WEB`, the `web/e2e` helpers), and a full plan | The nightly's whole desktop suite on macOS; a core or daemon change is observed through `web-e2e` on Linux and the Linux and Windows legs of the OS contract |
 | `os contract (macOS)` | a change to `hide-platform` or `hide-herdr-client`, and a full plan | The nightly's `verify` call, which plans every lane and so runs all three legs |
+| `package (macos)` (the packaged app) | a change to what goes into a package (`PACKAGE_PATHS`), not a full plan without one; a cold release build and the packaged app's two specs, 10 to 16 minutes, nearly all of it the build | The nightly's `package.yml` call on main, which found issue #412 a day after its cause merged; no other job starts the packaged app (its signed bundle, host, daemon and Herdr) |
 | the web `@platform` tests on macOS | never (no lane) | The same tests run in every pull request on Linux (`web-e2e` runs the whole suite) and on Windows (`windows-e2e`); the nightly runs them on macOS in `web e2e (macOS full)` |
 | the remote mailbox lane on macOS | never | The nightly's `remote mailbox (macOS)` job; a pull request runs the lane on Linux, and the Mac-only parts of the fixture (codesign of the staged binaries, the system's SFTP server, the macOS Herdr asset) are checked there |
 
-A change to `herdr-core` or `hided` alone therefore starts no macOS job.
-What only macOS shows for such a change (Trash, file watching, process ownership, the ⌘ chords) is found by the next nightly, which opens the nightly issue when it fails; the cost is that delay.
+A change to `herdr-core` or `hided` alone, outside `hided/build.rs` and `hided/src/cli.rs`, therefore starts no macOS job.
+What only macOS shows for such a change (Trash, file watching, process ownership, the ⌘ chords) is found by the next nightly, which opens a `nightly-failure` issue when it fails; the cost is that delay.
 Running the desktop `@platform` tests on Linux and Windows for a `desktop/src/main` change waits for the desktop operating-system scope change (issue #561).
 
 ### How many jobs a run starts
 
-A run that plans every lane a pull request can plan starts at most 17 jobs, down from 23 (the 2026-10-05 shape of run `37324202934`, before the macOS and mailbox work), and `scripts/tests/test_ci_plan.py` counts them from the workflows:
+A run that plans every lane a pull request can plan starts at most 20 jobs, down from 23 (the 2026-10-05 shape of run `37324202934`, before the macOS and mailbox work), and `scripts/tests/test_ci_plan.py` counts them from the workflows:
 
 | Jobs | Count | Why |
 | --- | --- | --- |
@@ -364,8 +366,9 @@ A run that plans every lane a pull request can plan starts at most 17 jobs, down
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
 | `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
+| `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |
 
-The common runs are smaller: a `herdr-core` or `hided` change starts 14 jobs and none on macOS, a web shell change 10, a desktop-only change 5 with one on macOS, a `hide-platform` change 15 with one on macOS, and a documentation change 3.
+The common runs are smaller: a `herdr-core` or `hided` change starts 14 jobs and none on macOS, a web shell change 10, a desktop-only change 5 with one on macOS, a `hide-platform` change 15 with one on macOS, a `hide-kit` or `hide-agent-hooks` change 17 with one on macOS (`package`), and a documentation change 3.
 The median wall time, the share of runs whose Linux shards waited more than 10 minutes, and each shard's time at four shards come from a measurement of the pull request runs after this change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
 
@@ -406,13 +409,15 @@ CI retries a failed test once, for classification and for the report, and for no
   On Windows CI the web suite also logs, for each failed attempt and at that moment, what holds TCP connections (count by state and by process name, `[windows sockets]` lines from `web/e2e/windows-sockets-reporter.ts`), because a Chromium `ERR_NO_BUFFER_SPACE` on a loopback connect left nothing saying who held the sockets; a passing attempt runs nothing.
   The desktop suite keeps, for each failed attempt, the end of each private daemon's `Logs/core.jsonl` (at most 256 KiB, whole records) as `hided-<n>.jsonl` in that attempt's `test-results` folder, which the same artifact carries, with the run's folders, the repository, the home and the temporary folder written as placeholders, because the host log alone could not show the order of the core's focus records behind a flaky ⌃Tab cycle (issue 629); a passing attempt copies nothing.
   A test that fails its retry too fails the lane; nothing else is retried anywhere.
+  The report step writes it on the job as an error annotation titled `Failed test` (its file and line, and its name on the first line of the message), which the run's summary page shows and the nightly report files (below).
 - At the deadline a flaky test is fixed or deleted.
   Whoever knows the cause opens the fix or the deletion; if nobody does, the issue goes to the operator.
   The deadline is not a timer that moves the test somewhere quieter, and a later flake on an issue past its deadline says so in its comment.
 - A green lane is not proof that a flaky test passed on that commit: its first attempt failed.
-  Read the `Report flaky tests` step and the `quarantine` issues before claiming a flow verified.
+  Read the `Report flaky and failed tests` step and the `quarantine` issues before claiming a flow verified.
 - The report step cannot fail a lane: the run already passed.
   If it cannot file (a GitHub error, a read-only token), it leaves the unfiled tests in a warning annotation and in the job summary under "Flaky tests that were not filed", and the next flaky run files them; a filed run lists its issues in the same summary.
+- GitHub keeps 10 error annotations per step, so one report step runs the script once and annotates at most 8 failed tests; past that it writes one more annotation, `Failed tests not annotated`, whose message is the count it left out.
 - `cargo nextest` runs no doc test.
   The workspace has none that runs (its three doc blocks are `ignore`, `text` and `sh`); a runnable doc test needs its own `cargo test --doc` step.
 - `verify-cargo.sh test` and `test-scoped` stay `cargo test` for local runs and the sealed harness; they never retry.
@@ -431,6 +436,22 @@ No test leaves a required lane:
 - There is no quarantine tag and no quarantine step: every web and desktop e2e test runs in the lanes its plan picks, and a flaky one is retried, filed and fixed or deleted like any other.
 - Rust has no quarantine either: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
   An `ignore` that names an external binary, such as `real_herdr` and `remote_delivery`, is an opt-in run with its own step and says what it needs; it is not a quarantine.
+
+### Nightly failures
+
+The nightly's `report` job (`scripts/ci-flaky-report.py --nightly`) is the one writer of `nightly-failure` issues, so the run's cap, the comments and the closing never race between lanes; a lane only writes its annotations.
+
+- A failure is one issue: a test a lane annotated as `Failed test`, or, for a failed job that annotated none (its report step died, wrote nothing or never ran), the lane and its failed step.
+  The lane is the job's name without its shard, so a test is the same failure in whichever shard ran it; `verify`'s gate, which fails whenever a lane it waits for did, is not a lane.
+  A step that only prepares the runner (checking out, installing, fetching Herdr, a lost runner) adds the label `infra`; any other step, a build included, does not.
+- The issue names the test or step, the lane and its runner, an excerpt of the error (run through the same cleaning as a flaky issue's, since the page is public), the run and its commit, the lane's last green nightly within 14 runs, the pull requests merged since then that touched the failing test's file (or, for a step, the lane's workflows and the scripts they call) as candidates, and an expiry two days out.
+  It is ended by fixing the cause or reverting the candidate; a longer timeout, more retries or a skip does not end it.
+- The same failure again (a hidden `nightly-failure:<lane>:<test or step>` marker) is one comment per run attempt on the open issue, never a second issue.
+- A scheduled run on main, or a hand run of `all`, that passes a lane closes that lane's issues with a comment naming the commit and the run; a skipped or cancelled lane closes nothing.
+- One run opens at most 10 issues; the rest, with the count of failed tests a lane had no annotation room for, go into one issue, `nightly: N more failures in run <id>`, which the next scheduled run closes as it files its own.
+- A run of any other branch writes no issue.
+- The report fails its job when GitHub does, so a failure it could not file shows as a red report job rather than a silence.
+  `--dry-run` with `--repo` and `--run` prints what it would write for any finished run and writes nothing.
 
 ## Reviewing a pull request that adds or changes a test
 

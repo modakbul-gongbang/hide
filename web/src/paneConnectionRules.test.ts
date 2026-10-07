@@ -45,4 +45,6 @@ it("shows a finished shared-server answer only to the operator who asked, and a 
   expect(sharedServerOutcome({ state: "done" }, true)).toEqual({ phase: "done" });
   expect(sharedServerOutcome({ state: "failed", reason: "timed_out" }, false)).toBeNull();
   expect(sharedServerOutcome({ state: "failed", reason: "timed_out" }, true)).toEqual({ phase: "failed", key: "panes.connection.sharedServerFailed.timedOut" });
+  // Autostart went off but the running server did not stop: its own line, not the generic one (PRD codex-daemon-apply B7).
+  expect(sharedServerOutcome({ state: "failed", reason: "stop_failed" }, true)).toEqual({ phase: "failed", key: "panes.connection.sharedServerFailed.stopFailed" });
 });

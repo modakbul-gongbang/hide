@@ -76,6 +76,7 @@ const DAEMON_OFF_FAILURE: Record<string, MessageKey> = {
   codex_refused: "panes.connection.sharedServerFailed.codexRefused",
   timed_out: "panes.connection.sharedServerFailed.timedOut",
   unreachable: "panes.connection.sharedServerFailed.unreachable",
+  stop_failed: "panes.connection.sharedServerFailed.stopFailed",
 };
 
 export type SharedServerOutcome = { phase: "pending" } | { phase: "done" } | { phase: "failed"; key: MessageKey };

@@ -12,7 +12,7 @@ import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
   claudeSettings, codexHooks, deviceHome,
-  codexDaemonWritten, proveDeviceHome, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
+  codexAutostart, codexDaemonAnswers, codexDaemonWritten, proveDeviceHome, startCodexDaemon, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
 import { endChild, hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
@@ -29,7 +29,7 @@ const LABELS_ID = "hide.agent-context-labels";
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
 type DaemonEvent = {
-  kind?: string; device_id?: string; target?: string; reason?: string;
+  kind?: string; device_id?: string; target?: string; reason?: string; outcome?: unknown;
   components?: { id: string; state?: string; outcome?: unknown; reason?: string | null }[];
   upload?: { sent: number; reused: number; missing: string[] };
 };
@@ -218,6 +218,16 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     await page.keyboard.press("Escape");
     expect(applied().length).toBeGreaterThan(reinstalls);
     hideCommand(readSettings(claudeSettings(home)), "SessionStart", hooks);
+
+    // PRD codex-daemon-apply B3, B11: the operator's confirmed turn-off reaches the device's helper,
+    // which turns autostart off and stops the daemon running there, in one answer.
+    startCodexDaemon(home);
+    const answered = () => daemonEvents(daemonLog).filter((line) => line.kind === "codex_daemon_off.answered" && line.device_id === DEVICE);
+    await sendFrame(page, state, { kind: "codex_daemon_disable", payload: { device_id: DEVICE } });
+    await expect.poll(() => answered().length, { timeout: 60_000 }).toBe(1);
+    expect(answered()[0]!.outcome).toEqual({ state: "done" });
+    expect(codexAutostart(home)).toBe(false);
+    expect(codexDaemonAnswers(home)).toBe(false);
 
     // B22, B23: removal says what comes off and what stays, then takes only Hide's parts off.
     await page.locator(`[data-device-menu="${DEVICE}"]`).click();

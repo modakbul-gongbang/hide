@@ -7,10 +7,12 @@ Human Inbox UI, relay/escalate, authority proof and automatic draft clearing rem
 
 ## Commands and caller identity
 
-These commands need the running daemon and a current agent pane in a registered checkout; they work without an open renderer.
+These commands, the `hide agent` commands among them, need the running daemon and a current agent pane in a registered checkout; they work without an open renderer.
 The daemon binds the caller through the existing Workspace credential boundary and resolves the actual pane, provider and native-session identity from Herdr.
-A pane hint cannot replace that binding, and an absent, ambiguous or changed occupant returns an explicit error.
-Each queued command revalidates both its original capability caller and the agent pane against the prepared Workspace and checkout context before applying or saving; a moved checkout or newly narrower caller binding returns `caller_context_changed`.
+Only a pane-bound caller is accepted: a checkout-bound caller (a plain terminal, or a tool shell inside Codex's shared app-server daemon) is refused `agent_pane_required` whatever pane it names, and its next step is to run the command inside the agent's own pane, or to run that Codex without the shared daemon (`--no-daemon`).
+A pane hint cannot replace that binding: a pane-bound caller whose hint names another pane is refused `caller_identity_conflict`, and an absent, ambiguous or changed occupant returns an explicit error.
+`hide factory` is the exception ([factory.md](factory.md)): a checkout-bound caller acts as the operator without a pane, and its pane hint is never read as identity or lineage.
+Each queued command revalidates the caller's pane against the prepared Workspace and checkout context before applying or saving; a moved checkout returns `caller_context_changed`.
 Mailbox callers and new recipients require a positive native-session binding; a missing binding returns `native_identity_required`.
 Two missing native references in the same pane never authorize retained mail.
 Target names and pane IDs resolve against the daemon's current observations.
@@ -45,7 +47,7 @@ A tool that runs these commands from a program (sasu, a Factory engine) checks t
 `hide contract --json` answers that contract:
 
 - `format`: the document's own format, now 1.
-- `commands`: each command's words, its positional `arguments` with their value types, `repeats_at_most` for a last argument that repeats, its `options` (each with `name`, `value` type or `null` for a switch, `required`, and the options it `requires`), what `rest` passes through after `--`, and the names of the `answers` it can return.
+- `commands`: each command's words, its positional `arguments` with their value types, `repeats_at_most` for a last argument that repeats, its `options` (each with `name`, `value` type or `null` for a switch, `required`, and the options it `requires`), what `rest` passes through after `--`, the names of the `answers` it can return, and, where the contract declares them, the `refusals` its own rule answers with; those are not every failure, since every command can also fail for the daemon, the pane or the ledger.
 - `value_types`: what each value type admits (`text`, `key`, `body`, `approval`, `unsigned`, `one_of` with its `values`).
 - `envelopes`: for each topic, where the printed line carries `ok`, the `answer` and the failure `code`; a failure also exits non-zero.
 - `answers`: the JSON Schema of each answer, and `digest`, the `sha256:` of the document without it, its keys sorted and written compactly.
@@ -185,6 +187,9 @@ A watch observed by a Factory warns after that Factory's stall window (`stall_mi
 
 `hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.
 `register` records the participant on the caller's own machine, which the pane capability names: `--machine` may be left out, and when given it must name that same machine or the call is refused with `machine_identity_conflict`, so a caller in a connected device's pane registers as that device.
+`hide agent show here` answers the caller's own registration, read only, with no renderer: the one live record whose actor is the caller's attested pane, device and session, the same match as `--parent here` (`coordination::live_self`), refused when two match (`coordination::here`).
+Only a pane-bound credential can ask, as for every delivery and agent command: a checkout-bound one is refused `agent_pane_required`, and a pane-bound one whose hint names another pane is refused `caller_identity_conflict`.
+A caller with no such record is refused `participant_ended` when its record ended, `participant_session_changed` when its pane's live record belongs to another session (the pane's agent session changed), `ambiguous_participant` when two live records match, and `participant_unavailable` otherwise; a remote participant on a pane of the same name is never the local caller.
 `hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
 It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
 A completed spawn stores a durable receipt for its parent and intent, so retries return the same child and preserve ended registrations and closed watches.

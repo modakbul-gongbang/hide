@@ -506,6 +506,7 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
+        self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
         }
@@ -525,6 +526,7 @@ impl Runtime {
                 remote.close(reason);
             }
         }
+        self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
         }
@@ -535,6 +537,7 @@ impl Runtime {
         self.device_hosts.remove(device_id);
         self.forget_device_catalog(device_id);
         self.device_kit_pending.remove(device_id);
+        self.codex_daemon_off_running.remove(device_id);
         self.device_first_run_choice.remove(device_id);
         self.kit_states.remove(device_id);
     }
