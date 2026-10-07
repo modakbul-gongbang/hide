@@ -130,7 +130,7 @@ fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
      --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop|PreToolUse> \
      [--memory-injection] [--source <install marker>]\n       \
-     hide-agent-hooks hook --runtime <gemini-cli|cursor> \
+     hide-agent-hooks hook --runtime cursor \
      --event SessionStart [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }

@@ -1,6 +1,8 @@
-//! The one-time retirement of the thirteen agents Hide stopped supporting
-//! (PRD settings-cleanup D-06): only what the kit's record names and what
-//! carries Hide's marker is taken, and a second pass changes nothing.
+//! The one-time retirement of the fourteen agents Hide stopped supporting
+//! (PRD settings-cleanup D-06, and Gemini CLI once the support list became
+//! the agents the pinned Herdr ships an integration for): only what the kit's
+//! record names and what carries Hide's marker is taken, and a second pass
+//! changes nothing.
 
 use super::*;
 use crate::agents::{SKILL_NAME, skill_text};
@@ -167,9 +169,9 @@ fn a_hook_file_that_does_not_parse_stays_and_is_tried_again() {
 #[test]
 fn the_shared_stub_stays_while_a_supported_agent_still_reads_it() {
     let fixture = Fixture::new();
-    executable(&fixture.home().join(".local/bin/gemini"), "#!/bin/sh\n");
-    std::fs::create_dir_all(fixture.home().join(".gemini")).unwrap();
-    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    executable(&fixture.home().join(".local/bin/grok"), "#!/bin/sh\n");
+    std::fs::create_dir_all(fixture.home().join(".grok")).unwrap();
+    apply(&fixture.target, &Scope::agents(["grok"], []));
     let shared = fixture
         .home()
         .join(".agents/skills")
@@ -186,7 +188,7 @@ fn the_shared_stub_stays_while_a_supported_agent_still_reads_it() {
 
     apply(&fixture.target, &Scope::automatic());
 
-    assert!(shared.is_file(), "Gemini CLI still reads it");
+    assert!(shared.is_file(), "Grok still reads it");
     assert!(!record(&fixture).contains("amp"));
 }
 
@@ -266,4 +268,187 @@ fn removing_the_kit_takes_a_retired_agents_marked_hook_too() {
     assert!(!settings.contains("hide-guidance"), "{settings}");
     assert!(settings.contains("/opt/mine.sh"));
     assert!(!qwen_skill(&fixture).exists());
+}
+
+// --- Gemini CLI ------------------------------------------------------------------
+
+const GEMINI_HOOK_COMMAND: &str = "if [ -x '/kit/hide-agent-hooks' ]; then exec '/kit/hide-agent-hooks' hook --runtime gemini-cli --event SessionStart --source hide-guidance@1; fi";
+
+fn gemini_settings(fixture: &Fixture) -> PathBuf {
+    fixture.home().join(".gemini/settings.json")
+}
+
+fn shared_skill(fixture: &Fixture) -> PathBuf {
+    fixture
+        .home()
+        .join(".agents/skills")
+        .join(SKILL_NAME)
+        .join("SKILL.md")
+}
+
+/// A Mac an earlier build put Gemini CLI on: Hide's guidance group in
+/// `~/.gemini/settings.json` beside the operator's own hook and settings, the
+/// shared skill stub, Gemini's own sign-in and session files, and the record
+/// that names Hide's pieces. The shapes are the ones the earlier build wrote
+/// (`hide_agent_hooks::guidance`, Gemini CLI's documented `SessionStart`).
+fn gemini_as_an_earlier_build_left_it(fixture: &Fixture) {
+    write(
+        &gemini_settings(fixture),
+        &serde_json::json!({
+            "security": { "auth": { "selectedType": "oauth-personal" } },
+            "hooks": { "SessionStart": [
+                { "matcher": "startup", "hooks": [{ "type": "command", "command": "/opt/mine.sh" }] },
+                { "matcher": "*", "hooks": [{
+                    "name": "hide-guidance",
+                    "type": "command",
+                    "command": GEMINI_HOOK_COMMAND,
+                    "timeout": 8000
+                }] }
+            ] }
+        })
+        .to_string(),
+    );
+    write(
+        &fixture.home().join(".gemini/oauth_creds.json"),
+        "{\"token\":\"synthetic\"}",
+    );
+    write(
+        &fixture
+            .home()
+            .join(".gemini/tmp/project/chats/session-1.json"),
+        "{\"messages\":[]}",
+    );
+    write(&shared_skill(fixture), &skill_text());
+    write(
+        &fixture.home().join(".hide/kit/installed.json"),
+        r#"{"format":1,"installed":["hook:gemini-cli","skill:agents"],"agents":{"gemini-cli":true}}"#,
+    );
+}
+
+/// Gemini CLI's own files, which no pass may change.
+fn gemini_own_files(fixture: &Fixture) -> Vec<(PathBuf, Vec<u8>)> {
+    home_tree(fixture.home())
+        .into_iter()
+        .filter(|(path, _)| path.starts_with(".gemini") && !path.ends_with("settings.json"))
+        .filter_map(|(path, (_, contents))| contents.map(|contents| (path, contents)))
+        .collect()
+}
+
+#[test]
+fn gemini_clis_hide_hook_and_shared_stub_go_and_the_operators_settings_stay() {
+    let fixture = Fixture::new();
+    gemini_as_an_earlier_build_left_it(&fixture);
+    let own = gemini_own_files(&fixture);
+    assert_eq!(own.len(), 2, "{own:?}");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(gemini_settings(&fixture)).unwrap()).unwrap();
+    assert!(
+        !settings.to_string().contains("hide-guidance"),
+        "{settings}"
+    );
+    assert_eq!(
+        settings["hooks"]["SessionStart"],
+        serde_json::json!([{ "matcher": "startup", "hooks": [{ "type": "command", "command": "/opt/mine.sh" }] }])
+    );
+    assert_eq!(
+        settings["security"]["auth"]["selectedType"],
+        "oauth-personal"
+    );
+    assert_eq!(gemini_own_files(&fixture), own, "sign-in and sessions stay");
+    // No agent that is on reads the shared folder, so Hide's stub goes.
+    assert!(!shared_skill(&fixture).exists());
+    let removed = &report.legacy_retirement.removed;
+    assert!(
+        removed.iter().any(|what| what == "Gemini CLI hook"),
+        "{removed:?}"
+    );
+    assert!(
+        removed.iter().any(|what| what == "shared skill"),
+        "{removed:?}"
+    );
+    assert!(report.legacy_retirement.failures.is_empty(), "{report:?}");
+    let record = record(&fixture);
+    assert!(!record.contains("gemini"), "{record}");
+    assert!(!record.contains("skill:agents"), "{record}");
+    // Gemini CLI is not a row Settings lists any more (B1).
+    assert!(report.agents.iter().all(|agent| agent.id != "gemini-cli"));
+
+    // A later pass does not look at Gemini CLI's files: one it could not
+    // read is not a failure (B4).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let settings = gemini_settings(&fixture);
+        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let again = apply(&fixture.target, &Scope::automatic());
+        std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(again.legacy_retirement.is_empty(), "{again:?}");
+    }
+}
+
+#[test]
+fn gemini_clis_shared_stub_stays_while_codex_is_on_and_reads_it() {
+    let fixture = Fixture::new();
+    gemini_as_an_earlier_build_left_it(&fixture);
+    // Codex is on by default and reads the same folder.
+    executable(&fixture.home().join(".local/bin/codex"), "#!/bin/sh\n");
+    std::fs::create_dir_all(fixture.home().join(".codex")).unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(shared_skill(&fixture).is_file(), "Codex still reads it");
+    assert!(
+        !std::fs::read_to_string(gemini_settings(&fixture))
+            .unwrap()
+            .contains("hide-guidance")
+    );
+    assert!(report.legacy_retirement.failures.is_empty(), "{report:?}");
+    let record = record(&fixture);
+    assert!(!record.contains("gemini"), "{record}");
+    assert!(
+        record.contains("skill:agents"),
+        "Codex's stub is still Hide's: {record}"
+    );
+}
+
+/// A Gemini settings file the pass cannot read keeps the piece in the record
+/// and says why in the retirement report (which goes to the diagnostic log,
+/// not to the screen); the next pass finishes it.
+#[cfg(unix)]
+#[test]
+fn a_gemini_settings_file_that_cannot_be_read_is_tried_again_by_the_next_pass() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    gemini_as_an_earlier_build_left_it(&fixture);
+    let settings = gemini_settings(&fixture);
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let first = apply(&fixture.target, &Scope::automatic());
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert!(
+        first
+            .legacy_retirement
+            .failures
+            .iter()
+            .any(|failure| failure.starts_with("Gemini CLI hook:")),
+        "{first:?}"
+    );
+    assert!(record(&fixture).contains("hook:gemini-cli"));
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("hide-guidance")
+    );
+
+    let second = apply(&fixture.target, &Scope::automatic());
+
+    assert!(second.legacy_retirement.failures.is_empty(), "{second:?}");
+    let left = std::fs::read_to_string(&settings).unwrap();
+    assert!(!left.contains("hide-guidance"), "{left}");
+    assert!(left.contains("/opt/mine.sh"), "{left}");
+    assert!(!record(&fixture).contains("gemini"));
 }

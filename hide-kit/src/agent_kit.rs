@@ -407,7 +407,9 @@ fn report_agent(
             target, adapter, agent, record, on, detection, failures,
         )),
     };
-    let herdr = herdr_piece(target, adapter, record, on, detection, herdr, failures);
+    let herdr = Some(herdr_piece(
+        target, adapter, record, on, detection, herdr, failures,
+    ));
     AgentReport {
         id: adapter.id.to_owned(),
         label: adapter.label.to_owned(),
@@ -425,9 +427,7 @@ fn report_agent(
 /// Herdr CLI Hide can find, else the listing or why it could not be read.
 type HerdrView = Option<Result<Statuses, String>>;
 
-/// One agent's Herdr integration as the row states it; `None` for an agent
-/// the pinned Herdr has no integration for, which then has no row for it and
-/// no failure (the agent's state is read from its screen).
+/// One agent's Herdr integration as the row states it.
 fn herdr_piece(
     target: &KitTarget,
     adapter: &AgentAdapter,
@@ -436,8 +436,8 @@ fn herdr_piece(
     detection: &Detection,
     herdr: &HerdrView,
     failures: Option<&AgentFailures>,
-) -> Option<PieceReport> {
-    let integration = adapter.herdr?;
+) -> PieceReport {
+    let integration = adapter.herdr;
     let folder = integration
         .folder
         .iter()
@@ -466,22 +466,22 @@ fn herdr_piece(
                 "Hide's Herdr integration is still in place; switch the agent on and off again to remove it".to_owned()
             })
         });
-        return Some(match left {
+        return match left {
             Some(reason) => piece(ComponentState::Failed, Some(reason)),
             None => piece(ComponentState::Off, None),
-        });
+        };
     }
     if !detection.installed(adapter) {
-        return Some(PieceReport {
+        return PieceReport {
             state: ComponentState::Absent,
             reason: Some(not_found(adapter)),
             location: None,
-        });
+        };
     }
     if let Some(reason) = failure {
-        return Some(piece(ComponentState::Failed, Some(reason)));
+        return piece(ComponentState::Failed, Some(reason));
     }
-    Some(match herdr {
+    match herdr {
         None => piece(
             ComponentState::Absent,
             Some("Herdr is not found on this machine".to_owned()),
@@ -516,7 +516,7 @@ fn herdr_piece(
             ),
             Some(Integration::Missing) => piece(ComponentState::NotInstalled, None),
         },
-    })
+    }
 }
 
 /// Hide's skill stub is still in the folder of an agent the operator switched
@@ -840,9 +840,7 @@ fn apply_herdr(
     let mut installed_now: Vec<(&AgentAdapter, Option<HookFiles>)> = Vec::new();
     let mut touched = false;
     for adapter in ADAPTERS {
-        let Some(integration) = adapter.herdr else {
-            continue;
-        };
+        let integration = adapter.herdr;
         let code = herdr_code(adapter);
         let recorded = record.contains_piece(&code);
         if !enabled(record, scope, adapter) {
@@ -926,9 +924,7 @@ fn apply_herdr(
     let after = Statuses::probe(target);
     if let Some(Ok(statuses)) = &after {
         for (adapter, files) in installed_now {
-            let Some(integration) = adapter.herdr else {
-                continue;
-            };
+            let integration = adapter.herdr;
             if statuses.of(integration.name) == Some(Integration::Current) && record_readable {
                 *changed |= record.insert_piece(&herdr_code(adapter));
                 if let Some(files) = files {
@@ -1021,7 +1017,7 @@ pub(crate) fn remove(target: &KitTarget) -> Vec<(String, RemoveOutcome)> {
 pub(crate) fn remove_herdr(target: &KitTarget, record: &Record) -> Vec<(String, RemoveOutcome)> {
     let owned: Vec<&AgentAdapter> = ADAPTERS
         .iter()
-        .filter(|adapter| adapter.herdr.is_some() && record.contains_piece(&herdr_code(adapter)))
+        .filter(|adapter| record.contains_piece(&herdr_code(adapter)))
         .collect();
     if owned.is_empty() {
         return Vec::new();
@@ -1029,8 +1025,8 @@ pub(crate) fn remove_herdr(target: &KitTarget, record: &Record) -> Vec<(String, 
     let statuses = Statuses::probe(target);
     owned
         .into_iter()
-        .filter_map(|adapter| {
-            let integration = adapter.herdr?;
+        .map(|adapter| {
+            let integration = adapter.herdr;
             let outcome = match &statuses {
                 None => RemoveOutcome::Failed {
                     reason: "Herdr is not found on this machine".to_owned(),
@@ -1046,7 +1042,7 @@ pub(crate) fn remove_herdr(target: &KitTarget, record: &Record) -> Vec<(String, 
                     Err(reason) => RemoveOutcome::Failed { reason },
                 },
             };
-            Some((herdr_code(adapter), outcome))
+            (herdr_code(adapter), outcome)
         })
         .collect()
 }

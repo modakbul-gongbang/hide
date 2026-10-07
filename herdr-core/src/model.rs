@@ -718,8 +718,8 @@ pub struct KitAgentSnapshot {
     /// `None` for an agent that gets the skill only.
     pub hook: Option<KitPieceSnapshot>,
     /// Herdr's own integration for the agent, installed through the
-    /// machine's Herdr CLI; `None` for an agent the pinned Herdr has none
-    /// for (Gemini CLI).
+    /// machine's Herdr CLI. Every supported agent has one; `None` only from a
+    /// device helper whose build predates the field.
     pub herdr: Option<KitPieceSnapshot>,
     /// Hide does only some of what it does for Claude Code with this agent:
     /// the row wears the Partial chip whether or not the agent is on (PRD
@@ -1882,7 +1882,7 @@ pub struct PaneChildrenSnapshot {
     pub chips: Vec<AgentChipSnapshot>,
     /// Whether Hide hears this pane's session, for the pane header's "Not
     /// connected" chip (PRD settings-cleanup B26 to B31). `None` on an agent
-    /// Hide has no connection to judge (Gemini CLI, Grok, OpenCode, Pi,
+    /// Hide has no connection to judge (Grok, OpenCode, Pi, omp,
     /// Cursor: B19) and on one whose hook is switched off or whose machine
     /// the core has not read yet. Derived from the same observation as
     /// `instrumented` above, never a second detector.
@@ -4040,9 +4040,10 @@ pub struct BackgroundAiProviderSnapshot {
     /// The provider layer's own id, such as `codex`.
     pub id: String,
     pub label: String,
-    /// The kit's adapter id for the same agent (`claude-code`, `codex`,
-    /// `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`), which the Agents
-    /// tab and the logos are keyed by.
+    /// The id the Agents tab and the logos key the same agent by: the kit's
+    /// adapter id (`claude-code`, `codex`, `grok`, `opencode`, `pi`,
+    /// `cursor`), or `gemini-cli` for Gemini CLI, which Hide AI still uses
+    /// though the kit no longer lists it.
     pub agent: String,
     /// The availability class the provider layer reported: `ready`,
     /// `needs_login`, `not_installed`, `unavailable`, `unsupported`, or
