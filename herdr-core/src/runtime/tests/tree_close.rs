@@ -110,11 +110,19 @@ fn tree_catalog() -> session_sync::PrecomputedCatalog {
     session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &workspace::catalog_paths_here(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces.iter().flat_map(|space| space.cwds.clone()),
+        )),
     }
 }
 
@@ -138,6 +146,7 @@ fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     assert!(
         runtime.ingest_session_with_catalog(Ok(tree_payload(&EVERY, status)), Some(tree_catalog()))
@@ -442,7 +451,7 @@ fn an_admitted_tree_keeps_room_for_its_later_closes() {
 #[test]
 fn a_device_descendant_closes_through_the_device_and_fails_when_it_disconnects() {
     let mut runtime = tree_runtime(&[]);
-    runtime.local_machine_id = Some("machine-local".to_owned());
+    runtime.node = crate::node::NodeId::parse("machine-local").unwrap();
     let remote_pane = "remote:mini:pane:r1";
     let mut child = runtime.snapshot.navigator.agents[1].clone();
     child.pane_id = remote_pane.to_owned();

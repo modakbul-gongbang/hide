@@ -126,7 +126,7 @@ impl Runtime {
         // folders: the same confinement to the checkout's opened root on
         // either shell (PRD S5.5 D-05). A device without a ready helper
         // lists nothing and says why.
-        let channel = match self.device_channel(&target_id) {
+        let channel = match self.node_link(&target_id) {
             Ok(channel) => channel,
             Err(message) => {
                 let generation = self.advance_remote_file_generation();
@@ -178,7 +178,7 @@ impl Runtime {
             .name(format!("herdr-core-remote-files-{target_id}"))
             .spawn(move || {
                 let result =
-                    crate::host_access::list_folder(channel.as_ref(), &worker_root_path, "")
+                    crate::node_access::list_folder(channel.as_ref(), &worker_root_path, "")
                         .map_err(|error| error.to_string());
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
@@ -212,7 +212,7 @@ impl Runtime {
         target_id: &str,
         root_path: &str,
         generation: u64,
-        result: Result<hide_host::list::Listing, String>,
+        result: Result<hide_node_link::list::Listing, String>,
     ) -> bool {
         let Some(status_index) = self
             .snapshot
@@ -439,6 +439,19 @@ impl Runtime {
                 );
                 return true;
             }
+            if matches!(
+                &payload.request,
+                RemoteControlRequest::TogglePaneZoom { .. }
+            ) && remote_pane_alone_unzoomed(&session, &pane_id)
+            {
+                self.push_diagnostic(
+                    "remote.control.zoom_single_pane",
+                    format!(
+                        "Pane {pane_id} on {target_id} is its tab's only pane; zoom was not sent"
+                    ),
+                );
+                return true;
+            }
         }
 
         // The Workspace that holds the agent or tab the request chooses,
@@ -522,7 +535,9 @@ impl Runtime {
                         return true;
                     }
                     (None, None) => RemoteControlAction::OpenOwner {
-                        owner: super::projects::owner_open(project, checkout, &target_id),
+                        owner: super::projects::owner_open(
+                            project, checkout, &target_id, &self.node,
+                        ),
                         cwd: checkout.path.clone(),
                         label: checkout.next_tab_label.clone(),
                         area_id: None,
@@ -592,7 +607,7 @@ impl Runtime {
                     self.refuse_unconfirmed_owner(&target_id, checkout);
                     return true;
                 }
-                match super::projects::tab_host(project, checkout, &target_id) {
+                match super::projects::tab_host(project, checkout, &target_id, &self.node) {
                     TabHost::Workspace(owner) => RemoteControlAction::CreateTab {
                         workspace_id: owner,
                         cwd,
@@ -1130,8 +1145,8 @@ impl Runtime {
         };
         let codex_daemon_on = self
             .kit_states
-            .get(crate::workspace::LOCAL_DEVICE_ID)
-            .is_some_and(|kit| kit.codex_daemon_on == Some(true));
+            .get(self.node.as_str())
+            .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;
@@ -1539,7 +1554,7 @@ impl Runtime {
     pub fn ai_request(&self) -> crate::ai::AiRequest {
         let settings = self.ai_settings.clone().unwrap_or_default();
         let selecting = if self.ai_settings.is_some() && settings.enabled && !settings.chosen {
-            self.kit_state(crate::workspace::LOCAL_DEVICE_ID)
+            self.kit_state(self.node.as_str())
                 .agents
                 .iter()
                 .filter(|row| {
@@ -1555,7 +1570,7 @@ impl Runtime {
         } else {
             std::collections::BTreeSet::new()
         };
-        let kit = self.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+        let kit = self.kit_state(self.node.as_str());
         // The kit's own answer to "is this agent's program on this Mac"; none
         // until it has read, so no agent is called missing from no reading.
         let cli_found = (!kit.agents.is_empty()).then(|| {
@@ -1656,7 +1671,7 @@ impl Runtime {
             return false;
         }
         let on: Vec<String> = self
-            .kit_state(crate::workspace::LOCAL_DEVICE_ID)
+            .kit_state(self.node.as_str())
             .agents
             .iter()
             .filter(|row| row.enabled)
@@ -1802,7 +1817,7 @@ impl Runtime {
                 hide_agent_hooks::AgentRuntime::Codex => "codex",
             };
             let off = self
-                .kit_state(crate::workspace::LOCAL_DEVICE_ID)
+                .kit_state(self.node.as_str())
                 .agents
                 .iter()
                 .any(|row| row.id == agent && !row.enabled);
@@ -2298,9 +2313,7 @@ impl Runtime {
                     Some(target) => crate::session_sync::remote_pane_id(target, parent),
                     None => parent.to_owned(),
                 }),
-                Some(machine) if self.local_machine_id.as_deref() == Some(machine) => {
-                    Some(parent.to_owned())
-                }
+                Some(machine) if self.node == machine => Some(parent.to_owned()),
                 Some(machine) => machine_targets
                     .get(machine)
                     .map(|target| crate::session_sync::remote_pane_id(target, parent)),

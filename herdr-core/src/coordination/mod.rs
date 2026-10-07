@@ -4,7 +4,7 @@
 mod executor;
 pub(crate) mod lineage;
 
-use crate::delivery::answer::{AgentView, RegisterCheck};
+use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
 use crate::delivery::{Actor, ledger::Ledger, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -128,6 +128,54 @@ pub fn resolve_actor<'a>(ledger: &'a Ledger, key: &str) -> Option<&'a Actor> {
     found.next().is_none().then_some(&first.actor)
 }
 
+/// The id `hide agent show` and `--parent` take for the caller itself.
+pub const HERE: &str = "here";
+
+/// The caller's live registrations: the records not ended whose actor is
+/// the caller's attested pane, device and session. `--parent here` takes
+/// the first; `here` refuses more than one.
+pub(crate) fn live_self<'a>(
+    ledger: &'a Ledger,
+    caller: &'a Actor,
+) -> impl Iterator<Item = &'a AgentRecord> {
+    ledger
+        .agents
+        .iter()
+        .filter(move |record| !record.ended && record.actor.same_identity(caller))
+}
+
+/// The caller's own registration, by the same match as `--parent here`,
+/// refusing two. It never registers. A caller with no such record learns
+/// which of the ways it has none: its record ended, its pane's live record
+/// belongs to another session (the pane's agent session changed), or there
+/// is none.
+pub(crate) fn here<'a>(
+    ledger: &'a Ledger,
+    caller: &'a Actor,
+) -> Result<&'a AgentRecord, &'static str> {
+    let mut live = live_self(ledger, caller);
+    match (live.next(), live.next()) {
+        (Some(record), None) => return Ok(record),
+        (Some(_), Some(_)) => return Err("ambiguous_participant"),
+        _ => {}
+    }
+    if ledger
+        .agents
+        .iter()
+        .any(|record| record.ended && record.actor.same_identity(caller))
+    {
+        Err("participant_ended")
+    } else if ledger.agents.iter().any(|record| {
+        !record.ended
+            && record.actor.pane_id == caller.pane_id
+            && record.actor.device_id == caller.device_id
+    }) {
+        Err("participant_session_changed")
+    } else {
+        Err("participant_unavailable")
+    }
+}
+
 pub(crate) fn view(record: &AgentRecord, ledger: &Ledger) -> Value {
     json!(agent_view(record, ledger))
 }
@@ -143,11 +191,15 @@ pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
         pane: record.pane.clone(),
         parent: record.parent.clone(),
         project: record.project.clone(),
-        runtime: if record.ended { "ended" } else { "running" },
-        connection: if record.ended {
-            "disconnected"
+        runtime: if record.ended {
+            Runtime::Ended
         } else {
-            "connected"
+            Runtime::Running
+        },
+        connection: if record.ended {
+            Connection::Disconnected
+        } else {
+            Connection::Connected
         },
         registered: !record.ended,
         watch: ledger
@@ -627,6 +679,53 @@ mod tests {
         )
     }
 
+    /// `here` is the caller's own live registration, and a caller with
+    /// none learns why: ended, its pane's session moved on, or never there.
+    #[test]
+    fn here_is_the_callers_own_live_registration() {
+        let mut ledger = Ledger::default();
+        let observer = record("observer", "observer-session", None);
+        let caller = observer.actor.clone();
+        assert_eq!(
+            here(&ledger, &caller).err(),
+            Some("participant_unavailable")
+        );
+        let id = register(&mut ledger, observer, &caller);
+        let child = record("child", "child-session", Some(id.clone()));
+        let child_actor = child.actor.clone();
+        register(&mut ledger, child, &caller);
+        assert_eq!(here(&ledger, &caller).unwrap().id, id);
+        assert_eq!(here(&ledger, &child_actor).unwrap().name, "child");
+        // A remote participant on a pane of the same name is not this caller.
+        let mut remote = caller.clone();
+        remote.device_id = "mini".into();
+        assert_eq!(
+            here(&ledger, &remote).err(),
+            Some("participant_unavailable")
+        );
+        // The pane's session moved on: its record belongs to the old one.
+        let mut handed_off = caller.clone();
+        handed_off.session = crate::wire::session_digest("observer-after-compaction");
+        assert_eq!(
+            here(&ledger, &handed_off).err(),
+            Some("participant_session_changed")
+        );
+        ledger
+            .agents
+            .iter_mut()
+            .find(|record| record.id == id)
+            .unwrap()
+            .ended = true;
+        assert_eq!(here(&ledger, &caller).err(), Some("participant_ended"));
+        let mut twice = ledger.agents[1].clone();
+        twice.id = "agent-copy".into();
+        ledger.agents.push(twice);
+        assert_eq!(
+            here(&ledger, &child_actor).err(),
+            Some("ambiguous_participant")
+        );
+    }
+
     #[test]
     fn only_a_factory_registers_under_a_factory_name() {
         let mut ledger = Ledger::default();
@@ -645,7 +744,7 @@ mod tests {
             "reserved_name"
         );
         // A pane cannot register the Factory's own record either.
-        let factory = Actor::factory("f-1");
+        let factory = Actor::factory("f-1", crate::node::TEST_NODE);
         let mut owned = record("factory:f-1", "factory:f-1", None);
         owned.actor = factory.clone();
         let pane = record("pane-2", "native-pane-2", None).actor;

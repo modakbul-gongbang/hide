@@ -94,16 +94,16 @@ fn caller_query_reads_only_its_live_checkout_and_untouched_views_are_empty() {
     let (mut runtime, _dir) = caller_fixture();
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
     let info = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap();
-    assert_eq!(info.context.device_id, "local");
+    assert_eq!(info.context.device_id, crate::node::TEST_NODE);
     assert_eq!(info.context.workspace_id, "workspace-b");
     assert_eq!(info.context.checkout_id, "checkout-b");
     assert_eq!(info.context.checkout_path, "/checkouts/b");
     assert!(info.views.is_none());
     assert_eq!(
         runtime
-            .workspace_control_query("local", "pane-b", Query::ViewList)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::ViewList)
             .unwrap()
             .views,
         Some(Vec::new())
@@ -114,7 +114,7 @@ fn caller_query_reads_only_its_live_checkout_and_untouched_views_are_empty() {
         .as_mut()
         .unwrap()
         .views
-        .entry("local", "/checkouts/b")
+        .entry(crate::node::TEST_NODE, "/checkouts/b")
         .layout;
     let display = layout.new_display(
         "/checkouts/b/보고서.md",
@@ -124,7 +124,7 @@ fn caller_query_reads_only_its_live_checkout_and_untouched_views_are_empty() {
     );
     layout.insert("a1", display, 1).unwrap();
     let views = runtime
-        .workspace_control_query("local", "pane-b", Query::ViewList)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::ViewList)
         .unwrap()
         .views
         .unwrap();
@@ -141,7 +141,7 @@ fn caller_query_refuses_stale_or_ambiguous_pane_without_using_the_front_workspac
     let (mut runtime, _dir) = caller_fixture();
     assert_eq!(
         runtime
-            .workspace_control_query("local", "closed-pane", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "closed-pane", Query::Info)
             .unwrap_err()
             .reason,
         "pane_not_connected"
@@ -149,7 +149,7 @@ fn caller_query_refuses_stale_or_ambiguous_pane_without_using_the_front_workspac
     runtime.snapshot.navigator.workspaces[1].checkouts[0].tabs[0].panes[0].id = "pane-a".to_owned();
     assert_eq!(
         runtime
-            .workspace_control_query("local", "pane-a", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-a", Query::Info)
             .unwrap_err()
             .reason,
         "ambiguous_pane"
@@ -158,7 +158,7 @@ fn caller_query_refuses_stale_or_ambiguous_pane_without_using_the_front_workspac
     runtime.workspace_views = None;
     assert_eq!(
         runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap_err()
             .reason,
         "views_unavailable"
@@ -167,7 +167,7 @@ fn caller_query_refuses_stale_or_ambiguous_pane_without_using_the_front_workspac
     runtime.snapshot.status.herdr.state = "disconnected".to_owned();
     assert_eq!(
         runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap_err()
             .reason,
         "pane_not_connected"
@@ -212,7 +212,7 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
     });
 
     let local = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap();
     let remote = runtime
         .workspace_control_query(device, "pane-b", Query::Info)
@@ -231,7 +231,7 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
     );
     assert_eq!(
         runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap()
             .context
             .workspace_id,
@@ -243,14 +243,14 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
 fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let other = runtime
-        .workspace_control_query("local", "pane-a", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-a", Query::Info)
         .unwrap()
         .context;
-    let key = ("local", "/checkouts/b");
+    let key = (crate::node::TEST_NODE, "/checkouts/b");
     let layout = &mut runtime
         .workspace_views
         .as_mut()
@@ -287,7 +287,7 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
     let retry_id = action_id("retry-split");
     let first = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &retry_id,
@@ -297,7 +297,14 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
         .unwrap();
     assert!(first.changed);
     let retry = runtime
-        .workspace_control_action("local", "pane-b", &expected, &retry_id, action, Ok(None))
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &retry_id,
+            action,
+            Ok(None),
+        )
         .unwrap();
     assert_eq!(retry, first);
     assert_eq!(
@@ -310,7 +317,7 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &retry_id,
@@ -327,7 +334,7 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-a",
                 &other,
                 &action_id("wrong-workspace"),
@@ -357,7 +364,7 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &retry_id,
@@ -378,10 +385,10 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
 fn close_of_an_already_closed_view_returns_a_no_change_result() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
-    let key = ("local", "/checkouts/b");
+    let key = (crate::node::TEST_NODE, "/checkouts/b");
     let layout = &mut runtime
         .workspace_views
         .as_mut()
@@ -399,7 +406,7 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
     assert!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &action_id("close-1"),
@@ -412,7 +419,7 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
     assert!(
         !runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &action_id("close-2"),
@@ -435,7 +442,7 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
 #[test]
 fn selecting_a_hidden_view_reveals_only_when_requested() {
     let (mut runtime, _dir) = caller_fixture();
-    let key = ("local", "/checkouts/b");
+    let key = (crate::node::TEST_NODE, "/checkouts/b");
     let layout = &mut runtime
         .workspace_views
         .as_mut()
@@ -447,14 +454,14 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
     let view_id = display.id.clone();
     layout.insert("a1", display, 1).unwrap();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
     let called = |runtime: &Runtime| runtime.workspace_views.as_ref().unwrap().views_calls;
     runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("select-hidden"),
@@ -474,7 +481,7 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
     assert_eq!(called(&runtime), 0, "a background select calls no column");
     runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("select-reveal"),
@@ -530,7 +537,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     let path = dir.path().join("보고서.md");
     std::fs::write(&path, "hello\n").unwrap();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
@@ -541,7 +548,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     };
     let id = action_id("file-open");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
         .unwrap()
     else {
         panic!("file needs a host read")
@@ -549,7 +556,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     let material = source.read().unwrap();
     let first = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &id,
@@ -561,7 +568,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     assert_eq!(first.context.checkout_path, root);
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
     let views = runtime
-        .workspace_control_query("local", "pane-b", Query::ViewList)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::ViewList)
         .unwrap()
         .views
         .unwrap();
@@ -570,7 +577,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     assert_eq!(views[0].target, path.to_string_lossy());
     std::fs::remove_file(&path).unwrap();
     let ActionPreparation::Cached(Ok(retried)) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
         .unwrap()
     else {
         panic!("retry should return its recorded result without rereading")
@@ -584,7 +591,13 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     };
     let reveal_id = action_id("reveal-open-file");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &reveal_id, &reveal)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &reveal_id,
+            &reveal,
+        )
         .unwrap()
     else {
         panic!("a new intent checks its source")
@@ -592,7 +605,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     let material = source.read().unwrap();
     runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &reveal_id,
@@ -610,7 +623,7 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
 fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let before = runtime.snapshot.navigator.focused_workspace_id.clone();
@@ -623,7 +636,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     let request_id = action_id("browser-open");
     let first = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &request_id,
@@ -632,7 +645,10 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
         )
         .unwrap();
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
-    let key = ("local".to_owned(), expected.checkout_path.clone());
+    let key = (
+        crate::node::TEST_NODE.to_owned(),
+        expected.checkout_path.clone(),
+    );
     let load = runtime
         .view_layout_of(&key)
         .unwrap()
@@ -642,7 +658,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &request_id,
@@ -663,7 +679,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     );
     let page = |runtime: &Runtime| {
         runtime
-            .workspace_control_query("local", "pane-b", Query::ViewList)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::ViewList)
             .unwrap()
             .views
             .unwrap()
@@ -676,7 +692,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     assert_eq!(page(&runtime).state, "pending");
     let report = |runtime: &mut Runtime, load: u64, loading: bool, failure: Option<&str>| {
         let payload = serde_json::from_value(serde_json::json!({
-            "workspace":{"device_id":"local","path":expected.checkout_path},
+            "workspace":{"device_id":crate::node::TEST_NODE,"path":expected.checkout_path},
             "display_id":first.view_id,"url":"https://example.test/page","title":"Page",
             "load":load,"loading":loading,"failure":failure,
         }))
@@ -688,7 +704,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     report(&mut runtime, load, false, None);
     assert_eq!(page(&runtime).state, "loaded");
     let gone = serde_json::from_value(serde_json::json!({
-        "workspace":{"device_id":"local","path":expected.checkout_path},
+        "workspace":{"device_id":crate::node::TEST_NODE,"path":expected.checkout_path},
         "display_id":first.view_id,"url":"https://example.test/page","title":"Page",
         "load":load,"present":false,
     }))
@@ -697,7 +713,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     assert_eq!(page(&runtime).state, "disconnected");
     runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("browser-reload"),
@@ -727,7 +743,7 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
 fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let (existing, other_view, other_area) = seed_browser_areas(&mut runtime, &expected);
@@ -746,7 +762,14 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
     };
     let id = action_id("new-browser-target");
     let first = runtime
-        .workspace_control_action("local", "pane-b", &expected, &id, action.clone(), Ok(None))
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &id,
+            action.clone(),
+            Ok(None),
+        )
         .unwrap();
     assert_ne!(first.view_id, existing);
     assert_eq!(first.area_id.as_deref(), Some("a1"));
@@ -765,7 +788,7 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
     // A lost reply repeats the intent, even if the caller supplies no material.
     let after = browser_control_state(&runtime);
     let ActionPreparation::Cached(Ok(cached)) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
         .unwrap()
     else {
         panic!("duplicate target creation must return its receipt")
@@ -773,7 +796,14 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
     assert_eq!(cached, first);
     assert_eq!(
         runtime
-            .workspace_control_action("local", "pane-b", &expected, &id, action.clone(), Ok(None))
+            .workspace_control_action(
+                crate::node::TEST_NODE,
+                "pane-b",
+                &expected,
+                &id,
+                action.clone(),
+                Ok(None)
+            )
             .unwrap(),
         first
     );
@@ -781,7 +811,7 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
 
     let second = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("another-browser-target"),
@@ -807,7 +837,7 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
 fn browser_explicit_area_dedupes_only_within_that_area() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let (_, other_view, other_area) = seed_browser_areas(&mut runtime, &expected);
@@ -820,7 +850,7 @@ fn browser_explicit_area_dedupes_only_within_that_area() {
     };
     let first = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("area-dedupe"),
@@ -832,7 +862,7 @@ fn browser_explicit_area_dedupes_only_within_that_area() {
     assert_eq!(first.area_id.as_deref(), Some("a1"));
     let reloaded = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("area-reload"),
@@ -856,7 +886,7 @@ fn browser_explicit_area_dedupes_only_within_that_area() {
 fn legacy_browser_open_keeps_global_dedupe_and_active_area_insertion() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let (existing, _, other_area) = seed_browser_areas(&mut runtime, &expected);
@@ -867,7 +897,7 @@ fn legacy_browser_open_keeps_global_dedupe_and_active_area_insertion() {
     .unwrap();
     let inserted = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("legacy-fresh"),
@@ -882,7 +912,7 @@ fn legacy_browser_open_keeps_global_dedupe_and_active_area_insertion() {
     .unwrap();
     let reused = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("legacy-duplicate"),
@@ -900,7 +930,7 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
     for seeded in [false, true] {
         let (mut runtime, _dir) = caller_fixture();
         let expected = runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap()
             .context;
         if seeded {
@@ -915,7 +945,13 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
         let id = action_id("unknown-browser-area");
         let before = browser_control_state(&runtime);
         let refusal = runtime
-            .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+            .workspace_control_prepare_action(
+                crate::node::TEST_NODE,
+                "pane-b",
+                &expected,
+                &id,
+                &action,
+            )
             .err()
             .unwrap();
         assert_eq!(refusal.reason, "view_layout.unknown_area");
@@ -923,7 +959,7 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
         assert_eq!(
             runtime
                 .workspace_control_action(
-                    "local",
+                    crate::node::TEST_NODE,
                     "pane-b",
                     &expected,
                     &id,
@@ -935,7 +971,13 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
         );
         assert_eq!(browser_control_state(&runtime), before);
         let ActionPreparation::Cached(Err(cached)) = runtime
-            .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+            .workspace_control_prepare_action(
+                crate::node::TEST_NODE,
+                "pane-b",
+                &expected,
+                &id,
+                &action,
+            )
             .unwrap()
         else {
             panic!("a committed refusal is idempotent too")
@@ -951,7 +993,7 @@ fn browser_area_removed_during_file_read_refuses_without_mutation() {
     runtime.snapshot.navigator.workspaces[1].path = root.clone();
     runtime.snapshot.navigator.workspaces[1].checkouts[0].path = root;
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let (_, other_view, other_area) = seed_browser_areas(&mut runtime, &expected);
@@ -965,7 +1007,7 @@ fn browser_area_removed_during_file_read_refuses_without_mutation() {
     };
     let id = action_id("browser-area-disappeared");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
         .unwrap()
     else {
         panic!("the checked HTML source must still be read outside the lock")
@@ -986,7 +1028,7 @@ fn browser_area_removed_during_file_read_refuses_without_mutation() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &id,
@@ -1005,12 +1047,12 @@ fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
     for close in [false, true] {
         let (mut runtime, _dir) = caller_fixture();
         let expected = runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap()
             .context;
         let (view_id, _, other_area) = seed_browser_areas(&mut runtime, &expected);
         let copied_view = runtime
-            .workspace_control_query("local", "pane-b", Query::ViewList)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::ViewList)
             .unwrap()
             .views
             .unwrap()
@@ -1034,14 +1076,20 @@ fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
         let id = action_id("scoped-before-move");
         assert!(matches!(
             runtime
-                .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+                .workspace_control_prepare_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    &action
+                )
                 .unwrap(),
             ActionPreparation::Ready
         ));
 
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &action_id("move-page-before-commit"),
@@ -1066,7 +1114,14 @@ fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
         let before = browser_control_state(&runtime);
         assert_eq!(
             runtime
-                .workspace_control_action("local", "pane-b", &expected, &id, action, Ok(None))
+                .workspace_control_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    action,
+                    Ok(None)
+                )
                 .unwrap_err()
                 .reason,
             "browser_scope_changed"
@@ -1080,7 +1135,7 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
     for close in [false, true] {
         let (mut runtime, _dir) = caller_fixture();
         let expected = runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap()
             .context;
         let layout = &mut runtime
@@ -1114,7 +1169,13 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
         let before = browser_control_state(&runtime);
         assert_eq!(
             runtime
-                .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+                .workspace_control_prepare_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    &action
+                )
                 .err()
                 .unwrap()
                 .reason,
@@ -1122,7 +1183,14 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
         );
         assert_eq!(
             runtime
-                .workspace_control_action("local", "pane-b", &expected, &id, action, Ok(None))
+                .workspace_control_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    action,
+                    Ok(None)
+                )
                 .unwrap_err()
                 .reason,
             "browser_scope_changed"
@@ -1135,7 +1203,7 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
 fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt() {
     let (mut runtime, _dir) = caller_fixture();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let (view_id, _, other_area) = seed_browser_areas(&mut runtime, &expected);
@@ -1147,7 +1215,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     let select_id = action_id("scoped-select");
     let selected = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &select_id,
@@ -1161,7 +1229,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &select_id,
@@ -1175,7 +1243,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
         assert_eq!(
             runtime
                 .workspace_control_action(
-                    "local",
+                    crate::node::TEST_NODE,
                     "pane-b",
                     &expected,
                     &select_id,
@@ -1200,7 +1268,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     let close_id = action_id("scoped-close");
     let closed = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &close_id,
@@ -1219,7 +1287,13 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     );
     let after_close = browser_control_state(&runtime);
     let ActionPreparation::Cached(Ok(cached)) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &close_id, &close_action)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &close_id,
+            &close_action,
+        )
         .unwrap()
     else {
         panic!("a closed browser target must replay its successful receipt")
@@ -1228,7 +1302,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &close_id,
@@ -1243,7 +1317,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
         assert_eq!(
             runtime
                 .workspace_control_action(
-                    "local",
+                    crate::node::TEST_NODE,
                     "pane-b",
                     &expected,
                     &close_id,
@@ -1262,7 +1336,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &action_id("fresh-scoped-close"),
@@ -1276,7 +1350,7 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     assert!(
         !runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &action_id("legacy-close-missing"),
@@ -1300,7 +1374,7 @@ fn browser_file_source_is_confined_to_the_calling_checkout() {
     runtime.snapshot.navigator.workspaces[1].checkouts[0].path =
         checkout.to_string_lossy().into_owned();
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let outside = dir.path().join("outside.html");
@@ -1313,7 +1387,7 @@ fn browser_file_source_is_confined_to_the_calling_checkout() {
     };
     let ActionPreparation::Read(source) = runtime
         .workspace_control_prepare_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &action_id("outside-html"),
@@ -1334,7 +1408,7 @@ fn browser_file_source_is_confined_to_the_calling_checkout() {
     };
     let id = action_id("inside-html");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
         .unwrap()
     else {
         panic!("file URL must read outside the lock")
@@ -1343,7 +1417,7 @@ fn browser_file_source_is_confined_to_the_calling_checkout() {
     assert!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &id,
@@ -1380,12 +1454,14 @@ fn diff_open_requires_a_real_working_tree_change() {
         "user.name=Fixture",
         "-c",
         "user.email=fixture@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
         "commit",
         "-qm",
         "baseline",
     ]);
     let expected = runtime
-        .workspace_control_query("local", "pane-b", Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
         .unwrap()
         .context;
     let action = Action::OpenDiff {
@@ -1395,7 +1471,13 @@ fn diff_open_requires_a_real_working_tree_change() {
     };
     let clean_id = action_id("clean");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &clean_id, &action)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &clean_id,
+            &action,
+        )
         .unwrap()
     else {
         panic!("diff needs a Git read")
@@ -1407,7 +1489,7 @@ fn diff_open_requires_a_real_working_tree_change() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 "pane-b",
                 &expected,
                 &clean_id,
@@ -1420,7 +1502,13 @@ fn diff_open_requires_a_real_working_tree_change() {
     );
     std::fs::write(&path, "changed\n").unwrap();
     let ActionPreparation::Cached(Err(retried)) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &clean_id, &action)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &clean_id,
+            &action,
+        )
         .unwrap()
     else {
         panic!("the failed intent must keep its refusal")
@@ -1428,7 +1516,7 @@ fn diff_open_requires_a_real_working_tree_change() {
     assert_eq!(retried.reason, "diff_unchanged");
     let id = action_id("changed");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
         .unwrap()
     else {
         panic!("diff needs a Git read")
@@ -1436,7 +1524,7 @@ fn diff_open_requires_a_real_working_tree_change() {
     let material = source.read().unwrap();
     let result = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             "pane-b",
             &expected,
             &id,
@@ -1445,7 +1533,7 @@ fn diff_open_requires_a_real_working_tree_change() {
         )
         .unwrap();
     let views = runtime
-        .workspace_control_query("local", "pane-b", Query::ViewList)
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::ViewList)
         .unwrap()
         .views
         .unwrap();
@@ -1469,7 +1557,7 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
 
     let nested = runtime
         .workspace_control_query(
-            "local",
+            crate::node::TEST_NODE,
             &caller("k1", "/checkouts/a/worktrees/wt/src"),
             Query::Info,
         )
@@ -1480,20 +1568,46 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
     assert!(nested.views.is_none());
 
     let parent = runtime
-        .workspace_control_query("local", &caller("k1", "/checkouts/a/src"), Query::ViewList)
+        .workspace_control_query(
+            crate::node::TEST_NODE,
+            &caller("k1", "/checkouts/a/src"),
+            Query::ViewList,
+        )
         .unwrap();
     assert_eq!(parent.context.checkout_id, "checkout-a");
     assert_eq!(parent.views, Some(Vec::new()));
 
     let exact = runtime
-        .workspace_control_query("local", &caller("k1", "/checkouts/b"), Query::Info)
+        .workspace_control_query(
+            crate::node::TEST_NODE,
+            &caller("k1", "/checkouts/b"),
+            Query::Info,
+        )
         .unwrap();
     assert_eq!(exact.context.checkout_id, "checkout-b");
+    // A checkout caller is offered the Workspace, never delivery, which acts
+    // as one agent and so needs a pane-bound caller.
+    let offered = |caller: &str| {
+        runtime
+            .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
+            .unwrap()
+            .capabilities
+    };
+    let checkout_offer = offered(&caller("k1", "/checkouts/b"));
+    assert!(checkout_offer.contains(&"view.list"));
+    for delivery in ["request.send", "inbox", "inbox.hook", "watch.assign"] {
+        assert!(!checkout_offer.contains(&delivery), "{delivery}");
+        assert!(offered("pane-b").contains(&delivery), "{delivery}");
+    }
 
     for outside in ["/checkouts/ab", "/checkouts", "/elsewhere/checkouts/a"] {
         assert_eq!(
             runtime
-                .workspace_control_query("local", &caller("k1", outside), Query::Info)
+                .workspace_control_query(
+                    crate::node::TEST_NODE,
+                    &caller("k1", outside),
+                    Query::Info
+                )
                 .unwrap_err()
                 .reason,
             "checkout_not_registered",
@@ -1504,7 +1618,11 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
     runtime.snapshot.status.herdr.state = "disconnected".to_owned();
     assert_eq!(
         runtime
-            .workspace_control_query("local", &caller("k1", "/checkouts/a"), Query::Info)
+            .workspace_control_query(
+                crate::node::TEST_NODE,
+                &caller("k1", "/checkouts/a"),
+                Query::Info
+            )
             .unwrap_err()
             .reason,
         "checkout_not_registered"
@@ -1525,7 +1643,7 @@ fn two_registrations_of_one_path_refuse_the_checkout_caller_instead_of_choosing(
     assert_eq!(
         runtime
             .workspace_control_query(
-                "local",
+                crate::node::TEST_NODE,
                 &crate::workspace_control::checkout_caller_id("k1", "/checkouts/b/src"),
                 Query::Info,
             )
@@ -1536,7 +1654,7 @@ fn two_registrations_of_one_path_refuse_the_checkout_caller_instead_of_choosing(
     // The pane in that checkout is unaffected.
     assert_eq!(
         runtime
-            .workspace_control_query("local", "pane-b", Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
             .unwrap()
             .context
             .checkout_id,
@@ -1550,12 +1668,12 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
     let first = crate::workspace_control::checkout_caller_id("k1", "/checkouts/b/src");
     let second = crate::workspace_control::checkout_caller_id("k2", "/checkouts/b");
     let expected = runtime
-        .workspace_control_query("local", &first, Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, &first, Query::Info)
         .unwrap()
         .context;
     assert_eq!(
         runtime
-            .workspace_control_query("local", &second, Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, &second, Query::Info)
             .unwrap()
             .context,
         expected
@@ -1563,7 +1681,7 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
     let request_id = action_id("shared");
     let opened = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             &first,
             &expected,
             &request_id,
@@ -1582,7 +1700,7 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
     // told the id was reused: the record belongs to the first capability.
     let selected = runtime
         .workspace_control_action(
-            "local",
+            crate::node::TEST_NODE,
             &second,
             &expected,
             &request_id,
@@ -1596,7 +1714,7 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
         .unwrap();
     assert_eq!(selected.view_id, opened.view_id);
     let views = runtime
-        .workspace_control_query("local", &second, Query::ViewList)
+        .workspace_control_query(crate::node::TEST_NODE, &second, Query::ViewList)
         .unwrap()
         .views
         .unwrap();
@@ -1609,7 +1727,7 @@ fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 &second,
                 &expected,
                 &action_id("after-move"),

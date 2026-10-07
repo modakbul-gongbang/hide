@@ -108,7 +108,11 @@ fn testing_an_unconnected_device_reports_the_way_out() {
     assert_eq!(error.kind, "device.not_connected");
     assert!(device(&runtime, "studio").test.is_none());
 
-    assert!(dispatch_device(&mut runtime, "test_device", "local"));
+    assert!(dispatch_device(
+        &mut runtime,
+        "test_device",
+        crate::node::TEST_NODE
+    ));
     let error = runtime
         .snapshot()
         .status
@@ -123,7 +127,7 @@ pub(super) fn runtime_with_home() -> Runtime {
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
         home: None,
-        machine_id: None,
+        node_id: crate::node::test_node(),
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: folder
@@ -137,7 +141,6 @@ pub(super) fn runtime_with_home() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     let mut runtime = Runtime::new(
         options,
@@ -146,6 +149,7 @@ pub(super) fn runtime_with_home() -> Runtime {
             home_path: Some(folder.path().join("home")),
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::new(Some(folder.path().join("home")))),
     );
     runtime.test_dirs.push(folder);
     runtime
@@ -291,7 +295,11 @@ fn returning_to_this_machine_gives_the_keyboard_back_to_the_local_pane() {
         Some("remote:studio:pane:w9:p1")
     );
 
-    assert!(dispatch_device(&mut runtime, "focus_device", "local"));
+    assert!(dispatch_device(
+        &mut runtime,
+        "focus_device",
+        crate::node::TEST_NODE
+    ));
 
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
@@ -346,7 +354,7 @@ fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
     assert_eq!(runtime.snapshot().navigator.workspaces, before);
     assert_eq!(
         runtime.snapshot().navigator.focused_device_id.as_deref(),
-        Some("local")
+        Some(crate::node::TEST_NODE)
     );
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
@@ -385,7 +393,7 @@ fn a_device_project_at_this_machines_path_does_not_hold_up_its_add_or_removal() 
     assert_eq!(runtime.workspace_removal_in_flight_for("/work/same"), None);
 
     runtime.snapshot.ui_state.workspace_registrations = vec![
-        registration("local:1", workspace::LOCAL_DEVICE_ID),
+        registration("local:1", crate::node::TEST_NODE),
         registration("remote:mac:workspace:1", "mac"),
     ];
     runtime

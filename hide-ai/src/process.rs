@@ -11,7 +11,7 @@ use hide_platform::process;
 /// A missing measurement is `Unavailable`, never a zero: where the kernel
 /// query fails the cap is not enforced, and a silent zero would read as a
 /// healthy tree while a leak grew underneath it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum ProcessMeasurement {
     Available {
         /// The pid of the child the crate started (the app-server wrapper).

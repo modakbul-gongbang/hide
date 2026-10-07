@@ -11,7 +11,7 @@
 # it. A push to main, a comparison that cannot be computed, and a path no rule
 # claims plan every lane; main's full run is the net under a lane a pull
 # request left out. Nightly's call plans every lane too, and a lane it fails
-# opens the nightly issue, which a failed push run does not.
+# opens a `nightly-failure` issue, which a failed push run does not.
 #
 # A draft pull request runs the `plan` job and `verify` only: the lanes wait
 # for the pull request to be marked ready for review, and `verify` fails with
@@ -28,8 +28,10 @@
 # 2026-09-28 one run held all five for 26 minutes, so a second pull request
 # waited up to 70 minutes before its lanes started. A pull request therefore
 # asks for a macOS runner only for what a macOS runner alone proves: `desktop
-# e2e` for a change to the desktop app or the web code it drives, and `os
-# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`.
+# e2e` for a change to the desktop app or the web code it drives, `os
+# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`, and
+# `package`'s macOS job for a change to what goes into a package, the one job
+# that starts the packaged app such a change builds.
 # Core and daemon changes run on Linux and Windows and leave the macOS
 # `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
 # `nightly.yml`.
@@ -116,8 +118,6 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Test the repository scripts, the lane plan included
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - name: Test nightly failure reporting
-        run: node --test scripts/tests/nightly-report.test.cjs
       - name: Structural checks
         run: |
           bash scripts/check-harness-ignore-anchor.sh
@@ -126,6 +126,7 @@ jobs:
           bash scripts/check-no-workstation-identity.sh
           bash scripts/check-worktree-removal-boundary.sh
           zsh scripts/check-herdr-pin-single-source.sh
+          python3 scripts/check-core-touches-no-machine.py
 
   rust:
     name: rust workspace
@@ -178,7 +179,7 @@ jobs:
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
             bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
           fi
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
@@ -251,7 +252,7 @@ jobs:
       # differently and rebuilt the crates under it: herdr-core compiled three
       # times and compiling took about 6 of the job's 11 minutes (2026-10-05).
       TEST_TARGETS: >-
-        -p hided -p hide-host -p hide-kit -p hide-agent-hooks -p herdr-core -p hide-ai
+        -p hided -p hide-host -p hide-node -p hide-kit -p hide-agent-hooks -p herdr-core -p hide-ai
         --lib --bin hide-agent-hooks
         --test opener_lifecycle --test connect_stop --test handshake --test real_herdr
         --test hook_deadline --test windows_hook_command --test claude_cli
@@ -283,6 +284,7 @@ jobs:
         timeout-minutes: 25
         run: |
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hided) & kind(lib) & (test(pane_auth) | test(opener) | test(open_command) | test(workspace_cli))'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-node) & kind(lib)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::opener_lifecycle)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-host) & kind(lib) & test(workspace_bridge)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::connect_stop)'
@@ -360,7 +362,7 @@ jobs:
         if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
         timeout-minutes: 10
         run: bash scripts/verify-web.sh desktop test
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
@@ -484,8 +486,9 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hide and hided for the desktop app
-        # hide-agent-hooks and hide-host-helper too: the home-layout spec
-        # stages every binary the packaged app carries.
+        # hide-agent-hooks too, which the fixture's app bundle links beside
+        # them, and hide-host-helper: the home-layout spec stages every binary
+        # the packaged app carries.
         run: bash scripts/verify-cargo.sh cli
       - name: Install dependencies
         run: bash scripts/verify-web.sh install
@@ -516,7 +519,7 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           bash scripts/verify-web.sh desktop e2e
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         # A failed test is retried once; see web-e2e.yml.
         id: flaky
         if: ${{ !cancelled() }}
@@ -536,9 +539,21 @@ jobs:
             desktop/test-results
           if-no-files-found: ignore
 
+  package:
+    name: package
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'package')
+    uses: ./.github/workflows/package.yml
+    permissions:
+      contents: read
+    with:
+      # A pull request's package reports a version no release uses.
+      version: 0.0.0-ci.${{ github.run_number }}
+      include-macos: true
+
   verify:
     name: verify
-    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, web-e2e, remote-mailbox, desktop-e2e]
+    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, web-e2e, remote-mailbox, desktop-e2e, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

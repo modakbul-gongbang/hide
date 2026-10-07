@@ -15,7 +15,17 @@ CRATES = ci.cargo_crates(ROOT)
 EVERY_PACKAGE = sorted(crate["name"] for crate in CRATES.values())
 # The lanes that take a macOS runner; every other check on macOS is a job of
 # `nightly.yml`.
-MACOS_LANES = {"os-contract-macos", "desktop-e2e"}
+MACOS_LANES = {"os-contract-macos", "desktop-e2e", "package"}
+# Every lane but `package`: what a push, the nightly and an unclassified path plan.
+FULL = [lane for lane in ci.LANES if lane != "package"]
+# The paths a pull request changed when `package.yml` had its own trigger.
+PACKAGE_INPUTS = (
+    "desktop/scripts/package.mjs", "desktop/scripts/build.mjs", "desktop/package.json", "desktop/resources/entitlements.plist",
+    "contracts/herdr-bundle.json", "scripts/fetch-herdr-runtime.sh", "scripts/fetch-herdr-runtime.ps1",
+    "scripts/verify-cargo.sh", "scripts/verify-web.sh", "scripts/toolchain-env.sh",
+    "hided/build.rs", "hided/src/cli.rs", "hide-kit/src/lib.rs", "hide-agent-hooks/src/main.rs",
+    ".github/workflows/package.yml", ".github/workflows/release.yml",
+)
 
 
 def plan(*paths, status="M"):
@@ -117,9 +127,8 @@ class Selection(unittest.TestCase):
         result = plan("hide-platform/src/process.rs")
         self.assertTrue({"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
         self.assertNotIn("desktop-e2e", result["lanes"])
-        # hide-project depends on nothing in the workspace, so it is the one
-        # crate a platform change does not reach.
-        self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-project"])
+        # Every workspace crate depends on the platform layer, hide-project included.
+        self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
         self.assertFalse(result["full"])
 
     def test_a_leaf_crate_tests_its_reverse_dependencies_and_compiles_on_windows(self):
@@ -143,14 +152,28 @@ class Selection(unittest.TestCase):
         # Their OS differences are checked on Linux and Windows; the nightly
         # runs the macOS leg and the macOS `@platform` tests for them.
         for path in (
-            "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-kit/src/lib.rs", "hide-agent-hooks/src/lib.rs",
-            "hide-host/src/lib.rs", "hide-session/src/lib.rs", "web/src/Overview.tsx", "web/e2e/s3.spec.ts",
-            "web/playwright.config.ts",
+            "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-host/src/lib.rs", "hide-session/src/lib.rs",
+            "web/src/Overview.tsx", "web/e2e/s3.spec.ts", "web/playwright.config.ts",
         ):
             with self.subTest(path=path):
                 lanes = set(plan(path)["lanes"])
                 self.assertFalse(lanes & MACOS_LANES, lanes & MACOS_LANES)
         self.assertEqual(set(plan("herdr-core/src/lib.rs")["lanes"]) & {"os-contract", "windows-e2e"}, {"os-contract", "windows-e2e"})
+
+    def test_what_goes_into_a_package_plans_the_package_lane_and_nothing_else_does(self):
+        # The kit and hooks a packaged daemon runs reach macOS only through it.
+        for path in PACKAGE_INPUTS:
+            with self.subTest(path=path):
+                self.assertIn("package", plan(path)["lanes"])
+        for path in (
+            "hided/src/lib.rs", "hided/src/core.rs", "herdr-core/src/lib.rs", "hide-platform/src/process.rs",
+            "desktop/src/main/index.ts", "desktop/e2e/fixture.ts", "web/src/store.ts", "docs/TESTING.md",
+            ".github/workflows/pr.yml", "Cargo.lock", "pnpm-lock.yaml",
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn("package", plan(path)["lanes"])
+        self.assertEqual(set(plan("hide-kit/src/lib.rs")["lanes"]) & MACOS_LANES, {"package"})
+        self.assertEqual(plan(".github/workflows/package.yml")["lanes"], ["policy", "package"])
 
     def test_only_the_desktop_app_and_the_web_code_it_drives_ask_for_the_desktop_lane(self):
         for path in ("desktop/src/main/index.ts", "desktop/static/icon.png", "desktop/e2e/desktop.spec.ts", "web/src/shortcuts.ts", "web/e2e/herdr-fixture.ts"):
@@ -176,19 +199,21 @@ class Selection(unittest.TestCase):
             with self.subTest(entries=entries):
                 result = ci.select(entries, CRATES, ROOT)
                 self.assertTrue(result["full"])
-                self.assertEqual(result["lanes"], list(ci.LANES))
+                package = any(path in PACKAGE_INPUTS for _, path in entries)
+                self.assertEqual(result["lanes"], list(ci.LANES) if package else FULL)
                 self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
 
     def test_a_push_and_a_failed_comparison_run_everything(self):
-        self.assertEqual(ci.plan("push", None, None, ROOT)["lanes"], list(ci.LANES))
+        self.assertEqual(ci.plan("push", None, None, ROOT)["lanes"], FULL)
         result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT)
         self.assertTrue(result["full"])
         self.assertIn("comparison unavailable", result["reasons"]["rust"][0])
 
     def test_nightly_calls_verify_with_every_lane(self):
         # The call plans every lane like a push, and a lane it fails reaches
-        # the nightly issue through the report job's `needs`.
-        self.assertEqual(ci.plan("schedule", None, None, ROOT)["lanes"], list(ci.LANES))
+        # the nightly report, which waits for it in `needs`. The packages are
+        # the nightly's own call, so `verify` leaves them out.
+        self.assertEqual(ci.plan("schedule", None, None, ROOT)["lanes"], FULL)
         workflow = (ROOT / ".github/workflows/pr.yml").read_text()
         self.assertRegex(workflow, r"\n  workflow_call:\n")
         # A called run takes the caller's name, so it never takes a push run's
@@ -219,7 +244,7 @@ class Selection(unittest.TestCase):
     def test_a_missing_crate_graph_runs_everything(self):
         with tempfile.TemporaryDirectory() as directory:
             result = ci.plan("pull_request", "HEAD^1", "HEAD", Path(directory))
-            self.assertEqual(result["lanes"], list(ci.LANES))
+            self.assertEqual(result["lanes"], FULL)
             self.assertIn("crate graph unavailable", result["reasons"]["rust"][0])
 
     def test_a_pull_request_diff_is_read_from_git(self):
@@ -261,8 +286,8 @@ class NamedPaths(unittest.TestCase):
         for path in (
             "site/index.html", "tools/t1-preflight/README.md", "spikes/web-shell/measure/summarize.py", "agents/prd/x/prd.md",
             ".gitignore", "web/.gitignore", ".github/pull_request_template.md", ".github/dependabot.yml",
-            ".github/workflows/nightly.yml", ".github/workflows/package.yml", ".github/workflows/release.yml",
-            "scripts/tests/test_ci_plan.py", "scripts/nightly-report.cjs", "scripts/check-harness-ignore-anchor.sh",
+            ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml",
+            "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
             "contracts/README.md", "site/README.md",
         ):
@@ -292,9 +317,9 @@ class NamedPaths(unittest.TestCase):
             "web/scripts/gen-types.mjs": {"checks", "web-e2e"},
             "desktop/eslint.config.mjs": {"checks"},
             "desktop/eslint.globals.mjs": {"checks"},
-            "desktop/scripts/build.mjs": {"checks", "desktop-e2e"},
-            "desktop/scripts/package.mjs": {"checks"},
-            "desktop/scripts/smoke-package.mjs": {"checks"},
+            "desktop/scripts/build.mjs": {"checks", "desktop-e2e", "package"},
+            "desktop/scripts/package.mjs": {"checks", "package"},
+            "desktop/scripts/smoke-package.mjs": {"checks", "package"},
         }
         for path, lanes in expected.items():
             with self.subTest(path=path):
@@ -311,7 +336,7 @@ class NamedPaths(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertTrue(plan(path)["full"])
-                self.assertEqual(plan(path)["lanes"], list(ci.LANES))
+                self.assertEqual(plan(path)["lanes"], list(ci.LANES) if path in PACKAGE_INPUTS else FULL)
 
     def test_a_crate_readme_is_still_the_crates_change(self):
         # The crate may include it in a doc test; the documentation rule only
@@ -320,7 +345,7 @@ class NamedPaths(unittest.TestCase):
 
     def test_a_named_path_does_not_narrow_a_plan_that_has_another_reason(self):
         self.assertEqual(self.lanes("site/index.html", "web/src/Overview.tsx"), self.lanes("web/src/Overview.tsx"))
-        self.assertEqual(plan("site/index.html", "scripts/verify-cargo.sh")["lanes"], list(ci.LANES))
+        self.assertEqual(plan("site/index.html", "Cargo.lock")["lanes"], FULL)
 
     def test_no_script_named_as_unread_is_called_by_a_lane(self):
         # The claim behind POLICY_ONLY's scripts: nothing but `policy` (and a
@@ -328,7 +353,9 @@ class NamedPaths(unittest.TestCase):
         workflows = ROOT / ".github/workflows"
         pr = (workflows / "pr.yml").read_text()
         policy = pr[pr.index("\n  policy:\n"):pr.index("\n  rust:\n")]
-        callers = pr.replace(policy, "") + (workflows / "web-e2e.yml").read_text() + (workflows / "os-contract.yml").read_text()
+        callers = pr.replace(policy, "") + "".join(
+            (workflows / name).read_text() for name in ("web-e2e.yml", "os-contract.yml", "package.yml")
+        )
         for helper in ("verify-cargo.sh", "verify-web.sh", "toolchain-env.sh", "install-nextest.sh", "fetch-herdr-runtime.sh",
                        "fetch-herdr-runtime.ps1", "ci-flaky-report.py", "check-herdr-schema.py"):
             callers += (ROOT / "scripts" / helper).read_text()
@@ -359,11 +386,23 @@ def runner_jobs(block):
         return shards + (1 if shards > 1 else 0)
     if "uses: ./.github/workflows/os-contract.yml" in block:
         return len(json.loads(re.search(r"systems: '(\[[^']*\])'", block).group(1)))
+    if "uses: ./.github/workflows/package.yml" in block:
+        package = (ROOT / ".github/workflows/package.yml").read_text()
+        return len(re.findall(r"\n          - system: ", package)) + ("include-macos: true" in block)
     return 1
 
 
 class Workflows(unittest.TestCase):
     """`pr.yml` has the jobs the plan names, and the job count TESTING.md states."""
+
+    def test_the_package_lane_is_the_only_way_a_pull_request_reaches_package_yml(self):
+        # One list of package paths: `package.yml` has no trigger to keep in step with PACKAGE_PATHS.
+        package = (ROOT / ".github/workflows/package.yml").read_text()
+        triggers = package[package.index("\non:\n"):package.index("\njobs:\n")]
+        self.assertNotIn("pull_request", triggers)
+        self.assertNotIn("paths:", triggers)
+        # The pull request's call builds the macOS package and runs its specs.
+        self.assertIn("include-macos: true", pr_jobs()["package"])
 
     def test_every_lane_has_a_job_that_asks_the_plan_and_verify_waits_on_it(self):
         jobs = pr_jobs()
@@ -414,7 +453,7 @@ class Workflows(unittest.TestCase):
         for lane, block in jobs.items():
             with self.subTest(lane=lane):
                 body = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
-                names_macos = bool(re.search(r"macos-\d+|\"macos\"", body))
+                names_macos = bool(re.search(r"macos-\d+|\"macos\"|include-macos: true", body))
                 self.assertEqual(names_macos, lane in MACOS_LANES)
 
     def test_the_most_a_pull_request_starts_is_the_count_testing_md_states(self):

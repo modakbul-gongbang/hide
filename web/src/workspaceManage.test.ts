@@ -97,8 +97,8 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T" };
-  const browser = { reveal: null, newTabChord: "⌥T" };
+  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T", node: "local" };
+  const browser = { reveal: null, newTabChord: "⌥T", node: "local" };
   /** Each item as the menu draws it: a separator line before it, its label, and its reason when disabled. */
   const drawn = (items: { label: string; separated?: boolean; unavailable: string | null; shortcut?: string }[]) =>
     items.flatMap((item) => [...(item.separated ? ["─"] : []), item.shortcut ? `${item.label} ${item.shortcut}` : item.label]);
@@ -278,38 +278,38 @@ describe("row menus", () => {
 describe("receipts", () => {
   it("reads only the task this page asked for", () => {
     const request = { kind: "worktree_create", afterId: 4, repositoryRoot: "/Users/example/hide", branch: "feature" };
-    expect(taskFor(task({}), request)?.id).toBe(5);
-    expect(taskFor(task({ id: 4 }), request)).toBeNull();
-    expect(taskFor(task({ branch: "other" }), request)).toBeNull();
-    expect(taskFor(task({ kind: "checkout_purpose" }), request)).toBeNull();
-    expect(taskFor(task({}), null)).toBeNull();
+    expect(taskFor(task({}), request, "local")?.id).toBe(5);
+    expect(taskFor(task({ id: 4 }), request, "local")).toBeNull();
+    expect(taskFor(task({ branch: "other" }), request, "local")).toBeNull();
+    expect(taskFor(task({ kind: "checkout_purpose" }), request, "local")).toBeNull();
+    expect(taskFor(task({}), null, "local")).toBeNull();
     // The same repository path on another device is another task.
-    expect(taskFor(task({}), { ...request, deviceId: "local" })?.id).toBe(5);
-    expect(taskFor(task({ device_id: "studio" }), { ...request, deviceId: "local" })).toBeNull();
-    expect(taskFor(task({ device_id: "studio" }), { ...request, deviceId: "studio" })?.id).toBe(5);
+    expect(taskFor(task({}), { ...request, deviceId: "local" }, "local")?.id).toBe(5);
+    expect(taskFor(task({ device_id: "studio" }), { ...request, deviceId: "local" }, "local")).toBeNull();
+    expect(taskFor(task({ device_id: "studio" }), { ...request, deviceId: "studio" }, "local")?.id).toBe(5);
   });
 
   it("reads only the removal of the checkout this page asked to delete", () => {
     const removal = { id: 3, repository_root: "/r", checkout_path: "/r-feature", branch: "feature", delete_branch: false, phase: "removing", message: null };
-    expect(removalFor(removal, "local", "/r-feature", 2)?.id).toBe(3);
-    expect(removalFor(removal, "local", "/r-other", 2)).toBeNull();
-    expect(removalFor(removal, "local", "/r-feature", 3)).toBeNull();
+    expect(removalFor(removal, "local", "/r-feature", 2, "local")?.id).toBe(3);
+    expect(removalFor(removal, "local", "/r-other", 2, "local")).toBeNull();
+    expect(removalFor(removal, "local", "/r-feature", 3, "local")).toBeNull();
     // The same path on another device is not this page's removal.
-    expect(removalFor(removal, "studio", "/r-feature", 2)).toBeNull();
-    expect(removalFor({ ...removal, device_id: "studio" }, "studio", "/r-feature", 2)?.id).toBe(3);
+    expect(removalFor(removal, "studio", "/r-feature", 2, "local")).toBeNull();
+    expect(removalFor({ ...removal, device_id: "studio" }, "studio", "/r-feature", 2, "local")?.id).toBe(3);
   });
 
   it("marks a checkout as being deleted while checking, closing panes or running Git", () => {
     const removal = { id: 3, repository_root: "/r", checkout_path: "/r-feature", branch: "feature", delete_branch: false, phase: "closing", message: null };
-    expect(checkoutRemoving(removal, "local", "/r-feature")).toBe(true);
-    expect(checkoutRemoving({ ...removal, phase: "checking" }, "local", "/r-feature")).toBe(true);
-    expect(checkoutRemoving({ ...removal, phase: "removing" }, "local", "/r-feature")).toBe(true);
+    expect(checkoutRemoving(removal, "local", "/r-feature", "local")).toBe(true);
+    expect(checkoutRemoving({ ...removal, phase: "checking" }, "local", "/r-feature", "local")).toBe(true);
+    expect(checkoutRemoving({ ...removal, phase: "removing" }, "local", "/r-feature", "local")).toBe(true);
     // A finished removal took the row away; a failed one gives it back as it was.
-    expect(checkoutRemoving({ ...removal, phase: "finished" }, "local", "/r-feature")).toBe(false);
-    expect(checkoutRemoving({ ...removal, phase: "failed" }, "local", "/r-feature")).toBe(false);
-    expect(checkoutRemoving(removal, "local", "/r-other")).toBe(false);
-    expect(checkoutRemoving(removal, "studio", "/r-feature")).toBe(false);
-    expect(checkoutRemoving(null, "local", "/r-feature")).toBe(false);
+    expect(checkoutRemoving({ ...removal, phase: "finished" }, "local", "/r-feature", "local")).toBe(false);
+    expect(checkoutRemoving({ ...removal, phase: "failed" }, "local", "/r-feature", "local")).toBe(false);
+    expect(checkoutRemoving(removal, "local", "/r-other", "local")).toBe(false);
+    expect(checkoutRemoving(removal, "studio", "/r-feature", "local")).toBe(false);
+    expect(checkoutRemoving(null, "local", "/r-feature", "local")).toBe(false);
   });
 });
 

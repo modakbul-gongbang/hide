@@ -11,8 +11,8 @@ const registration = (path: string, device_id = "local") => ({ id: path, label: 
 
 describe("Add a project", () => {
   it("lists this Mac first, then every registered device", () => {
-    expect(addProjectHosts(undefined, t)).toEqual([{ id: "local", label: "This Mac" }]);
-    expect(addProjectHosts(undefined, ko)).toEqual([{ id: "local", label: "이 Mac" }]);
+    expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This Mac" }]);
+    expect(addProjectHosts(undefined, ko)).toEqual([{ id: "", label: "이 Mac" }]);
     expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
       { id: "local", label: "Studio" },
       { id: "mini", label: "Mini" },
@@ -22,8 +22,8 @@ describe("Add a project", () => {
   it("opens on the focused device while it is listed, this Mac otherwise", () => {
     const hosts = addProjectHosts([device("mini", "Mini")], t);
     expect(initialHost(hosts, "mini")).toBe("mini");
-    expect(initialHost(hosts, "gone")).toBe("local");
-    expect(initialHost(hosts, null)).toBe("local");
+    expect(initialHost(hosts, "gone")).toBe("");
+    expect(initialHost(hosts, null)).toBe("");
   });
 
   it("sees a folder already registered on the same device, trailing slash or not", () => {
@@ -54,11 +54,11 @@ describe("Add a project", () => {
   });
 
   it("puts a new project beside the most recently added one on this Mac, else in home", () => {
-    expect(defaultProjectParent([])).toBe("~");
-    expect(defaultProjectParent([registration("/home/me/work/a"), registration("/home/me/side/b/"), registration("/home/me/x", "mini")])).toBe("/home/me/side");
-    expect(defaultProjectParent([registration("/home/me/a", "mini")])).toBe("~");
+    expect(defaultProjectParent([], "local")).toBe("~");
+    expect(defaultProjectParent([registration("/home/me/work/a"), registration("/home/me/side/b/"), registration("/home/me/x", "mini")], "local")).toBe("/home/me/side");
+    expect(defaultProjectParent([registration("/home/me/a", "mini")], "local")).toBe("~");
     // The device's Home is no project: a project added after it is not expected beside `~/hide`.
-    expect(defaultProjectParent([registration("/home/me/work/a"), { ...registration("/home/me/hide"), home: true }])).toBe("/home/me/work");
+    expect(defaultProjectParent([registration("/home/me/work/a"), { ...registration("/home/me/hide"), home: true }], "local")).toBe("/home/me/work");
   });
 
   it("takes one folder name, and says why another is not one", () => {

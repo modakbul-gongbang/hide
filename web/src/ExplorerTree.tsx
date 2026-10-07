@@ -28,7 +28,7 @@ import {
   type ExplorerRow,
   helperNeedsSettings,
 } from "./explorer";
-import { changesFor, explorerContext } from "./snapshot";
+import { changesFor, explorerContext, localDeviceId } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
 import { drawnViews } from "./viewFocus";
@@ -195,7 +195,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   // (S7 B14, B16); otherwise a restored device Workspace kept its Explorer
   // on the helper's old refusal until the operator pressed Retry.
   const hostReady = useShellStore(
-    (s) => device !== "local" && s.rest?.navigator?.devices?.find((row) => row.id === device)?.host?.state === "ready",
+    (s) => device !== localDeviceId(s.rest) && s.rest?.navigator?.devices?.find((row) => row.id === device)?.host?.state === "ready",
   );
   const wasReady = useRef(hostReady);
   useEffect(() => {
@@ -701,6 +701,7 @@ function ExplorerContextMenu({
     besideReason,
     reveal: revealHost(),
     device: explorerContext(useShellStore.getState().rest).device,
+    node: localDeviceId(useShellStore.getState().rest),
   });
   return (
     <EntryPointMenu

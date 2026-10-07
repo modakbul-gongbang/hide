@@ -67,7 +67,7 @@ export type HostState =
   | { kind: "connecting" }
   | ({ kind: "attached" } & Attached)
   | ({ kind: "lost" } & Attached)
-  | { kind: "failed"; reason: FailureReason };
+  | { kind: "failed"; reason: FailureReason; file?: string };
 
 function isExecutable(file: string): boolean {
   try {
@@ -368,7 +368,7 @@ export class DesktopHost {
     if (this.quitting) return;
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
     if (this.quitting) return;
-    if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail);
+    if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer.file);
     this.log.event("discovery.attached", { attempt, port: answer.port, pid: answer.pid });
     this.remember(cli);
     this.attach(answer);
@@ -498,10 +498,10 @@ export class DesktopHost {
     return this.runChild(file, args, timeoutMs, this.childEnvironment());
   }
 
-  private fail(attempt: number, reason: FailureReason, detail: string): void {
+  private fail(attempt: number, reason: FailureReason, detail: string, file?: string): void {
     if (this.quitting) return;
-    this.log.event("discovery.failed", { attempt, reason, detail });
-    this.setState({ kind: "failed", reason });
+    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }) });
+    this.setState(file === undefined ? { kind: "failed", reason } : { kind: "failed", reason, file });
   }
 
   private attach(daemon: Attached): void {
@@ -701,7 +701,7 @@ export class DesktopHost {
       this.load(window.loadURL(state.url), state.kind);
       return;
     }
-    const hash = state.kind === "failed" ? `failed=${state.reason}` : "connecting";
+    const hash = state.kind === "failed" ? `failed=${state.reason}${state.file === undefined ? "" : `&file=${encodeURIComponent(state.file)}`}` : "connecting";
     const words = this.statusWords();
     const shown = window.webContents.getURL();
     if (shown.startsWith(STATUS_PAGE_URL) && new URL(shown).searchParams.get("lang") === words.lang) {
@@ -734,6 +734,7 @@ export class DesktopHost {
       start_failed: t("native.status.startFailed"),
       no_response: t("native.status.noResponse"),
       other_build: t("native.status.otherBuild"),
+      state_refused: t("native.status.stateRefused"),
     };
     return { query, lang: query.lang };
   }

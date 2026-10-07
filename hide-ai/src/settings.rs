@@ -334,11 +334,16 @@ pub fn settings_path(home: &Path) -> PathBuf {
 /// exists and cannot be read is a fact the caller has to state before it
 /// falls back; see `AI_PROVIDERS.md`.
 pub fn load(home: &Path) -> Result<AiSettings, AiError> {
+    load_choice(home).map(Option::unwrap_or_default)
+}
+
+/// [`load`], with `None` when nobody has chosen yet.
+pub fn load_choice(home: &Path) -> Result<Option<AiSettings>, AiError> {
     let path = settings_path(home);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(AiSettings::default());
+            return Ok(None);
         }
         Err(error) => {
             return Err(AiError::Internal(format!(
@@ -347,7 +352,7 @@ pub fn load(home: &Path) -> Result<AiSettings, AiError> {
             )));
         }
     };
-    serde_json::from_slice(&bytes).map_err(|error| {
+    serde_json::from_slice(&bytes).map(Some).map_err(|error| {
         AiError::InvalidOutput(format!("ai_settings_malformed:line={}", error.line()))
     })
 }

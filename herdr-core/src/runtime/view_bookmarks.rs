@@ -79,7 +79,7 @@ impl Runtime {
     /// one. A device Workspace has one area, so its shown tab is the
     /// checkout's active tab.
     fn agent_view_of(&self, key: &WorkspaceKey) -> (Vec<&str>, Option<&str>) {
-        if key.0 == workspace::LOCAL_DEVICE_ID
+        if key.0 == self.node.as_str()
             && let Some(layout) = self.agent_layout_of(key)
         {
             let shown: Vec<&str> = layout

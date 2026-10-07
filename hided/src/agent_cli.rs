@@ -3,7 +3,7 @@
 use crate::env::{self, Env};
 use herdr_core::{coordination::Command, delivery::Command as Delivery};
 use std::collections::BTreeMap;
-pub const USAGE: &str = "hide agent register [--check] [--machine <device>] --host-scope <scope> --session <session> --instance <terminal> --name <name> --pane <pane> [--parent <id>] [--project <path>]\nhide agent list\nhide agent show <id>\nhide agent end <id> [--actor <id>]\nhide agent spawn --parent <here|id> --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [--no-watch] [-- <native args>]";
+pub const USAGE: &str = "hide agent register [--check] [--machine <device>] --host-scope <scope> --session <session> --instance <terminal> --name <name> --pane <pane> [--parent <id>] [--project <path>]\nhide agent list\nhide agent show <id|here>\nhide agent end <id> [--actor <id>]\nhide agent spawn --parent <here|id> --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [--no-watch] [-- <native args>]";
 pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery, String> {
     let verb = args.next().ok_or(USAGE)?.as_str();
     let mut flags = BTreeMap::new();
@@ -132,9 +132,11 @@ pub fn run(env: &Env, command: Delivery) -> Result<(), String> {
                 .as_str()
                 .unwrap_or("agent_unavailable")
                 .to_owned();
+            // The daemon's next step is what the caller can act on.
+            let message = answer["next_action"].as_str().unwrap_or(&code);
             println!(
                 "{}",
-                serde_json::json!({"ok":false,"error":{"code":code,"message":code}})
+                serde_json::json!({"ok":false,"error":{"code":code,"message":message}})
             );
             Err(code)
         }

@@ -80,7 +80,7 @@ fn device_runtime(repo: &Repo) -> SharedRuntime {
 
 fn device_runtime_with_host(
     repo: &Repo,
-    host: Arc<dyn crate::host_access::HostChannel>,
+    host: Arc<dyn crate::node_access::NodeLink>,
 ) -> SharedRuntime {
     let mut runtime = runtime();
     let workspace_id = format!("remote:{DEVICE}:workspace:w1");
@@ -175,22 +175,25 @@ fn last_error(shared: &Arc<Mutex<Runtime>>) -> Option<String> {
 
 struct UnsupportedPreflight(Arc<FakeDevice>);
 
-impl crate::host_access::HostChannel for UnsupportedPreflight {
+impl crate::node_access::NodeLink for UnsupportedPreflight {
     fn call(
         &self,
-        call: hide_host::protocol::Call,
+        call: hide_node_link::protocol::Call,
         timeout: Duration,
-    ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
-        if matches!(call, hide_host::protocol::Call::WorktreeRemovalCheck { .. }) {
-            return Err(crate::host_access::HostCallError::Refused(
-                hide_host::HostError::new(
-                    hide_host::ErrorCode::InvalidRequest,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        if matches!(
+            call,
+            hide_node_link::protocol::Call::WorktreeRemovalCheck { .. }
+        ) {
+            return Err(crate::node_access::LinkError::Refused(
+                hide_node_link::HostError::new(
+                    hide_node_link::ErrorCode::InvalidRequest,
                     "Unsupported worktree preflight. Reconnect to update the device helper"
                         .to_owned(),
                 ),
             ));
         }
-        crate::host_access::HostChannel::call(self.0.as_ref(), call, timeout)
+        crate::node_access::NodeLink::call(self.0.as_ref(), call, timeout)
     }
 }
 

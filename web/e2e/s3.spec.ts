@@ -140,7 +140,7 @@ async function leaveApp(page: Page): Promise<string> {
   return app;
 }
 
-function draftId(hostId: string, root: string, file: string, device = "local"): string {
+function draftId(hostId: string, root: string, file: string, device: string): string {
   return [hostId, device, root, file].join("\u0000");
 }
 
@@ -761,7 +761,7 @@ test("the Explorer creates, renames, moves and trashes entries", { tag: "@platfo
     // file's stored draft follows it to the new path.
     const addedPath = `${repo}/src/added.ts`;
     await seedDraft(page, {
-      id: draftId(fixture.daemon.hostId, repo, addedPath), host: fixture.daemon.hostId, device: "local",
+      id: draftId(fixture.daemon.hostId, repo, addedPath, fixture.daemon.node), host: fixture.daemon.hostId, device: fixture.daemon.node,
       root: repo, path: addedPath, contents: "unsaved recovery copy", updated_at: Date.now(),
     });
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
@@ -884,9 +884,9 @@ test("a preview-only document closes without a save", async ({ page }) => {
     // A stale recovery buffer is exactly the trap: a preview-only document has
     // no draft the core would accept, so the restore must decline it rather
     // than hand it back as a close-save the core refuses (D-14).
-    const stale = draftId(fixture.daemon.hostId, repo, `${repo}/huge.txt`);
+    const stale = draftId(fixture.daemon.hostId, repo, `${repo}/huge.txt`, fixture.daemon.node);
     await seedDraft(page, {
-      id: stale, host: fixture.daemon.hostId, device: "local", root: repo, path: `${repo}/huge.txt`,
+      id: stale, host: fixture.daemon.hostId, device: fixture.daemon.node, root: repo, path: `${repo}/huge.txt`,
       contents: "stale draft\n", updated_at: Date.now(),
     });
     await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
@@ -983,43 +983,45 @@ test("a dropped file reaches the terminal as an attachment", async ({ page }) =>
   try {
     // The fixture checkout's panes run the shim that logs every PTY byte, so
     // the pasted token is observable there; openCheckout focused the repository.
+    // The repository's pane stays on screen until the core answers the checkout
+    // click, so the drop waits for the fixture's own first pane, by its id.
     await page.locator('[data-sidebar-mode="projects"]').click();
     const project = page.locator("[data-project]", { hasText: "fixture" });
     await project.locator("[data-checkout]").first().click();
-    await page.locator('[data-tab-kind="herdr"]').first().click();
-    const pane = page.locator("[data-pane-view]").first();
-    await expect(pane).toBeVisible();
+    const [target] = herdr.panes;
+    await expect(page.locator(`[data-pane-view="${target}"]`)).toBeVisible();
 
     // A file drop is bytes the browser can read but cannot name; the shell
     // uploads them, and the core pastes the staged path into the PTY (B14).
-    await page.evaluate(async (base64) => {
+    await page.evaluate(async ({ base64, pane }) => {
       const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
       const file = new File([binary], "dropped.png", { type: "image/png" });
       const data = new DataTransfer();
       data.items.add(file);
-      const target = document.querySelector("[data-pane-view]") as HTMLElement;
-      target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
-      target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
-    }, PNG.toString("base64"));
+      const view = document.querySelector(`[data-pane-view="${pane}"]`) as HTMLElement;
+      view.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+      view.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, { base64: PNG.toString("base64"), pane: target });
 
     await expect.poll(() => sent.get("attachment_stage")).toBe(1);
     await expect.poll(() => sent.get("attachment_commit")).toBe(1);
 
-    // The shim logs every byte its PTY received, so the pasted token shows up.
-    const logs = herdr.inputLogs.map((file) => file);
-    const read = () => logs.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "")).join("\n");
+    // The shim logs every byte its PTY received, so the pasted token shows up
+    // in the log of the pane it was dropped on (`inputLogs` follows `panes`).
+    const [log] = herdr.inputLogs;
+    const read = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "");
     await expect.poll(read, { timeout: 15_000 }).toContain("dropped.png");
 
     // ⌘V of an image: the same flow, with the image staged at the path the core
     // reads a clipboard attachment from (B14).
-    await page.evaluate((base64) => {
+    await page.evaluate(({ base64, pane }) => {
       const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
       const file = new File([binary], "clipboard.png", { type: "image/png" });
       const data = new DataTransfer();
       data.items.add(file);
-      const target = document.querySelector("[data-terminal-host]") as HTMLElement;
-      target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
-    }, PNG.toString("base64"));
+      const host = document.querySelector(`[data-pane-view="${pane}"] [data-terminal-host]`) as HTMLElement;
+      host.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+    }, { base64: PNG.toString("base64"), pane: target });
     await expect.poll(read, { timeout: 15_000 }).toContain("TerminalClipboard");
     await expect(page.locator("[data-pane-attachment-refusal]")).toHaveCount(0);
     await screenshot(page, "s3-attachment-drop");
@@ -1221,12 +1223,31 @@ test("an old draft is restored, never discarded for its age (S5.5 B12)", async (
   const { file, repo } = fixture;
   try {
     await seedDraft(page, {
-      id: draftId(fixture.daemon.hostId, repo, file), host: fixture.daemon.hostId, device: "local",
+      id: draftId(fixture.daemon.hostId, repo, file, fixture.daemon.node), host: fixture.daemon.hostId, device: fixture.daemon.node,
       root: repo, path: file, contents: "export const answer = 97;\n", updated_at: Date.now() - 400 * 24 * 60 * 60 * 1000,
     });
     await page.reload();
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 97");
     await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 97;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a draft this host stored for its own machine under `local` moves to the node id and is restored (core-host-node D-21)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  const host = fixture.daemon.hostId;
+  try {
+    await seedDraft(page, {
+      id: draftId(host, repo, file, "local"), host, device: "local",
+      root: repo, path: file, contents: "export const answer = 98;\n", updated_at: Date.now(),
+    });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
+    const stored = await storedDrafts(page);
+    expect(stored.some((row) => row.device === "local")).toBe(false);
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 98;\n");
   } finally {
     close(fixture);
   }
@@ -1270,7 +1291,7 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     expect(fs.readFileSync(file, "utf8")).toBe(original);
     fs.chmodSync(file, 0o644);
     await page.locator("[data-draft-recovery-review]").click();
-    const id = encodeURIComponent(draftId(restarted.hostId, repo, file));
+    const id = encodeURIComponent(draftId(restarted.hostId, repo, file, restarted.node));
     const showCheckout = page.locator(`[data-draft-show-checkout="${id}"]`);
     if (await showCheckout.count()) await showCheckout.click();
     await expect(page.locator(`[data-draft-open="${id}"]`)).toBeVisible({ timeout: 10_000 });
@@ -1320,7 +1341,7 @@ test("a draft is discarded only when the operator confirms it (S5.5 B11)", async
   const fixture = await openCheckout(page);
   const { repo } = fixture;
   try {
-    const elsewhere = { id: draftId("host-another", repo, `${repo}/src/main.ts`), host: "host-another", device: "local", root: repo, path: `${repo}/src/main.ts`, contents: "other host\n", updated_at: 1 };
+    const elsewhere = { id: draftId("host-another", repo, `${repo}/src/main.ts`, "local"), host: "host-another", device: "local", root: repo, path: `${repo}/src/main.ts`, contents: "other host\n", updated_at: 1 };
     const unverified = { id: ["", "", "", "/old/path.ts"].join("\u0000"), host: null, device: null, root: "", path: "/old/path.ts", contents: "v1\n", updated_at: 2 };
     await seedDraft(page, elsewhere);
     await seedDraft(page, unverified);

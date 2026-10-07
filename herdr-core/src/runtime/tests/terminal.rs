@@ -690,6 +690,7 @@ fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> SharedRuntime {
             runtime: shared.weak(),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
+            node: Arc::new(hide_node::Local::of_process()),
         });
         runtime.terminal_sessions.insert(
             pane.to_owned(),

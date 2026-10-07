@@ -359,13 +359,16 @@ Settings counts sessions and never these connections, so a pane that needs a Reo
 | Instrumentation | Connection |
 | --- | --- |
 | instrumented | `connected: true` |
-| `session_predates_install`, a Codex and the machine's shared server on | `codex_shared_server` |
+| `session_predates_install`, a Codex and the machine's shared server on, or its daemon still answering | `codex_shared_server` |
 | `session_predates_install`, any other | `started_before_hide` |
 | `hooks_not_installed`, `config_unreadable`, `hook_outdated` | `setup_needed` (fix it in the agent's row in Settings; Reopen would change nothing) |
 | `hooks_switched_off`, `unknown`, an agent with no hook, or an agent asleep | no connection, so no chip |
 
 `can_reopen` is false for `setup_needed` and for a pane on another device, because a Reopen restarts the session through this Mac's Herdr.
-The shared server's setting is the machine's last kit read (`KitSnapshot.codex_daemon_on`): a read that says it is on is what turns a Codex pane's reason into the shared server, and a later read that says it is off turns it back into `started_before_hide` at once.
+The shared server is the machine's last kit read (`KitSnapshot::shares_codex_server`): a read that says the setting is on, or that a daemon still answers with the setting off, is what turns a Codex pane's reason into the shared server, and a later read that says neither turns it back into `started_before_hide` at once (PRD codex-daemon-apply D-07, B9).
+After a turn-off that answered `stop_failed`, only a read that says no daemon answers ends the shared server, so a daemon answer Hide could not read keeps the retry on offer (B7).
+A kit read happens at launch and on each device connection, on a Reinstall, when a Settings tab showing the kit opens and on this Mac every 5 seconds while it stays open, and in the answer to a turn-off request.
+Nothing else polls for a daemon, so one that another app starts later reaches the pane's reason at the next of those reads, not live.
 
 Reopen is one event, `pane_reopen { pane_id }`, and reuses the session-sleep path rather than a second one: the agent is ended the way sleep ends it and started again in the same pane with its own resume arguments, a Codex with `--no-daemon` first (`herdr-core/src/pane_reopen.rs`).
 Everything knowable before the agent is touched is refused before it is touched, so a refusal known at that point leaves the pane as it was: an agent that is working or waiting (`agent_busy`), a session Herdr never reported an id for or one with no resume arguments (`session_gone`), a Codex whose capability was never read (`codex_unread`), and a folder that is gone (`start_refused`).
@@ -380,11 +383,14 @@ It is not started a second time, because the wait for the ended agent's name abo
 Herdr's words for a refusal go to the diagnostic log (`pane_reopen.answered`), never to the screen.
 
 The Codex shared server is turned off by one more event, `codex_daemon_disable { device_id }` (`local` for this Mac), and only by it: no install pass ever does.
-It rides the machine's kit queue as `Scope::codex_daemon_off`, and the pass that carries it runs `codex features disable daemon_auto_start`, reads the setting back, and answers in its report; `KitSnapshot.codex_daemon_off` is `{"state":"pending"}` from the request until that report, then `{"state":"done"}` or `{"state":"failed","reason":<code>}` with `codex_missing`, `codex_refused`, `timed_out` or `unreachable`.
-A failure leaves the setting as it was, a plain read of the kit says nothing about the request and keeps the last answer, and a machine that is already off, or whose Codex has no such setting, has nothing to turn off.
-A running daemon is never stopped, so sessions already on it stay there until they are reopened.
+The operator confirms it first, because it also stops the daemon that is running, which disconnects every Codex attached to it (PRD codex-daemon-apply D-04, D-11).
+It rides the machine's kit queue as `Scope::codex_daemon_off`, and the pass that carries it runs `codex features disable daemon_auto_start`, reads the setting back, stops the running daemon with `codex app-server daemon stop`, and answers in its report.
+`KitSnapshot.codex_daemon_off` is `{"state":"pending"}` from the request until that report, then `{"state":"done"}` or `{"state":"failed","reason":<code>}` with `codex_missing`, `codex_refused`, `timed_out`, `unreachable` or `stop_failed`.
+A failure before the setting went off leaves it as it was and stops nothing, while `stop_failed` says the setting is off but the daemon still answers, did not stop, or answered in a way Hide cannot read; the same request again then only stops it.
+A plain read of the kit says nothing about the request and keeps the last answer, and a machine whose setting is off with no daemon answering, or whose Codex has no such setting, has nothing to turn off.
+A Codex that Hide started runs with `--no-daemon`, is not attached to the daemon, and keeps running.
 
-Regression owners: `runtime::tests::agent_connection` (the connection per reason, Reopen coalescing and refusals, the request's lifecycle), `pane_reopen::tests` (the order of end and start against `FakeHerdr`), and `hide-kit`'s `the_operators_request_turns_the_shared_daemon_off_once_and_says_so`.
+Regression owners: `runtime::tests::agent_connection` (the connection per reason, Reopen coalescing and refusals, the request's lifecycle), `pane_reopen::tests` (the order of end and start against `FakeHerdr`), `runtime::tests::device_kit` (a device's turn-off over the confirmed connection only, its numbered runs), `hide-kit`'s `the_operators_request_turns_the_shared_daemon_off_once_and_says_so` and the stop tests beside it, and `hide_agent_hooks::codex_daemon::tests` (the stop through the account's own `CODEX_HOME`).
 
 ## GitHub status in the Workspace row
 
@@ -407,7 +413,8 @@ A failed read (the answer's `pull_requests_read` is false, whatever the reason) 
 The previous answer stays drawn while a retry waits, and nothing new is shown for it: the row keeps its muted stale state (design principle 13), and each retry writes one `github` `read.retry` diagnostic with the project, the attempt and the delay.
 The failure count lives in the clock (`GithubClock`), not in a second delay, and a project is asked again only after its previous ask answered, so at most 64 projects each cost one read per 30 seconds in the worst case and an outage backs every one of them off to the five-minute pace within four retries.
 At most 64 local Git projects are read: the project in front first, then the ones a screen named with `github_request` or `overview_refresh`, then the rest in path order; a count past that is stated in the diagnostic log as `projects.over_limit` each time it changes and the ones left out show no PR icon.
-Every project shares `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+Every project shares `GithubReader`, its per-project cache, one active worker and coalesced pending requests.
+Each `gh` command runs on the core's own node (`hide-host/src/gh.rs`), where the operator's GitHub login is, under its 15-second limit; the core sends the command line as a `gh` call, the node refuses any line `hide_node_link::gh::allowed` does not name without running it, and the core parses what it answers.
 The last successful answer of every project is kept in `github-snapshot.json` in the state folder (`hide_kit::layout::github_snapshot`, written by `github_store.rs`) and restored when the daemon starts, so the first frame already draws it; the file also keeps what the wire leaves out of a pull request (its head commit, its repository and its created and closed times), because a settled pull request reconnects to its worktree only at that commit.
 A restored answer is stale until a read replaces it: `stale` is set and `last_success_at_unix_ms` stays the time of the read that produced it, so the icon is muted and the popover says how old it is.
 A file that cannot be read, decoded or is of another schema version is not used and is named in the diagnostic log as `snapshot.discarded`; the next answer replaces it.
@@ -546,7 +553,7 @@ Main and non-Git checkouts appear on Tasks only while an agent there works on a 
 Completed columns start collapsed and disappear only with their underlying pane or worktree.
 
 `runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.
-`wire.rs` extracts metadata and `git_dir.rs` reads the branch setting with the catalog off the runtime lock.
+`wire.rs` extracts metadata, and the core's own node reads the branch setting with the catalog's other path facts (`Call::PathFacts`) off the runtime lock.
 The existing generation-driven GitHub reader fetches PRs, repository identity and open issues together; a 201st sentinel proves overflow and `sort:updated-desc` determines backlog order.
 Missing closed or cross-repository linked issues use one bounded read-only GraphQL query, not one process per card.
 An enriched issue lookup may retry once without optional Project fields; basic issue facts remain usable and the Project failure stays in the diagnostic and GitHub availability path.

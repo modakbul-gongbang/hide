@@ -1,17 +1,25 @@
 # The `@platform` web tests on macOS and Windows, the desktop suite whole on
 # macOS and its `@platform` tests on Linux and Windows, and package checks nightly,
 # and `verify` (pr.yml) with every lane on main. A push to main runs every lane
-# too, but a lane it fails opens no issue; here it opens the nightly issue, and
-# a lane that breaks with no merge (a runner image, a service a test reaches)
-# is found within a day. The Rust toolchain is not one of those: its version is
+# too, but a lane it fails opens no issue; here it opens a nightly-failure
+# issue, and a lane that breaks with no merge (a runner image, a service a test
+# reaches) is found within a day. The Rust toolchain is not one of those: its version is
 # the one `rust-toolchain.toml` names, so a new image cannot change it.
 # A test fails this run only when it fails its retry too (CI retries a failed
 # test once); a test that passes the retry is flaky, and
-# scripts/ci-flaky-report.py files it as an issue, as in pr.yml.
+# scripts/ci-flaky-report.py files it as an issue, as in pr.yml. A test that
+# fails its retry too is written as a `Failed test` annotation on its job.
 # Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.
 # PRs run the whole web suite on Linux and its `@platform` tests on Windows (see pr.yml); macOS runs only here.
-# A main-branch nightly failure opens one issue or comments on the existing
-# thread once per run attempt. Candidate-branch runs never write an issue.
+# The `report` job, the one writer of `nightly-failure` issues, opens one per
+# annotated test, or per lane and failed step for a failed job that annotated
+# none (`infra` when that step only prepares the runner), with the candidate
+# pull requests merged since the lane's last green nightly and a two-day
+# expiry; it comments once per run attempt on an issue already open for the
+# same failure, opens at most 10 per run and lists the rest in one, and
+# closes a lane's issues when a scheduled run (or a hand run of `all`) passes
+# it. A run of any other branch writes no issue. docs/TESTING.md, "Nightly
+# failures", owns the policy.
 # Run it by hand from the Actions tab (workflow_dispatch); actual queue load
 # and completed jobs must be measured separately from this configured matrix.
 # A hand run picks `lane`: `all`, or one system's web and desktop suites, so
@@ -21,6 +29,10 @@
 # The schedule runs everything. A lane left out is skipped, and the failure
 # report ignores a skipped job.
 #
+# The schedule is at 17 past the hour: GitHub delays runs scheduled on the
+# hour, when every repository's are due, and the 18:00 UTC run started
+# between 22:30 and 23:50 UTC.
+#
 # This repository is public, so GitHub disables a scheduled workflow after 60
 # days with no repository activity. If this run stops appearing, re-enable it in
 # the Actions tab rather than looking for a bug here.
@@ -28,7 +40,7 @@ name: nightly
 
 on:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "17 17 * * *"
   workflow_dispatch:
     inputs:
       lane:
@@ -181,18 +193,16 @@ jobs:
           else
             bash scripts/verify-web.sh desktop e2e "${selection[@]}"
           fi
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         id: flaky
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          status=0
-          python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json || status=$?
-          python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml || status=$?
-          exit "$status"
+        # One report per step: the step's annotations are its failed tests,
+        # and GitHub keeps 10 per step.
+        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
       - name: Keep the failed desktop run
         # A flaky run keeps it as a failed one does; see web-e2e.yml.
         if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
@@ -221,23 +231,21 @@ jobs:
       include-macos: true
 
   report:
-    name: report a failure
+    name: nightly report
     needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       actions: read
+      checks: read
       contents: read
       issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
-      - name: Report each failed attempt once in the nightly issue
-        uses: actions/github-script@v8
+      - name: Open, comment on and close the nightly-failure issues
         env:
-          NIGHTLY_RESULTS: ${{ toJSON(needs) }}
-        with:
-          script: |
-            const report = require('./scripts/nightly-report.cjs');
-            const outcome = await report({ github, context, results: JSON.parse(process.env.NIGHTLY_RESULTS) });
-            core.info(JSON.stringify(outcome));
+          GH_TOKEN: ${{ github.token }}
+          LANE_INPUT: ${{ inputs.lane }}
+        run: python3 scripts/ci-flaky-report.py --nightly --lane-input "$LANE_INPUT"

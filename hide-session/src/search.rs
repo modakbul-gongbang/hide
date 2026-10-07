@@ -1,12 +1,10 @@
 //! Local copied conversation search. No provider or Memory dependency.
 //! One caller owns this connection; messages and cursor commit together.
-use crate::{Agent, ConversationCheckpoint, ConversationCursor, EventKind};
+
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -14,6 +12,8 @@ pub const FILE_LIMIT: usize = 2_000;
 const MESSAGE_LIMIT: usize = 25_000;
 const BODY_LIMIT: usize = 64 * 1024;
 const HIT_LIMIT: usize = 100;
+/// The most stamps one search asks for: a page reads at most 101 rows.
+pub const STAMP_LIMIT: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchHit {
@@ -30,15 +30,51 @@ pub struct SearchPage {
     pub stale: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct UpdateReads {
-    pub cursor_bytes: u64,
-    pub witness_bytes: u64,
+/// What the index holds for one session file: the conversation cursor, the
+/// file's stamp and the prefix witness, each as the reader wrote it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedFile {
+    pub cursor: String,
+    pub stamp: String,
+    pub witness: String,
+}
+/// One human or assistant message read from a session file, at the byte
+/// offset of the record that held it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexedMessage {
+    pub offset: u64,
+    pub role: String,
+    pub at_unix_ms: u64,
+    pub text: String,
+}
+/// One bounded read of a session file on its node, for [`SearchIndex::apply`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum IndexStep {
+    /// Nothing past the saved cursor.
+    Done,
+    /// Only the prefix witness moved.
+    Witness { witness: String, more: bool },
+    /// The saved prefix no longer matches: the session's rows go and it is
+    /// read again from the start.
+    Reset,
+    /// Messages past the cursor, committed with the file's new state; with
+    /// `reset` the session's older rows go first.
+    Read {
+        reset: bool,
+        messages: Vec<IndexedMessage>,
+        cursor: String,
+        stamp: String,
+        witness: String,
+        more: bool,
+    },
 }
 pub struct SearchIndex {
     db: Connection,
-    reads: UpdateReads,
 }
+/// The current stamp of each asked session file, in order; `None` for one
+/// that is gone or cannot be read.
+pub type CurrentStamps<'a> = dyn FnMut(&[String]) -> Result<Vec<Option<String>>, String> + 'a;
 impl SearchIndex {
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
@@ -61,13 +97,61 @@ impl SearchIndex {
             CREATE INDEX IF NOT EXISTS messages_scope ON messages(project,session);
             CREATE VIRTUAL TABLE IF NOT EXISTS grams USING fts5(terms, content='');")
             .map_err(|e| e.to_string())?;
-        Ok(Self {
-            db,
-            reads: UpdateReads::default(),
-        })
+        Ok(Self { db })
     }
-    pub fn last_update_reads(&self) -> UpdateReads {
-        self.reads
+    /// Moves every row of each `(old, new)` Project to its new id, in one
+    /// transaction (PRD core-host-node D-23). A row whose new key is already
+    /// taken was written under the new id since, so the newer row stays and
+    /// the old one is dropped: a stale index row (rebuilt from the session
+    /// files) or an older Copied history setting. A dropped message leaves
+    /// the full-text index with it. Returns the rows moved and dropped.
+    /// An index with nothing under an old id is only read, so a converted
+    /// install never takes the write lock again.
+    pub fn rekey_projects(&mut self, pairs: &[(String, String)]) -> Result<(usize, usize), String> {
+        let mut pending = false;
+        for (old, _) in pairs {
+            for table in ["policy", "control_outcomes", "files", "messages"] {
+                pending |= self
+                    .db
+                    .query_row(
+                        &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE project=?1)"),
+                        [old],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        if !pending {
+            return Ok((0, 0));
+        }
+        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let (mut moved, mut dropped) = (0, 0);
+        for (old, new) in pairs {
+            for table in ["policy", "control_outcomes", "files", "messages"] {
+                moved += tx
+                    .execute(
+                        &format!("UPDATE OR IGNORE {table} SET project=?1 WHERE project=?2"),
+                        params![new, old],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            for table in ["policy", "control_outcomes", "files", "messages"] {
+                dropped += tx
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM {table} WHERE project=?1"),
+                        [old],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|e| e.to_string())? as usize;
+            }
+            erase(&tx, old, None, None)?;
+            for table in ["policy", "control_outcomes", "files"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE project=?1"), [old])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok((moved, dropped))
     }
     fn budget(&self) {
         let started = Instant::now();
@@ -192,214 +276,100 @@ impl SearchIndex {
         }
         Ok(())
     }
-    /// At most the existing 1 MiB cursor budget per call. True means more bytes.
-    pub fn update(
-        &mut self,
-        project: &str,
-        session: &str,
-        agent: Agent,
-        path: &Path,
-        cutoff: u64,
-    ) -> Result<bool, String> {
-        self.reads = UpdateReads::default();
-        self.budget();
-        let opened = open_regular(path)?;
-        self.update_opened(project, session, agent, path, cutoff, &opened)
-    }
-    fn update_opened(
-        &mut self,
-        project: &str,
-        session: &str,
-        agent: Agent,
-        path: &Path,
-        cutoff: u64,
-        opened: &File,
-    ) -> Result<bool, String> {
-        if opened.metadata().map_err(|e| e.to_string())?.len() > crate::SESSION_READ_LIMIT_BYTES {
-            return Err("Sessions larger than 64 MiB cannot be indexed or opened here.".into());
-        }
-        let observed_stamp = metadata_stamp(&opened.metadata().map_err(|e| e.to_string())?)?;
-        if stamp(path)? != observed_stamp {
-            return Err("Session source changed before indexing.".into());
-        }
-        let previous = self
-            .db
+    /// What the index holds for `session`, which its node reads on from.
+    pub fn saved(&self, project: &str, session: &str) -> Result<Option<SavedFile>, String> {
+        self.db
             .query_row(
                 "SELECT cursor,stamp,witness FROM files WHERE project=?1 AND session=?2",
                 params![project, session],
                 |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                    ))
+                    Ok(SavedFile {
+                        cursor: r.get(0)?,
+                        stamp: r.get(1)?,
+                        witness: r.get(2)?,
+                    })
                 },
             )
             .optional()
-            .map_err(|e| e.to_string())?;
-        let mut cursor = ConversationCursor::new();
-        let mut reset = false;
-        let mut prefix = PrefixWitness::default();
-        if let Some((serialized, saved_stamp, saved_witness)) = previous.as_ref() {
-            let checkpoint: ConversationCheckpoint =
-                serde_json::from_str(serialized).map_err(|e| e.to_string())?;
-            prefix = serde_json::from_str(saved_witness).map_err(|e| e.to_string())?;
-            if saved_stamp == &observed_stamp {
-                if prefix.hashed_offset < checkpoint.offset() {
-                    let end = checkpoint.offset().min(prefix.hashed_offset + HASH_BLOCK);
-                    prefix
-                        .hashes
-                        .push(hash_block(opened, prefix.hashed_offset, end)?);
-                    self.reads.witness_bytes = end - prefix.hashed_offset;
-                    prefix.hashed_offset = end;
-                    prefix.verified_chunks = prefix.hashes.len();
-                    if stamp(path)? != observed_stamp {
-                        return Err("Session changed while validating its prefix.".into());
+            .map_err(|e| e.to_string())
+    }
+    /// Writes one read of the session file at `path` (`search_read`),
+    /// keeping messages from `cutoff` on. True means the file has more.
+    pub fn apply(
+        &mut self,
+        project: &str,
+        session: &str,
+        path: &str,
+        cutoff: u64,
+        step: IndexStep,
+    ) -> Result<bool, String> {
+        self.budget();
+        match step {
+            IndexStep::Done => Ok(false),
+            IndexStep::Reset => {
+                self.remove(project, Some(session))?;
+                Ok(true)
+            }
+            IndexStep::Witness { witness, more } => {
+                self.db
+                    .execute(
+                        "UPDATE files SET witness=?3 WHERE project=?1 AND session=?2",
+                        params![project, session, witness],
+                    )
+                    .map_err(|e| e.to_string())?;
+                Ok(more)
+            }
+            IndexStep::Read {
+                reset,
+                messages,
+                cursor,
+                stamp,
+                witness,
+                more,
+            } => {
+                let tx = self.db.transaction().map_err(|e| e.to_string())?;
+                if reset {
+                    erase(&tx, project, Some(session), None)?;
+                }
+                let count: usize = tx
+                    .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+                    .map_err(|e| e.to_string())?;
+                let mut added = 0;
+                for message in messages {
+                    if message.at_unix_ms < cutoff {
+                        continue;
                     }
-                    self.db
-                        .execute(
-                            "UPDATE files SET witness=?3 WHERE project=?1 AND session=?2",
-                            params![
-                                project,
-                                session,
-                                serde_json::to_string(&prefix).map_err(|e| e.to_string())?
-                            ],
+                    if message.text.len() > BODY_LIMIT || count + added >= MESSAGE_LIMIT {
+                        return Err("Search index capacity reached (25,000 messages, 64 KiB per message). Reduce retention or clear the index.".into());
+                    }
+                    let folded = message.text.to_lowercase();
+                    tx.execute("INSERT OR IGNORE INTO messages(project,session,offset,role,at,body,folded) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![project,session,message.offset,message.role,message.at_unix_ms,message.text,folded]).map_err(|e| e.to_string())?;
+                    if tx.changes() > 0 {
+                        tx.execute(
+                            "INSERT INTO grams(rowid,terms) VALUES(?1,?2)",
+                            params![tx.last_insert_rowid(), grams(&folded)],
                         )
                         .map_err(|e| e.to_string())?;
-                    return Ok(checkpoint.has_more() || prefix.hashed_offset < checkpoint.offset());
-                }
-                if !checkpoint.has_more() {
-                    return Ok(false);
-                }
-            }
-            if saved_stamp != &observed_stamp {
-                let saved_size = saved_stamp
-                    .split(':')
-                    .nth(2)
-                    .and_then(|v| v.parse::<u64>().ok());
-                reset = prefix.hashed_offset < checkpoint.offset()
-                    || saved_size.is_none_or(|size| {
-                        opened.metadata().map(|m| m.len() <= size).unwrap_or(true)
-                    });
-                if !reset {
-                    if prefix.verified_for != observed_stamp {
-                        prefix.verified_for = observed_stamp.clone();
-                        prefix.verified_chunks = 0;
-                    }
-                    if prefix.verified_chunks < prefix.hashes.len() {
-                        let n = prefix.verified_chunks;
-                        let end = checkpoint.offset().min((n as u64 + 1) * HASH_BLOCK);
-                        self.reads.witness_bytes = end - n as u64 * HASH_BLOCK;
-                        reset = hash_block(opened, n as u64 * HASH_BLOCK, end)? != prefix.hashes[n];
-                        if reset {
-                            self.remove(project, Some(session))?;
-                            return Ok(true);
-                        }
-                        if !reset {
-                            if stamp(path)? != observed_stamp {
-                                return Err("Session changed while validating its prefix.".into());
-                            }
-                            prefix.verified_chunks += 1;
-                            self.db
-                                .execute(
-                                    "UPDATE files SET witness=?3 WHERE project=?1 AND session=?2",
-                                    params![
-                                        project,
-                                        session,
-                                        serde_json::to_string(&prefix).map_err(|e| e.to_string())?
-                                    ],
-                                )
-                                .map_err(|e| e.to_string())?;
-                            return Ok(true);
-                        }
+                        added += 1;
                     }
                 }
-            }
-            if !reset {
-                cursor = ConversationCursor::restore(checkpoint);
-            }
-        }
-        if reset {
-            prefix = PrefixWitness::default();
-        }
-        let old_offset = cursor.checkpoint().offset();
-        let parsed = cursor
-            .read_file(agent, path, opened)
-            .map_err(|e| e.to_string())?;
-        reset |= parsed.rescan_reason.is_some();
-        if parsed.rescan_reason.is_some() {
-            prefix = PrefixWitness::default();
-        }
-        let checkpoint = cursor.checkpoint();
-        // Only the partial previous block and newly consumed blocks are hashed.
-        let first = if reset { 0 } else { old_offset / HASH_BLOCK };
-        prefix.hashes.truncate(first as usize);
-        prefix.hashed_offset = first * HASH_BLOCK;
-        self.reads.cursor_bytes = cursor.read_bytes();
-        // Small files complete in one call while the combined transcript and
-        // hash reads still fit the same 1 MiB budget. Large files stage hashes.
-        let hash_bytes = checkpoint.offset().saturating_sub(prefix.hashed_offset);
-        if hash_bytes
-            <= crate::SESSION_INCREMENT_READ_LIMIT_BYTES.saturating_sub(self.reads.cursor_bytes)
-        {
-            while prefix.hashed_offset < checkpoint.offset() {
-                let end = checkpoint.offset().min(prefix.hashed_offset + HASH_BLOCK);
-                prefix
-                    .hashes
-                    .push(hash_block(opened, prefix.hashed_offset, end)?);
-                self.reads.witness_bytes += end - prefix.hashed_offset;
-                prefix.hashed_offset = end;
+                tx.execute("INSERT INTO files VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project,session) DO UPDATE SET path=excluded.path,cursor=excluded.cursor,stamp=excluded.stamp,witness=excluded.witness", params![project,session,path,cursor,stamp,witness]).map_err(|e| e.to_string())?;
+                tx.commit().map_err(|e| e.to_string())?;
+                Ok(more)
             }
         }
-
-        prefix.verified_for = observed_stamp.clone();
-        prefix.verified_chunks = prefix.hashes.len();
-        let new_witness = serde_json::to_string(&prefix).map_err(|e| e.to_string())?;
-        // A replacement during reading cannot commit a mixed file/cursor.
-        if stamp(path)? != observed_stamp {
-            return Err("Session changed while indexing; retrying on the next refresh.".into());
-        }
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
-        if reset {
-            erase(&tx, project, Some(session), None)?;
-        }
-        let count: usize = tx
-            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
-            .map_err(|e| e.to_string())?;
-        let mut added = 0;
-        for (event, offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
-            if !matches!(event.kind, EventKind::Human | EventKind::Assistant)
-                || event.at_unix_ms < cutoff
-            {
-                continue;
-            }
-            if event.text.len() > BODY_LIMIT || count + added >= MESSAGE_LIMIT {
-                return Err("Search index capacity reached (25,000 messages, 64 KiB per message). Reduce retention or clear the index.".into());
-            }
-            let folded = event.text.to_lowercase();
-            tx.execute("INSERT OR IGNORE INTO messages(project,session,offset,role,at,body,folded) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![project,session,offset,event.role,event.at_unix_ms,event.text,folded]).map_err(|e| e.to_string())?;
-            if tx.changes() > 0 {
-                tx.execute(
-                    "INSERT INTO grams(rowid,terms) VALUES(?1,?2)",
-                    params![tx.last_insert_rowid(), grams(&folded)],
-                )
-                .map_err(|e| e.to_string())?;
-                added += 1;
-            }
-        }
-        tx.execute("INSERT INTO files VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project,session) DO UPDATE SET path=excluded.path,cursor=excluded.cursor,stamp=excluded.stamp,witness=excluded.witness", params![project,session,path.to_string_lossy(),serde_json::to_string(&checkpoint).map_err(|e| e.to_string())?,observed_stamp,new_witness]).map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(cursor.has_more() || prefix.hashed_offset < checkpoint.offset())
     }
-    pub fn search(&self, project: &str, query: &str, cutoff: u64) -> Result<SearchPage, String> {
-        self.search_scoped(project, query, cutoff, None)
-    }
+    /// The newest matching message of each session. A hit whose file's
+    /// stamp moved since it was indexed is dropped and marks the page stale;
+    /// `stamps` answers the files' current stamps, `None` for one that is
+    /// gone or unreadable, from the node that holds them.
     pub fn search_scoped(
         &self,
         project: &str,
         query: &str,
         cutoff: u64,
         allowed: Option<&[String]>,
+        stamps: &mut CurrentStamps<'_>,
     ) -> Result<SearchPage, String> {
         let query = query.trim().to_lowercase();
         if query.is_empty() {
@@ -443,13 +413,29 @@ impl SearchIndex {
                     },
                 )
                 .map_err(|e| e.to_string())?;
+            let rows = rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            let paths = rows
+                .iter()
+                .map(|(_, path, _)| path.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let current = if paths.is_empty() {
+                Vec::new()
+            } else {
+                stamps(&paths)?
+            };
+            if current.len() != paths.len() {
+                return Err("Session files answered another number of stamps than asked.".into());
+            }
+            let current = paths.into_iter().zip(current).collect::<BTreeMap<_, _>>();
             let mut page = SearchPage::default();
             let mut seen = BTreeSet::new();
-            let mut count = 0;
-            for row in rows {
-                count += 1;
-                let (mut hit, path, indexed_stamp) = row.map_err(|e| e.to_string())?;
-                if stamp(Path::new(&path)).ok().as_ref() != Some(&indexed_stamp) {
+            let count = rows.len();
+            for (mut hit, path, indexed_stamp) in rows {
+                if current.get(&path).cloned().flatten().as_ref() != Some(&indexed_stamp) {
                     page.stale = true;
                     continue;
                 }
@@ -548,97 +534,4 @@ fn snippet(body: &str, query: &str) -> String {
         chars[start..end].iter().collect::<String>(),
         if end < chars.len() { "…" } else { "" }
     )
-}
-fn stamp(path: &Path) -> Result<String, String> {
-    metadata_stamp(&fs::metadata(path).map_err(|e| e.to_string())?)
-}
-fn metadata_stamp(m: &fs::Metadata) -> Result<String, String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(format!(
-            "{}:{}:{}:{}:{}",
-            m.dev(),
-            m.ino(),
-            m.len(),
-            m.mtime(),
-            m.mtime_nsec()
-        ))
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(format!(
-            "{}:{:?}",
-            m.len(),
-            m.modified().map_err(|e| e.to_string())?
-        ))
-    }
-}
-const HASH_BLOCK: u64 = 1024 * 1024;
-#[derive(Default, Serialize, Deserialize)]
-struct PrefixWitness {
-    hashes: Vec<String>,
-    #[serde(default)]
-    hashed_offset: u64,
-    verified_for: String,
-    verified_chunks: usize,
-}
-fn hash_block(opened: &File, start: u64, end: u64) -> Result<String, String> {
-    let mut file = opened.try_clone().map_err(|e| e.to_string())?;
-    file.seek(SeekFrom::Start(start))
-        .map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut bytes = [0; 64 * 1024];
-    let mut reader = file.take(end.saturating_sub(start));
-    loop {
-        let n = reader.read(&mut bytes).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&bytes[..n]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-fn open_regular(path: &Path) -> Result<File, String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options.open(path).map_err(|e| e.to_string())?;
-    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
-        return Err("Session source is not a regular file.".into());
-    }
-    Ok(file)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn descriptor_replaced_before_path_stamp_cannot_publish_removed_text() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("source.jsonl");
-        fs::write(&path, r#"{"type":"response_item","timestamp":"2026-10-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"removed old body"}]}}"#).unwrap();
-        let opened = open_regular(&path).unwrap();
-        let replacement = temp.path().join("replacement");
-        fs::write(&replacement, "new source").unwrap();
-        fs::rename(&replacement, &path).unwrap();
-        let mut index = SearchIndex::open(&temp.path().join("index.db")).unwrap();
-        assert!(
-            index
-                .update_opened("p", "s", Agent::Codex, &path, 0, &opened)
-                .unwrap_err()
-                .contains("changed before")
-        );
-        assert!(
-            index
-                .search("p", "removed old body", 0)
-                .unwrap()
-                .hits
-                .is_empty()
-        );
-    }
 }

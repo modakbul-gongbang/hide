@@ -7,10 +7,12 @@ step: a planned lane must have succeeded and an unplanned one must have been
 skipped, so a lane whose `if:` is wrong fails `verify` instead of passing it.
 
 A push to main, a comparison that cannot be computed, a path no rule claims
-and the nightly call all plan every lane. No lane takes a macOS runner for
-anything but what only macOS proves (`os-contract-macos`, `desktop-e2e`); the
-rest of the macOS checks are jobs of `nightly.yml`. docs/TESTING.md, "Which
-lanes a pull request runs", owns the rules and the reasons for them.
+and the nightly call all plan every lane but `package`, which only a change to
+what goes into a package plans. No lane takes a macOS runner for anything but
+what only macOS proves (`os-contract-macos`, `desktop-e2e`, and `package`'s
+packaged app); the rest of the macOS checks are jobs of `nightly.yml`.
+docs/TESTING.md, "Which lanes a pull request runs", owns the rules and the
+reasons for them.
 """
 import argparse
 from fnmatch import fnmatchcase
@@ -34,7 +36,13 @@ LANES = (
     "web-e2e",
     "remote-mailbox",
     "desktop-e2e",
+    "package",
 )
+# What a full plan runs. `package` builds release packages from cold on three
+# runners, so it runs for a change to what goes into one (PACKAGE_PATHS) and
+# nothing else: main's push runs leave it out, the nightly calls
+# `package.yml` itself and a release builds its own.
+FULL_LANES = tuple(lane for lane in LANES if lane != "package")
 
 # Crates whose change reaches what differs by operating system: the platform
 # layer, the Herdr client's IPC, the install kit and hooks, and the daemon and
@@ -105,6 +113,20 @@ READERS = (
 )
 
 
+# The paths that change what goes into a package: the package scripts and
+# resources, the Herdr pin and its fetch, the build entrypoints, the web shell
+# `hided/build.rs` embeds, the daemon replacement in `hided/src/cli.rs`, the
+# install kit and hooks a packaged daemon runs, and the workflows that build
+# them. This is the only list: `package.yml` has no trigger of its own.
+PACKAGE_PATHS = (
+    "desktop/scripts/*", "desktop/package.json", "desktop/resources/*",
+    "contracts/herdr-bundle.json", "scripts/fetch-herdr-runtime.*",
+    "scripts/verify-cargo.sh", "scripts/verify-web.sh", "scripts/toolchain-env.sh",
+    "hided/build.rs", "hided/src/cli.rs", "hide-kit/*", "hide-agent-hooks/*",
+    ".github/workflows/package.yml", ".github/workflows/release.yml",
+)
+
+
 # Paths named here are the only ones narrower than "every lane"; a path no rule
 # names still plans every lane. Each entry says who reads the path, and
 # `scripts/tests/test_ci_plan.py` checks the claim where it can be checked.
@@ -115,15 +137,14 @@ POLICY_ONLY = (
     "agents/*", "site/*", "plugins/*", "tools/*", "spikes/*",
     ".gitignore", "web/.gitignore", "desktop/.gitignore",
     ".github/pull_request_template.md", ".github/dependabot.yml",
-    # Workflows no `pr.yml` job calls; `package.yml` and `design-contract.yml`
-    # have their own pull request triggers.
-    ".github/workflows/nightly.yml", ".github/workflows/package.yml", ".github/workflows/release.yml",
-    ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
+    # Workflows no `pr.yml` job calls; `design-contract.yml` has its own pull
+    # request trigger.
+    ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
     "scripts/tests/*",
     # Scripts only `policy`, another workflow or nobody runs.
-    "scripts/nightly-report.cjs",
     "scripts/check-agent-asset-committed.sh", "scripts/check-capability-readers-off-lock.sh",
     "scripts/check-harness-ignore-anchor.sh", "scripts/check-herdr-pin-single-source.sh",
+    "scripts/check-core-touches-no-machine.py",
     "scripts/check-no-workstation-identity.*", "scripts/check-worktree-removal-boundary.sh",
     "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
     "scripts/check-release-assets.mjs", "scripts/release-draft.mjs",
@@ -150,10 +171,13 @@ NAMED_LANES = (
     ("desktop/eslint.config.mjs", {"checks"}),
     ("desktop/eslint.globals.mjs", {"checks"}),
     # `build.mjs` is the e2e's build; `package.mjs` and `smoke-package.mjs` run
-    # in `package.yml`, which has its own trigger on this folder.
+    # in the `package` lane, which PACKAGE_PATHS plans for this folder.
     ("desktop/scripts/build.mjs", {"checks", "desktop-e2e"}),
     ("desktop/scripts/package.mjs", {"checks"}),
     ("desktop/scripts/smoke-package.mjs", {"checks"}),
+    # The `package` lane's workflow and the release that calls it.
+    (".github/workflows/package.yml", set()),
+    (".github/workflows/release.yml", set()),
 )
 
 
@@ -290,6 +314,8 @@ def select(entries, crates, root=ROOT, full_reason=None):
         path = PurePosixPath(name)
         if not name or path.is_absolute() or ".." in path.parts:
             raise ValueError(f"invalid changed path: {name!r}")
+        if any(fnmatchcase(name, pattern) for pattern in PACKAGE_PATHS):
+            reasons["package"].append(f"package input: {name}")
         lanes, reason, reached = classify(path, status, crates, root)
         if lanes is None:
             full.append(reason)
@@ -303,7 +329,7 @@ def select(entries, crates, root=ROOT, full_reason=None):
         for lane in lanes:
             reasons[lane].append(reason)
     if full:
-        for lane in LANES:
+        for lane in FULL_LANES:
             reasons[lane] = list(full)
         packages = {crate["name"] for crate in crates.values()}
     planned = [lane for lane in LANES if reasons[lane]]

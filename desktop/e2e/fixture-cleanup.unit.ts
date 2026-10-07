@@ -52,6 +52,13 @@ vi.mock("../../web/e2e/shims/build", () => ({
   }),
 }));
 
+// Linking the app bundle needs a Cargo build this suite does not have, and the
+// launch it precedes is replaced, so linking is replaced too.
+vi.mock("../../web/e2e/bundled-app", async (original) => ({
+  ...await original<typeof import("../../web/e2e/bundled-app")>(),
+  linkBundle: vi.fn(),
+}));
+
 /** Windows gets the built no-op opener in the private root; elsewhere /usr/bin/true needs no program. */
 function expectOpenerCopied(run: Isolated): void {
   if (process.platform === "win32") expect(copyFixtureShim).toHaveBeenCalledWith("noop", path.join(run.root, "bin", "hide-open.exe"));

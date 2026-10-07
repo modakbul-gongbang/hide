@@ -30,7 +30,7 @@ fn run() -> Result<(), String> {
     if args.first().is_some_and(|arg| arg == "--open-helper") {
         // Only Unix supervises a file opener through this mode.
         #[cfg(unix)]
-        return hided::spawn::run_opener_helper(&args);
+        return hide_node::opener::run_opener_helper(&args);
         #[cfg(not(unix))]
         return Err("--open-helper is the Unix opener supervisor's mode".into());
     }

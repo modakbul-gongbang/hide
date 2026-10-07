@@ -140,6 +140,7 @@ fn request_failure(method: &str, error: &hide_herdr_client::ApiError) -> String 
     // remote code is the part a reader needs.
     let reason = match &error {
         hide_herdr_client::ApiError::Remote { code, .. } => code.as_str(),
+        hide_herdr_client::ApiError::NotRunning(_) => "not running",
         hide_herdr_client::ApiError::Transport(_) => "transport",
         hide_herdr_client::ApiError::Malformed(_) => "malformed",
     };
@@ -157,9 +158,9 @@ pub(crate) fn retire_hcoord_plugin(target: &KitTarget) -> Retirement {
         HERDR_DEADLINE,
     ) {
         Ok(result) => unlink_list(target, HCOORD_PLUGIN_ID, result),
-        Err(hide_herdr_client::ApiError::Transport(_)) => {
-            crate::coordination_retirement::retire_offline_plugin(target)
-        }
+        Err(
+            hide_herdr_client::ApiError::NotRunning(_) | hide_herdr_client::ApiError::Transport(_),
+        ) => crate::coordination_retirement::retire_offline_plugin(target),
         Err(error) => Err(request_failure("plugin.list", &error)),
     };
     match unlinked {

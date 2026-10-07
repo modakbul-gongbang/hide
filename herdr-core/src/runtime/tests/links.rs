@@ -86,7 +86,7 @@ fn the_worker_is_handed_each_pull_request_with_its_issue_links_and_sources() {
     let project = &projects[0];
     assert_eq!(
         project.key,
-        hide_project::project_id(workspace::LOCAL_DEVICE_ID, Path::new("/repo"))
+        hide_project::project_id(crate::node::TEST_NODE, Path::new("/repo"))
     );
     assert_eq!(project.repository.as_deref(), Some("acme/project"));
     assert_eq!(project.repository_id.as_deref(), Some("R_kgDO"));
@@ -203,16 +203,11 @@ fn open_event(target: serde_json::Value) -> Vec<u8> {
 fn opening_a_pull_request_reads_its_sessions_on_the_panels_own_revision() {
     let home = scratch_dir("herdr-core-links-home-");
     claude_session(home.path(), "s-maker", CREATED + 1_000);
-    let shared = Arc::new(Mutex::new(links_runtime(
-        vec![pull_request(7, "4-task", &[3])],
-        true,
-    )));
-    let worker = super::super::links::spawn_worker(
-        &shared,
-        ChangeNotifier::noop(),
-        Some(home.path().to_path_buf()),
-    )
-    .expect("the link worker starts");
+    let mut runtime = links_runtime(vec![pull_request(7, "4-task", &[3])], true);
+    runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
+    let shared = Arc::new(Mutex::new(runtime));
+    let worker = super::super::links::spawn_worker(&shared, ChangeNotifier::noop())
+        .expect("the link worker starts");
 
     assert!(
         shared
@@ -282,7 +277,7 @@ fn an_answer_for_a_superseded_read_is_dropped_and_a_failure_keeps_the_lines() {
         agent: "claude".into(),
         id: "s1".into(),
         ids: vec!["s1".into()],
-        device_id: "local".into(),
+        device_id: crate::node::TEST_NODE.into(),
         role: SessionRole::Worked,
         pr: 7,
         request: None,

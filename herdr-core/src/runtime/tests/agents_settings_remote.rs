@@ -210,7 +210,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     let focus_local = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "focus_device",
-        "payload": {"device_id": "local"}
+        "payload": {"device_id": crate::node::TEST_NODE}
     }))
     .expect("focus local event");
     assert!(runtime.dispatch_json(&focus_local));
@@ -261,11 +261,11 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
 }
 
 /// A helper listing with these (name, is_directory) rows, in its order.
-fn listing(rows: &[(&str, bool)]) -> hide_host::list::Listing {
-    hide_host::list::Listing {
+fn listing(rows: &[(&str, bool)]) -> hide_node_link::list::Listing {
+    hide_node_link::list::Listing {
         entries: rows
             .iter()
-            .map(|(name, is_directory)| hide_host::list::Entry {
+            .map(|(name, is_directory)| hide_node_link::list::Entry {
                 name: (*name).to_owned(),
                 is_directory: *is_directory,
                 inode: 1,
@@ -494,7 +494,7 @@ fn ready_read(ids: &[&str]) -> crate::model::BackgroundAiSnapshot {
 /// Switches the named agents on in this Mac's kit snapshot, as the first-run
 /// choice or Settings › Agents leaves them.
 fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
-    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    let mut kit = runtime.kit_state(crate::node::TEST_NODE);
     kit.agents = hide_kit::agents::ADAPTERS
         .iter()
         .map(|adapter| {
@@ -519,7 +519,7 @@ fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
             }
         })
         .collect();
-    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    runtime.set_kit_state(crate::node::TEST_NODE, kit);
 }
 
 /// The Hide AI tab's state travels on the ordinary snapshot, and nothing on
@@ -1284,7 +1284,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             id: "workspace:a".to_owned(),
             label: "a".to_owned(),
             path: root_a.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         },
@@ -1293,7 +1293,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             id: "workspace:b".to_owned(),
             label: "b".to_owned(),
             path: root_b.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         },
@@ -1428,7 +1428,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
         id: workspace_id.clone(),
         label: "Remote selection leak".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -1471,7 +1471,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -1962,7 +1962,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         id: "workspace:read-record".to_owned(),
         label: "read-record".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];

@@ -47,7 +47,7 @@ const UNLOADABLE_ADDRESS: &str = "A page opens from an http, https or file addre
 const BESIDE_ORDER: [Edge; 4] = [Edge::Right, Edge::Left, Edge::Down, Edge::Up];
 
 // Every View diff is taken in the one Changes read, one per area at most.
-const _: () = assert!(MAX_VIEW_AREAS <= hide_host::git::MAX_DIFFS);
+const _: () = assert!(MAX_VIEW_AREAS <= hide_node_link::git::MAX_DIFFS);
 
 /// The payload of `view_layout`: one operator action on the View areas of
 /// the Workspace the operator saw. Each is one event and one frame; a
@@ -1930,13 +1930,13 @@ impl Runtime {
 
     /// The diffs on screen, which the Changes read takes with its own
     /// (contract 3.2), by absolute path.
-    pub(super) fn visible_view_diffs(&self) -> Vec<hide_host::git::DiffTarget> {
-        let mut visible: Vec<hide_host::git::DiffTarget> = Vec::new();
+    pub(super) fn visible_view_diffs(&self) -> Vec<hide_node_link::git::DiffTarget> {
+        let mut visible: Vec<hide_node_link::git::DiffTarget> = Vec::new();
         for display in self.visible_view_displays() {
             if display.kind != DisplayKind::Diff || display.tab_id.is_none() {
                 continue;
             }
-            let target = hide_host::git::DiffTarget {
+            let target = hide_node_link::git::DiffTarget {
                 path: display.path.clone(),
                 committed: display.committed.unwrap_or(false),
             };
@@ -1955,7 +1955,7 @@ impl Runtime {
     /// one History and Settings show, and its displays still wait, so they
     /// open once the device is fixed.
     pub(super) fn view_root_wait(&self, key: &WorkspaceKey) -> Option<String> {
-        if key.0 != workspace::LOCAL_DEVICE_ID {
+        if key.0 != self.node.as_str() {
             let label = self
                 .snapshot
                 .ui_state

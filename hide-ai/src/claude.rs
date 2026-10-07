@@ -115,7 +115,8 @@ impl Default for ClaudeConfig {
 
 /// Why a `/usage` read produced no text. The caller decides what each one
 /// means for the screen; no variant carries output, a token, or an account.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "error", content = "kind", rename_all = "snake_case")]
 pub enum UsageError {
     /// The binary is not on `PATH` (or the configured path is not a file).
     NotInstalled,
@@ -692,14 +693,14 @@ mod tests {
         });
         assert_eq!(backend.availability(), Availability::NotInstalled);
         let request = AiRequest {
-            feature_id: "test",
+            feature_id: "test".into(),
             request_id: crate::RequestId("r".to_owned()),
             subject_id: "s".to_owned(),
             system: "sys".to_owned(),
             input: "in".to_owned(),
             output_schema: schema(),
             deadline: Duration::from_secs(1),
-            schema_version: "v1",
+            schema_version: "v1".into(),
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),

@@ -17,11 +17,11 @@
 use super::*;
 #[path = "retirement.rs"]
 mod retirement;
-pub use crate::host_access::HostCallError;
-use crate::host_access::{HostAnswer, HostChannel, call_as};
 use crate::model::{HostConsent, HostIdentity};
-use hide_host::HostError;
-use hide_host::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
+pub use crate::node_access::LinkError;
+use crate::node_access::{LinkAnswer, NodeLink, call_as};
+use hide_node_link::HostError;
+use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
 use serde_json::value::RawValue;
@@ -36,7 +36,7 @@ use std::sync::mpsc;
 /// this bounds memory without refusing any answer the protocol can produce.
 const MAX_ANSWER_BYTES: usize = 128 * 1024 * 1024;
 
-/// One answer line as the helper sends it (`hide_host::protocol::Response`),
+/// One answer line as the helper sends it (`hide_node_link::protocol::Response`),
 /// with the result borrowed as JSON text rather than built into a `Value`.
 #[derive(serde::Deserialize)]
 struct AnswerLine<'a> {
@@ -365,17 +365,17 @@ impl Gate {
         }
     }
 
-    fn admit(&self, timeout: Duration) -> Result<(), HostCallError> {
+    fn admit(&self, timeout: Duration) -> Result<(), LinkError> {
         let mut admission = lock_recover(&self.state);
         if let Some(reason) = &admission.stopped {
-            return Err(HostCallError::NotConnected(reason.clone()));
+            return Err(LinkError::NotConnected(reason.clone()));
         }
         if admission.running < MAX_RUNNING {
             admission.running += 1;
             return Ok(());
         }
         if admission.queued >= MAX_QUEUED {
-            return Err(HostCallError::Busy);
+            return Err(LinkError::Busy);
         }
         admission.queued += 1;
         let deadline = Instant::now() + timeout;
@@ -385,7 +385,7 @@ impl Gate {
                 admission.queued -= 1;
                 drop(admission);
                 self.changed.notify_all();
-                return Err(HostCallError::NotConnected(reason));
+                return Err(LinkError::NotConnected(reason));
             }
             if admission.running < MAX_RUNNING {
                 break;
@@ -393,7 +393,7 @@ impl Gate {
             let now = Instant::now();
             if now >= deadline {
                 admission.queued -= 1;
-                return Err(HostCallError::Busy);
+                return Err(LinkError::Busy);
             }
             admission = self
                 .changed
@@ -454,7 +454,7 @@ struct Inner {
     next_id: AtomicU64,
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
-    roots: Mutex<HashMap<String, hide_host::RootIdentity>>,
+    roots: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
 }
 
 impl Drop for Inner {
@@ -495,25 +495,25 @@ impl RemoteHost {
 
     /// Sends one request and waits at most `timeout` for its answer. Must
     /// not be called from inside an async context.
-    pub fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
+    pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         self.inner.gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout);
         self.inner.gate.release();
         result
     }
 
-    fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
+    fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         let inner = &self.inner;
         let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
         let mut line = serde_json::to_vec(&Request { id, call }).map_err(|error| {
-            HostCallError::NotConnected(format!("The request could not be encoded: {error}"))
+            LinkError::NotConnected(format!("The request could not be encoded: {error}"))
         })?;
         line.push(b'\n');
         let (sender, receiver) = mpsc::channel();
         lock_recover(&inner.pending).insert(id, sender);
         if let Some(reason) = self.closed_reason() {
             lock_recover(&inner.pending).remove(&id);
-            return Err(HostCallError::NotConnected(reason));
+            return Err(LinkError::NotConnected(reason));
         }
         // Waiting behind another request's write sends nothing, so running
         // out of time there leaves the connection as it was; only a write
@@ -522,12 +522,12 @@ impl RemoteHost {
         let written = inner.runtime.block_on(async {
             let Ok(mut writer) = tokio::time::timeout_at(deadline, inner.writer.lock()).await
             else {
-                return Err(HostCallError::Busy);
+                return Err(LinkError::Busy);
             };
             // Admitted before the connection began to drain, but not sent:
             // it is refused now rather than sent after consent was withdrawn.
             if let Some(reason) = inner.gate.stopped() {
-                return Err(HostCallError::NotConnected(reason));
+                return Err(LinkError::NotConnected(reason));
             }
             Ok(tokio::time::timeout_at(deadline, async {
                 writer.write_all(&line).await?;
@@ -550,30 +550,30 @@ impl RemoteHost {
             Ok(Err(error)) => {
                 lock_recover(&inner.pending).remove(&id);
                 self.close("a request could not be written to the device helper");
-                return Err(HostCallError::Unknown(format!(
+                return Err(LinkError::Unknown(format!(
                     "The connection to the device failed while the request was sent ({error}); its result is unknown"
                 )));
             }
             Err(_) => {
                 lock_recover(&inner.pending).remove(&id);
                 self.close("a request was not accepted by the device helper in time");
-                return Err(HostCallError::Unknown(
+                return Err(LinkError::Unknown(
                     "The device did not accept the request in time; its result is unknown"
                         .to_owned(),
                 ));
             }
         }
         match receiver.recv_timeout(timeout) {
-            Ok(Ok(raw)) => Ok(HostAnswer::Raw(raw)),
-            Ok(Err(error)) => Err(HostCallError::Refused(error)),
+            Ok(Ok(raw)) => Ok(LinkAnswer::Raw(raw)),
+            Ok(Err(error)) => Err(LinkError::Refused(error)),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 lock_recover(&inner.pending).remove(&id);
-                Err(HostCallError::Unknown(
+                Err(LinkError::Unknown(
                     "The device did not answer in time; the result is unknown and nothing was resent"
                         .to_owned(),
                 ))
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(HostCallError::Unknown(format!(
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(LinkError::Unknown(format!(
                 "The connection to the device ended before it answered ({}); the result is unknown and nothing was resent",
                 self.closed_reason()
                     .unwrap_or_else(|| "no reason reported".to_owned())
@@ -582,8 +582,8 @@ impl RemoteHost {
     }
 }
 
-impl HostChannel for RemoteHost {
-    fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
+impl NodeLink for RemoteHost {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         RemoteHost::call(self, call, timeout)
     }
 
@@ -622,11 +622,11 @@ impl HostChannel for RemoteHost {
         RemoteHost::close(self, reason)
     }
 
-    fn pinned(&self, root: &str) -> Option<hide_host::RootIdentity> {
+    fn pinned(&self, root: &str) -> Option<hide_node_link::RootIdentity> {
         lock_recover(&self.inner.roots).get(root).copied()
     }
 
-    fn pin(&self, root: &str, identity: Option<hide_host::RootIdentity>) {
+    fn pin(&self, root: &str, identity: Option<hide_node_link::RootIdentity>) {
         let mut roots = lock_recover(&self.inner.roots);
         match identity {
             Some(identity) => {
@@ -1549,12 +1549,12 @@ mod tests {
         gate.stop("consent revoked");
         assert!(matches!(
             waiting.join().unwrap(),
-            Err(HostCallError::NotConnected(reason)) if reason == "consent revoked"
+            Err(LinkError::NotConnected(reason)) if reason == "consent revoked"
         ));
         assert!(stopped.elapsed() < Duration::from_secs(10));
         assert!(matches!(
             gate.admit(Duration::from_secs(1)),
-            Err(HostCallError::NotConnected(_))
+            Err(LinkError::NotConnected(_))
         ));
 
         let (started, waiting_idle) = std::sync::mpsc::channel();
@@ -1587,7 +1587,7 @@ mod tests {
             os: "linux".to_owned(),
             arch: "x86_64".to_owned(),
             home: None,
-            machine_identity: hide_host::protocol::MachineIdentity::Unavailable {
+            machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
                 reason: "fixture identity is unavailable".to_owned(),
             },
         };
@@ -1611,10 +1611,12 @@ mod tests {
         assert_eq!((line.id, line.ok.map(RawValue::get)), (7, Some("null")));
         let line: AnswerLine =
             serde_json::from_str(r#"{"id":8,"ok":{"paths":["a"],"truncated":false}}"#).unwrap();
-        let answer = HostAnswer::Raw(line.ok.unwrap().to_owned());
+        let answer = LinkAnswer::Raw(line.ok.unwrap().to_owned());
         let decoded = match answer {
-            HostAnswer::Raw(raw) => serde_json::from_str::<hide_host::index::Walked>(raw.get()),
-            HostAnswer::Parsed(_) => unreachable!(),
+            LinkAnswer::Raw(raw) => {
+                serde_json::from_str::<hide_node_link::index::Walked>(raw.get())
+            }
+            LinkAnswer::Parsed(_) => unreachable!(),
         }
         .unwrap();
         assert_eq!(decoded.paths, vec!["a".to_owned()]);
@@ -1622,7 +1624,10 @@ mod tests {
             serde_json::from_str(r#"{"id":9,"error":{"code":"invalid_path","message":"no"}}"#)
                 .unwrap();
         assert!(line.ok.is_none());
-        assert_eq!(line.error.unwrap().code, hide_host::ErrorCode::InvalidPath);
+        assert_eq!(
+            line.error.unwrap().code,
+            hide_node_link::ErrorCode::InvalidPath
+        );
         assert!(serde_json::from_str::<AnswerLine>(r#"{"ok":1}"#).is_err());
     }
 
@@ -1824,8 +1829,8 @@ mod tests {
 #[cfg(test)]
 mod probe {
     use super::*;
-    use hide_host::RootIdentity;
-    use hide_host::protocol::{RootOpened, RootRef};
+    use hide_node_link::RootIdentity;
+    use hide_node_link::protocol::{RootOpened, RootRef};
 
     #[test]
     #[ignore = "needs an authorized SSH device and a disposable fixture"]
@@ -1881,7 +1886,7 @@ mod probe {
             path: root_path,
             identity: opened.identity,
         };
-        let listing: hide_host::list::Listing = call_as(
+        let listing: hide_node_link::list::Listing = call_as(
             &host,
             Call::List {
                 root: root.clone(),
@@ -1894,7 +1899,7 @@ mod probe {
             listing.entries.iter().any(|entry| entry.name == "a.txt"),
             "{listing:?}"
         );
-        let document: hide_host::document::Document = call_as(
+        let document: hide_node_link::document::Document = call_as(
             &host,
             Call::OpenDocument {
                 root: root.clone(),
@@ -1905,7 +1910,7 @@ mod probe {
         .expect("document");
         assert_eq!(document.contents.as_deref(), Some("old\n"));
         let revision = document.revision.expect("editable revision");
-        let saved: hide_host::save::Saved = call_as(
+        let saved: hide_node_link::save::Saved = call_as(
             &host,
             Call::Save {
                 root: root.clone(),
@@ -1926,8 +1931,8 @@ mod probe {
             },
             timeout,
         ) {
-            Err(HostCallError::Refused(error)) => {
-                assert_eq!(error.code, hide_host::ErrorCode::Conflict);
+            Err(LinkError::Refused(error)) => {
+                assert_eq!(error.code, hide_node_link::ErrorCode::Conflict);
                 assert_eq!(
                     error.actual_revision.as_deref(),
                     Some(saved.revision.as_str())
@@ -1948,8 +1953,8 @@ mod probe {
             },
             timeout,
         ) {
-            Err(HostCallError::Refused(error)) => {
-                assert_eq!(error.code, hide_host::ErrorCode::RootReplaced)
+            Err(LinkError::Refused(error)) => {
+                assert_eq!(error.code, hide_node_link::ErrorCode::RootReplaced)
             }
             other => panic!("a wrong root identity must be refused: {other:?}"),
         }
@@ -1960,14 +1965,14 @@ mod probe {
             },
             timeout,
         ) {
-            Err(HostCallError::Refused(error)) => {
-                assert_eq!(error.code, hide_host::ErrorCode::InvalidPath)
+            Err(LinkError::Refused(error)) => {
+                assert_eq!(error.code, hide_node_link::ErrorCode::InvalidPath)
             }
             other => panic!("a traversal must be refused: {other:?}"),
         }
         host.close("probe finished");
         match host.call(Call::Hello, timeout) {
-            Err(HostCallError::NotConnected(_)) => {}
+            Err(LinkError::NotConnected(_)) => {}
             other => panic!("a closed host takes no request: {other:?}"),
         }
         eprintln!(

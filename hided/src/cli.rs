@@ -890,6 +890,9 @@ pub enum ConnectError {
     /// A daemon of another build runs here and this `hide` is not the app's,
     /// so it neither replaces nor attaches to it.
     OtherBuild(String),
+    /// The daemon stopped because a stored file could not be made this
+    /// machine's (PRD core-host-node B2); the host names the file.
+    StateRefused { file: String, detail: String },
 }
 
 impl ConnectError {
@@ -898,6 +901,7 @@ impl ConnectError {
             ConnectError::StartFailed(_) => "start_failed",
             ConnectError::NoResponse(_) => "no_response",
             ConnectError::OtherBuild(_) => "other_build",
+            ConnectError::StateRefused { .. } => "state_refused",
         }
     }
 
@@ -905,7 +909,8 @@ impl ConnectError {
         match self {
             ConnectError::StartFailed(detail)
             | ConnectError::NoResponse(detail)
-            | ConnectError::OtherBuild(detail) => detail,
+            | ConnectError::OtherBuild(detail)
+            | ConnectError::StateRefused { detail, .. } => detail,
         }
     }
 }
@@ -976,8 +981,12 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
             ConnectError::StartFailed(detail)
         })?;
     }
-    spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
-    wait_healthy(env).map_err(ConnectError::NoResponse)
+    let spawned_at = unix_ms();
+    let mut daemon = spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
+    let started = wait_healthy(env, &mut daemon, spawned_at);
+    // The daemon outlives this command; nothing waits for it.
+    std::mem::forget(daemon);
+    started
 }
 
 /// Moves the legacy default state folder into place before anything looks
@@ -1020,11 +1029,19 @@ fn connect_json(env: &Env) -> Result<(), String> {
     let (line, result) = match connect(env) {
         Ok(state) => (attached_json(&state, "ok"), Ok(())),
         Err(error) => (
-            serde_json::json!({
-                "ok": false,
-                "reason": error.reason(),
-                "detail": error.detail(),
-            }),
+            match &error {
+                ConnectError::StateRefused { file, .. } => serde_json::json!({
+                    "ok": false,
+                    "reason": error.reason(),
+                    "detail": error.detail(),
+                    "file": file,
+                }),
+                _ => serde_json::json!({
+                    "ok": false,
+                    "reason": error.reason(),
+                    "detail": error.detail(),
+                }),
+            },
             Err(format!("{}: {}", error.reason(), error.detail())),
         ),
     };
@@ -1205,7 +1222,7 @@ fn daemon_binary() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| format!("no hided beside {}", exe.display()))
 }
 
-fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
+fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<std::process::Child, String> {
     // The daemon would refuse the same value after it is spawned; checking
     // here answers `start_failed` with the path instead of a ten-second
     // `no_response` that names nothing.
@@ -1226,9 +1243,7 @@ fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
     if let Some(origin) = &env.vite_origin {
         command.env("HIDE_VITE_ORIGIN", origin);
     }
-    let child = spawn_owned(&mut command).map_err(|error| error.to_string())?;
-    std::mem::forget(child);
-    Ok(())
+    spawn_owned(&mut command).map_err(|error| error.to_string())
 }
 
 /// How long `hide connect` waits for the daemon it started to answer, on
@@ -1241,26 +1256,74 @@ const HEALTH_REQUEST: Duration = Duration::from_secs(1);
 /// The pause between two looks at a daemon that has not answered yet.
 const HEALTH_PAUSE: Duration = Duration::from_millis(100);
 
+/// Waits for the daemon `hide connect` started. One that exits first ends
+/// the wait at once, with the reason it logged when it refused its state
+/// folder (PRD core-host-node B2), since its stderr goes nowhere.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
-    wait_healthy_within(
+fn wait_healthy(
+    env: &Env,
+    daemon: &mut std::process::Child,
+    spawned_at: u64,
+) -> Result<DaemonState, ConnectError> {
+    let pid = daemon.id();
+    let waited = wait_started(
         HEALTHY_WITHIN,
         std::time::Instant::now,
         std::thread::sleep,
+        || daemon.try_wait().ok().flatten(),
         |timeout| probe_daemon(&env.state_dir, timeout).map(|(state, _)| state),
-    )
+    );
+    match waited {
+        Ok(state) => Ok(state),
+        Err(Waited::Timeout(detail)) => Err(ConnectError::NoResponse(detail)),
+        Err(Waited::Exited(status)) => {
+            let refusal = herdr_core::diagnostics::newest_record(
+                &env.state_dir.join("core-state.json"),
+                |record| refused_by(record, pid, spawned_at),
+            );
+            Err(match refusal {
+                Some(record) => ConnectError::StateRefused {
+                    file: record["file"].as_str().unwrap_or_default().to_owned(),
+                    detail: record["reason"].as_str().unwrap_or_default().to_owned(),
+                },
+                None => ConnectError::StartFailed(format!(
+                    "hided exited with {status} before it answered"
+                )),
+            })
+        }
+    }
 }
 
-/// Looks at the started daemon until it answers or `within` has passed on
-/// `now`'s clock. No request may outlast the time left, so the wait ends at
-/// the bound it names, and the error says what was last seen, so a slow
-/// start names its stage.
-fn wait_healthy_within(
+/// The refusal this start's daemon logged: its pid, written no earlier
+/// than it was spawned, so a record an earlier daemon with a reused pid
+/// left in the same Logs file is not read as this one's.
+fn refused_by(record: &serde_json::Value, pid: u32, spawned_at: u64) -> bool {
+    record["kind"] == "node_migration.refused"
+        && record["pid"].as_u64() == Some(u64::from(pid))
+        && record["at_unix_ms"]
+            .as_u64()
+            .is_some_and(|at| at >= spawned_at)
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+enum Waited {
+    Timeout(String),
+    Exited(std::process::ExitStatus),
+}
+
+fn wait_started(
     within: Duration,
     now: impl Fn() -> std::time::Instant,
     mut pause: impl FnMut(Duration),
+    mut exited: impl FnMut() -> Option<std::process::ExitStatus>,
     mut probe: impl FnMut(Duration) -> Result<DaemonState, String>,
-) -> Result<DaemonState, String> {
+) -> Result<DaemonState, Waited> {
     let deadline = now() + within;
     loop {
         let left = deadline.saturating_duration_since(now());
@@ -1268,14 +1331,34 @@ fn wait_healthy_within(
             Ok(state) => return Ok(state),
             Err(seen) => seen,
         };
+        if let Some(status) = exited() {
+            return Err(Waited::Exited(status));
+        }
         let left = deadline.saturating_duration_since(now());
         if left.is_zero() {
-            return Err(format!(
+            return Err(Waited::Timeout(format!(
                 "hided did not become healthy within {within:?}; last waited on {seen}"
-            ));
+            )));
         }
         pause(left.min(HEALTH_PAUSE));
     }
+}
+
+/// Looks at the started daemon until it answers or `within` has passed on
+/// `now`'s clock. No request may outlast the time left, so the wait ends at
+/// the bound it names, and the error says what was last seen, so a slow
+/// start names its stage.
+#[cfg(test)]
+fn wait_healthy_within(
+    within: Duration,
+    now: impl Fn() -> std::time::Instant,
+    pause: impl FnMut(Duration),
+    probe: impl FnMut(Duration) -> Result<DaemonState, String>,
+) -> Result<DaemonState, String> {
+    wait_started(within, now, pause, || None, probe).map_err(|waited| match waited {
+        Waited::Timeout(detail) => detail,
+        Waited::Exited(status) => format!("exited with {status}"),
+    })
 }
 
 /// The live daemon of this state folder and what its `/health` answered.
@@ -1351,6 +1434,20 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_is_read_only_from_the_daemon_this_start_spawned() {
+        let record = |pid: u32, at: u64| serde_json::json!({"kind": "node_migration.refused", "pid": pid, "at_unix_ms": at, "file": "/s/node.json"});
+        assert!(refused_by(&record(42, 1_000), 42, 1_000));
+        // Another daemon's, or one an earlier daemon with the same pid left.
+        assert!(!refused_by(&record(43, 1_000), 42, 1_000));
+        assert!(!refused_by(&record(42, 999), 42, 1_000));
+        assert!(!refused_by(
+            &serde_json::json!({"kind": "node_migration.refused", "pid": 42}),
+            42,
+            0
+        ));
+    }
 
     fn recorded(pid: u32, pid_started: Option<u64>) -> DaemonState {
         DaemonState {

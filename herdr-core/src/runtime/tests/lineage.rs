@@ -75,7 +75,7 @@ fn remote_lineage_agent<'a>(runtime: &'a Runtime, pane: &str) -> &'a SidebarAgen
 /// other machine's parent, with every machine identity known.
 fn cross_machine_runtime() -> Runtime {
     let mut runtime = runtime();
-    runtime.local_machine_id = Some("machine-local".to_owned());
+    runtime.node = crate::node::NodeId::parse("machine-local").unwrap();
     runtime
         .device_machine_ids
         .insert("mini".to_owned(), "machine-mini".to_owned());
@@ -369,7 +369,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
         home: None,
-        machine_id: None,
+        node_id: crate::node::test_node(),
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: runtime.state_path.to_string_lossy().into_owned(),
@@ -379,7 +379,6 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     let restarted = Runtime::new(
         options,
@@ -388,6 +387,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     );
     assert_eq!(
         restarted.snapshot.ui_state.expanded_agent_pane_ids,
@@ -1731,7 +1731,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
         location: None,
     };
     runtime.ingest_kit_report(
-        "local",
+        crate::node::TEST_NODE,
         &hide_kit::KitReport {
             components: vec![
                 part(
@@ -1757,6 +1757,8 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
         },
     );
@@ -1766,7 +1768,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             .navigator
             .devices
             .iter()
-            .find(|device| device.id == "local")
+            .find(|device| device.id == crate::node::TEST_NODE)
             .unwrap()
             .kit
             .clone()
@@ -1774,8 +1776,8 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
     assert!(local(&runtime).offers_reinstall);
     assert!(!local(&runtime).busy);
 
-    assert!(runtime.dispatch_json(&reinstall("local")));
-    assert!(runtime.dispatch_json(&reinstall("local")));
+    assert!(runtime.dispatch_json(&reinstall(crate::node::TEST_NODE)));
+    assert!(runtime.dispatch_json(&reinstall(crate::node::TEST_NODE)));
     assert!(local(&runtime).busy, "the row shows the install running");
     assert_eq!(
         runtime.take_local_kit_job(std::time::Instant::now()),
@@ -1787,7 +1789,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
     );
 
     runtime.ingest_kit_report(
-        "local",
+        crate::node::TEST_NODE,
         &hide_kit::KitReport {
             components: vec![part(
                 hide_kit::ComponentId::Cli,
@@ -1799,19 +1801,21 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
         },
     );
     assert!(!local(&runtime).busy);
     assert!(!local(&runtime).offers_reinstall);
     assert!(
-        !runtime.dispatch_json(&reinstall("local")),
+        !runtime.dispatch_json(&reinstall(crate::node::TEST_NODE)),
         "nothing is left to repair"
     );
     assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
 
     runtime.set_local_kit_unavailable(hide_kit::STANDALONE_REASON);
-    assert!(runtime.dispatch_json(&reinstall("local")));
+    assert!(runtime.dispatch_json(&reinstall(crate::node::TEST_NODE)));
     let error = runtime
         .snapshot
         .status
@@ -2236,7 +2240,7 @@ fn each_row_lists_its_live_descendants_deepest_first_and_a_leaf_lists_none() {
 #[test]
 fn a_descendant_on_a_disconnected_device_is_never_listed_for_a_close() {
     let mut runtime = runtime();
-    runtime.local_machine_id = Some("machine-local".to_owned());
+    runtime.node = crate::node::NodeId::parse("machine-local").unwrap();
     runtime
         .device_machine_ids
         .insert("mini".to_owned(), "machine-mini".to_owned());
@@ -2397,27 +2401,38 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
     let report = |codex_daemon| hide_kit::KitReport {
         codex_daemon,
         codex_daemon_on: None,
+        codex_daemon_running: None,
+        codex_daemon_unreadable: None,
         codex_daemon_off: None,
         ..Default::default()
     };
     assert_eq!(
-        runtime.codex_daemon("local"),
+        runtime.codex_daemon(crate::node::TEST_NODE),
         CodexDaemon::Unknown,
         "a machine whose kit has not answered cannot start Codex yet"
     );
-    runtime.ingest_kit_report("local", &report(Some(true)));
-    assert_eq!(runtime.codex_daemon("local"), CodexDaemon::Present);
+    runtime.ingest_kit_report(crate::node::TEST_NODE, &report(Some(true)));
+    assert_eq!(
+        runtime.codex_daemon(crate::node::TEST_NODE),
+        CodexDaemon::Present
+    );
 
-    runtime.ingest_kit_report("local", &report(Some(false)));
-    assert_eq!(runtime.codex_daemon("local"), CodexDaemon::Unsupported);
+    runtime.ingest_kit_report(crate::node::TEST_NODE, &report(Some(false)));
+    assert_eq!(
+        runtime.codex_daemon(crate::node::TEST_NODE),
+        CodexDaemon::Unsupported
+    );
 
-    runtime.ingest_kit_report("local", &report(None));
-    assert_eq!(runtime.codex_daemon("local"), CodexDaemon::Unknown);
+    runtime.ingest_kit_report(crate::node::TEST_NODE, &report(None));
+    assert_eq!(
+        runtime.codex_daemon(crate::node::TEST_NODE),
+        CodexDaemon::Unknown
+    );
 
     // The retired switch is not an event any more.
     let retired = serde_json::to_vec(&serde_json::json!({
         "schema_version": 2, "kind": "kit_component_set",
-        "payload": {"device_id": "local", "component": "codex_per_pane", "enabled": false}
+        "payload": {"device_id": crate::node::TEST_NODE, "component": "codex_per_pane", "enabled": false}
     }))
     .unwrap();
     runtime.dispatch_json(&retired);

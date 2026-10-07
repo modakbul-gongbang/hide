@@ -41,7 +41,7 @@ test("⌘K Start an agent… starts an agent in the checkout in front with the c
     // B23: no backdrop dims the screen behind it.
     await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCount(0);
     // B25: the checkout in front is the target.
-    await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", /^checkout:local:.*\/fixture$/);
+    await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", new RegExp(`^checkout:${daemon.node}:.*/fixture$`));
     // B24: text box, target, kind, model, ⏎ and 시작.
     await expect(panel.locator("[data-agent-kind]")).toHaveAttribute("data-agent-kind", "claude");
     await expect(panel.locator("[data-agent-model-kind]")).toBeVisible();
