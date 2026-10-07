@@ -1310,7 +1310,10 @@ dependencies = [
  "hide-herdr-client",
  "hide-host",
  "hide-node-link",
+ "hide-platform",
+ "libc",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

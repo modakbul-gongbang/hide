@@ -23,10 +23,10 @@ use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
-use crate::opener::OpenHandler;
 use crate::pane_auth::Registry;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
+use hide_node::opener::OpenHandler;
 
 const FALLBACK_INDEX: &str = include_str!("../fallback-ui/index.html");
 

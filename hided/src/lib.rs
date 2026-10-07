@@ -19,7 +19,7 @@ pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;
-pub mod opener;
+
 pub mod pane_auth;
 pub mod remote_bridge;
 pub mod server;
@@ -343,7 +343,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let shutdown = Arc::new(Notify::new());
     let supervisor_exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve opener supervisor executable: {error}"))?;
-    let opener = opener::OpenHandler::new(
+    let opener = hide_node::opener::OpenHandler::new(
         env.open_command.clone(),
         Arc::clone(&shutdown),
         supervisor_exe,

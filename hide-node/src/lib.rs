@@ -17,6 +17,8 @@ use hide_node_link::RootIdentity;
 use hide_node_link::protocol::Call;
 use hide_node_link::{LinkAnswer, LinkError, NodeLink};
 
+pub mod opener;
+
 /// The machine this process runs on, answered in place, for the account
 /// home it was given.
 #[derive(Clone, Debug)]
