@@ -972,27 +972,34 @@ fn publish_replica(
     labels: &mut Option<LabelWorker>,
 ) -> bool {
     let mut payload = replica.project();
-    // Observe native state before label overlays add UI timestamps. This is
-    // bounded memory work; no delivery I/O or notifier is started here.
-    if let Some(runtime) = context.runtime.upgrade()
-        && let Ok(mut guard) = runtime.lock()
-    {
-        match &context.target {
-            SessionSyncTarget::Local { socket_path } => {
-                let node = guard.node().clone();
-                guard.observe_delivery(node.as_str(), &payload, socket_path.to_str())
-            }
-            SessionSyncTarget::Remote { target_id, .. } => {
-                guard.observe_delivery(target_id, &payload, None)
-            }
-        }
-    }
     let overlay = labels.as_mut().map(|worker| {
         exchange_pull_requests(context, worker);
         take_label_switch(context, worker);
         observe_labels(worker, replica);
         worker.overlay()
     });
+    // Observe native state before label overlays add UI timestamps; the
+    // overlay is only consulted for what each session read says the agent
+    // waits for. This is bounded memory work; no delivery I/O or notifier
+    // is started here.
+    if let Some(runtime) = context.runtime.upgrade()
+        && let Ok(mut guard) = runtime.lock()
+    {
+        match &context.target {
+            SessionSyncTarget::Local { socket_path } => {
+                let node = guard.node().clone();
+                guard.observe_delivery(
+                    node.as_str(),
+                    &payload,
+                    socket_path.to_str(),
+                    overlay.as_ref(),
+                )
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.observe_delivery(target_id, &payload, None, overlay.as_ref())
+            }
+        }
+    }
     if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
         if let Some(overlay) = &overlay {
             overlay.apply(&mut payload);

@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use hide_herdr_client::{ApiConnector, request_small_response};
+use hide_session::turns::Waiting;
 use serde_json::{Value, json};
 
 use crate::runtime::Runtime;
@@ -44,6 +45,12 @@ pub(crate) enum Hold {
     Working,
     /// Herdr reports a permission or selection menu.
     Blocked,
+    /// The agent's session says its last turn waits for the operator to
+    /// approve a plan, a menu Herdr reports as `done`.
+    AwaitingOperator,
+    /// The agent's session can say it waits for the operator, and no read of
+    /// it settled that for Herdr's current state.
+    SessionUnread,
     /// Herdr reports a status that is not rest (or none at all).
     Status,
     /// Input hide routed after the last submission and the last start of
@@ -77,6 +84,8 @@ impl Hold {
             Self::Absent => "pane_unavailable",
             Self::Working => "working",
             Self::Blocked => "blocked",
+            Self::AwaitingOperator => "awaiting_operator",
+            Self::SessionUnread => "session_unread",
             Self::Status => "status_not_at_rest",
             Self::Draft => "draft",
             Self::Quiet => "quiet_period",
@@ -92,14 +101,30 @@ impl Hold {
 
 /// The agent kinds a bell may be typed into: those whose permission and
 /// selection menus Herdr was observed to report as `blocked` in an isolated
-/// run (`docs/delivery.md`, Verification). Herdr's own state is the only menu
-/// guard, so a kind that was not observed is not in this list.
+/// run (`docs/delivery.md`, Verification). A menu Herdr reports as `done`
+/// (Codex's plan approval) is guarded by the session read instead
+/// ([`Turn`]), so a kind that was not observed is not in this list.
 pub(crate) fn bell_target(kind: &str) -> bool {
     super::mailbox::prompt_hook(kind)
 }
 
+/// What the agent's session read says it waits for in Herdr's current state
+/// (PRD codex-plan-approval-hold D-06, D-07).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Turn {
+    /// The agent's session read reports no turns, so it says nothing here.
+    NotReported,
+    /// The read reports turns, and none read for the current state and
+    /// session settled them: a file not found, a failed read, a helper that
+    /// predates the field, a state newer than the last read.
+    Unread,
+    Read(Waiting),
+}
+
 /// Whether the pane is at rest and a bell can be typed into it. All of these
 /// must hold: Herdr reports `idle` or `done` and has for the quiet period,
+/// the session read, for an agent whose read reports turns, says for that
+/// state that nothing waits for the operator,
 /// hide has routed no input for the quiet period, no input hide routed is
 /// newer than the last submission and the last start of work (input before
 /// either was consumed by it, a menu answer for one), and the pane still hosts
@@ -116,6 +141,11 @@ pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
         "working" => return Err(Hold::Working),
         "blocked" => return Err(Hold::Blocked),
         _ => return Err(Hold::Status),
+    }
+    match observation.turn {
+        Turn::NotReported | Turn::Read(Waiting::Nothing) => {}
+        Turn::Read(Waiting::PlanApproval) => return Err(Hold::AwaitingOperator),
+        Turn::Unread => return Err(Hold::SessionUnread),
     }
     if observation.last_input_at_unix_ms
         > observation
@@ -482,6 +512,11 @@ mod tests {
             entered_working_at_unix_ms: NOW - 120_000,
             session: None,
             host_scope: None,
+            turn: if kind == "codex" {
+                Turn::Read(Waiting::Nothing)
+            } else {
+                Turn::NotReported
+            },
         }
     }
 
@@ -546,6 +581,27 @@ mod tests {
             change(&mut pane);
             assert_eq!(judge(&pane, NOW), Err(expected), "{name}");
         }
+    }
+
+    /// PRD codex-plan-approval-hold D-06, D-07, B3, B6, B7: a plan waiting
+    /// for the operator's approval holds the letter at `done` or `idle`, so
+    /// does a session not read for the current state, and an agent whose
+    /// read reports no turns is belled as before.
+    #[test]
+    fn a_session_waiting_for_the_operator_or_not_read_holds_the_letter() {
+        for status in ["idle", "done"] {
+            let mut pane = at_rest("codex");
+            pane.status = status.into();
+            pane.turn = Turn::Read(Waiting::PlanApproval);
+            assert_eq!(judge(&pane, NOW), Err(Hold::AwaitingOperator), "{status}");
+            pane.turn = Turn::Unread;
+            assert_eq!(judge(&pane, NOW), Err(Hold::SessionUnread), "{status}");
+            pane.turn = Turn::Read(Waiting::Nothing);
+            assert_eq!(judge(&pane, NOW), Ok(()), "{status}");
+        }
+        let claude = at_rest("claude");
+        assert_eq!(claude.turn, Turn::NotReported);
+        assert_eq!(judge(&claude, NOW), Ok(()));
     }
 
     #[test]
@@ -708,6 +764,40 @@ mod tests {
             assert_eq!(typed[0]["keys"], json!(["enter"]));
             assert_eq!(bell.attempts(), 1, "{flags}");
         }
+    }
+
+    /// B3, B4: while the recipient's session waits for the operator to
+    /// approve a plan, nothing is typed, the letter keeps its attempts, and
+    /// the reason is logged once with the letter and pane; once the session
+    /// says nothing waits, the same letter is belled.
+    #[test]
+    fn a_plan_waiting_for_approval_holds_the_letter_until_the_session_moves_on() {
+        let bell = Bell::start(json!({}));
+        let turn = |value: Turn| {
+            crate::runtime::delivery::tests::recipient_turn(
+                &mut bell.runtime.lock().unwrap(),
+                value,
+            );
+        };
+        turn(Turn::Read(Waiting::PlanApproval));
+        let mut doorbell = Doorbell::default();
+        let start = now();
+        let records = bell.pass(&mut doorbell, start);
+        assert_eq!(held(&records), ["awaiting_operator"]);
+        let logged = records
+            .iter()
+            .find(|record| record["kind"] == "doorbell.held")
+            .unwrap();
+        assert_eq!(logged["pane_id"], "recipient");
+        assert!(held(&bell.pass(&mut doorbell, start + 1_000)).is_empty());
+        assert!(bell.typed().is_empty());
+        assert_eq!(bell.asked(), 0, "a held verdict asks Herdr nothing");
+        assert_eq!(bell.attempts(), 0);
+
+        turn(Turn::Read(Waiting::Nothing));
+        bell.pass(&mut doorbell, start + 2_000);
+        assert_eq!(bell.typed().len(), 1);
+        assert_eq!(bell.attempts(), 1);
     }
 
     #[test]
