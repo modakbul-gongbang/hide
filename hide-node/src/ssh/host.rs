@@ -29,7 +29,7 @@ use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Condvar;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::mpsc;
 
 /// The longest answer line read from a device helper. The largest answer is
@@ -51,6 +51,34 @@ struct AnswerLine<'a> {
 
 /// What the reader hands a waiting call: the result's text or the refusal.
 type Answered = Result<Box<RawValue>, HostError>;
+
+/// One report line (`hide_node_link::protocol::Progress`), its report kept as
+/// text.
+#[derive(serde::Deserialize)]
+struct ProgressLine<'a> {
+    progress: u64,
+    #[serde(borrow)]
+    report: &'a RawValue,
+}
+
+/// Reports one call may have waiting for its caller; a call that reads them
+/// slower than they arrive is stopped with an error (engineering rule 15).
+pub const MAX_WAITING_REPORTS: usize = 256;
+
+/// What the reader hands a waiting call.
+enum Delivery {
+    Report(Box<RawValue>),
+    Answer(Answered),
+    /// More than [`MAX_WAITING_REPORTS`] reports waited unread.
+    Overflow,
+}
+
+/// A call waiting for its answer, and, when it hears reports, how many wait
+/// unread.
+struct Waiting {
+    sender: mpsc::Sender<Delivery>,
+    reports: Option<Arc<AtomicUsize>>,
+}
 
 fn present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -83,6 +111,9 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// written and again for its answer, and the longest call timeout is 120 s
 /// (an index walk, a worktree removal), so this outlasts both.
 const DRAIN_BOUND: Duration = Duration::from_secs(250);
+/// How long a cancel waits to be written; the call it stops ends on its
+/// own timeout whatever happens to the cancel.
+const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The helper builds this daemon carries, one per device platform.
@@ -410,7 +441,7 @@ struct Inner {
     /// The link's place among the connection's session channels.
     _session_channel: tokio::sync::OwnedSemaphorePermit,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
-    pending: Mutex<HashMap<u64, mpsc::Sender<Answered>>>,
+    pending: Mutex<HashMap<u64, Waiting>>,
     closed: Mutex<Option<String>>,
     gate: Gate,
     next_id: AtomicU64,
@@ -486,20 +517,137 @@ impl RemoteHost {
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         self.inner.gate.admit(timeout)?;
-        let result = self.send_and_wait(call, timeout);
+        let result = self.send_and_wait(call, timeout, None);
         self.inner.gate.release();
         result
     }
 
-    fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+    /// [`RemoteHost::call`] for a call whose node reports before it
+    /// answers: each report reaches `progress`, and one answered with false,
+    /// or the timeout passing, asks the node to stop the call.
+    pub fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        self.inner.gate.admit(timeout)?;
+        let result = self.send_and_wait(call, timeout, Some(progress));
+        self.inner.gate.release();
+        result
+    }
+
+    fn send_and_wait(
+        &self,
+        call: Call,
+        timeout: Duration,
+        mut progress: Option<&mut dyn FnMut(serde_json::Value) -> bool>,
+    ) -> Result<LinkAnswer, LinkError> {
         let inner = &self.inner;
         let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut line = serde_json::to_vec(&Request { id, call }).map_err(|error| {
-            LinkError::NotConnected(format!("The request could not be encoded: {error}"))
-        })?;
-        line.push(b'\n');
         let (sender, receiver) = mpsc::channel();
-        lock_recover(&inner.pending).insert(id, sender);
+        let reports = progress.is_some().then(Arc::default);
+        lock_recover(&inner.pending).insert(
+            id,
+            Waiting {
+                sender,
+                reports: reports.clone(),
+            },
+        );
+        self.send(id, call, timeout)?;
+        let end = Instant::now() + timeout;
+        let mut stopping = false;
+        loop {
+            let left = end.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(Delivery::Report(raw)) => {
+                    if let Some(waiting) = &reports {
+                        waiting.fetch_sub(1, Ordering::AcqRel);
+                    }
+                    // Reports already on their way after a stop are not the
+                    // caller's: it said it hears no more.
+                    if stopping {
+                        continue;
+                    }
+                    let go_on = match progress.as_mut() {
+                        Some(progress) => serde_json::from_str(raw.get())
+                            .map(&mut **progress)
+                            .unwrap_or(false),
+                        None => true,
+                    };
+                    if !go_on && !stopping {
+                        stopping = true;
+                        self.cancel(id);
+                    }
+                }
+                Ok(Delivery::Answer(Ok(raw))) => return Ok(LinkAnswer::Raw(raw)),
+                Ok(Delivery::Answer(Err(error))) => return Err(LinkError::Refused(error)),
+                Ok(Delivery::Overflow) => {
+                    self.cancel(id);
+                    return Err(LinkError::Unknown(format!(
+                        "The device reported faster than its {MAX_WAITING_REPORTS} waiting reports were read; the call was stopped"
+                    )));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    lock_recover(&inner.pending).remove(&id);
+                    if progress.is_some() {
+                        self.cancel(id);
+                    }
+                    return Err(LinkError::Unknown(
+                        "The device did not answer in time; the result is unknown and nothing was resent"
+                            .to_owned(),
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(LinkError::Unknown(format!(
+                        "The connection to the device ended before it answered ({}); the result is unknown and nothing was resent",
+                        self.closed_reason()
+                            .unwrap_or_else(|| "no reason reported".to_owned())
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Asks the node to stop the reporting call `request`; its answer still
+    /// ends the call. Nobody waits for the cancel's own answer.
+    fn cancel(&self, request: u64) {
+        let inner = &self.inner;
+        let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
+        let (sender, _unheard) = mpsc::channel();
+        lock_recover(&inner.pending).insert(
+            id,
+            Waiting {
+                sender,
+                reports: None,
+            },
+        );
+        if let Err(error) = self.send(id, Call::Cancel { request }, CANCEL_TIMEOUT) {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.cancel_unsent",
+                "target": inner.target,
+                "request": request,
+                "error": error.to_string(),
+            }));
+        }
+    }
+
+    /// Writes request `id`, already waiting in `pending`; on any failure it
+    /// is taken out again.
+    fn send(&self, id: u64, call: Call, timeout: Duration) -> Result<(), LinkError> {
+        let inner = &self.inner;
+        let encoded = serde_json::to_vec(&Request { id, call });
+        let mut line = match encoded {
+            Ok(line) => line,
+            Err(error) => {
+                lock_recover(&inner.pending).remove(&id);
+                return Err(LinkError::NotConnected(format!(
+                    "The request could not be encoded: {error}"
+                )));
+            }
+        };
+        line.push(b'\n');
         if let Some(reason) = self.closed_reason() {
             lock_recover(&inner.pending).remove(&id);
             return Err(LinkError::NotConnected(reason));
@@ -552,28 +700,22 @@ impl RemoteHost {
                 ));
             }
         }
-        match receiver.recv_timeout(timeout) {
-            Ok(Ok(raw)) => Ok(LinkAnswer::Raw(raw)),
-            Ok(Err(error)) => Err(LinkError::Refused(error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                lock_recover(&inner.pending).remove(&id);
-                Err(LinkError::Unknown(
-                    "The device did not answer in time; the result is unknown and nothing was resent"
-                        .to_owned(),
-                ))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(LinkError::Unknown(format!(
-                "The connection to the device ended before it answered ({}); the result is unknown and nothing was resent",
-                self.closed_reason()
-                    .unwrap_or_else(|| "no reason reported".to_owned())
-            ))),
-        }
+        Ok(())
     }
 }
 
 impl NodeLink for RemoteHost {
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         RemoteHost::call(self, call, timeout)
+    }
+
+    fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        RemoteHost::call_with_progress(self, call, timeout, progress)
     }
 
     fn close_when_idle(&self, reason: &str) {
@@ -1472,6 +1614,10 @@ fn spawn_host(
                             deliver_event(&inner, panes.as_ref(), &line);
                             continue;
                         }
+                        if line.starts_with(b"{\"progress\":") {
+                            deliver_report(&inner, &line);
+                            continue;
+                        }
                         // The answer is only tokenized here and kept as its
                         // own text; one nobody waits for is never copied.
                         match serde_json::from_slice::<AnswerLine<'_>>(&line) {
@@ -1481,10 +1627,13 @@ fn spawn_host(
                                     (None, Some(error)) => Some(Err(error)),
                                     _ => None,
                                 };
-                                let sender = lock_recover(&inner.pending).remove(&answer.id);
+                                let sender = lock_recover(&inner.pending)
+                                    .remove(&answer.id)
+                                    .map(|waiting| waiting.sender);
                                 match (sender, outcome) {
                                     (Some(sender), Some(outcome)) => {
-                                        let _ = sender.send(outcome.map(ToOwned::to_owned));
+                                        let _ = sender
+                                            .send(Delivery::Answer(outcome.map(ToOwned::to_owned)));
                                     }
                                     (sender, _) => crate::diagnostic!(json!({
                                         "component": "remote_host",
@@ -1563,6 +1712,48 @@ fn spawn_host(
 /// Hands one event line to hided's pane events. A node that sends events
 /// on a link nobody listens to, or a line that is not one, is logged and
 /// dropped; the requests on the link go on.
+/// Hands a report to the call that hears it. A call that does not hear
+/// reports, or one gone, drops it; one with [`MAX_WAITING_REPORTS`] unread
+/// is told it overflowed and hears nothing more.
+fn deliver_report(inner: &Arc<Inner>, line: &[u8]) {
+    let report = match serde_json::from_slice::<ProgressLine<'_>>(line) {
+        Ok(report) => report,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.report_unreadable",
+                "target": inner.target,
+                "class": format!("{:?}", error.classify()),
+                "bytes": line.len(),
+            }));
+            return;
+        }
+    };
+    let mut pending = lock_recover(&inner.pending);
+    let Some(waiting) = pending.get(&report.progress) else {
+        return;
+    };
+    let Some(unread) = &waiting.reports else {
+        return;
+    };
+    if unread.fetch_add(1, Ordering::AcqRel) >= MAX_WAITING_REPORTS {
+        if let Some(waiting) = pending.remove(&report.progress) {
+            let _ = waiting.sender.send(Delivery::Overflow);
+        }
+        crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.reports_overflowed",
+            "target": inner.target,
+            "request": report.progress,
+            "cap": MAX_WAITING_REPORTS,
+        }));
+        return;
+    }
+    let _ = waiting
+        .sender
+        .send(Delivery::Report(report.report.to_owned()));
+}
+
 fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
     let event = match serde_json::from_slice::<NodeEvent>(line) {
         Ok(event) => event,
@@ -1606,6 +1797,45 @@ mod tests {
         }
 
         fn closed(&self, _node: &str, _link: &RemoteHost) {}
+    }
+
+    /// A call that leaves reports unread past the cap hears that it
+    /// overflowed and nothing more, and a call that hears no reports drops
+    /// them; neither grows without bound.
+    #[test]
+    fn reports_past_the_cap_end_the_call_as_overflowed() {
+        let link = RemoteHost::detached("ssh:reports");
+        let (sender, receiver) = mpsc::channel();
+        let unread = Arc::new(AtomicUsize::new(MAX_WAITING_REPORTS - 1));
+        lock_recover(&link.inner.pending).insert(
+            7,
+            Waiting {
+                sender,
+                reports: Some(Arc::clone(&unread)),
+            },
+        );
+        let line = br#"{"progress":7,"report":{"n":1}}"#;
+        deliver_report(&link.inner, line);
+        assert!(matches!(receiver.try_recv(), Ok(Delivery::Report(_))));
+        deliver_report(&link.inner, line);
+        assert!(matches!(receiver.try_recv(), Ok(Delivery::Overflow)));
+        assert!(!lock_recover(&link.inner.pending).contains_key(&7));
+        deliver_report(&link.inner, line);
+        assert!(receiver.try_recv().is_err(), "nothing after the overflow");
+
+        let (sender, receiver) = mpsc::channel();
+        lock_recover(&link.inner.pending).insert(
+            8,
+            Waiting {
+                sender,
+                reports: None,
+            },
+        );
+        deliver_report(&link.inner, br#"{"progress":8,"report":null}"#);
+        assert!(
+            receiver.try_recv().is_err(),
+            "a plain call hears no reports"
+        );
     }
 
     /// Letter-720: a node cannot speak for another node's panes. The node an

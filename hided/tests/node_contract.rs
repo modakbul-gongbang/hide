@@ -327,6 +327,51 @@ fn a_device_s_channels_share_its_one_connection() {
     assert_eq!(device.ssh.accepted(), 1);
 }
 
+/// A reporting call crosses the link both ways: the device's Git watch
+/// reports up as it runs, a report answered with false stops it on the
+/// device, and the call ends with the watch's own answer.
+#[test]
+fn a_device_s_reporting_call_reports_and_stops_when_told() {
+    use hide_node_link::worktrees::GitWatchReport;
+    let device = Device::start();
+    let common = device.project.join("watched");
+    fs::create_dir_all(common.join("refs/heads")).unwrap();
+    let mut reports = Vec::new();
+    let mut wrote = false;
+    let answer = device.link.call_with_progress(
+        Call::GitWatch {
+            common_dirs: vec![common.to_string_lossy().into_owned()],
+        },
+        Duration::from_secs(30),
+        &mut |report| {
+            let report: GitWatchReport = serde_json::from_value(report).unwrap();
+            if !wrote {
+                fs::write(common.join("refs/heads/main"), "0000\n").unwrap();
+                wrote = true;
+            }
+            let changed = matches!(report, GitWatchReport::Changed { .. });
+            reports.push(report);
+            !changed
+        },
+    );
+    assert!(answer.is_ok(), "{answer:?}");
+    assert!(
+        matches!(reports.first(), Some(GitWatchReport::Watching { .. })),
+        "{reports:?}"
+    );
+    assert!(
+        matches!(reports.last(), Some(GitWatchReport::Changed { .. })),
+        "{reports:?}"
+    );
+    // The link still answers after the stopped call.
+    assert!(
+        device
+            .link
+            .call(Call::Hello, Duration::from_secs(10))
+            .is_ok()
+    );
+}
+
 /// Waits until the node removed `path`, which it does once its input ends.
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn gone_within(path: &Path, bound: Duration) {

@@ -2,6 +2,7 @@
 //! ends. The input is the SSH channel, so the helper lives exactly as long as
 //! the connection that started it (PRD S5.5 D-20).
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -12,8 +13,8 @@ use serde_json::Value;
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::protocol::{
-    Call, Hello, MachineIdentity, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow,
-    RootOpened, RootRef,
+    Call, Hello, MachineIdentity, Outcome, PROTOCOL_VERSION, Progress, Request, Response,
+    RevisionNow, RootOpened, RootRef,
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
@@ -29,6 +30,10 @@ const MAX_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
     let output = Mutex::new(output);
+    let env = Env::of_process();
+    // The reporting calls running now, each with whether it was asked to
+    // stop; at most one per worker.
+    let running: Mutex<HashMap<u64, bool>> = Mutex::new(HashMap::new());
     let panes = crate::panes::Panes::new();
     // Where a pane's `hide` on this machine finds the node's bootstrap
     // socket; read once, so every start of the service agrees.
@@ -47,6 +52,8 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
             let output = &output;
             let panes = &panes;
             let bridges = &bridges;
+            let env = &env;
+            let running = &running;
             scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
@@ -70,7 +77,23 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                         Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
                         Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
                         Call::StreamClose { stream } => panes.close_stream(stream),
-                        call => handle(call),
+                        call => {
+                            let id = request.id;
+                            lock(running).insert(id, false);
+                            let answered = handle_with_progress(call, env, &mut |report| {
+                                write_line(
+                                    output,
+                                    &Progress {
+                                        progress: id,
+                                        report,
+                                    },
+                                )
+                                .is_ok()
+                                    && lock(running).get(&id) == Some(&false)
+                            });
+                            lock(running).remove(&id);
+                            answered
+                        }
                     };
                     let response = Response {
                         id: request.id,
@@ -86,7 +109,7 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
             });
         }
         drop(receiver);
-        let result = read_requests(input, &sender, &output);
+        let result = read_requests(input, &sender, &output, &running);
         drop(sender);
         // The connection is gone: a kit step still running ends its child
         // rather than keep the helper alive after it, and the pane service
@@ -103,6 +126,7 @@ fn read_requests(
     mut input: impl BufRead,
     sender: &mpsc::SyncSender<Request>,
     output: &Mutex<impl Write>,
+    running: &Mutex<HashMap<u64, bool>>,
 ) -> io::Result<()> {
     let mut line = Vec::new();
     loop {
@@ -141,14 +165,35 @@ fn read_requests(
                 continue;
             }
         };
+        // A cancel is answered here, never queued behind the call it stops,
+        // which may hold a worker for as long as it runs.
+        if let Call::Cancel { request: target } = request.call {
+            if let Some(cancelled) = lock(running).get_mut(&target) {
+                *cancelled = true;
+            }
+            write_line(
+                output,
+                &Response {
+                    id: request.id,
+                    outcome: Outcome::Ok(Value::Null),
+                },
+            )?;
+            continue;
+        }
         if sender.send(request).is_err() {
             return Ok(());
         }
     }
 }
 
-fn write_line(output: &Mutex<impl Write>, response: &Response) -> io::Result<()> {
-    let mut bytes = serde_json::to_vec(response).map_err(io::Error::other)?;
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write_line(output: &Mutex<impl Write>, line: &impl serde::Serialize) -> io::Result<()> {
+    let mut bytes = serde_json::to_vec(line).map_err(io::Error::other)?;
     bytes.push(b'\n');
     let mut output = output
         .lock()
@@ -748,6 +793,9 @@ pub fn handle_with_progress(
             )?)
         }
         Call::Factory { call } => crate::factory::handle(call, &env.factory, progress),
+        // In a process, a reporting call stops through its reports; there is
+        // no request to cancel.
+        Call::Cancel { .. } => Ok(Value::Null),
     }
 }
 

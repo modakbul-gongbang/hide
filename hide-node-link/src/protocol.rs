@@ -3,7 +3,9 @@
 //!
 //! A request is `{"id": n, "op": "...", ...}` and its answer is
 //! `{"id": n, "ok": ...}` or `{"id": n, "error": {"code", "message"}}`.
-//! Answers may arrive out of order; the id pairs them. Every root-bearing
+//! Answers may arrive out of order; the id pairs them. A long call may send
+//! reports first, each `{"progress": n, "report": ...}` ([`Progress`]), and
+//! a `cancel` request for it stops it. Every root-bearing
 //! request names the root's path and the identity the first `root_open`
 //! reported, so the helper refuses a checkout replaced between requests.
 
@@ -491,6 +493,13 @@ pub enum Call {
     StreamClose {
         stream: u64,
     },
+    /// Stops the reporting call `request`: its next report is answered with
+    /// false, and it answers as stopped. Answered at once, before any
+    /// waiting request, and a request that is no longer running is left
+    /// as it is.
+    Cancel {
+        request: u64,
+    },
     /// The Software Factory's machine work on the core's own node
     /// ([`crate::factory::FactoryCall`]). A git, `gh` or check run reports
     /// while it runs, and a report answered with false stops it.
@@ -566,7 +575,8 @@ impl Call {
             | Self::PaneProofAnswer { .. }
             | Self::PaneInspect { .. }
             | Self::StreamWrite { .. }
-            | Self::StreamClose { .. } => true,
+            | Self::StreamClose { .. }
+            | Self::Cancel { .. } => true,
             Self::AiAvailability { .. }
             | Self::AiModels { .. }
             | Self::AiExecute { .. }
@@ -618,6 +628,14 @@ pub struct KitRemoved {
     pub kit: hide_kit::RemoveReport,
     /// The helper root and every build under it.
     pub helper_root: hide_kit::RemoveOutcome,
+}
+
+/// A report a running call sends before its answer, as its own line
+/// (`{"progress": id, "report": ...}`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Progress {
+    pub progress: u64,
+    pub report: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
