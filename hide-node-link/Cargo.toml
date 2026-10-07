@@ -7,7 +7,8 @@ publish = false
 # The contract between the core and a node: the `NodeLink` trait and the
 # shapes that cross it. Nothing here touches a machine (PRD core-host-node
 # D-21), so the core depends on it without reaching one. The session and
-# kit request shapes are still defined by `hide-session` and `hide-kit`, used
+# kit request shapes are still defined by `hide-session` and `hide-kit`, and
+# the Project identity by `hide-project`, used
 # here for their types only, as are the hook diagnosis of `hide-agent-hooks`
 # and the provider answers of `hide-ai`.
 # `hide-platform` is here for its `path` module only: how a name is spelled
@@ -18,6 +19,7 @@ hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-ai = { path = "../hide-ai" }
 hide-kit = { path = "../hide-kit" }
 hide-platform = { path = "../hide-platform" }
+hide-project = { path = "../hide-project" }
 hide-session = { path = "../hide-session" }
 base64 = "=0.23.1"
 libc = "=0.2.189"

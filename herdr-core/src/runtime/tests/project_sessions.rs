@@ -103,6 +103,7 @@ fn project(path: &Path, checkouts: bool) -> WorkspaceSnapshot {
 fn shared(fixture: &Fixture) -> SharedRuntime {
     let mut runtime = runtime();
     runtime.home_path = Some(fixture.home.clone());
+    runtime.own_node = Arc::new(hide_node::Local::new(Some(fixture.home.clone())));
     let alpha = project(&fixture.alpha, false);
     let zeta = project(&fixture.zeta, true);
     runtime.snapshot.navigator.focused_workspace_id = Some(zeta.id.clone());
@@ -248,7 +249,10 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
         memories: Vec::new(),
         state: None,
     };
-    let landed = runtime.ingest_project_sessions(stale, Ok(settle_history(load, &[])));
+    let landed = runtime.ingest_project_sessions(
+        stale,
+        Ok(settle_history(load, &[], &mut |_| HashSet::new())),
+    );
 
     assert!(!landed);
     let sessions = runtime.snapshot.project_sessions.clone().unwrap();
@@ -467,7 +471,10 @@ fn refreshes_during_a_history_read_coalesce_into_one_more_read() {
         memories: Vec::new(),
         state: None,
     };
-    runtime.ingest_project_sessions(running, Ok(settle_history(load, &[])));
+    runtime.ingest_project_sessions(
+        running,
+        Ok(settle_history(load, &[], &mut |_| HashSet::new())),
+    );
     assert!(!runtime.project_sessions_work.list_waiting);
     assert!(runtime.project_sessions_work.list_in_flight);
     assert!(runtime.snapshot.project_sessions.as_ref().unwrap().loading);

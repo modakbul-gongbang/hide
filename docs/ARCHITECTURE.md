@@ -113,6 +113,7 @@ The durable cursor stores file identity and the safe start offset of an incomple
 Each incremental poll reads at most 1 MiB and retains no JSONL line larger than 256 KiB, while catalog and archive detail reads reject a complete session larger than 64 MiB.
 The same provider, session, content-hash retry converges through a deterministic receipt instead of repeating revisions.
 All filesystem, SQLite, hook-config, provider, and serialization work occurs outside the runtime mutex; applying a completed worker result is the only locked transition.
+The session files are read by the node that holds them and the Memory store is the core's: the core asks that node for the Project's facts (`project`, its id named by the node's id), its session list (`project_sessions`), a file's size and time (`session_stat`), one bounded read past a saved cursor (`session_chunk`, which answers the next checkpoint) and a whole session for the archive (`session_text`), and parses and stores what comes back.
 Disabling Memory stops new analysis and injection without deleting its data, while Forget, revision Undo, and confirmed Project deletion have their own explicit lifecycle operations.
 
 The core owns the fourth right-panel section, each Project's Sessions/Memory mode, filters, actionable analysis state, and editor preview identity.
@@ -127,7 +128,7 @@ A device Project reads no local session: the section carries the device's reason
 The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; its immutable history rows and open transcript use shared pointers for O(1) unchanged comparisons and payload capture under the lock, and it is absent from the wire until a Project is named.
 The core words each reason for the operator (a missing, unparsable, oversized or unreadable file, a session or Project folder it could not read) and records a read failure as a diagnostic.
 A session a Project's history listed and a later read no longer finds stays listed as unavailable, with its last location, when its file is gone, for as long as the daemon runs, so a moved or deleted file reads differently from one that never existed (B5); one whose file is still there no longer belongs to the Project (its checkout was removed, say) and leaves the list as the catalog decides.
-The core keeps each Project's last rows for that, and the read's worker checks their files off the lock; a kept row stays until its file is found again, so what is kept grows only with the sessions deleted while the daemon runs.
+The core keeps each Project's last rows for that, and the read's worker asks the node whether their files are there off the lock (`real_paths`; a failed answer marks none gone); a kept row stays until its file is found again, so what is kept grows only with the sessions deleted while the daemon runs.
 A failed history read leaves the open session's conversation on screen, or says why it was not read, rather than leaving it reading.
 Metadata filtering remains local over retained rows.
 Human/Assistant body search owns one background worker and an independent `session-search.sqlite3` copied-body FTS store, with no Memory extraction cursor or provider dependency.

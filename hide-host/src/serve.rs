@@ -577,6 +577,26 @@ pub fn handle_with_progress(
             }
             to_value(hide_session::search_read::stamps(&paths))
         }
+        Call::ProjectSessions { project } => {
+            let home = env.home("sessions_home_unavailable")?;
+            let sessions =
+                hide_session::SessionCatalog::new(Path::new(&home), project.device_id.clone())
+                    .project_sessions(&project)
+                    .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
+            to_value(sessions)
+        }
+        Call::SessionStat { path } => to_value(
+            crate::sessions::stat(&absolute(&path)?)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
+        Call::SessionChunk { path, checkpoint } => to_value(
+            crate::sessions::chunk(&absolute(&path)?, checkpoint)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
+        Call::SessionText { path } => to_value(
+            hide_session::read_bounded(&absolute(&path)?, hide_session::SESSION_READ_LIMIT_BYTES)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+        ),
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
                 return Err(HostError::new(

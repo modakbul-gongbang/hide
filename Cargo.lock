@@ -1321,6 +1321,7 @@ dependencies = [
  "hide-ai",
  "hide-kit",
  "hide-platform",
+ "hide-project",
  "hide-session",
  "libc",
  "serde",

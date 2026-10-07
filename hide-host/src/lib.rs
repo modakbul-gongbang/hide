@@ -35,6 +35,7 @@ pub mod reporting;
 pub mod root;
 pub mod save;
 pub mod serve;
+pub mod sessions;
 pub mod usage;
 pub mod workspace_bridge;
 pub mod worktrees;

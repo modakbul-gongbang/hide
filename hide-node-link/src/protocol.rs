@@ -409,6 +409,28 @@ pub enum Call {
     SessionStamps {
         paths: Vec<String>,
     },
+    /// The agent sessions the node holds for `project`, newest first, at most
+    /// `hide_session::SESSION_DISCOVERY_LIMIT` files visited
+    /// (`hide_session::ProjectSession`).
+    ProjectSessions {
+        project: hide_project::ProjectIdentity,
+    },
+    /// The session file's size and modification time (`sessions::SessionStat`).
+    SessionStat {
+        path: String,
+    },
+    /// The complete lines of the session file at `path` past `checkpoint`,
+    /// one bounded read (`sessions::SessionChunk`).
+    SessionChunk {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::CursorCheckpoint>,
+    },
+    /// The whole session file at `path`, at most
+    /// `hide_session::SESSION_READ_LIMIT_BYTES`, as text.
+    SessionText {
+        path: String,
+    },
 }
 
 /// What a `kit` request does. `apply` and `reinstall` answer a
