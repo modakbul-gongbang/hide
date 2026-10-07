@@ -16,7 +16,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent_live_check.process_table import Process, marked_descendants, snapshot
+from agent_live_check.process_table import Process, descendants, marked_descendants, snapshot
 from agent_live_check.processes import OwnedProcesses, ProcessError, guard
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
@@ -115,6 +115,17 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_owned_orphan_subtree_is_tracked_without_adopting_reused_or_external_roots(self):
+        def item(pid, parent, birth):
+            return Process(pid, parent, pid, birth, 1, False, os.getuid())
+        table = {pid: item(pid, parent, birth) for pid, parent, birth in (
+            (999, 1, 1), (111, 999, 2), (222, 1, 3), (333, 222, 4),
+            (444, 333, 5), (555, 1, 6), (666, 555, 7), (777, 1, 9), (888, 777, 10))}
+        proven = {222: table[222], 777: item(777, 1, 8)}
+        current = descendants(table, 999, proven)
+        self.assertEqual(set(current), {999, 111, 222, 333, 444})
+        self.assertEqual(sum(process.rss for process in current.values()), 5)
+
     def test_live_non_orphan_needs_no_token_read_but_unknown_orphan_still_fails(self):
         import ctypes
         import errno

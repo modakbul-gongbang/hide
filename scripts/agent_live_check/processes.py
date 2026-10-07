@@ -190,7 +190,7 @@ def guard(reader: int, argv: list[str]) -> int:
                             stderr=None, _guarded=False)
         while not cancelled.is_set():
             table = snapshot()
-            current = descendants(table, os.getpid())
+            current = descendants(table, os.getpid(), observed)
             # Record proven ancestry before optional orphan discovery can fail.
             observed.update(current)
             observed.pop(os.getpid(), None)
@@ -198,6 +198,7 @@ def guard(reader: int, argv: list[str]) -> int:
                 current.update(marked_descendants(table, marker, earliest,
                                known={**observed, os.getpid(): table[os.getpid()]},
                                remember=observed.__setitem__))
+                current.update(descendants(table, os.getpid(), observed))
             current.pop(os.getpid(), None)
             observed.update(current)
             if (any(p.rss < 0 and not p.zombie for p in current.values())
@@ -217,12 +218,12 @@ def guard(reader: int, argv: list[str]) -> int:
     finally:
         try:
             table = snapshot()
-            current = descendants(table, os.getpid())
+            current = descendants(table, os.getpid(), observed)
             current.pop(os.getpid(), None)
             observed.update(current)
             for signum in (signal.SIGCONT, signal.SIGTERM, signal.SIGKILL):
                 table = snapshot()
-                observed.update(descendants(table, os.getpid()))
+                observed.update(descendants(table, os.getpid(), observed))
                 if sys.platform == "darwin":
                     try:
                         marked_descendants(table, marker, earliest,
@@ -234,6 +235,7 @@ def guard(reader: int, argv: list[str]) -> int:
                         # already proven ours rather than abandoning teardown.
                         sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
                         failed = True
+                observed.update(descendants(table, os.getpid(), observed))
                 observed.pop(os.getpid(), None)
                 for pid, identity in observed.items():
                     actual = table.get(pid)
@@ -252,7 +254,7 @@ def guard(reader: int, argv: list[str]) -> int:
             end = time.monotonic() + 2
             while True:
                 table = snapshot()
-                observed.update(descendants(table, os.getpid()))
+                observed.update(descendants(table, os.getpid(), observed))
                 if sys.platform == "darwin":
                     try:
                         marked_descendants(table, marker, earliest,
@@ -261,6 +263,7 @@ def guard(reader: int, argv: list[str]) -> int:
                     except BaseException as error:
                         sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
                         failed = True
+                observed.update(descendants(table, os.getpid(), observed))
                 observed.pop(os.getpid(), None)
                 survivors = [pid for pid, item in observed.items()
                              if pid in table and table[pid].birth == item.birth

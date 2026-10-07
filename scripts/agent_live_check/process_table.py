@@ -88,8 +88,11 @@ def snapshot() -> dict[int, Process]:
     return result
 
 
-def descendants(table: dict[int, Process], root: int) -> dict[int, Process]:
-    selected = {root}
+def descendants(table: dict[int, Process], root: int, known=None) -> dict[int, Process]:
+    # A token-proven orphan remains an owned ancestry root. A recycled PID
+    # cannot carry that proof into a different process's subtree.
+    selected = {root} | {pid for pid, identity in (known or {}).items()
+                         if pid in table and table[pid].birth == identity.birth}
     while True:
         added = {pid for pid, item in table.items() if item.parent in selected}
         if added <= selected:
