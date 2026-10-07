@@ -1116,7 +1116,7 @@ An action the engine has not answered within 20 seconds reads as unanswered, say
 ### The Factory place
 
 The sidebar has a Factory row of its own beside Home, and its badge is the number of items in 내 차례, with no badge at zero.
-The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind Settings or a confirmation, as the Overview waits; the screen is kept out of Recent Panels.
+The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind a dialog or another overlay (Settings, the find bar, a confirmation), where the Overview waits too; the screen is kept out of Recent Panels.
 With no open Factory the screen offers only '+ Factory 만들기'.
 Under the Factory row, once a Factory exists, is the secretary row: an ordinary agent tab in the core device's Home with the Factory's guide in its first prompt, which reads the board with `hide factory status` each time it answers, so closing the tab loses nothing.
 There is one secretary; the row and '비서에게 묻기' go to it, and when there is none they start one with the Factory's default runtime.

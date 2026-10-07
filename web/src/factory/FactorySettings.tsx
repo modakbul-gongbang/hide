@@ -279,7 +279,10 @@ function TextField({ value, onCommit, placeholder, numeric = false, data, reset 
       placeholder={placeholder}
       aria-label={placeholder}
       data-factory-setting={data}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        sent.current = null;
+      }}
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
