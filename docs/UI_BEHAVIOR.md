@@ -1389,7 +1389,7 @@ Removing a device asks once, names in one line what comes off that device (with 
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 The page has no per-device agents line, no coordination retirement row and no Codex per pane row: the kit no longer turns Codex's shared daemon off, and a machine's agents are on the Agents tab.
 
-Settings > Agents shows the seven agents Hide supports, Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
+Settings > Agents shows the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
 With a device registered, a switch at the top chooses This Mac or a device and the list below is that machine's; with none there is no switch.
 A device that cannot be reached shows one line and Try again in place of its list; a machine whose kit cannot run says why above a list it may still have.
 `Installed N` lists the agents whose program is found on the machine ([agent-hooks.md: Installed means the program is found](agent-hooks.md#installed-means-the-program-is-found)), or that are on and whose program went away, so they can still be switched off; a folder an agent creates does not count.
@@ -1399,7 +1399,8 @@ A row is the agent's official mark (the same in light and dark), its name and a 
 The switch is that machine's: turning an agent on installs its skill and hook and the Herdr integration there, turning it off takes out only what Hide installed (docs/agent-hooks.md), and an agent that is off wears no status.
 An agent that is on says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
-Gemini CLI, Grok, OpenCode, Pi and Cursor wear a `Partial` chip, on or off, and show no counts; the chip opens a popover with every feature of the kit's feature table, `✓ Works` or `– Not available`, and for an agent Herdr has no integration for (Gemini CLI) one line that Hide judges its status from the screen.
+Grok, OpenCode, Pi, omp and Cursor wear a `Partial` chip, on or off, and show no counts; the chip opens a popover with every feature of the kit's feature table, `✓ Works` or `– Not available`.
+Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row an older device helper still reports for an agent Hide no longer supports (Gemini CLI) is not drawn.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
 A switch-off whose removal did not finish keeps the row from reading Off and says so in its own line.
@@ -1407,7 +1408,7 @@ There is no row or switch for Codex per pane, no per-agent CLI group (that is Hi
 Idle agents (`Sleep after`) and Starting work (`Link the issue in pull requests`) follow the list.
 
 The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown when this Mac's kit has never run and stays until it is answered.
-It lists the seven agents Hide supports, Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
+It lists the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
 Claude Code and Codex are on when they are installed; every other installed agent is on too, since the operator chose the full set, and `Apply` installs what is left on.
 `Apply` is the only button and the only way out: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Apply installs nothing and ends the question.
 The question belongs to the kit record (`awaiting_choice` in `~/.hide/kit/installed.json`), not to the window: closing the app, reloading the page or a failed save leaves it asked, and the next launch asks again until Apply has saved.
