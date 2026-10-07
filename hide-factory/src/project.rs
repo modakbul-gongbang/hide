@@ -17,7 +17,6 @@ use crate::adapters::*;
 use crate::engine::{MERGE_COMMIT_AGAIN_MS, task_marker};
 use crate::exec::{Runner, checked, classify};
 use crate::model::*;
-use crate::store::sha256_hex;
 use crate::verify::{Job, Prepare, VerifyRunner};
 
 /// Local issues (`L-<n>`) for a project without GitHub, owned by the core.
@@ -732,7 +731,7 @@ impl TaskSource for SharedProjects {
         for (number, issue) in &labelled {
             let issue_ref = IssueRef::Github { number: *number };
             let body = issue["body"].as_str().unwrap_or_default();
-            let hash = sha256_hex(body.as_bytes());
+            let hash = crate::store::body_hash(body);
             match held.get(number) {
                 None => {
                     if issue["state"].as_str() == Some("OPEN")

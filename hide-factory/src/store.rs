@@ -408,6 +408,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+/// An issue body's identity: line endings and surrounding blank space do
+/// not make an edit, so the body the Factory wrote matches what GitHub
+/// answers for it.
+pub fn body_hash(body: &str) -> String {
+    sha256_hex(body.replace("\r\n", "\n").trim().as_bytes())
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     let temporary = path.with_extension("partial");
     {

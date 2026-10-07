@@ -2097,7 +2097,13 @@ impl Engine {
                         f.next_local_issue = f.next_local_issue.max(number + 1);
                     }
                     self.save_factory(factory_id);
-                    self.with_task(factory_id, id, |task| task.issue = Some(issue));
+                    // The body it wrote is the one a later edit is read
+                    // against, so the first edit a person makes counts.
+                    let written = crate::store::body_hash(&body);
+                    self.with_task(factory_id, id, |task| {
+                        task.issue = Some(issue);
+                        task.source_body_hash = Some(written);
+                    });
                 }
                 Err(failure) => {
                     self.external_failure(factory_id, Some(id), &failure);
@@ -5266,7 +5272,7 @@ impl Engine {
                     t.issue = Some(issue.clone());
                     t.label_path = true;
                     t.writes.insert("label".into());
-                    t.source_body_hash = Some(sha256_hex(body.as_bytes()));
+                    t.source_body_hash = Some(crate::store::body_hash(&body));
                 });
                 self.add_question(
                     factory_id,

@@ -2145,6 +2145,27 @@ fn an_outside_push_that_breaks_main_drafts_a_fix_and_never_reverts() {
 // ------------------------------------------------------------- outside work
 
 #[test]
+fn the_first_edit_to_an_issue_the_factory_wrote_sends_the_task_back_to_review() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let a = h.ready("First", &[]);
+    let b = h.ready("Second", &[&a]);
+    assert_eq!(h.state(&f, &b), TaskState::Waiting);
+    assert!(
+        h.task(&f, &b).source_body_hash.is_some(),
+        "the written body is known"
+    );
+    let issue = h.task(&f, &b).issue.unwrap();
+    h.world().outside.push_back(OutsideEvent::BodyEdited {
+        issue,
+        body_hash: "edited".into(),
+    });
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &b), TaskState::Drafting, "re-reviewed (B52)");
+}
+
+#[test]
 fn an_outside_pull_request_takes_a_running_task_and_its_merge_finishes_it() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Auto);
