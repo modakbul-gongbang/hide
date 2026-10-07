@@ -603,9 +603,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
-  const homeWorkspace = useShellStore((s) => contextHome(s.rest));
   const raisedOpen = useUiStore((s) => s.raisedOpen);
-  const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, homeWorkspace, raisedOpen), [workspaces, groups, listedAgents, homeWorkspace, raisedOpen]);
+  const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, frontScope, raisedOpen), [workspaces, groups, listedAgents, frontScope, raisedOpen]);
   // The device's Needs You and Done come first, then its Home, then the projects; Working and Seen are the Agents tab's.
   const raised = useMemo(() => rows.filter((row) => row.kind === "raised"), [rows]);
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
@@ -616,8 +615,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
   const numbered = useUiStore((s) => s.hint === "agents");
   const numberOfPane = useMemo(
-    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(frontListed, frontScope)), rows, workspaces) : null),
-    [numbered, frontListed, frontScope, rows, workspaces],
+    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(frontListed, frontScope)), rows, frontScope) : null),
+    [numbered, frontListed, frontScope, rows],
   );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.

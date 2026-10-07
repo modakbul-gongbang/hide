@@ -1119,8 +1119,7 @@ export function TasksListView({ board, page, actions, handlers }: { board: Tasks
 
 /** What a List row asks of the operator, as one small word: an agent's question, or a result not yet looked at. */
 function turnKind(card: TaskCard): "question" | "review" | null {
-  if (!card.needsYou) return null;
-  return card.rows.some((row) => row.agent.state.needs_you) ? "question" : "review";
+  return card.turnKind;
 }
 
 function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: number; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {

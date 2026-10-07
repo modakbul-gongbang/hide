@@ -75,8 +75,7 @@ export function projectPaneIds(workspace: Workspace): Set<string> {
 
 /** The agents running in a Project, in the core's order. */
 export function projectAgents(workspace: Workspace, agents: AgentRow[]): AgentRow[] {
-  const panes = projectPaneIds(workspace);
-  return agents.filter((agent) => panes.has(agent.pane_id));
+  return scopeRows(workspace.agent_scope.pane_ids, agents);
 }
 
 export function groupCounts(scope: AgentScope): GroupCounts { return scope.groups; }

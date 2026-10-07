@@ -102,11 +102,22 @@ pub struct TurnCounts {
     pub done: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Raised {
+    pub group: String,
+    pub shown: Vec<String>,
+    pub more: Vec<String>,
+}
+
 /// A scope carries both physical totals and Overview membership. The latter
 /// uses the first checkout owner and deduplicates inside each project, as the
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub prs: crate::agent_state::work::board::Board,
+    pub raised: Vec<Raised>,
+    pub owners: BTreeMap<String, String>,
+    pub badge_total: usize,
     pub pane_ids: Vec<String>,
     pub total: usize,
     pub overview_total: usize,
@@ -429,6 +440,10 @@ struct PlaceInput {
     device: String,
     project: String,
     home: bool,
+    pull_requests: Vec<crate::model::PullRequestSnapshot>,
+    tasks: Vec<crate::tasks::TaskSnapshot>,
+    repository: Option<String>,
+    checkout_work: Vec<(Option<String>, bool, bool, Option<String>)>,
     checkout_labels: Vec<(String, Option<String>, Option<u32>)>,
     checkouts: Vec<(
         String,
@@ -531,6 +546,21 @@ impl Cache {
                     device: p.device_id.clone(),
                     project: p.id.clone(),
                     home: p.is_home,
+                    pull_requests: p.pull_requests.clone(),
+                    tasks: p.tasks.tasks.clone(),
+                    repository: p.home_issues.repository.clone(),
+                    checkout_work: p
+                        .checkouts
+                        .iter()
+                        .map(|c| {
+                            (
+                                c.pull_request.as_ref().map(|p| p.url.clone()),
+                                c.is_worktree,
+                                c.exists,
+                                c.task_key.clone(),
+                            )
+                        })
+                        .collect(),
                     checkout_labels: p
                         .checkouts
                         .iter()
@@ -620,6 +650,11 @@ impl Cache {
                         project_marks(&[project]),
                     ),
                 );
+                projects
+                    .get_mut(&(project.device_id.clone(), project.id.clone()))
+                    .expect("project scope inserted")
+                    .prs =
+                    crate::agent_state::work::board::project(project, &device.agents, &trees);
                 for checkout in &project.checkouts {
                     let pane_ids: HashSet<_> = checkout
                         .tabs
@@ -655,6 +690,10 @@ impl Cache {
                     let value = checkouts
                         .get_mut(&(project.device_id.clone(), checkout.id.clone()))
                         .expect("checkout scope just inserted");
+                    value.badge_total = checkout.agent_summary.needs_you
+                        + checkout.agent_summary.done
+                        + checkout.agent_summary.working
+                        + checkout.agent_summary.seen;
                     value.tree = trees.remove(&checkout.id).expect("checkout tree projected");
                     value.global_tree = global_trees
                         .remove(&checkout.id)
@@ -684,6 +723,44 @@ impl Cache {
                     project_marks(&device.projects),
                 ),
             );
+            let mut owners = BTreeMap::new();
+            let mut drawn = HashSet::new();
+            for project in &device.projects {
+                for checkout in &project.checkouts {
+                    for pane in checkout.tabs.iter().flat_map(|t| &t.panes) {
+                        drawn.insert(pane.id.as_str());
+                        if !project.is_home {
+                            owners
+                                .entry(pane.id.clone())
+                                .or_insert_with(|| checkout.id.clone());
+                        }
+                    }
+                }
+            }
+            let raised = [("needs_you", 5), ("done", 3)]
+                .into_iter()
+                .filter_map(|(group, cap)| {
+                    let ids: Vec<_> = live
+                        .iter()
+                        .filter(|a| a.group == group && drawn.contains(a.pane_id.as_str()))
+                        .map(|a| a.pane_id.clone())
+                        .collect();
+                    if ids.is_empty() {
+                        None
+                    } else {
+                        Some(Raised {
+                            group: group.into(),
+                            shown: ids.iter().take(cap).cloned().collect(),
+                            more: ids.into_iter().skip(cap).collect(),
+                        })
+                    }
+                })
+                .collect();
+            let device_scope = device_scopes
+                .get_mut(device.id)
+                .expect("device scope inserted");
+            device_scope.raised = raised;
+            device_scope.owners = owners;
             device_scopes
                 .get_mut(device.id)
                 .expect("device scope just inserted")

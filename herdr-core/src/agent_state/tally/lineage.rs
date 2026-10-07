@@ -31,6 +31,7 @@ pub struct Tree {
     pub shown: Vec<String>,
     pub more: usize,
     pub needs_you: bool,
+    pub turn_kind: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -109,6 +110,17 @@ pub(super) fn checkout_trees(
             }) {
                 visit(root, 0, true, &by_pane, &mut seen, &mut tree);
             }
+            tree.turn_kind = tree.needs_you.then(|| {
+                if tree
+                    .rows
+                    .iter()
+                    .any(|r| by_pane[r.pane_id.as_str()].state.needs_you)
+                {
+                    "question"
+                } else {
+                    "review"
+                }
+            });
             let mut shown = tree
                 .rows
                 .iter()

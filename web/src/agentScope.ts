@@ -2,6 +2,14 @@ import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest 
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentScope = {
+  raised: { group: "needs_you" | "done"; shown: string[]; more: string[] }[];
+  owners: Record<string, string>;
+  badge_total: number;
+  prs: {
+    rows: { number: number; checkout_id: string | null; agents: string[]; lineage: { pane_id: string; depth: number }[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
+    groups: { group: "turn" | "fixing" | "blocked" | "merged"; numbers: number[] }[];
+    open: number;
+  };
   pane_ids: string[];
   total: number;
   overview_total: number;
@@ -53,4 +61,5 @@ export type AgentTreeScope = {
   shown: string[];
   more: number;
   needs_you: boolean;
+  turn_kind: "question" | "review" | null;
 };

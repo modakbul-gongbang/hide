@@ -3,7 +3,7 @@ import type { AgentScope } from "../agentScope";
 import type { SnapshotRest, Workspace } from "../snapshot";
 import data from "./agentScopes.json";
 
-export const EMPTY_GALLERY_SCOPE = data.presets[0] as AgentScope;
+export const EMPTY_GALLERY_SCOPE = data.presets[0] as unknown as AgentScope;
 export function galleryScopes(rest: SnapshotRest, scene: string, expandedAgents: string[]): SnapshotRest {
   scene += `:${data.foldable.filter((id) => expandedAgents.includes(id)).join(",")}`;
   const scopes = data.snapshots[scene as keyof typeof data.snapshots];

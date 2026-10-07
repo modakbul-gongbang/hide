@@ -1,11 +1,12 @@
+import { projectRows, projectListNumbers } from "../test/legacyAgentScope";
 import { emptyScope, legacyRest } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { agentListOrder, numberedAgents, numberedTabs, numberOf, projectListNumbers } from "./numbering";
-import { projectRows } from "./projects";
+import { agentListOrder, numberedAgents, numberedTabs, numberOf } from "./numbering";
+
 import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
 function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff" }[] = []): Checkout {

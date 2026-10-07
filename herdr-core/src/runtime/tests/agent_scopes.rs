@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::{PullRequestChecks, PullRequestSnapshot};
 
 fn rows() -> Vec<SidebarAgentSnapshot> {
     project_agents(
@@ -232,4 +233,145 @@ fn checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority
         3
     );
     assert!(!runtime.refresh_agent_scopes());
+}
+
+#[test]
+fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes() {
+    use crate::request_view::{AgentPullRequestSnapshot, AgentRequestSnapshot};
+    let mut runtime = runtime();
+    let pr: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+        "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
+        "head_branch":"feature","base_branch":"main","badge":"open","checks":"failed","is_draft":false,
+        "closing_issues":[{"repository":"acme/app","number":7}]
+    })).unwrap();
+    let mut agents = rows();
+    // The PR maker moved to another checkout and is still working there.
+    agents[0].request = Some(AgentRequestSnapshot {
+        verb: crate::agent_state::RequestVerb::Working,
+        verb_since_unix_ms: 1,
+        line: None,
+        end: None,
+        request: None,
+        later_by: None,
+        reply: None,
+        pull_requests: vec![AgentPullRequestSnapshot {
+            number: pr.number,
+            title: pr.title.clone(),
+            url: pr.url.clone(),
+            badge: pr.badge,
+            checks: pr.checks,
+            head_branch: pr.head_branch.clone(),
+            closing_issues: pr.closing_issues.clone(),
+            live: true,
+            duty: true,
+            created: true,
+            settled_at_unix_ms: None,
+        }],
+    });
+    agents[1].group = "done".into();
+    agents[1].activity = "stopped".into();
+    agents[1].state = crate::agent_state::turn::row_state(&agents[1]);
+    let mut branch = checkout(
+        "project",
+        "feature",
+        "/fixture/feature",
+        Some(pane("child", "/fixture/feature")),
+    );
+    branch.pull_request = Some(pr.clone());
+    branch.exists = true;
+    let mut project = workspace("project", "Project", "/fixture", vec![branch]);
+    project.home_issues.repository = Some("acme/app".into());
+    project.pull_requests = vec![pr];
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.snapshot.navigator.agents = agents;
+    assert!(runtime.refresh_agent_scopes());
+    let board = &runtime.snapshot.navigator.workspaces[0].agent_scope.prs;
+    assert_eq!(board.rows[0].agents, vec!["child", "root"]);
+    assert_eq!(board.rows[0].group, "blocked");
+    assert!(board.rows[0].needs_look);
+    assert_eq!(board.rows[0].issue.as_ref().unwrap().label, "#7");
+    assert_eq!(board.open, 1);
+    assert_eq!(board.groups[0].numbers, vec![42]);
+    runtime.snapshot.navigator.workspaces[0].pull_requests[0].checks = PullRequestChecks::Passing;
+    assert!(
+        runtime.refresh_agent_scopes(),
+        "GitHub changes invalidate work scope even when agents stay still"
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .prs
+            .rows[0]
+            .group,
+        "turn"
+    );
+    runtime.snapshot.navigator.agents[1].activity = "working".into();
+    runtime.snapshot.navigator.agents[1].group = "working".into();
+    runtime.snapshot.navigator.agents[1].state =
+        crate::agent_state::turn::row_state(&runtime.snapshot.navigator.agents[1]);
+    assert!(runtime.refresh_agent_scopes());
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .prs
+            .rows[0]
+            .group,
+        "fixing"
+    );
+    assert!(!runtime.refresh_agent_scopes());
+}
+
+#[test]
+fn raised_sections_keep_five_questions_three_completions_and_first_number_owner() {
+    let mut runtime = runtime();
+    let prototype = rows()[0].clone();
+    let agents: Vec<_> = (0..13)
+        .map(|i| {
+            let mut row = prototype.clone();
+            row.pane_id = format!("p{i}");
+            row.group = if i < 7 { "needs_you" } else { "done" }.into();
+            row.state = crate::agent_state::turn::row_state(&row);
+            row
+        })
+        .collect();
+    let mut first = checkout(
+        "project",
+        "first",
+        "/fixture/first",
+        Some(pane("p0", "/fixture/first")),
+    );
+    first.tabs[0].panes = (0..12)
+        .map(|i| pane(&format!("p{i}"), "/fixture/first"))
+        .collect();
+    let duplicate = checkout(
+        "project",
+        "second",
+        "/fixture/second",
+        Some(pane("p0", "/fixture/second")),
+    );
+    runtime.snapshot.navigator.agents = agents;
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/fixture",
+        vec![first, duplicate],
+    )];
+    assert!(runtime.refresh_agent_scopes());
+    let scope = &runtime
+        .snapshot
+        .navigator
+        .devices
+        .iter()
+        .find(|d| d.kind != "remote")
+        .unwrap()
+        .agent_scope;
+    assert_eq!(scope.raised[0].shown, vec!["p0", "p1", "p2", "p3", "p4"]);
+    assert_eq!(scope.raised[0].more, vec!["p5", "p6"]);
+    assert_eq!(scope.raised[1].shown, vec!["p7", "p8", "p9"]);
+    assert_eq!(scope.raised[1].more, vec!["p10", "p11"]);
+    assert_eq!(scope.owners["p0"], "first");
+    assert!(
+        !scope.owners.contains_key("p12"),
+        "an agent outside every drawn checkout is not raised or numbered in Projects"
+    );
 }

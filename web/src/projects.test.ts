@@ -1,7 +1,8 @@
+import { projectRows, checkoutPresentation, checkoutCard } from "../test/legacyAgentScope";
 import { emptyScope, legacyProject } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, checkoutPresentation, projectMarks as drawProjectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, projectMarks as drawProjectMarks, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 

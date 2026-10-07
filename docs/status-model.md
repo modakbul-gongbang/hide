@@ -600,3 +600,9 @@ The sidebar uses the connected-device tree; the Issues board uses the project de
 A done descendant turns a card yellow only when it is a root relative to that checkout.
 Folded checkout lines carry status-priority tiers; the browser keeps its existing locale-aware alphabetical placement inside a tier so Korean and English labels keep their displayed order.
 The cross-checkout counts, relative-root highlight and fold transitions are asserted by `runtime::tests::agent_scopes::checkout_trees_and_folded_badges_preserve_cross_checkout_lineage_and_priority`.
+
+`agent_state/work/board.rs` owns the PR list's branch and maker association, issue chip source, ancestor rows, attention ordering, groups and open count.
+The maker remains listed after moving to other work, but only the branch's agents can make the PR read as fixing or needing review.
+`runtime::tests::agent_scopes::pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes` pins that distinction and GitHub-only invalidation.
+The device scope also carries raised sections (five Needs You rows and three Done rows before overflow) and each numbered agent's first checkout owner.
+`runtime::tests::agent_scopes::raised_sections_keep_five_questions_three_completions_and_first_number_owner` pins those limits.

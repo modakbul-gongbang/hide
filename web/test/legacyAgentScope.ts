@@ -1,3 +1,6 @@
+import { projectRows as drawProjectRows, checkoutPresentation as drawCheckoutPresentation, checkoutCard as drawCheckoutCard } from "../src/projects";
+import { projectListNumbers as drawProjectNumbers } from "../src/numbering";
+import { buildPullRequests as beforeBuildPrs } from "./legacyPrBoard";
 import { checkoutAgentRows as beforeCheckoutAgentRows } from "./legacyAgentTree";
 import { buildTasks as drawBuildTasks, buildPullRequests as drawBuildPullRequests, shownAgents as drawShownAgents, type BoardRow } from "../src/projectBoard";
 import { legacyAgentRow } from "./legacyAgentRow";
@@ -12,7 +15,7 @@ import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, req
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { raised: [], owners: {}, badge_total: 0, prs: { rows: [], groups: [], open: 0 }, pane_ids: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent)): AgentScope {
@@ -65,10 +68,13 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
     const physical = agents.filter((agent) => (checkout.tabs ?? []).some((tab) => tab.panes.some((p) => p.id === agent.pane_id)));
     const value = legacyPhysicalScope(physical);
     value.marks = checkout.agent_summary?.marks ?? emptyScope().marks;
+    value.badge_total = legacyBadgeTotal(checkout);
     value.tree = legacyTree(trees.get(checkout.id) ?? []);
     value.global_tree = value.tree;
     return { ...checkout, agent_scope: value };
   });
+  const prs = beforeBuildPrs({ workspace: treeProject, agents: [...agents], device: null }, 0);
+  scope.prs = { rows: prs.groups.flatMap((g) => g.rows).map((r) => ({ number: r.number, checkout_id: r.checkout?.id ?? null, agents: r.agents.map((a) => a.pane_id), lineage: r.lineage.map((a) => ({ pane_id: a.agent.pane_id, depth: a.depth })), needs_look: r.needsLook, group: r.group, issue: r.issue ? { key: r.issue.key, label: r.issue.label, url: r.issue.url, task_key: r.issue.task?.key ?? null } : null })), groups: prs.groups.map((g) => ({ group: g.group, numbers: g.rows.map((r) => r.number) })), open: (project.pull_requests ?? []).filter((p) => p.badge !== "merged").length };
   return { ...project, checkouts, agent_scope: scope };
 }
 
@@ -151,6 +157,8 @@ export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest
   }
   const overall = legacyPhysicalScope(liveRows);
   overall.folded = foldedScopes(liveRows, liveWorkspaces);
+  Object.assign(local, legacyRaised(projects, liveRows.map((agent) => ({ agent, device: null }))));
+  for (const remote of remotes) Object.assign(deviceScopes.get(remote.target_id)!, legacyRaised(remote.session?.workspaces ?? [], liveRows.map((agent) => ({ agent, device: null }))));
   local.folded = foldedScopes(localRows, liveWorkspaces);
   for (const remote of remotes) deviceScopes.get(remote.target_id)!.folded = foldedScopes((remote.session?.agents ?? []).map((a) => ({ ...a, device_id: remote.target_id, device_label: rest.navigator?.devices?.find((d) => d.id === remote.target_id)?.label ?? remote.target_id })), liveWorkspaces);
   return { ...rest, navigator: { ...rest.navigator, agent_scope: overall, workspaces: projects, devices: rest.navigator?.devices?.map((d) => ({ ...d, agent_scope: deviceScopes.get(d.id) ?? emptyScope() })) }, status: { ...rest.status, remote: remotes } };
@@ -192,11 +200,42 @@ export function legacyTree(rows: readonly BoardRow[]): AgentScope["tree"] {
     return true;
   });
   const ranked = [...rows].sort((a,b) => a.agent.state.attention_rank - b.agent.state.attention_rank);
+  const needs = rows.some((r) => r.agent.group === "needs_you" || (r.depth === 0 && r.agent.group === "done"));
   const ids = (rows: readonly BoardRow[]) => rows.map((r) => ({ pane_id: r.agent.pane_id, depth: r.depth }));
-  return { rows: ids(rows), visible_rows: ids(visible), shown: ranked.slice(0,2).map((r) => r.agent.pane_id), more: Math.max(0, ranked.length-2), needs_you: rows.some((r) => r.agent.group === "needs_you" || (r.depth === 0 && r.agent.group === "done")) };
+  return { rows: ids(rows), visible_rows: ids(visible), shown: ranked.slice(0,2).map((r) => r.agent.pane_id), more: Math.max(0, ranked.length-2), needs_you: needs, turn_kind: needs ? (rows.some((r) => r.agent.group === "needs_you") ? "question" : "review") : null };
 }
 export function shownAgents(rows: BoardRow[]) { return drawShownAgents(legacyTree(rows), rows.map((r) => r.agent)); }
 export function buildTasks(projects: readonly BoardProject[], ...args: Parameters<typeof drawBuildTasks> extends [unknown, ...infer R] ? R : never) {
   return drawBuildTasks(projects.map((p) => ({ ...p, workspace: legacyProject(p.workspace, p.agents) })), ...args);
 }
 export function buildPullRequests(project: BoardProject, now: number) { return drawBuildPullRequests({ ...project, workspace: legacyProject(project.workspace, project.agents) }, now); }
+
+function legacyRaised(projects: readonly Workspace[], listed: readonly ListedAgent[]) {
+  const drawn = new Set<string>(), owners: Record<string, string> = {};
+  for (const project of projects) for (const checkout of project.checkouts) for (const tab of checkout.tabs ?? []) for (const pane of tab.panes) {
+    drawn.add(pane.id);
+    if (!project.is_home && owners[pane.id] === undefined) owners[pane.id] = checkout.id;
+  }
+  const raised: AgentScope["raised"] = [];
+  for (const [group, cap] of [["needs_you", 5], ["done", 3]] as const) {
+    const ids = listed.filter((r) => r.agent.group === group && drawn.has(r.agent.pane_id)).map((r) => r.agent.pane_id);
+    if (ids.length) raised.push({ group, shown: ids.slice(0, cap), more: ids.slice(cap) });
+  }
+  return { raised, owners };
+}
+export function projectRows(workspaces: Workspace[], groups: Parameters<typeof drawProjectRows>[1], listed: ListedAgent[], home: Workspace | null = null, open: readonly string[] = []) {
+  return drawProjectRows(workspaces, groups, listed, { ...emptyScope(), ...legacyRaised(home ? [...workspaces, home] : workspaces, listed) }, open);
+}
+export function projectListNumbers(numbers: Parameters<typeof drawProjectNumbers>[0], rows: Parameters<typeof drawProjectNumbers>[1], workspaces: readonly Workspace[]) {
+  return drawProjectNumbers(numbers, rows, { ...emptyScope(), ...legacyRaised(workspaces, []) });
+}
+function legacyBadgeTotal(checkout: Checkout) {
+  const s = checkout.agent_summary;
+  return s ? s.needs_you + s.done + s.working + s.seen : 0;
+}
+export function checkoutPresentation(project: Workspace, checkout: Checkout, ...args: [number, Parameters<typeof drawCheckoutPresentation>[3]]) {
+  return drawCheckoutPresentation(project, { ...checkout, agent_scope: { ...emptyScope(), badge_total: legacyBadgeTotal(checkout) } }, ...args);
+}
+export function checkoutCard(project: Workspace, checkout: Checkout, ...args: [number, Parameters<typeof drawCheckoutCard>[3]]) {
+  return drawCheckoutCard(project, { ...checkout, agent_scope: { ...emptyScope(), badge_total: legacyBadgeTotal(checkout) } }, ...args);
+}

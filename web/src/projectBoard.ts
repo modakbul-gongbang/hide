@@ -124,6 +124,7 @@ export type TaskCard = {
   more: number;
   /** An agent asks or finished and was not looked at: the only coloured card (B5). */
   needsYou: boolean;
+  turnKind: "question" | "review" | null;
   /** An open backlog issue of a project on this Mac: Start opens the Start dialog. */
   canStart: boolean;
   first: FirstAction;
@@ -270,6 +271,7 @@ function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Che
     shown,
     more,
     needsYou: tree?.needs_you ?? false,
+    turnKind: tree?.turn_kind ?? null,
     canStart,
     first: firstAction(stage, canStart, checkout, pr),
     editable: task.source === "local" && local,
@@ -584,13 +586,6 @@ export const PR_GROUP_LABEL: Record<PrGroup, MessageKey> = {
   merged: "board.prGroup.merged",
 };
 
-const PR_GROUPS: readonly PrGroup[] = ["turn", "fixing", "blocked", "merged"];
-
-/** An agent at work, a parent waiting on its working children included (status-model's activity axis, PRD Risks). */
-function isWorking(agent: AgentRow): boolean {
-  return agent.state.working;
-}
-
 /** The issue a pull request works on: the task when the source lists it, else the reference its body closes. */
 export type PrIssue = { key: string; label: string; url: string | null; task: Task | null };
 
@@ -636,48 +631,6 @@ export type PrBoard = {
   failure: ReadFailure | null;
 };
 
-const PR_ATTENTION = (agent: AgentRow) => (agent.group === "needs_you" ? 0 : agent.group === "done" ? 1 : isWorking(agent) ? 2 : 3);
-
-/** The ancestors of the checkout's agents, root first, then the checkout's own rows (B5). */
-function prLineage(rows: BoardRow[], agents: readonly AgentRow[]): BoardRow[] {
-  const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
-  const shown = new Set(rows.map((row) => row.agent.pane_id));
-  const result: BoardRow[] = [];
-  for (const row of rows) {
-    if (row.depth !== 0) continue;
-    const ancestors: AgentRow[] = [];
-    let parent = row.agent.lineage_parent_pane_id ? byPane.get(row.agent.lineage_parent_pane_id) : undefined;
-    while (parent && !shown.has(parent.pane_id) && ancestors.length < 8) {
-      ancestors.unshift(parent);
-      parent = parent.lineage_parent_pane_id ? byPane.get(parent.lineage_parent_pane_id) : undefined;
-    }
-    ancestors.forEach((agent, depth) => {
-      shown.add(agent.pane_id);
-      result.push({ agent, depth });
-    });
-    const start = rows.indexOf(row);
-    for (let index = start; index < rows.length && (index === start || (rows[index]?.depth ?? 0) > 0); index += 1) {
-      const next = rows[index] as BoardRow;
-      result.push({ agent: next.agent, depth: next.depth + ancestors.length });
-    }
-  }
-  return result;
-}
-
-/** The issue of a pull request: its checkout's linked task, else the first issue its body closes. */
-function prIssue(workspace: Workspace, checkout: Checkout | null, pr: PullRequest, tasks: Map<string, Task>): PrIssue | null {
-  const linked = checkout?.task_key ? tasks.get(checkout.task_key) : undefined;
-  if (linked) return { key: linked.key, label: linked.id ?? linked.title, url: linked.url, task: linked };
-  const repository = workspace.home_issues?.repository ?? null;
-  for (const reference of pr.closing_issues ?? []) {
-    const key = `github:${reference.repository}#${reference.number}`;
-    const task = tasks.get(key) ?? null;
-    const label = task?.id ?? (reference.repository === repository ? `#${reference.number}` : `${reference.repository}#${reference.number}`);
-    return { key, label, url: task?.url ?? `https://github.com/${reference.repository}/issues/${reference.number}`, task };
-  }
-  return null;
-}
-
 /**
  * The PRs tab (D-11, D-32, D-52) for one project: its pull requests grouped
  * by whose move it is. A merged one is `Recently merged`, newest merge first; an
@@ -690,7 +643,8 @@ function prIssue(workspace: Workspace, checkout: Checkout | null, pr: PullReques
 export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const { workspace, agents } = project;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-  const rowsByCheckout = checkoutAgentRows(workspace, agents);
+  const board = workspace.agent_scope.prs;
+  const byPane = new Map(agents.map((a) => [a.pane_id, a]));
   const local = workspace.tasks?.source?.kind === "local";
   const rows: PrRow[] = [];
   for (const pr of workspace.pull_requests ?? []) {
@@ -698,27 +652,17 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     // The checkout the core connected it to (a settled pull request only at the
     // exact commit), never a branch of the same name: a branch used again for
     // new work is not the merged pull request's worktree to clean up.
-    const checkout = workspace.checkouts.find((row) => row.pull_request?.url === pr.url && (row.is_worktree || row.exists)) ?? null;
-    const boardRows = checkout ? (rowsByCheckout.get(checkout.id) ?? []) : [];
-    const panes = new Set(checkout?.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)) ?? []);
-    // The agent whose session made it is on its row too, wherever it works
-    // (overview-request-view D-45): the request view and this board share the link.
-    const made = (agent: AgentRow) => agent.request?.pull_requests.some((pull) => pull.created && pull.url === pr.url) === true;
-    const agentsHere = agents.filter((agent) => panes.has(agent.pane_id) || made(agent)).sort((a, b) => PR_ATTENTION(a) - PR_ATTENTION(b));
-    // Whose move it is stays the branch's: the maker may be at other work by now.
-    const onBranch = agentsHere.filter((agent) => panes.has(agent.pane_id));
+    const state = board.rows.find((row) => row.number === pr.number);
+    if (!state) throw new Error(`Missing core PR row: ${pr.number}`);
+    const checkout = state.checkout_id === null ? null : workspace.checkouts.find((c) => c.id === state.checkout_id);
+    if (checkout === undefined) throw new Error(`Missing PR checkout: ${state.checkout_id}`);
+    const agentsHere = scopeRows(state.agents, agents);
     const chip = prChip(pr);
     const merged = pr.badge === "merged";
     const checks = chip.checks;
     const review = merged ? null : pr.review;
-    const group: PrGroup = merged
-      ? "merged"
-      : onBranch.some(isWorking)
-        ? "fixing"
-        : checks === "failed" || review === "changes_requested"
-          ? "blocked"
-          : "turn";
-    const issue = prIssue(workspace, checkout, pr, tasks);
+    const group = state.group;
+    const issue = state.issue ? { ...state.issue, task: state.issue.task_key ? tasks.get(state.issue.task_key) ?? null : null } : null;
     const folderGone = checkout !== null && (!checkout.exists || checkout.worktree?.missing === true);
     const worktree = checkout?.is_worktree === true && checkout.is_primary !== true;
     rows.push({
@@ -732,8 +676,12 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       checkout,
       issue,
       agents: agentsHere,
-      lineage: checkout ? prLineage(boardRows, agents) : [],
-      needsLook: onBranch.some((agent) => agent.group === "done"),
+      lineage: state.lineage.map((row) => {
+        const agent = byPane.get(row.pane_id);
+        if (!agent) throw new Error(`Missing PR lineage row: ${row.pane_id}`);
+        return { agent, depth: row.depth };
+      }),
+      needsLook: state.needs_look,
       checks,
       review,
       at: merged ? (pr.merged_at_unix_ms ?? null) : (pr.updated_at_unix_ms ?? null),
@@ -742,8 +690,12 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       cleanup: merged && worktree ? (folderGone ? "record" : "worktree") : null,
     });
   }
-  const byRecent = (a: PrRow, b: PrRow) => (b.at ?? 0) - (a.at ?? 0) || b.number - a.number;
-  const groups = PR_GROUPS.map((group) => ({ group, rows: rows.filter((row) => row.group === group).sort(byRecent) })).filter((entry) => entry.rows.length > 0);
+  const byNumber = new Map(rows.map((row) => [row.number, row]));
+  const groups = board.groups.map((group) => ({ group: group.group, rows: group.numbers.map((number) => {
+    const row = byNumber.get(number);
+    if (!row) throw new Error(`Missing grouped PR: ${number}`);
+    return row;
+  }) }));
   const status = workspace.checkouts.find((checkout) => checkout.github)?.github ?? null;
   // A repository with no GitHub remote has no pull requests, which is an answer, not a failure (design 13).
   const noRemote = status?.failure_category === "no_github_remote";
@@ -752,7 +704,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const age = status?.last_success_at_unix_ms != null ? Math.max(0, Math.floor((now - status.last_success_at_unix_ms) / 60_000)) : null;
   return {
     groups,
-    open: answered ? rows.filter((row) => row.group !== "merged").length : null,
+    open: answered ? board.open : null,
     reading: !answered && !failed,
     failure: failed ? { project: null, source: "GitHub", value: age === null ? "none" : { minutes: age } } : null,
   };

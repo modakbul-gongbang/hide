@@ -12,7 +12,7 @@ import { frontDeviceId } from "./devices";
 import { agentListRows, agentTree, deviceListedAgents, type ListedAgent } from "./navigation";
 import type { ProjectRow } from "./projects";
 import { DIGITS, type Digit } from "./shortcuts";
-import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
 import { agentEntries } from "./workspace";
 
 /** Local area tree order, then each bar left to right; devices retain their strip order. */
@@ -60,16 +60,12 @@ export function listedAgentOrder(listed: ListedAgent[], scope: AgentScope | null
 export function projectListNumbers(
   numbered: Map<Digit, string>,
   rows: readonly ProjectRow[],
-  workspaces: readonly Workspace[],
+  scope: AgentScope | null,
 ): (paneId: string, checkoutId: string | null) => Digit | null {
   // A raised agent folded past its section's cap is not drawn there, so its number stays on its tree row.
   const raised = new Set(rows.flatMap((row) => (row.kind === "raised" ? [...row.agents, ...(row.expanded ? row.more : [])].map(({ agent }) => agent.pane_id) : [])));
-  const owners = new Map<string, string>();
-  for (const workspace of workspaces) {
-    for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout.id);
-  }
   return (paneId, checkoutId) => {
-    const shown = checkoutId === null ? raised.has(paneId) : !raised.has(paneId) && owners.get(paneId) === checkoutId;
+    const shown = checkoutId === null ? raised.has(paneId) : !raised.has(paneId) && scope?.owners[paneId] === checkoutId;
     return shown ? numberOf(numbered, paneId) : null;
   };
 }

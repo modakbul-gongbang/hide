@@ -1,9 +1,10 @@
+import { projectRows } from "../test/legacyAgentScope";
 import { agentSections } from "../test/legacyAgentScope";
 import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { agentPlaces, allAgents, allProjectsCount, boardProjects, deviceListedAgents, mainSections } from "./navigation";
-import { projectRows } from "./projects";
+
 import { contextAllWorkspaces, contextHome, contextWorkspaces, projectsOf } from "./remote";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
