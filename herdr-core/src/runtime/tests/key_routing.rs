@@ -8,6 +8,7 @@
 //! session, the only place a key can do anything.
 
 use super::*;
+use crate::runtime::terminal_input::HELD_INPUT_MAX_AGE;
 
 const CHECKOUT: &str = "/tmp/hide-key-routing";
 /// The pane that held the keyboard when the creation was asked for.
@@ -493,4 +494,101 @@ fn input_held_for_a_pane_whose_retries_ran_out_is_not_written_on_reconnect() {
     open_session(&mut runtime, pane);
     assert!(typed(&runtime, pane).is_empty());
     assert!(typed(&runtime, ORIGIN).is_empty());
+}
+
+/// B10: keys typed for a split more than three seconds before its pane can
+/// take them are discarded, whether they waited for Herdr's answer or for
+/// the new pane's session; no pane receives a byte of them.
+#[test]
+fn keys_for_a_split_older_than_the_age_limit_reach_no_pane() {
+    let older = HELD_INPUT_MAX_AGE + Duration::from_millis(500);
+    // Still waiting for Herdr's answer.
+    let herdr = fake_herdr("key-routing-stale-request");
+    let mut runtime = runtime_on(&herdr);
+    runtime.dispatch_json(&split("r-stale"));
+    runtime.dispatch_json(&key_for_request("r-stale", b"rm -rf build"));
+    runtime.input_requests.age(older);
+    // Keys typed within the limit, before and after the answer, still go in.
+    runtime.dispatch_json(&key_for_request("r-stale", b"ls"));
+    let ((), records) = crate::diagnostics::capture(|| {
+        split_answer(
+            &mut runtime,
+            Ok(PaneControlOutcome::Acknowledged {
+                created_pane_id: Some(SPLIT_PANE.to_owned()),
+            }),
+        )
+    });
+    let stale = records
+        .iter()
+        .filter(|record| record["reason"] == "stale")
+        .collect::<Vec<_>>();
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0]["pane_id"], SPLIT_PANE);
+    assert_eq!(stale[0]["bytes"], "rm -rf build".len());
+    runtime.dispatch_json(&key_for_request("r-stale", b"\r"));
+    open_session(&mut runtime, SPLIT_PANE);
+    assert_eq!(typed(&runtime, SPLIT_PANE), b"ls\r");
+    assert!(typed(&runtime, ORIGIN).is_empty());
+
+    // Answered in time, then waiting for the new pane's session: each key's
+    // age counts from when it was typed, not from the answer.
+    let herdr = fake_herdr("key-routing-stale-session");
+    let mut runtime = runtime_on(&herdr);
+    runtime.dispatch_json(&split("r-slow"));
+    runtime.dispatch_json(&key_for_request("r-slow", b"rm -rf build"));
+    split_answer(
+        &mut runtime,
+        Ok(PaneControlOutcome::Acknowledged {
+            created_pane_id: Some(SPLIT_PANE.to_owned()),
+        }),
+    );
+    runtime.pane_input_hold.age(older);
+    open_session(&mut runtime, SPLIT_PANE);
+    assert!(typed(&runtime, SPLIT_PANE).is_empty());
+    assert!(typed(&runtime, ORIGIN).is_empty());
+}
+
+/// B10: input held while a pane's session retries is written when the retry
+/// opens it within three seconds of its being typed, and discarded after.
+#[test]
+fn input_held_through_a_reconnect_is_written_only_within_the_age_limit() {
+    for (age, expected) in [
+        (Duration::ZERO, b"make deploy\r".as_slice()),
+        (
+            HELD_INPUT_MAX_AGE + Duration::from_millis(500),
+            b"".as_slice(),
+        ),
+    ] {
+        let herdr = fake_herdr("key-routing-reconnect-age");
+        let mut runtime = runtime_on(&herdr);
+        runtime.ingest_session(Ok(session_with_split_pane(true)));
+        let pane = SPLIT_PANE;
+        // Its start failed and a retry is due.
+        let now = Instant::now();
+        runtime.terminal_session_lifecycles.insert(
+            pane.into(),
+            TerminalSessionLifecycle {
+                state: "unavailable",
+                ..TerminalSessionLifecycle::default()
+            },
+        );
+        let mut recovery = crate::terminal_recovery::Recovery::new(now, "failed".into());
+        recovery.due = Some(now + Duration::from_secs(1));
+        runtime.terminal_recovery.insert(pane.into(), recovery);
+        for chunk in [b"make deploy".as_slice(), b"\r"] {
+            runtime.dispatch_json(&event(
+                "key",
+                serde_json::json!({"pane_id": pane, "bytes_base64": live::encode_base64(chunk)}),
+            ));
+        }
+        assert!(runtime.snapshot().status.last_error.is_none());
+        runtime.pane_input_hold.age(age);
+
+        // The retry opens a session.
+        runtime.terminal_session_lifecycles.remove(pane);
+        runtime.terminal_recovery.remove(pane);
+        open_session(&mut runtime, pane);
+        assert_eq!(typed(&runtime, pane), expected, "held for {age:?}");
+        assert!(typed(&runtime, ORIGIN).is_empty());
+    }
 }

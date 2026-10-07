@@ -3025,6 +3025,7 @@ impl Runtime {
                     self.write_terminal_control(
                         &payload.pane_id,
                         &live::encode_base64(bytes.as_bytes()),
+                        Instant::now(),
                     );
                     return self.snapshot.status.last_error.is_some();
                 }
@@ -3709,7 +3710,10 @@ impl Runtime {
                 return Err(true);
             }
         };
-        match self.input_requests.route(&request_id, &bytes) {
+        match self
+            .input_requests
+            .route(&request_id, &bytes, Instant::now())
+        {
             (super::terminal_input::KeyRoute::Pane(pane_id), _) => Ok(KeyPayload {
                 pane_id,
                 bytes_base64,
@@ -3768,12 +3772,18 @@ impl Runtime {
     }
 
     pub(super) fn deliver_key(&mut self, payload: KeyPayload) -> bool {
-        self.write_key(payload, true)
+        self.write_key(payload, true, Instant::now())
     }
 
-    /// Writes one key to its pane; `takes_focus` is false for keys held for
-    /// a creation, which reach the new pane without moving the keyboard.
-    pub(super) fn write_key(&mut self, payload: KeyPayload, takes_focus: bool) -> bool {
+    /// Writes one key, typed at `typed_at`, to its pane; `takes_focus` is
+    /// false for keys held for a creation, which reach the new pane without
+    /// moving the keyboard.
+    pub(super) fn write_key(
+        &mut self,
+        payload: KeyPayload,
+        takes_focus: bool,
+        typed_at: Instant,
+    ) -> bool {
         let submits = crate::labels::input::key_submits(&payload.bytes_base64);
         self.note_delivery_key(&payload.pane_id);
         if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
@@ -3799,7 +3809,7 @@ impl Runtime {
                 .keys()
                 .any(|target_id| remote_pane_source_id(target_id, &payload.pane_id).is_some())
         {
-            self.write_terminal_control(&payload.pane_id, &payload.bytes_base64);
+            self.write_terminal_control(&payload.pane_id, &payload.bytes_base64, typed_at);
         } else {
             // Fixture mode has no PTY behind the pane; the loopback
             // echo is the whole byte bridge.

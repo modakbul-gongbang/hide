@@ -15,12 +15,19 @@
 //!
 //! Crossing a cap discards what was held, with a diagnostic naming the holder
 //! and the byte count; nothing reaches the screen (design principle 13).
+//! So does each key held longer than `HELD_INPUT_MAX_AGE` when its pane
+//! could take it: keys typed that long ago are no longer what the operator
+//! means to run. Keys arrive in order, so what is discarded is the oldest
+//! part and the rest goes in, in order.
 
 use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use crate::model::{InputRequestSnapshot, InputRequestState as WireState};
 
 pub(super) const INPUT_HOLD_LIMIT_BYTES: usize = 64 * 1024;
+/// The oldest held input a pane is given when it can take it (D-11, B10).
+pub(super) const HELD_INPUT_MAX_AGE: Duration = Duration::from_secs(3);
 /// Creation requests remembered at once. The shell's mark ends long before
 /// this many newer creations push one out.
 pub(super) const INPUT_REQUEST_LIMIT: usize = 8;
@@ -74,7 +81,7 @@ struct InputRequest {
     origin: InputOrigin,
     state: InputRequestState,
     /// The chunks as they were typed, so each is written as its own key.
-    held: Vec<Vec<u8>>,
+    held: Vec<HeldChunk>,
     held_bytes: usize,
     dropped_bytes: usize,
     /// Whether a session layout has carried the pane this request names. A
@@ -141,9 +148,14 @@ impl InputRequests {
         });
     }
 
-    /// Routes `bytes` sent against `request_id`. Returns the route and
-    /// whether the request's published state changed.
-    pub(super) fn route(&mut self, request_id: &str, bytes: &[u8]) -> (KeyRoute, bool) {
+    /// Routes `bytes`, typed at `typed_at`, sent against `request_id`.
+    /// Returns the route and whether the request's published state changed.
+    pub(super) fn route(
+        &mut self,
+        request_id: &str,
+        bytes: &[u8],
+        typed_at: Instant,
+    ) -> (KeyRoute, bool) {
         if !valid_request_id(request_id) {
             report_invalid_request_id(request_id);
             return (KeyRoute::Dropped, false);
@@ -190,7 +202,10 @@ impl InputRequests {
                     return (KeyRoute::Dropped, true);
                 }
                 request.held_bytes += bytes.len();
-                request.held.push(bytes.to_vec());
+                request.held.push(HeldChunk {
+                    typed_at,
+                    bytes: bytes.to_vec(),
+                });
                 (KeyRoute::Held, false)
             }
         }
@@ -199,7 +214,11 @@ impl InputRequests {
     /// Herdr's answer for `origin` named `pane_id`: the request is ready and
     /// what it held is handed back to be written, in order, before anything
     /// else reaches the pane. None when no pending request has this origin.
-    pub(super) fn resolve(&mut self, origin: &InputOrigin, pane_id: &str) -> Option<Vec<Vec<u8>>> {
+    pub(super) fn resolve(
+        &mut self,
+        origin: &InputOrigin,
+        pane_id: &str,
+    ) -> Option<Vec<HeldChunk>> {
         let request = self.requests.iter_mut().find(|request| {
             &request.origin == origin && request.state == InputRequestState::Pending
         })?;
@@ -306,6 +325,16 @@ impl InputRequests {
         )
     }
 
+    /// Makes every held key `by` older, as if typed that much earlier.
+    #[cfg(test)]
+    pub(super) fn age(&mut self, by: Duration) {
+        for request in &mut self.requests {
+            for chunk in &mut request.held {
+                chunk.age(by);
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn origin_of(&self, request_id: &str) -> Option<InputOrigin> {
         self.requests
@@ -337,6 +366,41 @@ impl InputRequests {
     }
 }
 
+/// One key as it was typed, held until its pane can take it.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct HeldChunk {
+    pub(super) typed_at: Instant,
+    pub(super) bytes: Vec<u8>,
+}
+
+impl HeldChunk {
+    /// Makes the key `by` older, as if typed that much earlier.
+    #[cfg(test)]
+    fn age(&mut self, by: Duration) {
+        self.typed_at = self.typed_at.checked_sub(by).unwrap_or(self.typed_at);
+    }
+}
+
+/// The keys a pane can still be given at `now`, in order; those held longer
+/// than `HELD_INPUT_MAX_AGE` are discarded with one diagnostic naming the
+/// pane and their byte count, never their content.
+fn fresh_chunks(pane_id: &str, chunks: Vec<HeldChunk>, now: Instant) -> Vec<HeldChunk> {
+    let (fresh, stale): (Vec<_>, Vec<_>) = chunks
+        .into_iter()
+        .partition(|chunk| now.saturating_duration_since(chunk.typed_at) <= HELD_INPUT_MAX_AGE);
+    let bytes = stale.iter().map(|chunk| chunk.bytes.len()).sum::<usize>();
+    if bytes > 0 {
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal_input",
+            "kind": "terminal.input_discarded",
+            "pane_id": pane_id,
+            "reason": "stale",
+            "bytes": bytes,
+        }));
+    }
+    fresh
+}
+
 fn discard(request: &mut InputRequest, reason: &str) {
     request.held.clear();
     let held = std::mem::take(&mut request.held_bytes);
@@ -353,7 +417,11 @@ fn discard(request: &mut InputRequest, reason: &str) {
 /// What a pane whose control session is not open yet has been sent.
 #[derive(Debug)]
 enum PaneHeld {
-    Holding(Vec<u8>),
+    /// The keys in order, and their byte count.
+    Holding {
+        chunks: Vec<HeldChunk>,
+        bytes: usize,
+    },
     /// The cap was crossed: everything typed until the session opens is
     /// dropped too, so the pane never receives the tail of a lost paste.
     Overflowed,
@@ -366,19 +434,34 @@ pub(super) struct PaneInputHold {
 }
 
 impl PaneInputHold {
-    /// Keeps `bytes` for `pane_id`. Crossing the cap discards everything
-    /// held for the pane together with `bytes`, and everything sent after it
-    /// until the session opens; returns false when `bytes` was dropped.
-    pub(super) fn hold(&mut self, pane_id: &str, bytes: &[u8]) -> bool {
+    /// Keeps `bytes`, typed at `typed_at`, for `pane_id`, first discarding
+    /// held keys already too old to be written, so they never push fresh
+    /// ones over the cap. Crossing the cap discards everything held for the
+    /// pane together with `bytes`, and everything sent after it until the
+    /// session opens; returns false when `bytes` was dropped.
+    pub(super) fn hold(&mut self, pane_id: &str, bytes: &[u8], typed_at: Instant) -> bool {
         let entry = self
             .held
             .entry(pane_id.to_owned())
-            .or_insert_with(|| PaneHeld::Holding(Vec::new()));
-        let PaneHeld::Holding(held) = entry else {
+            .or_insert_with(|| PaneHeld::Holding {
+                chunks: Vec::new(),
+                bytes: 0,
+            });
+        let PaneHeld::Holding {
+            chunks,
+            bytes: held,
+        } = entry
+        else {
             return false;
         };
-        if held.len() + bytes.len() > INPUT_HOLD_LIMIT_BYTES {
-            let dropped = held.len() + bytes.len();
+        if chunks.first().is_some_and(|chunk| {
+            typed_at.saturating_duration_since(chunk.typed_at) > HELD_INPUT_MAX_AGE
+        }) {
+            *chunks = fresh_chunks(pane_id, std::mem::take(chunks), typed_at);
+            *held = chunks.iter().map(|chunk| chunk.bytes.len()).sum();
+        }
+        if *held + bytes.len() > INPUT_HOLD_LIMIT_BYTES {
+            let dropped = *held + bytes.len();
             *entry = PaneHeld::Overflowed;
             crate::diagnostic!(serde_json::json!({
                 "component": "terminal_input",
@@ -389,27 +472,48 @@ impl PaneInputHold {
             }));
             return false;
         }
-        held.extend_from_slice(bytes);
+        *held += bytes.len();
+        chunks.push(HeldChunk {
+            typed_at,
+            bytes: bytes.to_vec(),
+        });
         true
     }
 
-    /// What the pane's open control session writes first.
-    pub(super) fn take(&mut self, pane_id: &str) -> Option<Vec<u8>> {
-        match self.held.remove(pane_id)? {
-            PaneHeld::Holding(bytes) => Some(bytes).filter(|bytes| !bytes.is_empty()),
-            PaneHeld::Overflowed => None,
+    /// What the pane's control session, open at `now`, writes first; keys
+    /// held longer than `HELD_INPUT_MAX_AGE` are discarded instead.
+    pub(super) fn take(&mut self, pane_id: &str, now: Instant) -> Option<Vec<u8>> {
+        let PaneHeld::Holding { chunks, .. } = self.held.remove(pane_id)? else {
+            return None;
+        };
+        let bytes = fresh_chunks(pane_id, chunks, now)
+            .into_iter()
+            .flat_map(|chunk| chunk.bytes)
+            .collect::<Vec<_>>();
+        Some(bytes).filter(|bytes| !bytes.is_empty())
+    }
+
+    /// Makes every held key `by` older, as if typed that much earlier.
+    #[cfg(test)]
+    pub(super) fn age(&mut self, by: Duration) {
+        for held in self.held.values_mut() {
+            if let PaneHeld::Holding { chunks, .. } = held {
+                for chunk in chunks {
+                    chunk.age(by);
+                }
+            }
         }
     }
 
     /// The pane will not get a control session for this input.
     pub(super) fn discard(&mut self, pane_id: &str, reason: &str) {
-        if let Some(PaneHeld::Holding(bytes)) = self.held.remove(pane_id) {
+        if let Some(PaneHeld::Holding { bytes, .. }) = self.held.remove(pane_id) {
             crate::diagnostic!(serde_json::json!({
                 "component": "terminal_input",
                 "kind": "terminal.input_discarded",
                 "pane_id": pane_id,
                 "reason": reason,
-                "bytes": bytes.len(),
+                "bytes": bytes,
             }));
         }
     }
@@ -466,31 +570,36 @@ impl super::Runtime {
     }
 
     /// Herdr's answer for `origin` named `pane_id`: what was typed for the
-    /// request goes to that pane now, ahead of anything typed later.
-    /// Each chunk is written as the key it was, but without moving the
-    /// keyboard: the operator may have gone to another pane since typing.
+    /// request goes to that pane now, ahead of anything typed later, less
+    /// the keys already older than `HELD_INPUT_MAX_AGE`. Each chunk is
+    /// written as the key it was, but without moving the keyboard: the
+    /// operator may have gone to another pane since typing. A pane still
+    /// opening keeps each with the time it was typed, so its age keeps
+    /// counting.
     pub(super) fn resolve_input_request(&mut self, origin: &InputOrigin, pane_id: &str) {
         let Some(held) = self.input_requests.resolve(origin, pane_id) else {
             return;
         };
         self.sync_input_requests();
+        let held = fresh_chunks(pane_id, held, Instant::now());
         if held.is_empty() {
             return;
         }
         crate::diagnostic!(serde_json::json!({
             "component": "terminal_input",
-            "kind": "terminal.input_delivered",
+            "kind": "terminal.input_handed_over",
             "pane_id": pane_id,
             "chunks": held.len(),
-            "bytes": held.iter().map(Vec::len).sum::<usize>(),
+            "bytes": held.iter().map(|chunk| chunk.bytes.len()).sum::<usize>(),
         }));
         for chunk in held {
             self.write_key(
                 super::events::KeyPayload {
                     pane_id: pane_id.to_owned(),
-                    bytes_base64: crate::live::encode_base64(&chunk),
+                    bytes_base64: crate::live::encode_base64(&chunk.bytes),
                 },
                 false,
+                chunk.typed_at,
             );
         }
     }
@@ -506,18 +615,28 @@ impl super::Runtime {
 mod tests {
     use super::*;
 
+    fn now() -> Instant {
+        Instant::now()
+    }
+
+    fn keys(chunks: Vec<HeldChunk>) -> Vec<Vec<u8>> {
+        chunks.into_iter().map(|chunk| chunk.bytes).collect()
+    }
+
     #[test]
     fn keys_wait_for_the_answer_then_follow_the_pane_it_names() {
         let mut requests = InputRequests::default();
         requests.open("r1", InputOrigin::Split("op-1".to_owned()));
-        assert_eq!(requests.route("r1", b"ls"), (KeyRoute::Held, false));
-        assert_eq!(requests.route("r1", b"\r"), (KeyRoute::Held, false));
+        assert_eq!(requests.route("r1", b"ls", now()), (KeyRoute::Held, false));
+        assert_eq!(requests.route("r1", b"\r", now()), (KeyRoute::Held, false));
         assert_eq!(
-            requests.resolve(&InputOrigin::Split("op-1".to_owned()), "w1:p2"),
+            requests
+                .resolve(&InputOrigin::Split("op-1".to_owned()), "w1:p2")
+                .map(keys),
             Some(vec![b"ls".to_vec(), b"\r".to_vec()])
         );
         assert_eq!(
-            requests.route("r1", b"x"),
+            requests.route("r1", b"x", now()),
             (KeyRoute::Pane("w1:p2".to_owned()), false)
         );
     }
@@ -526,10 +645,13 @@ mod tests {
     fn a_failed_creation_drops_held_and_later_keys() {
         let mut requests = InputRequests::default();
         requests.open("r1", InputOrigin::TabCreate(7));
-        requests.route("r1", b"echo hi");
+        requests.route("r1", b"echo hi", now());
         assert!(requests.discard(&InputOrigin::TabCreate(7), "refused"));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
-        assert_eq!(requests.route("r1", b"x"), (KeyRoute::Dropped, false));
+        assert_eq!(
+            requests.route("r1", b"x", now()),
+            (KeyRoute::Dropped, false)
+        );
         assert_eq!(requests.resolve(&InputOrigin::TabCreate(7), "w1:p9"), None);
     }
 
@@ -539,7 +661,10 @@ mod tests {
         assert!(requests.refuse_unopened("r1"));
         assert!(!requests.refuse_unopened("r1"));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
-        assert_eq!(requests.route("r1", b"x"), (KeyRoute::Dropped, false));
+        assert_eq!(
+            requests.route("r1", b"x", now()),
+            (KeyRoute::Dropped, false)
+        );
     }
 
     #[test]
@@ -549,7 +674,10 @@ mod tests {
         requests.open(&long, InputOrigin::TabCreate(1));
         assert!(!requests.refuse_unopened("has space"));
         assert!(requests.snapshot().is_empty());
-        assert_eq!(requests.route(&long, b"x"), (KeyRoute::Dropped, false));
+        assert_eq!(
+            requests.route(&long, b"x", now()),
+            (KeyRoute::Dropped, false)
+        );
     }
 
     #[test]
@@ -558,9 +686,11 @@ mod tests {
         requests.open("r1", InputOrigin::TabCreate(1));
         requests.resolve(&InputOrigin::TabCreate(1), "w1:p2");
         requests.open("r1", InputOrigin::Split("op-9".to_owned()));
-        assert_eq!(requests.route("r1", b"x"), (KeyRoute::Held, false));
+        assert_eq!(requests.route("r1", b"x", now()), (KeyRoute::Held, false));
         assert_eq!(
-            requests.resolve(&InputOrigin::Split("op-9".to_owned()), "w1:p3"),
+            requests
+                .resolve(&InputOrigin::Split("op-9".to_owned()), "w1:p3")
+                .map(keys),
             Some(vec![b"x".to_vec()])
         );
     }
@@ -572,13 +702,19 @@ mod tests {
         requests.resolve(&InputOrigin::Split("op".into()), "w1:p2");
         // Answered before any layout carries the pane: still routed.
         assert!(!requests.follow_panes(|_| false, |_| false));
-        assert_eq!(requests.route("r1", b"a").0, KeyRoute::Pane("w1:p2".into()));
+        assert_eq!(
+            requests.route("r1", b"a", now()).0,
+            KeyRoute::Pane("w1:p2".into())
+        );
         // Drawn by Hide alone, then gone when the drawing expires: Herdr has
         // not laid it out, so its keys still wait for it.
         requests.mark_laid_out(|_| false);
         assert!(!requests.follow_panes(|pane| pane == "w1:p2", |_| false));
         assert!(!requests.follow_panes(|_| false, |_| false));
-        assert_eq!(requests.route("r1", b"a").0, KeyRoute::Pane("w1:p2".into()));
+        assert_eq!(
+            requests.route("r1", b"a", now()).0,
+            KeyRoute::Pane("w1:p2".into())
+        );
 
         requests.mark_laid_out(|pane| pane == "w1:p2");
         assert!(!requests.follow_panes(|pane| pane == "w1:p2", |_| false));
@@ -586,7 +722,7 @@ mod tests {
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
         // Herdr gives the id to another pane: the request does not follow it.
         requests.follow_panes(|pane| pane == "w1:p2", |_| false);
-        assert_eq!(requests.route("r1", b"b").0, KeyRoute::Dropped);
+        assert_eq!(requests.route("r1", b"b", now()).0, KeyRoute::Dropped);
     }
 
     #[test]
@@ -595,14 +731,14 @@ mod tests {
         requests.open("r1", InputOrigin::Split("op".into()));
         requests.resolve(&InputOrigin::Split("op".into()), "w1:p2");
         assert!(requests.follow_panes(|_| true, |pane| pane == "w1:p2"));
-        assert_eq!(requests.route("r1", b"a").0, KeyRoute::Dropped);
+        assert_eq!(requests.route("r1", b"a", now()).0, KeyRoute::Dropped);
     }
 
     #[test]
     fn an_unknown_request_never_reaches_a_pane() {
         let mut requests = InputRequests::default();
         assert_eq!(
-            requests.route("nobody", b"rm -rf"),
+            requests.route("nobody", b"rm -rf", now()),
             (KeyRoute::Dropped, false)
         );
     }
@@ -612,8 +748,8 @@ mod tests {
         let mut requests = InputRequests::default();
         requests.open("r1", InputOrigin::TabCreate(1));
         let chunk = vec![b'a'; INPUT_HOLD_LIMIT_BYTES];
-        assert_eq!(requests.route("r1", &chunk), (KeyRoute::Held, false));
-        assert_eq!(requests.route("r1", b"b"), (KeyRoute::Dropped, true));
+        assert_eq!(requests.route("r1", &chunk, now()), (KeyRoute::Held, false));
+        assert_eq!(requests.route("r1", b"b", now()), (KeyRoute::Dropped, true));
         assert_eq!(requests.state_of("r1"), Some(InputRequestState::Discarded));
     }
 
@@ -625,23 +761,98 @@ mod tests {
         }
         assert_eq!(requests.snapshot().len(), INPUT_REQUEST_LIMIT);
         assert_eq!(requests.state_of("r0"), None);
-        assert_eq!(requests.route("r0", b"x"), (KeyRoute::Dropped, false));
+        assert_eq!(
+            requests.route("r0", b"x", now()),
+            (KeyRoute::Dropped, false)
+        );
     }
 
     #[test]
     fn an_attaching_pane_keeps_input_in_order_up_to_the_cap() {
         let mut hold = PaneInputHold::default();
-        assert!(hold.hold("w1:p1", b"ab"));
-        assert!(hold.hold("w1:p1", b"c"));
-        assert_eq!(hold.take("w1:p1"), Some(b"abc".to_vec()));
-        assert_eq!(hold.take("w1:p1"), None);
-        assert!(hold.hold("w1:p1", &vec![b'a'; INPUT_HOLD_LIMIT_BYTES]));
-        assert!(!hold.hold("w1:p1", b"z"));
+        assert!(hold.hold("w1:p1", b"ab", now()));
+        assert!(hold.hold("w1:p1", b"c", now()));
+        assert_eq!(hold.take("w1:p1", now()), Some(b"abc".to_vec()));
+        assert_eq!(hold.take("w1:p1", now()), None);
+        assert!(hold.hold("w1:p1", &vec![b'a'; INPUT_HOLD_LIMIT_BYTES], now()));
+        assert!(!hold.hold("w1:p1", b"z", now()));
         assert!(
-            !hold.hold("w1:p1", b"tail"),
+            !hold.hold("w1:p1", b"tail", now()),
             "the rest of a lost paste must not reach the pane"
         );
-        assert_eq!(hold.take("w1:p1"), None);
-        assert!(hold.hold("w1:p1", b"next"), "an opened session starts over");
+        assert_eq!(hold.take("w1:p1", now()), None);
+        assert!(
+            hold.hold("w1:p1", b"next", now()),
+            "an opened session starts over"
+        );
+    }
+
+    #[test]
+    fn an_attaching_pane_gets_keys_held_up_to_the_age_limit_and_not_older_ones() {
+        let typed = Instant::now();
+        let mut hold = PaneInputHold::default();
+        assert!(hold.hold("w1:p1", b"ls", typed));
+        assert!(hold.hold("w1:p1", b"\r", typed + Duration::from_secs(2)));
+        assert_eq!(
+            hold.take("w1:p1", typed + HELD_INPUT_MAX_AGE),
+            Some(b"ls\r".to_vec())
+        );
+
+        assert!(hold.hold("w1:p1", b"make deploy", typed));
+        assert!(hold.hold("w1:p1", b"ls", typed + Duration::from_secs(2)));
+        let (written, records) =
+            crate::diagnostics::capture(|| hold.take("w1:p1", typed + Duration::from_secs(4)));
+        assert_eq!(written, Some(b"ls".to_vec()));
+        let stale = records
+            .iter()
+            .filter(|record| record["reason"] == "stale")
+            .collect::<Vec<_>>();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0]["pane_id"], "w1:p1");
+        assert_eq!(stale[0]["bytes"], "make deploy".len());
+        assert!(
+            !stale[0].to_string().contains("make deploy"),
+            "the record never carries what was typed"
+        );
+
+        // Stale keys leave before they can push fresh ones over the cap.
+        let half = vec![b'a'; INPUT_HOLD_LIMIT_BYTES / 2 + 1];
+        assert!(hold.hold("w1:p1", &half, typed));
+        assert!(hold.hold("w1:p1", &half, typed + Duration::from_secs(4)));
+        assert_eq!(
+            hold.take("w1:p1", typed + Duration::from_secs(4)),
+            Some(half.clone())
+        );
+
+        assert!(hold.hold("w1:p1", b"old", typed));
+        assert_eq!(
+            hold.take(
+                "w1:p1",
+                typed + HELD_INPUT_MAX_AGE + Duration::from_millis(1)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_request_hands_back_each_key_with_when_it_was_typed() {
+        let typed = Instant::now();
+        let mut requests = InputRequests::default();
+        requests.open("r1", InputOrigin::TabCreate(1));
+        requests.route("r1", b"a", typed);
+        requests.route("r1", b"b", typed + Duration::from_secs(1));
+        assert_eq!(
+            requests.resolve(&InputOrigin::TabCreate(1), "w1:p2"),
+            Some(vec![
+                HeldChunk {
+                    typed_at: typed,
+                    bytes: b"a".to_vec(),
+                },
+                HeldChunk {
+                    typed_at: typed + Duration::from_secs(1),
+                    bytes: b"b".to_vec(),
+                },
+            ])
+        );
     }
 }

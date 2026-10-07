@@ -2132,9 +2132,15 @@ impl Runtime {
             }
         }
     }
-    /// Routes key bytes only to an official controller. The actual pipe write
-    /// runs on the session writer thread, outside the runtime mutex.
-    pub(super) fn write_terminal_control(&mut self, pane_id: &str, bytes_base64: &str) {
+    /// Routes key bytes, typed at `typed_at`, only to an official controller.
+    /// The actual pipe write runs on the session writer thread, outside the
+    /// runtime mutex.
+    pub(super) fn write_terminal_control(
+        &mut self,
+        pane_id: &str,
+        bytes_base64: &str,
+        typed_at: Instant,
+    ) {
         if self.close_operation_holds_pane(pane_id) {
             self.set_error(
                 "terminal.close_pending",
@@ -2168,7 +2174,7 @@ impl Runtime {
             // A pane whose control session is still opening keeps its input
             // until the session can take it (PRD instant-pane-topology D-11).
             None if self.terminal_session_opening(pane_id) => {
-                self.pane_input_hold.hold(pane_id, &bytes);
+                self.pane_input_hold.hold(pane_id, &bytes, typed_at);
             }
             None => {
                 self.set_error(
@@ -2181,9 +2187,10 @@ impl Runtime {
     }
 
     /// Input typed while the session was opening goes first, in the order it
-    /// was typed; an observer cannot take it.
+    /// was typed, unless it is older than the hold's age limit; an observer
+    /// cannot take it.
     fn write_held_input(&mut self, pane_id: &str, session: &TerminalSession) {
-        let Some(held) = self.pane_input_hold.take(pane_id) else {
+        let Some(held) = self.pane_input_hold.take(pane_id, Instant::now()) else {
             return;
         };
         if session.mode == TerminalSessionMode::Control {
