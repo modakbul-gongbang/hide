@@ -153,11 +153,38 @@ fn run_gh(
 mod tests {
     use std::path::PathBuf;
 
-    use hide_node_link::gh::{ISSUE_DETAIL_FIELDS, PR_FEEDBACK_FIELDS};
+    use hide_node_link::gh::{
+        ISSUE_DETAIL_FIELDS, ISSUE_LIST_FIELDS, ISSUE_LIST_LIMIT, ISSUE_LIST_SEARCH,
+        OPEN_CHECK_FIELDS, PR_FEEDBACK_FIELDS, PULL_REQUEST_LIMIT,
+    };
 
     use super::*;
 
     const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
+
+    /// The two list reads the core makes, as the node allows them.
+    const PR_LIST: [&str; 8] = [
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        PULL_REQUEST_LIMIT,
+        "--json",
+        OPEN_CHECK_FIELDS,
+    ];
+    const ISSUE_LIST: [&str; 10] = [
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        ISSUE_LIST_LIMIT,
+        "--search",
+        ISSUE_LIST_SEARCH,
+        "--json",
+        ISSUE_LIST_FIELDS,
+    ];
 
     #[test]
     fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
@@ -174,7 +201,7 @@ esac"#,
             run_gh(
                 &fixture.binary,
                 Some(&fixture.root),
-                &["pr", "list"],
+                &PR_LIST,
                 FIXTURE_DEADLINE
             )
             .unwrap(),
@@ -184,7 +211,7 @@ esac"#,
             run_gh(
                 &fixture.binary,
                 Some(&fixture.root),
-                &["issue", "list"],
+                &ISSUE_LIST,
                 FIXTURE_DEADLINE
             )
             .unwrap(),
@@ -234,7 +261,7 @@ esac"#,
             run_gh(
                 &fixture.root.join("missing"),
                 None,
-                &["pr", "list"],
+                &PR_LIST,
                 FIXTURE_DEADLINE
             )
             .unwrap_err()
@@ -252,8 +279,7 @@ esac"#,
             ),
         ] {
             let fixture = GhFixture::new(&format!("printf '%s' '{stderr}' >&2; exit 1"));
-            let failure =
-                run_gh(&fixture.binary, None, &["pr", "list"], FIXTURE_DEADLINE).unwrap_err();
+            let failure = run_gh(&fixture.binary, None, &PR_LIST, FIXTURE_DEADLINE).unwrap_err();
             assert_eq!(failure.category, expected);
             assert_eq!(failure.reason, stderr);
         }
@@ -268,7 +294,7 @@ esac"#,
         let failure = run_gh(
             &fixture.binary,
             Some(&fixture.root),
-            &["pr", "list"],
+            &PR_LIST,
             Duration::from_secs(3),
         )
         .unwrap_err();
