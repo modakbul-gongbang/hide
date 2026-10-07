@@ -6,9 +6,11 @@ code under `herdr-core/src` reaches one directly.
 
 Test code is exempt: test-only files, a module file its parent declares
 behind `#[cfg(test)]`, and every item behind `#[cfg(test)]`. The core's own
-stores are exempt by name below, each with the reason it is the core's and
+stores are excused by name below, each with the reason it is the core's and
 not a machine fact, and so is what a later layer of the PRD moves out, named
-with that layer; nothing else may join either list without a reason.
+with that layer; nothing else may join either list without a reason. Each
+excused file carries the number of machine touches it has, so a new one in
+an excused file fails like one anywhere else.
 """
 import pathlib
 import re
@@ -37,23 +39,43 @@ BANNED = [
     (r"\blibc::", "calls the operating system; that is a node's"),
     (r"\bUnixStream\b|\bTcpStream\b|\bLocalSocketConnector\b",
      "opens a socket; a node holds the Herdr connection"),
+    (r"\bstd::net\b|\bUnixListener\b|\bTcpListener\b",
+     "listens on the network; that is a node's"),
+    (r"\btokio::(fs|process|net)\b", "reaches the machine through tokio; ask a node"),
+    (r"\.(try_exists|is_symlink)\(\)", "reads the file system; ask a node"),
+    (r"\b(std::)?env::(current_exe|current_dir|set_current_dir|home_dir)\b",
+     "reads where this process runs; that is a node's"),
+    (r"\bhide_ai::settings::(load|save)\b",
+     "reads or writes the AI choice file; keep it in one of the core's stores"),
 ]
 
 # The core's own stores and their plumbing: state the core owns and moves
 # with it (PRD core-host-node D-10), never a fact of the machine it runs on.
+# Each entry is the number of machine touches the file has and why.
 STORES = {
-    "herdr-core/src/persistence.rs": "the core's UI state file",
-    "herdr-core/src/workspace_views.rs": "the core's saved View layouts",
-    "herdr-core/src/delivery/ledger.rs": "the core's delivery ledger",
-    "herdr-core/src/labels/store.rs": "the core's agent label store",
-    "herdr-core/src/labels/import.rs": "reads the core's own earlier label store once",
-    "herdr-core/src/links/store.rs": "the core's link graph store",
-    "herdr-core/src/local_issues.rs": "the core's local issue store",
-    "herdr-core/src/github_store.rs": "the core's saved GitHub answers",
-    "herdr-core/src/diagnostics.rs": "the core's own log file",
+    "herdr-core/src/persistence.rs": (7, "the core's UI state file"),
+    "herdr-core/src/workspace_views.rs": (6, "the core's saved View layouts"),
+    "herdr-core/src/delivery/ledger.rs": (19, "the core's delivery ledger"),
+    "herdr-core/src/labels/store.rs": (3, "the core's agent label store"),
+    "herdr-core/src/labels/import.rs": (1, "reads the core's own earlier label store once"),
+    "herdr-core/src/links/store.rs": (6, "the core's link graph store"),
+    "herdr-core/src/local_issues.rs": (5, "the core's local issue store"),
+    "herdr-core/src/github_store.rs": (4, "the core's saved GitHub answers"),
+    "herdr-core/src/diagnostics.rs": (7, "the core's own log file"),
+    "herdr-core/src/labels/mod.rs": (
+        1,
+        "reads the operator's AI choice, a core store beside the core's "
+        "state file (`hide_ai::settings`)",
+    ),
+    "herdr-core/src/session_sync/coordinator.rs": (
+        2,
+        "reads and writes the operator's AI choice, a core store beside the "
+        "core's state file (`hide_ai::settings`)",
+    ),
     "herdr-core/src/node_migration.rs": (
+        15,
         "converts the core's own stores to node ids once, where they were "
-        "written, before any link exists (PRD core-host-node D-10)"
+        "written, before any link exists (PRD core-host-node D-10)",
     ),
 }
 
@@ -61,16 +83,17 @@ STORES = {
 # goes in the change that moves it; the check fails once a listed file no
 # longer reaches a machine, so a stale entry cannot linger.
 LATER_LAYERS = {
-    "herdr-core/src/remote.rs": "2b: the SSH transport moves into hide-node",
-    "herdr-core/src/remote/host.rs": "2b: the SSH transport moves into hide-node",
-    "herdr-core/src/remote/retirement.rs": "2b: the SSH transport moves into hide-node",
-    "herdr-core/src/remote/attachments.rs": "2b: the SSH transport moves into hide-node",
-    "herdr-core/src/ssh_hosts.rs": "2b: reading ~/.ssh/config is the node's with the transport",
-    "herdr-core/src/live.rs": "3: the terminal attach child moves to the node's terminal path",
-    "herdr-core/src/terminal_attachments.rs": "3: pasted attachments move with the terminal path",
+    "herdr-core/src/remote.rs": (14, "2b: the SSH transport moves into hide-node"),
+    "herdr-core/src/remote/host.rs": (11, "2b: the SSH transport moves into hide-node"),
+    "herdr-core/src/remote/retirement.rs": (3, "2b: the SSH transport moves into hide-node"),
+    "herdr-core/src/remote/attachments.rs": (1, "2b: the SSH transport moves into hide-node"),
+    "herdr-core/src/ssh_hosts.rs": (7, "2b: reading ~/.ssh/config is the node's with the transport"),
+    "herdr-core/src/live.rs": (3, "3: the terminal attach child moves to the node's terminal path"),
+    "herdr-core/src/terminal_attachments.rs": (2, "3: pasted attachments move with the terminal path"),
     "herdr-core/src/labels/generator.rs": (
+        6,
         "4: the one-generator lock is keyed by the Herdr server it labels, "
-        "which a node-role hided answers for its own Herdr"
+        "which a node-role hided answers for its own Herdr",
     ),
 }
 
@@ -169,20 +192,27 @@ def findings(path: pathlib.Path) -> list:
 
 def main() -> int:
     failures = []
-    excused = {**STORES, **LATER_LAYERS, **FIXTURES}
-    for listed in sorted(excused):
+    excused = {**STORES, **LATER_LAYERS}
+    for listed in sorted({**excused, **FIXTURES}):
         if not (ROOT / listed).exists():
             failures.append(f"{listed}: listed as excused but no longer exists; remove the entry")
     tests = test_modules()
     for path in sorted(CORE.rglob("*.rs")):
         relative = path.relative_to(ROOT).as_posix()
-        if test_only(path) or relative in tests:
+        if test_only(path) or relative in tests or relative in FIXTURES:
             continue
         found = findings(path)
         if relative in excused:
+            allowed, reason = excused[relative]
             if not found:
                 failures.append(
-                    f"{relative}: listed as excused ({excused[relative]}) but reaches no machine; remove the entry"
+                    f"{relative}: listed as excused ({reason}) but reaches no machine; remove the entry"
+                )
+            elif len(found) != allowed:
+                failures.append(
+                    f"{relative}: listed with {allowed} machine touch(es) ({reason}) but has "
+                    f"{len(found)}; move a new one to a node, or change the count with its reason\n"
+                    + "\n".join(found)
                 )
             continue
         failures.extend(found)

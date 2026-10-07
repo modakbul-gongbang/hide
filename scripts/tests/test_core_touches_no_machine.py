@@ -64,6 +64,17 @@ class CoreTouchesNoMachine(unittest.TestCase):
         self.assertEqual(check.test_modules(),
                          {'herdr-core/src/fake.rs', 'herdr-core/src/fixture.rs'})
 
+    def test_a_new_touch_in_an_excused_store_fails(self):
+        root, check = self.tree({'store.rs': 'fn save() { std::fs::write("s", b"x"); }\n'})
+        check.STORES = {'herdr-core/src/store.rs': (1, 'the core state file')}
+        check.LATER_LAYERS = {}
+        check.FIXTURES = {}
+        self.assertEqual(check.main(), 0)
+        (root / 'herdr-core/src/store.rs').write_text(
+            'fn save() { std::fs::write("s", b"x"); }\n'
+            'fn peek() -> bool { std::path::Path::new("/etc").try_exists().is_ok() }\n')
+        self.assertEqual(check.main(), 1)
+
     def test_the_repository_passes(self):
         check = load_check(ROOT)
         self.assertEqual(check.main(), 0)
