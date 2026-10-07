@@ -86,7 +86,7 @@ The guard keeps no state, runs no timer or worker, takes no lock of the runtime,
 The retained data is the refusal log, capped at 256 KiB with one rotation, and the throttled diagnostic store `delivery` already caps; crossing a cap rotates or suppresses, and never refuses a call.
 A defect, a missing `hide` or a daemon that does not answer lets the shell call run, so the worst the guard can add to an ordinary call is its own bounded wait, never a refusal.
 
-Measure it at the command boundary: the installed command line run as the runtime runs it (`sh -c`, the payload on stdin), wall time per call from the caller's side, against a process-spawn baseline, with the first ten calls discarded as warm-up.
+Measure it at the command boundary: the installed command line run as the runtime runs it (`sh -c`, the payload on stdin), wall time per call from the caller's side, against a process-spawn baseline, with the first calls discarded as warm-up (ten, and five for the real `hide` row).
 Report p50, p95 and the load average before and after, and report the idle and driven (launch) paths separately.
 The harness is a small script that times the installed command through `sh -c` with the payload on stdin, kept in the run directory that introduced the guard; a release `hide-agent-hooks` on an Apple silicon Mac gave the following, with the machine's load average about 4, so these are not idle-machine floors:
 

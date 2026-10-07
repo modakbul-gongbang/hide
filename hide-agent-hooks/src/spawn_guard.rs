@@ -105,9 +105,18 @@ pub struct Launch {
 /// Herdr server, session or machine is not aimed at it, and the `hide agent
 /// spawn` it would be sent to starts a child in this pane's Herdr instead.
 pub fn find_launch(command: &str, env: &dyn Fn(&str) -> Option<String>) -> Option<Launch> {
-    simple_commands(command)
-        .iter()
-        .find_map(|words| launch_of(words, env))
+    // An earlier command of the same call may aim every later `herdr` elsewhere:
+    // `export HERDR_SOCKET_PATH=...; herdr ...` is how a verification run's
+    // isolated server is reached. `source` of a script cannot be read, so that
+    // form is not recognised.
+    let mut away = false;
+    for words in simple_commands(command) {
+        if let Some(launch) = launch_of(&words, env, away) {
+            return Some(launch);
+        }
+        away |= aims_away(&words, env);
+    }
+    None
 }
 
 /// The shell tool's call, as a runtime's `PreToolUse` payload carries it.
@@ -364,10 +373,19 @@ impl Lexer {
     /// parenthesis; quotes inside it keep their own parentheses out of the count.
     fn parenthesized(&mut self) {
         let mut depth = 0usize;
+        // The heredocs this substitution opened: their bodies are text, so a
+        // quote or a parenthesis in one does not count.
+        let mut heredocs: Vec<(String, bool)> = Vec::new();
         while let Some(c) = self.peek(0) {
             self.at += 1;
             self.word.push(c);
             match c {
+                '<' if self.peek(0) == Some('<') && self.peek(1) != Some('<') => {
+                    if let Some(heredoc) = self.nested_heredoc_start() {
+                        heredocs.push(heredoc);
+                    }
+                }
+                '\n' => self.skip_nested_heredoc_bodies(&mut heredocs),
                 '(' => depth += 1,
                 ')' => {
                     depth -= 1;
@@ -406,6 +424,73 @@ impl Lexer {
             }
         }
         self.unclosed = true;
+    }
+
+    /// After the first `<` of a `<<` inside `$(...)`: copies the operator and
+    /// the delimiter word into the substitution's text and returns the
+    /// delimiter, with whether leading tabs are stripped (`<<-`).
+    fn nested_heredoc_start(&mut self) -> Option<(String, bool)> {
+        self.word.push('<');
+        self.at += 1;
+        let strip = self.peek(0) == Some('-');
+        if strip {
+            self.word.push('-');
+            self.at += 1;
+        }
+        while let Some(c @ (' ' | '\t')) = self.peek(0) {
+            self.word.push(c);
+            self.at += 1;
+        }
+        let mut delimiter = String::new();
+        let quote = self.peek(0).filter(|c| matches!(c, '\'' | '"'));
+        if let Some(quote) = quote {
+            self.word.push(quote);
+            self.at += 1;
+            while let Some(c) = self.peek(0) {
+                self.word.push(c);
+                self.at += 1;
+                if c == quote {
+                    break;
+                }
+                delimiter.push(c);
+            }
+        } else {
+            while let Some(c) = self.peek(0) {
+                if c.is_whitespace() || matches!(c, ')' | ';' | '|' | '&' | '<' | '>') {
+                    break;
+                }
+                self.word.push(c);
+                self.at += 1;
+                delimiter.push(c);
+            }
+        }
+        (!delimiter.is_empty()).then_some((delimiter, strip))
+    }
+
+    /// After a newline inside `$(...)`: copies the body of each heredoc the
+    /// line opened, to its delimiter line, into the substitution's text.
+    fn skip_nested_heredoc_bodies(&mut self, heredocs: &mut Vec<(String, bool)>) {
+        for (end, strip) in std::mem::take(heredocs) {
+            while self.at < self.chars.len() {
+                let start = self.at;
+                let stop = self.chars[start..]
+                    .iter()
+                    .position(|c| *c == '\n')
+                    .map_or(self.chars.len(), |offset| start + offset);
+                let next = (stop + 1).min(self.chars.len());
+                let line: String = self.chars[start..stop].iter().collect();
+                self.word.extend(self.chars[start..next].iter());
+                self.at = next;
+                let line = if strip {
+                    line.trim_start_matches('\t')
+                } else {
+                    line.as_str()
+                };
+                if line == end {
+                    break;
+                }
+            }
+        }
     }
 
     fn comment(&mut self) {
@@ -505,23 +590,13 @@ fn is_assignment(word: &str) -> bool {
 /// Words a shell puts before a command without changing which command runs:
 /// the keywords that open a compound command's body, and the wrappers that
 /// run the next word as it is.
-fn is_prefix(word: &str) -> bool {
-    matches!(
-        word,
-        "if" | "then"
-            | "elif"
-            | "else"
-            | "while"
-            | "until"
-            | "do"
-            | "{"
-            | "!"
-            | "time"
-            | "exec"
-            | "command"
-            | "nohup"
-            | "env"
-    )
+fn is_prefix(word: &str, compound: bool) -> bool {
+    matches!(word, "time" | "exec" | "command" | "nohup" | "env")
+        || (compound
+            && matches!(
+                word,
+                "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "!"
+            ))
 }
 
 /// The environment variables that choose which Herdr a `herdr` call talks to.
@@ -534,6 +609,7 @@ const TARGET_VARIABLES: [&str; 2] = ["HERDR_SOCKET_PATH", "HERDR_SESSION"];
 fn command_words<'a>(
     words: &'a [String],
     env: &dyn Fn(&str) -> Option<String>,
+    compound: bool,
 ) -> (&'a [String], bool) {
     let mut foreign = false;
     let mut at = 0;
@@ -544,7 +620,7 @@ fn command_words<'a>(
             if TARGET_VARIABLES.contains(&name) && env(name).as_deref() != Some(value) {
                 foreign = true;
             }
-        } else if !is_prefix(word) {
+        } else if !is_prefix(word, compound) {
             break;
         }
         at += 1;
@@ -568,10 +644,33 @@ fn kind_of(word: &str) -> Option<&'static str> {
     AGENT_KINDS.into_iter().find(|kind| *kind == name)
 }
 
-fn launch_of(words: &[String], env: &dyn Fn(&str) -> Option<String>) -> Option<Launch> {
-    let (words, foreign) = command_words(words, env);
+/// Whether a command that is not itself a `herdr` call changes which Herdr the
+/// ones after it talk to: a bare assignment, `export`, `declare` or `typeset` of
+/// a target variable to something other than the pane's own value, or an
+/// `unset` of one.
+fn aims_away(words: &[String], env: &dyn Fn(&str) -> Option<String>) -> bool {
+    let (rest, assigned_away) = command_words(words, env, true);
+    let Some((first, arguments)) = rest.split_first() else {
+        return assigned_away;
+    };
+    let changes = |word: &String| {
+        word.split_once('=').is_some_and(|(name, value)| {
+            TARGET_VARIABLES.contains(&name) && env(name).as_deref() != Some(value)
+        })
+    };
+    match first.as_str() {
+        "export" | "declare" | "typeset" => arguments.iter().any(changes),
+        "unset" => arguments
+            .iter()
+            .any(|word| TARGET_VARIABLES.contains(&word.as_str())),
+        _ => false,
+    }
+}
+
+fn launch_of(words: &[String], env: &dyn Fn(&str) -> Option<String>, away: bool) -> Option<Launch> {
+    let (words, foreign) = command_words(words, env, true);
     let (first, mut rest) = words.split_first()?;
-    if foreign || !is_herdr(first) {
+    if foreign || away || !is_herdr(first) {
         return None;
     }
     // Herdr's own options before the subcommand; naming a session or a machine
@@ -650,7 +749,10 @@ fn pane_text(shape: Shape, words: &[String]) -> Option<Launch> {
         [line] => simple_commands(line).into_iter().next()?,
         several => several.to_vec(),
     };
-    let (command, _) = command_words(&command, &|_| None);
+    // Text typed into a pane is not a compound command, so only the wrappers
+    // and assignments before its first word are skipped: `if claude is idle`
+    // is a sentence.
+    let (command, _) = command_words(&command, &|_| None, false);
     let (first, args) = command.split_first()?;
     Some(Launch {
         shape,
@@ -855,7 +957,7 @@ fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     file.flush()
 }
 
-/// The daemon could not be asked, so the call ran. One diagnostic per cause
+/// The daemon could not be asked, so the call ran. One diagnostic per window
 /// per ten minutes, to the log file only (PRD B6; principle 10: nothing here is
 /// something the operator or the agent can act on).
 pub fn unreachable(home: &Path, runtime: &str, cause: &'static str) {
@@ -1007,6 +1109,7 @@ mod tests {
             "herdr pane run w1:p2 'cd x && claude'",
             "herdr pane run w1:p2",
             "herdr pane send-text w1:p2 'hello'",
+            "herdr pane send-text w1:p2 'if claude is idle, wait'",
             "herdr agent list",
             "herdr agent prompt claude-1 hello",
             "herdr agent start --help",
@@ -1047,8 +1150,21 @@ mod tests {
             "HERDR_SOCKET_PATH=/tmp/qa/herdr.sock HERDR_BIN_PATH=/x/herdr herdr agent start qa --kind claude --pane w1:p1",
             "env HERDR_SOCKET_PATH=/tmp/qa.sock herdr agent start a --kind claude --pane p",
             "HERDR_SESSION=qa herdr pane run p claude",
+            "export HERDR_SOCKET_PATH=/tmp/qa.sock; herdr agent start qa --kind claude --pane w1:p1",
+            "HERDR_SOCKET_PATH=/tmp/qa.sock; herdr agent start qa --kind claude --pane p",
+            "export HERDR_SESSION=qa && herdr pane run p claude",
+            "export A=1 HERDR_SOCKET_PATH=/tmp/qa.sock && cd x && herdr agent start a --kind claude --pane p",
+            "unset HERDR_SOCKET_PATH; herdr agent start a --kind claude --pane p",
         ] {
             none(command);
+        }
+        // Other variables, and the pane's own socket, do not aim it away.
+        for command in [
+            "export FOO=1; herdr agent start a --kind claude --pane p",
+            "export HERDR_SOCKET_PATH=/run/own.sock; herdr agent start a --kind claude --pane p",
+            "FOO=1; herdr agent start a --kind claude --pane p",
+        ] {
+            assert_eq!(found(command).kind, "claude", "{command}");
         }
         // The pane's own server named explicitly is still the pane's Herdr.
         assert_eq!(
@@ -1078,6 +1194,42 @@ mod tests {
         ] {
             none(command);
         }
+    }
+
+    #[test]
+    fn a_heredoc_inside_a_substitution_is_text_for_the_launch_before_and_after_it() {
+        // The prompt of a launch passed as a heredoc: an apostrophe or a quote
+        // in its body is not a quote of the command.
+        let launch = found(
+            "herdr agent start reviewer --kind claude --pane p -- \"$(cat <<'EOF'\nCheck the user's change\nEOF\n)\"",
+        );
+        assert_eq!(launch.kind, "claude");
+        assert_eq!(launch.args.len(), 1, "{:?}", launch.args);
+        assert!(launch.args[0].contains("user's change"));
+        // An odd double quote and an early parenthesis in the body, too.
+        let launch = found(
+            "herdr agent start a --kind claude --pane p -- \"$(cat <<'EOF'\nSteps: 1) open the 5\" screen\nEOF\n)\"",
+        );
+        assert_eq!(launch.kind, "claude");
+        // A launch after a commit whose message is such a heredoc.
+        assert_eq!(
+            found("git commit -m \"$(cat <<'EOF'\nIt's done\nEOF\n)\" && herdr agent start a --kind claude --pane p")
+                .kind,
+            "claude"
+        );
+        // A tab-stripped heredoc and a bare delimiter.
+        assert_eq!(
+            found(
+                "herdr agent start a --kind codex --pane p -- \"$(cat <<-END\n\tit's\n\tEND\n)\""
+            )
+            .kind,
+            "codex"
+        );
+        // A here-string is not a heredoc.
+        assert_eq!(
+            found("herdr agent start a --kind codex --pane p -- \"$(cat <<< 'x')\"").kind,
+            "codex"
+        );
     }
 
     #[test]
