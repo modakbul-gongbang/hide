@@ -459,6 +459,21 @@ impl Boundary {
             .map(|candidate| candidate.source.path.clone())
     }
 
+    /// The identity `raw`'s registered root was verified by, the one every
+    /// listing of it is checked against, while that root is current.
+    pub fn root_identity(&self, raw: &str) -> Option<hide_node_link::RootIdentity> {
+        let wanted = Path::new(raw);
+        let roots = self.roots_for_read();
+        let root = roots
+            .iter()
+            .find(|candidate| candidate.source.path == wanted)
+            .filter(|candidate| Self::root_is_current(candidate))?;
+        Some(hide_node_link::RootIdentity {
+            device: root.identity.volume(),
+            inode: u64::try_from(root.identity.index()).ok()?,
+        })
+    }
+
     fn root_is_current(root: &RegisteredRoot) -> bool {
         let Ok(opened) = open_nonblocking(&root.source.path, true) else {
             return false;

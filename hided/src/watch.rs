@@ -19,11 +19,18 @@
 //! The resource is bounded on purpose (engineering 14 and 15): at most
 //! `WATCH_CAP` folders are stamped per poll, one request per poll carries
 //! every folder, the next poll does not start until the last has answered,
-//! and each watcher is one task that ends with the daemon. The same cap is
-//! why the web's own listing cache holds the same number: the two sides agree
-//! on which folders are live without a second protocol. The root is opened
-//! once per target and stamped by that identity, so a root replaced after it
-//! was opened is refused rather than followed.
+//! and each watcher is one task that ends with the daemon; a node that fails
+//! is asked again at the linked interval, not the in-process one. The same
+//! cap is why the web's own listing cache holds the same number: the two
+//! sides agree on which folders are live without a second protocol.
+//!
+//! The root is stamped by one identity, so a root replaced after it was
+//! pinned is refused rather than followed. This machine's root is pinned by
+//! the identity the boundary verified when the checkout was registered, the
+//! one every listing of it is checked against, so the watcher never opens the
+//! path on its own and cannot watch a folder the Explorer would refuse to
+//! list. A device's root is pinned when its node first opens it, under that
+//! node's own confinement.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,7 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use hide_node_link::protocol::{Call, RootOpened, RootRef};
-use hide_node_link::{NodeLink, RootIdentity, call_as};
+use hide_node_link::{ErrorCode, LinkError, NodeLink, RootIdentity, call_as};
 use serde_json::Value;
 use tokio::sync::{Notify, broadcast};
 
@@ -76,12 +83,14 @@ pub fn watched_folders(root: &str, expanded: &[String]) -> Vec<PathBuf> {
 }
 
 /// The folders to stamp on one node: the checkout root and its watched
-/// folders as absolute paths on that node, root first.
+/// folders as absolute paths on that node, root first, and the identity the
+/// root is stamped by when it is already known.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Target {
     pub node: String,
     pub root: String,
     pub folders: Vec<String>,
+    pub pinned: Option<RootIdentity>,
 }
 
 impl Target {
@@ -95,6 +104,15 @@ impl Target {
             node: node.to_owned(),
             root,
             folders,
+            pinned: None,
+        }
+    }
+
+    /// The same target stamped by `identity`, the root's verified identity.
+    pub fn pinned_by(self, identity: RootIdentity) -> Self {
+        Self {
+            pinned: Some(identity),
+            ..self
         }
     }
 }
@@ -257,18 +275,24 @@ struct Watching {
     /// The node and root the stamps belong to, and the root's identity when
     /// it was first opened for them.
     pinned: Option<((String, String), RootIdentity)>,
+    /// The node refused the pinned identity because the root was replaced;
+    /// the next poll opens it again.
+    replaced: bool,
     stamps: Stamps,
     /// Folders whose stamp moved, and when it last moved.
     moving: HashMap<String, Instant>,
 }
 
 impl Watching {
-    /// The root identity to stamp `target` by, when it is the one pinned.
+    /// The root identity to stamp `target` by: the one it carries, else the
+    /// one pinned for its node and root.
     fn pin_for(&self, target: &Target) -> Option<RootIdentity> {
-        self.pinned
-            .as_ref()
-            .filter(|(key, _)| key.0 == target.node && key.1 == target.root)
-            .map(|(_, identity)| *identity)
+        target.pinned.or_else(|| {
+            self.pinned
+                .as_ref()
+                .filter(|(key, _)| !self.replaced && key.0 == target.node && key.1 == target.root)
+                .map(|(_, identity)| *identity)
+        })
     }
 
     /// Takes one stamping of `target` and answers the folders to announce. A
@@ -276,7 +300,9 @@ impl Watching {
     /// `coalesce`, at once when that is zero; a folder watched for the first
     /// time in the same checkout counts as moved, because the page listed it
     /// when it was expanded, which may be before its first stamp. A new
-    /// checkout starts over and announces nothing.
+    /// checkout starts over and announces nothing; the same checkout stamped
+    /// by another root identity is a replaced root opened again, so every
+    /// folder is announced for the page to re-read.
     fn observe(
         &mut self,
         target: &Target,
@@ -286,11 +312,20 @@ impl Watching {
         coalesce: Duration,
     ) -> Vec<String> {
         let key = (target.node.clone(), target.root.clone());
-        if self.pinned.as_ref().map(|(pinned, _)| pinned) != Some(&key) {
-            self.pinned = Some((key, identity));
-            self.stamps = now;
-            self.moving.clear();
-            return Vec::new();
+        self.replaced = false;
+        match &self.pinned {
+            Some((pinned, before)) if *pinned == key && *before == identity => {}
+            previous => {
+                let mut announced = Vec::new();
+                if previous.as_ref().is_some_and(|(pinned, _)| *pinned == key) {
+                    announced = now.keys().cloned().collect();
+                    announced.sort();
+                }
+                self.pinned = Some((key, identity));
+                self.stamps = now;
+                self.moving.clear();
+                return announced;
+            }
         }
         let moved = changed_folders(&self.stamps, &now);
         self.stamps = now;
@@ -350,7 +385,7 @@ fn stamp_on(
     root: &str,
     pinned: Option<RootIdentity>,
     folders: &[String],
-) -> Result<(RootIdentity, Vec<Option<String>>), String> {
+) -> Result<(RootIdentity, Vec<Option<String>>), LinkError> {
     let identity = match pinned {
         Some(identity) => identity,
         None => {
@@ -360,8 +395,7 @@ fn stamp_on(
                     root: root.to_owned(),
                 },
                 STAMPS_TIMEOUT,
-            )
-            .map_err(|error| error.to_string())?
+            )?
             .identity
         }
     };
@@ -375,14 +409,13 @@ fn stamp_on(
             folders: folders.to_vec(),
         },
         STAMPS_TIMEOUT,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     if stamps.len() != folders.len() {
-        return Err(format!(
+        return Err(LinkError::Unknown(format!(
             "the node stamped {} folders of {}",
             stamps.len(),
             folders.len()
-        ));
+        )));
     }
     Ok((identity, stamps))
 }
@@ -397,6 +430,9 @@ async fn run(
     let mut watching = Watching::default();
     let mut poll = IN_PROCESS_POLL;
     let mut failing: Option<String> = None;
+    // The last node asked and its link, kept while it answers so a poll does
+    // not cross to the core's owner thread to find it again.
+    let mut linked: Option<(String, Arc<dyn NodeLink>)> = None;
     loop {
         tokio::select! {
             _ = tokio::time::sleep(poll) => {}
@@ -404,6 +440,8 @@ async fn run(
         }
         let Some(current) = target.lock().expect("watch target").clone() else {
             watching = Watching::default();
+            failing = None;
+            linked = None;
             continue;
         };
         let pairs: Vec<(String, String)> = current
@@ -416,26 +454,57 @@ async fn run(
         let relatives: Vec<String> = pairs.iter().map(|(_, relative)| relative.clone()).collect();
         let asked = current.clone();
         let pinned = watching.pin_for(&current);
+        let known = linked
+            .as_ref()
+            .filter(|(node, _)| *node == current.node)
+            .map(|(_, link)| Arc::clone(link));
         let core = Arc::clone(&core);
         let answer = tokio::task::spawn_blocking(move || {
-            let link = core.node_link(&asked.node)?;
-            let (identity, stamps) = stamp_on(link.as_ref(), &asked.root, pinned, &relatives)?;
-            Ok(Answer {
-                identity,
-                in_process: link.in_process(),
-                stamps,
-            })
+            let link = match known {
+                Some(link) => link,
+                None => core
+                    .node_link(&asked.node)
+                    .map_err(|message| (message, false))?,
+            };
+            let (identity, stamps) = stamp_on(link.as_ref(), &asked.root, pinned, &relatives)
+                .map_err(|error| {
+                    let replaced = matches!(
+                        &error,
+                        LinkError::Refused(refusal) if refusal.code == ErrorCode::RootReplaced
+                    );
+                    (error.to_string(), replaced)
+                })?;
+            Ok((
+                Arc::clone(&link),
+                Answer {
+                    identity,
+                    in_process: link.in_process(),
+                    stamps,
+                },
+            ))
         })
         .await
-        .unwrap_or_else(|error| Err(format!("the watch worker ended: {error}")));
+        .unwrap_or_else(|error| Err((format!("the watch worker ended: {error}"), false)));
         // A target that moved while the node answered is not what the answer
         // was for.
         if target.lock().expect("watch target").as_ref() != Some(&current) {
             continue;
         }
         let answer = match answer {
-            Ok(answer) => answer,
-            Err(message) => {
+            Ok((link, answer)) => {
+                linked = Some((current.node.clone(), link));
+                answer
+            }
+            Err((message, replaced)) => {
+                linked = None;
+                poll = LINKED_POLL;
+                // A device root its node opened is pinned here, so a root
+                // replaced since is opened again through that node, which
+                // confines it; this machine's root stays pinned by the
+                // boundary, which refuses its listings the same way.
+                if replaced && current.pinned.is_none() {
+                    watching.replaced = true;
+                }
                 if failing.as_deref() != Some(message.as_str()) {
                     eprintln!(
                         "{}",
@@ -551,6 +620,7 @@ mod tests {
                     "/r/src".to_owned(),
                     "/r/src/deep".to_owned()
                 ],
+                pinned: None,
             })
         );
         assert_eq!(device_target(&snapshot("changes", "ready"), "local"), None);
@@ -674,6 +744,79 @@ mod tests {
             stamp_on(&node, &root_path, Some(identity), &folders).is_err(),
             "the replaced root is refused"
         );
+    }
+
+    /// This machine's root is stamped by the identity the boundary verified
+    /// at registration, so a root swapped for a link to an outside folder
+    /// before the first poll is refused, never pinned as the checkout.
+    #[cfg(unix)]
+    #[test]
+    fn a_root_swapped_before_the_first_poll_is_refused() {
+        use std::os::unix::fs::symlink;
+        let node = hide_node::Local::of_process();
+        let sandbox = tempfile::tempdir().unwrap();
+        let home = sandbox.path().join("home");
+        let root = home.join("checkout");
+        let outside = sandbox.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let boundary = crate::boundary::Boundary::new(&home).unwrap();
+        let root = boundary.home().join("checkout");
+        boundary.set_roots(vec![crate::boundary::Root {
+            workspace_id: "w".to_owned(),
+            checkout_id: "c".to_owned(),
+            path: root.clone(),
+        }]);
+        let root_path = root.to_string_lossy().into_owned();
+        let identity = boundary.root_identity(&root_path).unwrap();
+        let target = Target::of("local", root_path.clone(), &[]).pinned_by(identity);
+
+        std::fs::rename(&root, home.join("moved")).unwrap();
+        symlink(&outside, &root).unwrap();
+        let pinned = Watching::default().pin_for(&target);
+        assert_eq!(pinned, Some(identity), "the watcher opens nothing itself");
+        let refused = stamp_on(&node, &root_path, pinned, &[String::new()]).unwrap_err();
+        assert!(
+            matches!(&refused, LinkError::Refused(error) if error.code == ErrorCode::RootReplaced),
+            "{refused}"
+        );
+    }
+
+    /// A device root its node refused as replaced is opened again on the next
+    /// poll, and every watched folder is announced so the page re-reads the
+    /// new directory behind the same path.
+    #[test]
+    fn a_replaced_device_root_is_opened_again_and_announced() {
+        let target = Target::of("mac", "/r".to_owned(), &["/r/src".to_owned()]);
+        let first = RootIdentity {
+            device: 1,
+            inode: 2,
+        };
+        let second = RootIdentity {
+            device: 1,
+            inode: 3,
+        };
+        let at = Instant::now();
+        let both = stamps(&[("/r", "a"), ("/r/src", "b")]);
+        let mut watching = Watching::default();
+        assert!(
+            watching
+                .observe(&target, first, both.clone(), at, Duration::ZERO)
+                .is_empty()
+        );
+        assert_eq!(watching.pin_for(&target), Some(first));
+
+        watching.replaced = true;
+        assert_eq!(
+            watching.pin_for(&target),
+            None,
+            "the next poll opens the root"
+        );
+        assert_eq!(
+            watching.observe(&target, second, both, at, Duration::ZERO),
+            vec!["/r".to_owned(), "/r/src".to_owned()]
+        );
+        assert_eq!(watching.pin_for(&target), Some(second));
     }
 
     /// An expanded folder replaced under a watched root has a new stamp, so

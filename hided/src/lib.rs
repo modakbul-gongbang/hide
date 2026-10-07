@@ -641,12 +641,18 @@ fn apply_snapshot(
             .collect::<Vec<_>>(),
     );
     let (root, expanded) = watch_state_from_value(value);
-    let root = root.filter(|root| boundary.known_root(root).is_some());
+    let root = root.and_then(|root| {
+        boundary
+            .root_identity(&root)
+            .map(|identity| (root, identity))
+    });
     let expanded: Vec<String> = expanded
         .into_iter()
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
-    watch.reconcile(root.map(|root| watch::Target::of(boundary.node().as_str(), root, &expanded)));
+    watch.reconcile(root.map(|(root, identity)| {
+        watch::Target::of(boundary.node().as_str(), root, &expanded).pinned_by(identity)
+    }));
     watch.reconcile_device(watch::device_target(value, boundary.node().as_str()));
 }
 
