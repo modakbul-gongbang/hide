@@ -26,8 +26,7 @@ mod imp {
         FILE_NAME_NORMALIZED, FILE_TYPE_DISK, GetFileType, GetFinalPathNameByHandleW,
     };
     use windows_sys::Win32::System::Threading::{
-        GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_QUERY_LIMITED_INFORMATION,
-        QueryFullProcessImageNameW,
+        GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE,
     };
 
     /// `SystemExtendedHandleInformation`.
@@ -111,7 +110,8 @@ mod imp {
             }
             found.push(Holder {
                 pid: entry.pid as u32,
-                process: process_name(entry.pid as u32),
+                process: crate::process::name_of(entry.pid as u32)
+                    .unwrap_or_else(|_| "?".to_owned()),
                 path,
                 access: entry.access,
             });
@@ -222,26 +222,6 @@ mod imp {
         // SAFETY: the duplicate is closed once.
         unsafe { CloseHandle(copy) };
         path
-    }
-
-    fn process_name(pid: u32) -> String {
-        // SAFETY: a plain process open; a null result means no access.
-        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if process.is_null() {
-            return "?".to_owned();
-        }
-        let mut buffer = [0_u16; 1024];
-        let mut length = buffer.len() as u32;
-        // SAFETY: the buffer holds the `length` units the call is told of.
-        let named =
-            unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) };
-        // SAFETY: opened above and closed once.
-        unsafe { CloseHandle(process) };
-        if named == 0 {
-            return "?".to_owned();
-        }
-        let full = String::from_utf16_lossy(&buffer[..length as usize]);
-        full.rsplit('\\').next().unwrap_or(&full).to_owned()
     }
 
     /// A path in one spelling for comparing: no `\\?\` prefix, lower case, and

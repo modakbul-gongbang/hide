@@ -19,11 +19,6 @@ use hide_node_link::protocol::Call;
 use hide_node_link::{LinkAnswer, LinkError, NodeLink};
 
 pub mod diagnostics;
-// The test writer of a script run as a program, shared with the crate it
-// was written for rather than copied.
-#[cfg(all(test, unix))]
-#[path = "../../hide-host/src/executable_fixture.rs"]
-mod executable_fixture;
 pub mod opener;
 pub mod pane_proof;
 pub mod ssh;

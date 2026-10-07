@@ -416,8 +416,17 @@ impl PaneControlAction {
 
 #[derive(Debug)]
 pub enum PaneControlOutcome {
-    Projected { layout: PaneLayoutSnapshot },
-    Acknowledged { created_pane_id: Option<String> },
+    Projected {
+        layout: PaneLayoutSnapshot,
+    },
+    Acknowledged {
+        created_pane_id: Option<String>,
+    },
+    /// Herdr accepted the request and moved nothing: a zoom answered
+    /// `zoom_changed: false` or a resize answered `changed: false`. No
+    /// layout event follows, so the operation ends at this answer (PRD
+    /// instant-pane-topology D-12).
+    Unchanged,
 }
 
 #[derive(Clone, Debug)]
@@ -575,6 +584,7 @@ fn execute_remote_control(
             | PaneControlAction::ToggleZoom { .. }
             | PaneControlAction::Close { .. } => match execute_pane_control(connector, action)? {
                 PaneControlOutcome::Acknowledged { created_pane_id } => (None, created_pane_id),
+                PaneControlOutcome::Unchanged => (None, None),
                 PaneControlOutcome::Projected { .. } => {
                     return Err(ControlFailure::Definite(
                         "remote pane mutation returned a layout projection".to_owned(),
@@ -877,13 +887,29 @@ fn execute_pane_control(
         amount,
     } = action
     {
-        mutation_request(
+        let result = mutation_request(
             connector,
             "pane.resize",
             wire::pane_resize_params(pane_id, *direction, *amount)?,
         )?;
-        return Ok(PaneControlOutcome::Acknowledged {
-            created_pane_id: None,
+        let changed = wire::pane_resize_changed(result).map_err(ControlFailure::Ambiguous)?;
+        return Ok(if changed {
+            PaneControlOutcome::Acknowledged {
+                created_pane_id: None,
+            }
+        } else {
+            PaneControlOutcome::Unchanged
+        });
+    }
+    if let PaneControlAction::ToggleZoom { pane_id } = action {
+        let result = mutation_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
+        let changed = wire::pane_zoom_changed(result).map_err(ControlFailure::Ambiguous)?;
+        return Ok(if changed {
+            PaneControlOutcome::Acknowledged {
+                created_pane_id: None,
+            }
+        } else {
+            PaneControlOutcome::Unchanged
         });
     }
 
@@ -899,10 +925,6 @@ fn execute_pane_control(
             let params = wire::pane_split_params(pane_id, *direction, cwd.as_deref())?;
             let result = mutation_request(connector, "pane.split", params)?;
             Some(wire::split_pane(result).map_err(ControlFailure::Ambiguous)?)
-        }
-        PaneControlAction::ToggleZoom { pane_id } => {
-            mutation_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
-            None
         }
         PaneControlAction::Close { pane_id } => {
             mutation_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
@@ -922,7 +944,8 @@ fn execute_pane_control(
         }
         PaneControlAction::Project { .. }
         | PaneControlAction::Focus { .. }
-        | PaneControlAction::Resize { .. } => unreachable!("handled above"),
+        | PaneControlAction::Resize { .. }
+        | PaneControlAction::ToggleZoom { .. } => unreachable!("handled above"),
     };
     Ok(PaneControlOutcome::Acknowledged { created_pane_id })
 }
@@ -2977,7 +3000,12 @@ pub(crate) fn install(
         crate::session_sync::SessionSyncContext::local(&context, own_node),
         Some(usage_paths),
     ) {
-        Ok(handle) => Some(handle),
+        Ok(handle) => {
+            if let Ok(mut guard) = runtime.lock() {
+                guard.set_republish_waker(handle.republish_waker());
+            }
+            Some(handle)
+        }
         Err(message) => {
             crate::diagnostic!(json!({
                 "component": "session_sync",
@@ -3050,7 +3078,7 @@ pub fn project_layouts(
     (layouts, rejected)
 }
 
-fn project_layout(layout: &SessionLayoutPayload) -> Result<PaneLayoutSnapshot, String> {
+pub(crate) fn project_layout(layout: &SessionLayoutPayload) -> Result<PaneLayoutSnapshot, String> {
     if layout.panes.is_empty() {
         return Err(format!("Herdr tab {} has no panes", layout.tab_id));
     }
@@ -3120,7 +3148,7 @@ fn project_layout_node(
     })
 }
 
-fn split_areas(
+pub(crate) fn split_areas(
     area: SessionLayoutRect,
     direction: PaneLayoutDirection,
     ratio: f32,
@@ -5083,7 +5111,8 @@ mod tests {
             "pane.split" => {
                 json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
             }
-            "pane.zoom" | "pane.close" => json!({"type": "ok"}),
+            "pane.zoom" => zoom_answer("w1:p1", true),
+            "pane.close" => json!({"type": "ok"}),
             other => panic!("unexpected {other}"),
         });
         let connector = herdr.connector();
@@ -5135,6 +5164,90 @@ mod tests {
                 ),
                 ("pane.close".to_owned(), json!({"pane_id": "w1:p1"})),
             ]
+        );
+    }
+
+    fn one_pane_layout(pane_id: &str) -> Value {
+        json!({
+            "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+            "focused_pane_id": pane_id,
+            "panes": [{"pane_id": pane_id, "focused": true,
+                       "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}],
+            "splits": []
+        })
+    }
+
+    fn zoom_answer(pane_id: &str, zoom_changed: bool) -> Value {
+        json!({"type": "pane_zoom", "zoom": {
+            "changed": true, "zoom_changed": zoom_changed, "focus_changed": !zoom_changed,
+            "pane_id": pane_id, "focused_pane_id": pane_id, "zoomed": zoom_changed,
+            "reason": (!zoom_changed).then_some("single_pane"),
+            "layout": one_pane_layout(pane_id)
+        }})
+    }
+
+    fn resize_answer(pane_id: &str, changed: bool) -> Value {
+        json!({"type": "pane_resize", "resize": {
+            "changed": changed, "pane_id": pane_id, "focused_pane_id": pane_id,
+            "layout": one_pane_layout(pane_id)
+        }})
+    }
+
+    /// Herdr answers a zoom of a lone pane with `zoom_changed: false` (and
+    /// `changed: true` when only focus moved) and a resize with nothing to
+    /// move with `changed: false`. Neither sends a layout event, so both read
+    /// as Unchanged and the operation can end at the answer (PRD
+    /// instant-pane-topology D-12). The change flag decides, not `changed`.
+    #[test]
+    fn a_zoom_or_resize_that_moved_nothing_reads_as_unchanged() {
+        let herdr = FakeHerdr::start("pane-control-unchanged", |method, params| {
+            let moved = params["pane_id"] == "w1:p2";
+            match method {
+                "pane.zoom" => zoom_answer(params["pane_id"].as_str().unwrap(), moved),
+                "pane.resize" => resize_answer(params["pane_id"].as_str().unwrap(), moved),
+                other => panic!("unexpected {other}"),
+            }
+        });
+        let connector = herdr.connector();
+        let zoom = |pane: &str| PaneControlAction::ToggleZoom {
+            pane_id: pane.to_owned(),
+        };
+        let resize = |pane: &str| PaneControlAction::Resize {
+            pane_id: pane.to_owned(),
+            direction: PaneResizeDirection::Right,
+            amount: 0.05,
+        };
+        for (action, unchanged) in [
+            (zoom("w1:p1"), true),
+            (zoom("w1:p2"), false),
+            (resize("w1:p1"), true),
+            (resize("w1:p2"), false),
+        ] {
+            let outcome = execute_pane_control(&connector, &action).expect("control request");
+            assert_eq!(
+                matches!(outcome, PaneControlOutcome::Unchanged),
+                unchanged,
+                "{action:?} answered {outcome:?}"
+            );
+        }
+    }
+
+    /// An answer without the change flag cannot say whether a layout event
+    /// will follow, so the operation's result is unknown, not a success.
+    #[test]
+    fn a_zoom_answer_without_its_result_is_ambiguous() {
+        let herdr = FakeHerdr::start("pane-control-zoom-ok", |_, _| json!({"type": "ok"}));
+        let failure = execute_pane_control(
+            &herdr.connector(),
+            &PaneControlAction::ToggleZoom {
+                pane_id: "w1:p1".to_owned(),
+            },
+        )
+        .expect_err("a bare ok is not a zoom result");
+        assert!(
+            matches!(failure, ControlFailure::Ambiguous(_)),
+            "{failure:?}"
         );
     }
 

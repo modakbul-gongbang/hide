@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) use hide_node_link::attachments::{
-    AttachmentFile, MAX_FILES, MAX_PATH_BYTES, check_cancelled, valid_request_id,
+    AttachmentFile, COMMIT_GRACE, MAX_FILES, MAX_PATH_BYTES, check_cancelled, valid_request_id,
 };
 pub(crate) const MAX_QUEUED_INPUT: usize = 64 * 1024;
 

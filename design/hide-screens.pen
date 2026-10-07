@@ -218362,17 +218362,17 @@
                             },
                             {
                               "type": "frame",
-                              "id": "onb-gemini-cli-tile-l",
-                              "name": "Tile · Gemini CLI · off",
+                              "id": "onb-omp-tile-l",
+                              "name": "Tile · omp · off",
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "onb-gemini-cli-plate-l",
+                                  "id": "onb-omp-plate-l",
                                   "name": "Logo plate",
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "onb-gemini-cli-logo-l",
+                                      "id": "onb-omp-logo-l",
                                       "name": "Logo",
                                       "children": [],
                                       "width": 32,
@@ -218380,7 +218380,7 @@
                                       "fill": {
                                         "type": "image",
                                         "enabled": true,
-                                        "url": "../web/src/assets/agents/gemini-cli.png",
+                                        "url": "../web/src/assets/agents/omp.svg",
                                         "mode": "fit"
                                       }
                                     }
@@ -218396,9 +218396,9 @@
                                 },
                                 {
                                   "type": "text",
-                                  "id": "onb-gemini-cli-name-l",
-                                  "name": "Gemini CLI",
-                                  "content": "Gemini CLI",
+                                  "id": "onb-omp-name-l",
+                                  "name": "omp",
+                                  "content": "omp",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -218406,7 +218406,7 @@
                                 },
                                 {
                                   "type": "text",
-                                  "id": "onb-gemini-cli-state-l",
+                                  "id": "onb-omp-state-l",
                                   "name": "Off",
                                   "content": "Off",
                                   "fill": "$--muted-foreground",
@@ -218416,7 +218416,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "onb-gemini-cli-check-l",
+                                  "id": "onb-omp-check-l",
                                   "name": "Check",
                                   "children": [],
                                   "width": 16,
@@ -218798,18 +218798,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-qwen-code-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/qwen-code.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-qwen-code-mono-l",
+                                      "name": "QC",
+                                      "content": "QC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -218866,18 +218862,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-goose-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/goose.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-goose-mono-l",
+                                      "name": "GO",
+                                      "content": "GO",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -218934,18 +218926,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-cline-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/cline.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-cline-mono-l",
+                                      "name": "CL",
+                                      "content": "CL",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -219011,18 +218999,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-kilo-code-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/kilo-code.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-kilo-code-mono-l",
+                                      "name": "KC",
+                                      "content": "KC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -219480,18 +219464,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-mistral-vibe-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/mistral-vibe.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-mistral-vibe-mono-l",
+                                      "name": "MV",
+                                      "content": "MV",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -219983,17 +219963,17 @@
                             },
                             {
                               "type": "frame",
-                              "id": "onb-gemini-cli-tile-d",
-                              "name": "Tile · Gemini CLI · off",
+                              "id": "onb-omp-tile-d",
+                              "name": "Tile · omp · off",
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "onb-gemini-cli-plate-d",
+                                  "id": "onb-omp-plate-d",
                                   "name": "Logo plate",
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "onb-gemini-cli-logo-d",
+                                      "id": "onb-omp-logo-d",
                                       "name": "Logo",
                                       "children": [],
                                       "width": 32,
@@ -220001,7 +219981,7 @@
                                       "fill": {
                                         "type": "image",
                                         "enabled": true,
-                                        "url": "../web/src/assets/agents/gemini-cli.png",
+                                        "url": "../web/src/assets/agents/omp.svg",
                                         "mode": "fit"
                                       }
                                     }
@@ -220017,9 +219997,9 @@
                                 },
                                 {
                                   "type": "text",
-                                  "id": "onb-gemini-cli-name-d",
-                                  "name": "Gemini CLI",
-                                  "content": "Gemini CLI",
+                                  "id": "onb-omp-name-d",
+                                  "name": "omp",
+                                  "content": "omp",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -220027,7 +220007,7 @@
                                 },
                                 {
                                   "type": "text",
-                                  "id": "onb-gemini-cli-state-d",
+                                  "id": "onb-omp-state-d",
                                   "name": "Off",
                                   "content": "Off",
                                   "fill": "$--muted-foreground",
@@ -220037,7 +220017,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "onb-gemini-cli-check-d",
+                                  "id": "onb-omp-check-d",
                                   "name": "Check",
                                   "children": [],
                                   "width": 16,
@@ -220419,18 +220399,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-qwen-code-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/qwen-code.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-qwen-code-mono-d",
+                                      "name": "QC",
+                                      "content": "QC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -220487,18 +220463,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-goose-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/goose.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-goose-mono-d",
+                                      "name": "GO",
+                                      "content": "GO",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -220555,18 +220527,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-cline-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/cline.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-cline-mono-d",
+                                      "name": "CL",
+                                      "content": "CL",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -220632,18 +220600,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-kilo-code-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/kilo-code.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-kilo-code-mono-d",
+                                      "name": "KC",
+                                      "content": "KC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -221101,18 +221065,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-mistral-vibe-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/mistral-vibe.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-mistral-vibe-mono-d",
+                                      "name": "MV",
+                                      "content": "MV",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,

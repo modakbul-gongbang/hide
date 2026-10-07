@@ -10,6 +10,13 @@
 # attached tabs, before the shell returns to the measured tab. The driver and
 # the marker still go to the one measured pane; the other panes are idle
 # shells with mounted xterm instances.
+# `topology` (PRD instant-pane-topology D-15) adds a second tab to the
+# measured workspace and, with MEASURE_SCALE=operator or double, fills the
+# server to that scale (scale.sh); it then records idle resources, one echo
+# trial under the scale's agent churn, and the split, zoom, close, new tab
+# and tab switch latencies (topology.mjs), and skips the frame window.
+# MEASURE_HIDED_BIN measures another hided build, such as a baseline, with
+# the same fixture.
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
 # target/release/hided built after `pnpm --dir web build` (docs/BUILD.md: a release hided embeds web/dist).
 set -euo pipefail
@@ -30,9 +37,12 @@ measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
 trap 'rmdir "$MEASURE_SOCKET_DIR"' EXIT
 scenario="${MEASURE_SCENARIO:-single}"
-case "$scenario" in single|multi|areas2|areas3) ;; *) echo "MEASURE_SCENARIO must be single, multi, areas2 or areas3" >&2; exit 2;; esac
+case "$scenario" in single|multi|areas2|areas3|topology) ;; *) echo "MEASURE_SCENARIO must be single, multi, areas2, areas3 or topology" >&2; exit 2;; esac
+scale="${MEASURE_SCALE:-none}"
+case "$scale" in none|operator|double) ;; *) echo "MEASURE_SCALE must be none, operator or double" >&2; exit 2;; esac
+[[ "$scale" == none || "$scenario" == topology ]] || { echo "MEASURE_SCALE needs MEASURE_SCENARIO=topology" >&2; exit 2; }
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
-hided_bin="$MEASURE_WORKTREE/target/release/hided"
+hided_bin="${MEASURE_HIDED_BIN:-$MEASURE_WORKTREE/target/release/hided}"
 [[ -x "$hided_bin" ]] || { echo "build target/release/hided first: pnpm --dir web build, then the release build described in docs/BUILD.md" >&2; exit 1; }
 [[ -x "$chrome_bin" ]] || { echo "Chrome not found at $chrome_bin" >&2; exit 1; }
 pids=()
@@ -133,6 +143,7 @@ reset_fixture() {
   echo "chrome_version=$("$chrome_bin" --version 2>/dev/null)"
   echo "socket=$HERDR_SOCKET_PATH"
   echo "scenario=$scenario"
+  echo "scale=$scale"
   echo "isolated_headless=$isolated_headless"
   echo "memory_series=$memory_series"
   echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -204,6 +215,16 @@ if [[ "$scenario" == areas* ]]; then
   for pane in "${extra_panes[@]}"; do wait_prompt "$pane"; done
 fi
 
+if [[ "$scenario" == topology ]]; then
+  created="$("$HERDR_BIN_PATH" tab create --workspace "$measure_workspace" --cwd "$MEASURE_FIXTURE" --label switch --no-focus)"
+  export MEASURE_SWITCH_TAB="$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
+  wait_prompt "$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')"
+  if [[ "$scale" != none ]]; then
+    note "filling the private server to the $scale scale"
+    bash "$measure_dir/scale.sh" build "$scale"
+  fi
+fi
+
 # Product hided (release, embedded web/dist) on the private socket.
 spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 "$hided_bin"
 hided_pid=$owned_pid
@@ -258,6 +279,25 @@ cat "$MEASURE_RUN_DIR/page.json"
 python3 "$measure_dir/memory.py" settled "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-settled.json"
 cat "$MEASURE_RUN_DIR/memory-settled.json"
 python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid" > "$MEASURE_RUN_DIR/resources-idle.json"
+
+if [[ "$scenario" == topology ]]; then
+  if [[ "$scale" != none ]]; then
+    spawn_owned churn bash "$measure_dir/scale.sh" churn
+  fi
+  reset_fixture
+  note "echo under the scale's agent churn (50 samples)"
+  MEASURE_ECHO_REPEATS=50 node "$measure_dir/echo.mjs" > "$MEASURE_RUN_DIR/echo-1.json"
+  python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/echo-1.json" > "$MEASURE_RUN_DIR/echo-summary.json"
+  note "topology: ${MEASURE_TOPOLOGY_ROUNDS:-20} rounds of split, zoom, unzoom, close, new tab and tab switch"
+  node "$measure_dir/topology.mjs" > "$MEASURE_RUN_DIR/topology.json"
+  python3 "$measure_dir/summarize.py" topology "$MEASURE_RUN_DIR/topology.json" > "$MEASURE_RUN_DIR/topology-summary.json"
+  # Only a build that records stage times writes these lines.
+  python3 "$measure_dir/summarize.py" timing "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/timing-summary.json"
+  python3 "$measure_dir/memory.py" after-topology "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-after-topology.json"
+  cat "$MEASURE_RUN_DIR/echo-summary.json" "$MEASURE_RUN_DIR/topology-summary.json"
+  note 'measurement complete; cleaning up owned processes'
+  exit 0
+fi
 
 for trial in 1 2 3; do
   reset_fixture

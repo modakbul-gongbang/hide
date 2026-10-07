@@ -35,6 +35,7 @@ import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from ".
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
+import { armKeyTarget } from "./keyTarget";
 import {
   catalogWorkspaces,
   deviceOfCheckout,
@@ -61,6 +62,7 @@ import { useShellStore } from "./store";
 import { useUiStore, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
+import { zoomViewer } from "./viewers/viewerZoom";
 import {
   activeDisplay,
   adjacentInOrder,
@@ -814,11 +816,13 @@ export function createActions(send: DispatchFn) {
       }
       const here = current();
       if (!here) return diagnostic("create_tab: no focused checkout");
+      const requestId = remoteRequestId();
       dispatch({
         schema_version: 2,
         kind: "create_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, label: here.checkout.next_tab_label, ...(areaId ? { area_id: areaId } : {}) },
+        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, label: here.checkout.next_tab_label, request_id: requestId, ...(areaId ? { area_id: areaId } : {}) },
       });
+      armKeyTarget(requestId);
     };
 
   const closeTab = (tabId: string) => {
@@ -1108,7 +1112,9 @@ export function createActions(send: DispatchFn) {
     startHomeTab(deviceId: string) {
       const requestId = remoteRequestId();
       ui().setHomeStart({ requestId, deviceId, refusal: null });
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId, localDeviceId(rest())) } });
+      const node = localDeviceId(rest());
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId, node) } });
+      if (deviceId === node) armKeyTarget(requestId);
     },
 
     /**
@@ -1207,6 +1213,9 @@ export function createActions(send: DispatchFn) {
           ...(request.resumeSessionId ? { resume_session_id: request.resumeSessionId } : {}),
         },
       });
+      // Keys typed before the new tab holds the keyboard reach its agent once
+      // it has started, never the pane that had the keyboard.
+      if (request.requestId && (!request.deviceId || request.deviceId === localDeviceId(rest()))) armKeyTarget(request.requestId);
     },
 
     /**
@@ -1399,7 +1408,9 @@ export function createActions(send: DispatchFn) {
         sendRemote(deviceId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
         return;
       }
-      dispatch({ schema_version: 2, kind: "create_tab", payload: { workspace_id: checkout.workspace_id, checkout_id: checkout.id, label: checkout.next_tab_label } });
+      const requestId = remoteRequestId();
+      dispatch({ schema_version: 2, kind: "create_tab", payload: { workspace_id: checkout.workspace_id, checkout_id: checkout.id, label: checkout.next_tab_label, request_id: requestId } });
+      armKeyTarget(requestId);
     },
 
     /** Makes a checkout its project's default: the home glyph and the first place move to it (D-03). */
@@ -1726,11 +1737,13 @@ export function createActions(send: DispatchFn) {
       const paneId = target ?? useShellStore.getState().focusedPaneId;
       const pane = here?.tab?.panes.find((row) => row.id === paneId);
       if (!here?.tab?.id || !pane) return diagnostic("create_pane: no focused pane");
+      const requestId = remoteRequestId();
       dispatch({
         schema_version: 2,
         kind: "create_pane",
-        payload: { tab_id: here.tab.id, cwd: pane.cwd, command: null, direction },
+        payload: { tab_id: here.tab.id, cwd: pane.cwd, command: null, direction, request_id: requestId },
       });
+      armKeyTarget(requestId);
     },
 
     /** Zooms or unzooms `target`, a pane the operator pointed at, else the focused pane. */
@@ -1748,13 +1761,19 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
     },
 
-    /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: the document when an
-     * editor tab owns the canvas, else the focused terminal pane. */
+    /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: an image or PDF
+     * zooms when its display holds the keyboard, the document's text when an
+     * editor tab owns the canvas, else the focused terminal pane's. */
     textScale(direction: "in" | "out" | "reset") {
+      // A viewer's zoom is its display's own, page-local and never sent.
+      const owner = keyboardOwner();
+      const frame = frameNow();
+      const area = owner.kind === "view" && frame ? findArea(frame.layout.root, owner.areaId) : null;
+      if (area?.active && zoomViewer(area.active, direction)) return;
       // A pane's text size is this page's drawing, stored in the core's ui
       // state by pane id; a remote pane is sized the same way and nothing is
       // sent to its host.
-      if (editorFor(useShellStore.getState().editor) && keyboardOwner().kind === "view") {
+      if (editorFor(useShellStore.getState().editor) && owner.kind === "view") {
         dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
         return;
       }

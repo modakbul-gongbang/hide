@@ -16,6 +16,7 @@ pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
 mod documents;
+mod drawn_ahead;
 mod editor;
 mod events;
 mod factory;
@@ -25,7 +26,9 @@ mod issues;
 mod kit;
 pub(crate) mod links;
 mod memory;
+mod op_timing;
 mod operations;
+mod pane_prediction;
 mod pane_reopen;
 mod project_sessions;
 mod projects;
@@ -40,6 +43,7 @@ mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
 mod terminal;
+mod terminal_input;
 mod tree_close;
 mod view_areas;
 mod view_bookmarks;
@@ -55,6 +59,7 @@ use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use control_lane::ControlLane;
 pub(crate) use control_lane::LaneStart;
 use events::*;
+pub(crate) use op_timing::HerdrArrival;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
@@ -1275,6 +1280,38 @@ pub struct Runtime {
     /// layout has pane ids and split ratios but no PTY rectangle to confirm a
     /// resize against.
     confirmed_pane_layout_signatures: HashMap<String, PaneTopologySignature>,
+    /// Stage times of each Hide-started tab creation and pane operation
+    /// (PRD instant-pane-topology D-14).
+    op_timings: op_timing::OpTimings,
+    /// Keys sent against a creation request, and input for panes whose
+    /// control session is not open yet (PRD instant-pane-topology D-11).
+    input_requests: terminal_input::InputRequests,
+    pane_input_hold: terminal_input::PaneInputHold,
+    /// Panes of a tab drawn ahead of Herdr, whose PTY keeps its size until
+    /// Herdr confirms (PRD instant-pane-topology D-08). Recomputed with every
+    /// session overlay, so it never outlives the predictions behind it.
+    grid_held_panes: HashSet<String>,
+    /// Held panes whose view reported a size meanwhile; it is sent once when
+    /// the hold ends.
+    held_resizes: HashSet<String>,
+    /// A pane close that waited in its tab's line, by close key: the place
+    /// it held there, which orders its drawing among the line's other
+    /// predictions. Pruned to the live closes on each insert.
+    close_line_places: HashMap<String, (u64, u64)>,
+    /// A session update is being applied: the navigator still shows the one
+    /// it replaces, so a close waiting in a tab's line starts only after it.
+    ingesting_session: bool,
+    /// A tab's line is being pumped; see `pump_geometry_queue`.
+    pumping_geometry: bool,
+    /// Herdr's confirmed layout of each tab with a drawn prediction, as the
+    /// last session showed it; a new request is predicted on it rather than
+    /// on the drawing.
+    confirmed_layouts: HashMap<String, crate::model::PaneLayoutSnapshot>,
+    /// Per tab, the closes drawn on the canvas ahead of Herdr; set with every
+    /// session overlay and read by the layout writers.
+    drawn_closes: HashMap<String, Vec<pane_prediction::Prediction>>,
+    /// Created tabs drawn until Herdr's layout for them arrives (D-05).
+    provisional_tabs: Vec<drawn_ahead::ProvisionalTab>,
     recent_closed_sequence: u64,
     reopen_in_flight: Option<String>,
     /// A reopen asked for while this machine's newest close was still
@@ -1294,9 +1331,14 @@ pub struct Runtime {
     /// The same record for tabs created on a device, by target and the tab id
     /// that device's Herdr gave it.
     created_device_tabs: BTreeMap<(String, String), session::CreatedTabCheckout>,
-    /// An acknowledgment arrived for a tab the session had already placed
-    /// under another checkout, so the local coordinator republishes once.
-    created_tab_republish_requested: bool,
+    /// Wakes the local coordinator to read the session again now, when the
+    /// core draws something ahead of Herdr or takes it back (PRD
+    /// instant-pane-topology D-05, D-07). None until the coordinator starts,
+    /// and in tests, which ingest the session themselves.
+    republish_waker: Option<session_sync::RepublishWaker>,
+    /// A republish was asked for since a test last looked.
+    #[cfg(test)]
+    republish_requested: bool,
     /// The clock the birth window is measured on: monotonic, so a wall-clock
     /// step cannot end it early, and replaceable so a test moves it rather
     /// than waiting (`session.rs`, `BirthClock`).
@@ -1909,6 +1951,17 @@ impl Runtime {
             close_status_checks_in_flight: HashSet::new(),
             pane_operations: HashMap::new(),
             confirmed_pane_layout_signatures: HashMap::new(),
+            op_timings: op_timing::OpTimings::default(),
+            input_requests: terminal_input::InputRequests::default(),
+            pane_input_hold: terminal_input::PaneInputHold::default(),
+            grid_held_panes: HashSet::new(),
+            held_resizes: HashSet::new(),
+            drawn_closes: HashMap::new(),
+            confirmed_layouts: HashMap::new(),
+            close_line_places: HashMap::new(),
+            ingesting_session: false,
+            pumping_geometry: false,
+            provisional_tabs: Vec::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
             reopen_after_close: None,
@@ -1916,7 +1969,9 @@ impl Runtime {
             status_refresh_requested: false,
             created_tab_checkouts: BTreeMap::new(),
             created_device_tabs: BTreeMap::new(),
-            created_tab_republish_requested: false,
+            republish_waker: None,
+            #[cfg(test)]
+            republish_requested: false,
             birth_clock: Arc::new(Instant::now),
             next_async_operation_id: 0,
             #[cfg(test)]

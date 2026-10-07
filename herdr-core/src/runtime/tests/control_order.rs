@@ -97,6 +97,47 @@ fn answer(
     (changed, started)
 }
 
+/// `payload` with a second pane, `<tab>:q`, split to the right of `<tab>:p` in
+/// `tab_id`, so a zoom there has a pane to hide.
+fn with_second_pane(mut payload: SessionSnapshotPayload, tab_id: &str) -> SessionSnapshotPayload {
+    let first = format!("{tab_id}:p");
+    let second = format!("{tab_id}:q");
+    let pane = payload
+        .panes
+        .iter()
+        .find(|pane| pane.pane_id == first)
+        .expect("the tab's pane")
+        .clone();
+    payload.panes.push(crate::sidebar::SessionPanePayload {
+        pane_id: second.clone(),
+        ..pane
+    });
+    let layout = payload
+        .layouts
+        .iter_mut()
+        .find(|layout| layout.tab_id == tab_id)
+        .expect("the tab's layout");
+    let area = layout.area;
+    let half = area.width / 2;
+    layout.panes[0].rect.width = half;
+    layout.panes.push(crate::sidebar::SessionLayoutPanePayload {
+        pane_id: second,
+        rect: crate::sidebar::SessionLayoutRect {
+            x: area.x + half,
+            width: area.width - half,
+            ..area
+        },
+    });
+    layout
+        .splits
+        .push(crate::sidebar::SessionLayoutSplitPayload {
+            direction: crate::model::PaneLayoutDirection::Right,
+            ratio: 0.5,
+            rect: area,
+        });
+    payload
+}
+
 pub(super) fn diagnostic_messages(runtime: &Runtime, kind: &str) -> Vec<String> {
     runtime
         .snapshot()
@@ -756,11 +797,14 @@ fn a_zoom_and_resize_in_other_tabs_start_while_an_unanswered_pane_focus_holds_th
     let (mut runtime, _checkout_id) =
         live_tab_order_runtime("/private/tmp/hide-control-order-zoom-while-focus");
     let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
-    runtime.ingest_session(Ok(tab_order_payload(
-        "/private/tmp/hide-control-order-zoom-while-focus",
-        &tabs,
-        &tabs,
-        "w-order:t1",
+    runtime.ingest_session(Ok(with_second_pane(
+        tab_order_payload(
+            "/private/tmp/hide-control-order-zoom-while-focus",
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        ),
+        "w-order:t2",
     )));
     assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t2:p", "pane-1")));
     assert!(
@@ -802,6 +846,13 @@ fn a_pane_operation_whose_topology_arrived_before_its_answer_settles_on_the_answ
     let checkout_path = "/private/tmp/hide-control-order-early-topology";
     let (mut runtime, _checkout_id) = runtime_on(&herdr, checkout_path);
     let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let split = || {
+        with_second_pane(
+            tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t1"),
+            "w-order:t2",
+        )
+    };
+    runtime.ingest_session(Ok(split()));
     let zoom = r#"{"schema_version":2,"kind":"toggle_zoom","payload":{"pane_id":"w-order:t2:p"}}"#;
 
     runtime.dispatch_json(zoom.as_bytes());
@@ -810,7 +861,7 @@ fn a_pane_operation_whose_topology_arrived_before_its_answer_settles_on_the_answ
 
     // Herdr's update with the zoomed layout arrives while the request is
     // still unanswered.
-    let mut payload = tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t1");
+    let mut payload = split();
     payload
         .layouts
         .iter_mut()
@@ -841,4 +892,40 @@ fn a_pane_operation_whose_topology_arrived_before_its_answer_settles_on_the_answ
     runtime.dispatch_json(zoom.as_bytes());
     herdr.wait_for_requests(2, Duration::from_secs(5));
     assert_eq!(runtime.pane_operations.len(), 1);
+}
+
+/// Zoom has nothing to hide on a tab's only pane: Herdr answers it unchanged
+/// (`single_pane`), so no topology would ever confirm it, and the operation
+/// left waiting turned away every later split, zoom and close in the tab
+/// (⌘D did nothing in a tab zoomed hours earlier). Such a zoom is not sent;
+/// once the tab holds a second pane, it is.
+#[test]
+fn a_zoom_on_a_tabs_only_pane_is_not_sent_and_leaves_the_tab_free() {
+    let herdr = FakeHerdr::start("order-zoom-single-pane", |method, _| match method {
+        "pane.zoom" => serde_json::json!({"type": "ok"}),
+        other => panic!("unexpected {other}"),
+    });
+    let checkout_path = "/private/tmp/hide-control-order-zoom-single-pane";
+    let (mut runtime, _checkout_id) = runtime_on(&herdr, checkout_path);
+    let zoom = r#"{"schema_version":2,"kind":"toggle_zoom","payload":{"pane_id":"w-order:t2:p"}}"#;
+
+    runtime.dispatch_json(zoom.as_bytes());
+    assert!(
+        runtime.pane_operations.is_empty(),
+        "nothing waits on the tab"
+    );
+    assert!(herdr.methods().is_empty(), "Herdr was not asked");
+    assert_eq!(
+        diagnostic_messages(&runtime, "pane.zoom.single_pane"),
+        ["Pane w-order:t2:p is its tab's only pane; zoom was not sent"]
+    );
+
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    runtime.ingest_session(Ok(with_second_pane(
+        tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t1"),
+        "w-order:t2",
+    )));
+    runtime.dispatch_json(zoom.as_bytes());
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    assert_eq!(herdr.methods(), ["pane.zoom"]);
 }

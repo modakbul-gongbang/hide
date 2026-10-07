@@ -10,12 +10,19 @@ pub(super) struct PendingAttachment {
     pub operation: AsyncOperationSnapshot,
     pane_id: String,
     terminal_generation: Option<u64>,
+    /// The local pane had no terminal session at the drop. The web shows a
+    /// pane once its layout arrives, before its session attaches, so the
+    /// paste waits for that session until the operation's deadline.
+    awaiting_terminal: bool,
     remote: Option<(String, u64)>,
     clipboard: bool,
     clipboard_preparing: bool,
     bracketed: bool,
     paths: Vec<String>,
     prepared: Option<Arc<Vec<AttachmentFile>>>,
+    /// The paste text, made when the files are ready and held while the
+    /// terminal is awaited.
+    paste: Option<Vec<u8>>,
     queued: Vec<u8>,
     rejected_bytes: usize,
     cancelled: Arc<AtomicBool>,
@@ -48,8 +55,11 @@ impl Runtime {
         let Some(pending) = self.attachment.as_ref() else {
             return false;
         };
-        if self.attachment_target_valid(pending) || pending.operation.stage == "retired" {
+        if pending.operation.stage == "retired" {
             return false;
+        }
+        if self.attachment_target_valid(pending) {
+            return self.attachment_terminal_arrived();
         }
         let pending = self.attachment.as_mut().expect("checked above");
         pending.cancelled.store(true, Ordering::Release);
@@ -67,6 +77,67 @@ impl Runtime {
         {
             self.start_attachment_cleanup();
         }
+        true
+    }
+
+    /// A paste that began before the pane's first terminal session takes
+    /// that session as its own; a later one retires it like any reconnect.
+    pub(super) fn adopt_attachment_terminal(&mut self, pane_id: &str, generation: u64) {
+        if let Some(pending) = self.attachment.as_mut().filter(|pending| {
+            pending.pane_id == pane_id
+                && pending.awaiting_terminal
+                && pending.terminal_generation.is_none()
+        }) {
+            pending.terminal_generation = Some(generation);
+        }
+    }
+
+    /// Ends the wait once the awaited session is there, and writes a paste
+    /// that was ready before it.
+    fn attachment_terminal_arrived(&mut self) -> bool {
+        let Some(pending) = self.attachment.as_mut().filter(|pending| {
+            pending.awaiting_terminal && self.terminal_sessions.contains_key(&pending.pane_id)
+        }) else {
+            return false;
+        };
+        pending.awaiting_terminal = false;
+        crate::diagnostic!(serde_json::json!({
+            "kind": "terminal.attachment.terminal_arrived",
+            "request_id": pending.operation.id,
+            "pane_id": pending.pane_id,
+            "waited_ms": unix_milliseconds().saturating_sub(pending.operation.started_at_unix_ms),
+        }));
+        if pending.operation.stage == "terminal" {
+            self.deliver_attachment();
+        }
+        true
+    }
+
+    /// Fails a paste whose terminal did not attach while its staged files are
+    /// kept, the same unavailable failure a drop on a dead pane gets.
+    pub(super) fn expire_attachment_wait(&mut self, now_unix_ms: u64) -> bool {
+        let Some(pending) = self.attachment.as_mut().filter(|pending| {
+            pending.awaiting_terminal
+                && pending.operation.phase == "pending"
+                && pending.operation.stage != "cancelling"
+                && pending
+                    .operation
+                    .deadline_at_unix_ms
+                    .is_some_and(|deadline| now_unix_ms >= deadline)
+        }) else {
+            return false;
+        };
+        pending.awaiting_terminal = false;
+        pending.paste = None;
+        pending.cancelled.store(true, Ordering::Release);
+        crate::diagnostic!(serde_json::json!({
+            "kind": "terminal.attachment.terminal_wait_expired",
+            "request_id": pending.operation.id,
+            "pane_id": pending.pane_id,
+            "generation": pending.terminal_generation,
+            "waited_ms": now_unix_ms.saturating_sub(pending.operation.started_at_unix_ms),
+        }));
+        self.fail_attachment(TERMINAL_UNAVAILABLE, false);
         true
     }
 
@@ -124,9 +195,10 @@ impl Runtime {
         match self.terminal_sessions.get(&pending.pane_id) {
             Some(session) => session.mode == TerminalSessionMode::Control,
             None => {
-                self.live.is_none()
-                    && pending.remote.is_none()
-                    && !pending.pane_id.starts_with("remote:")
+                pending.awaiting_terminal
+                    || (self.live.is_none()
+                        && pending.remote.is_none()
+                        && !pending.pane_id.starts_with("remote:"))
             }
         }
     }
@@ -203,12 +275,22 @@ impl Runtime {
                     .get(target)
                     .map(|generation| (target.clone(), *generation))
             });
+        let awaiting_terminal = self.live.is_some()
+            && remote.is_none()
+            && !payload.pane_id.starts_with("remote:")
+            && !self.terminal_sessions.contains_key(&payload.pane_id);
+        if awaiting_terminal {
+            operation.deadline_at_unix_ms = Some(operation.started_at_unix_ms.saturating_add(
+                u64::try_from(ingress::COMMIT_GRACE.as_millis()).unwrap_or(u64::MAX),
+            ));
+        }
         let pending = PendingAttachment {
             operation,
             terminal_generation: self
                 .terminal_session_generations
                 .get(&payload.pane_id)
                 .copied(),
+            awaiting_terminal,
             pane_id: payload.pane_id,
             remote,
             clipboard: payload.clipboard,
@@ -216,12 +298,21 @@ impl Runtime {
             bracketed: payload.bracketed_paste,
             paths: payload.paths,
             prepared: None,
+            paste: None,
             queued: Vec::new(),
             rejected_bytes: 0,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
         let valid = self.attachment_target_valid(&pending)
             && (!pending.pane_id.starts_with("remote:") || pending.remote.is_some());
+        if valid && pending.awaiting_terminal {
+            crate::diagnostic!(serde_json::json!({
+                "kind": "terminal.attachment.awaiting_terminal",
+                "request_id": pending.operation.id,
+                "pane_id": pending.pane_id,
+                "generation": pending.terminal_generation,
+            }));
+        }
         self.attachment = Some(pending);
         self.attachment_rejection = None;
         if !valid {
@@ -229,7 +320,7 @@ impl Runtime {
                 .as_mut()
                 .expect("assigned above")
                 .clipboard_preparing = false;
-            self.fail_attachment("The original terminal is unavailable. Reconnect, cancel this transfer and paste again.", false);
+            self.fail_attachment(TERMINAL_UNAVAILABLE, false);
         } else if !payload.clipboard {
             self.start_attachment_worker();
         }
@@ -645,37 +736,61 @@ impl Runtime {
                 );
                 self.fail_attachment(&error, true);
             }
-            Ok(paths) => {
-                let mut bytes = match ingress::paste_bytes(&paths, pending.bracketed) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        self.fail_attachment(&error, false);
-                        return true;
-                    }
-                };
-                bytes.extend_from_slice(&pending.queued);
-                let pane_id = pending.pane_id.clone();
-                if let Some(session) = self.terminal_sessions.get(&pane_id) {
-                    if session.write_bytes(&bytes).is_err() {
-                        self.fail_attachment(
-                            "Terminal input was not accepted. Check the connection and retry.",
-                            true,
-                        );
-                        return true;
-                    }
-                } else {
-                    self.append_terminal_chunk(pane_id.clone(), live::encode_base64(&bytes));
+            Ok(paths) => match ingress::paste_bytes(&paths, pending.bracketed) {
+                Ok(paste) => {
+                    pending.paste = Some(paste);
+                    self.deliver_attachment();
                 }
-                // The paste is composer text the operator has not sent, and
-                // an Enter held behind it does not send it either.
-                self.note_delivery_key(&pane_id);
-                self.attachment = None;
-            }
+                Err(error) => {
+                    self.fail_attachment(&error, false);
+                    return true;
+                }
+            },
         }
         self.sync_async_operations();
         true
     }
+
+    /// Writes the ready paste and the input held behind it to the pane's
+    /// terminal, or keeps both while the pane's session is awaited.
+    fn deliver_attachment(&mut self) {
+        let Some(pending) = self.attachment.as_mut() else {
+            return;
+        };
+        let Some(paste) = pending.paste.as_ref() else {
+            return;
+        };
+        let pane_id = pending.pane_id.clone();
+        let mut bytes = paste.clone();
+        bytes.extend_from_slice(&pending.queued);
+        match self.terminal_sessions.get(&pane_id) {
+            Some(session) => {
+                if session.write_bytes(&bytes).is_err() {
+                    self.fail_attachment(
+                        "Terminal input was not accepted. Check the connection and retry.",
+                        true,
+                    );
+                    return;
+                }
+            }
+            None if pending.awaiting_terminal => {
+                pending.operation.stage = "terminal".to_owned();
+                pending.operation.message = Some("Waiting for the terminal to attach…".to_owned());
+                self.sync_async_operations();
+                return;
+            }
+            None => self.append_terminal_chunk(pane_id.clone(), live::encode_base64(&bytes)),
+        }
+        // The paste is composer text the operator has not sent, and an Enter
+        // held behind it does not send it either.
+        self.note_delivery_key(&pane_id);
+        self.attachment = None;
+        self.sync_async_operations();
+    }
 }
+
+const TERMINAL_UNAVAILABLE: &str =
+    "The original terminal is unavailable. Reconnect, cancel this transfer and paste again.";
 
 #[cfg(test)]
 mod tests {
@@ -937,6 +1052,129 @@ mod tests {
                 runtime.attachment.as_ref().unwrap().operation.phase,
                 "pending"
             );
+            assert!(runtime.snapshot.terminal.chunks.is_empty());
+        }
+    }
+
+    /// A runtime attached to Herdr whose pane is on screen before its
+    /// terminal session, the order the web shows a new pane in.
+    fn live_pane() -> Runtime {
+        let mut runtime = crate::runtime::tests::live_runtime();
+        runtime.suppress_terminal_session_workers = true;
+        runtime.ensure_terminal_pane("pane-one");
+        runtime
+            .terminal_sizes
+            .insert("pane-one".to_owned(), (24, 80));
+        runtime
+    }
+
+    const STAGED: &str = "/state/attachments/image.png";
+
+    /// Issue 735: a drop reached the core 3 ms before the pane's first
+    /// session was requested, failed as unavailable, and nothing was pasted.
+    /// The paste and the input typed behind it now wait for that session and
+    /// reach it in order, whichever of the files and the session is first.
+    #[test]
+    fn a_drop_before_the_panes_first_session_is_written_to_that_session() {
+        for files_first in [true, false] {
+            let mut runtime = live_pane();
+            begin(&mut runtime, ID, "pane-one");
+            assert_eq!(
+                runtime.attachment.as_ref().unwrap().operation.phase,
+                "pending"
+            );
+            runtime.hold_attachment_input(&key("pane-one", b" AFTER\r"));
+            if files_first {
+                runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
+                assert_eq!(
+                    runtime.attachment.as_ref().unwrap().operation.phase,
+                    "pending"
+                );
+            }
+            runtime.request_terminal_control("pane-one");
+            if !files_first {
+                runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
+            }
+            assert!(runtime.attachment.is_none(), "files_first={files_first}");
+            assert_eq!(
+                runtime.terminal_sessions["pane-one"].test_written_lines(),
+                vec![
+                    live::terminal_input_line(
+                        b"\x1b[200~\"/state/attachments/image.png\"\x1b[201~ AFTER\r"
+                    )
+                    .unwrap()
+                ],
+                "files_first={files_first}"
+            );
+            assert!(runtime.snapshot.terminal.chunks.is_empty());
+        }
+    }
+
+    /// The wait ends without any event: the coordinator's tick fails a paste
+    /// whose terminal never attached once its staged files stop being kept,
+    /// the slot is free for the next drop, and a late session gets nothing.
+    #[test]
+    fn a_drop_whose_terminal_never_attaches_fails_at_the_commit_grace() {
+        let mut runtime = live_pane();
+        begin(&mut runtime, ID, "pane-one");
+        runtime.attachment.as_mut().unwrap().clipboard_preparing = false;
+        runtime.hold_attachment_input(&key("pane-one", b"\r"));
+        runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
+        let operation = &runtime.attachment.as_ref().unwrap().operation;
+        let deadline = operation.started_at_unix_ms + ingress::COMMIT_GRACE.as_millis() as u64;
+        assert_eq!(operation.deadline_at_unix_ms, Some(deadline));
+
+        runtime.tick_async_operations(deadline - 1);
+        assert_eq!(
+            runtime.attachment.as_ref().unwrap().operation.phase,
+            "pending"
+        );
+        let (_, records) = crate::diagnostics::capture(|| runtime.tick_async_operations(deadline));
+        assert!(
+            records
+                .iter()
+                .any(|record| record["kind"] == "terminal.attachment.terminal_wait_expired"),
+            "{records:?}"
+        );
+        assert!(runtime.attachment.is_none());
+
+        runtime.request_terminal_control("pane-one");
+        assert!(
+            runtime.terminal_sessions["pane-one"]
+                .test_written_lines()
+                .is_empty()
+        );
+        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        begin(&mut runtime, OTHER_ID, "pane-one");
+        assert_eq!(
+            runtime.attachment.as_ref().unwrap().operation.phase,
+            "pending"
+        );
+    }
+
+    /// While the session is awaited, the pane leaving or its session being
+    /// replaced still retires the paste, as it does after a session attached.
+    #[test]
+    fn an_awaited_pane_that_leaves_or_reattaches_retires_the_paste() {
+        for leaves in [true, false] {
+            let mut runtime = live_pane();
+            runtime
+                .terminal_session_generations
+                .insert("pane-one".to_owned(), 7);
+            begin(&mut runtime, ID, "pane-one");
+            runtime.hold_attachment_input(&key("pane-one", b"\r"));
+            if leaves {
+                runtime.snapshot.terminal.panes.clear();
+            } else {
+                runtime
+                    .terminal_session_generations
+                    .insert("pane-one".to_owned(), 8);
+            }
+            assert!(runtime.reconcile_attachment_target());
+            let pending = runtime.attachment.as_ref().unwrap();
+            assert_eq!(pending.operation.stage, "retired", "leaves={leaves}");
+            assert!(pending.queued.is_empty());
+            runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
             assert!(runtime.snapshot.terminal.chunks.is_empty());
         }
     }

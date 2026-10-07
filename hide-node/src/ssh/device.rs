@@ -3,6 +3,7 @@
 //! with it, and the core sees only the traits.
 
 use super::host::{self, HelperPackages, PaneEventsSlot, PaneHook};
+use super::hosts::{Resolve, ssh_g};
 use super::*;
 use hide_node_link::attachments::AttachmentFile;
 use hide_node_link::device::{
@@ -14,8 +15,9 @@ use hide_node_link::device::{
 /// device packages, which a transport installs on a device that lacks them.
 pub struct Connector {
     packages: HelperPackages,
-    /// The `ssh` program that resolves an alias for Add device's list.
-    ssh: PathBuf,
+    /// What resolves an alias for Add device's list: `ssh -G`, or a test's
+    /// answers.
+    resolve: Resolve,
     /// Where each device's pane events go; none for a connector whose
     /// devices' panes do not reach this process.
     panes: Option<PaneEventsSlot>,
@@ -27,7 +29,7 @@ impl Connector {
     pub fn new(helper_dir: Option<PathBuf>) -> Self {
         Self {
             packages: HelperPackages::new(helper_dir),
-            ssh: PathBuf::from("ssh"),
+            resolve: ssh_g(PathBuf::from("ssh")),
             panes: None,
         }
     }
@@ -41,8 +43,14 @@ impl Connector {
 
     /// Resolves aliases for Add device's list with `ssh` instead of the
     /// `ssh` on `PATH`.
-    pub fn with_ssh_program(mut self, ssh: PathBuf) -> Self {
-        self.ssh = ssh;
+    pub fn with_ssh_program(self, ssh: PathBuf) -> Self {
+        self.with_resolve(ssh_g(ssh))
+    }
+
+    /// Resolves aliases for Add device's list with `resolve`, so a test
+    /// decides each answer and no child races the `ssh -G` deadline.
+    pub fn with_resolve(mut self, resolve: Resolve) -> Self {
+        self.resolve = resolve;
         self
     }
 }
@@ -78,7 +86,7 @@ impl DeviceConnector for Connector {
     }
 
     fn ssh_hosts(&self, home: &Path, registered: &[String], stop: &AtomicBool) -> SshHostListing {
-        super::hosts::list(&self.ssh, home, registered, stop)
+        super::hosts::list(&self.resolve, home, registered, stop)
     }
 }
 

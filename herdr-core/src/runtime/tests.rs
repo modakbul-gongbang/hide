@@ -38,6 +38,8 @@ mod github_reads;
 mod home;
 #[path = "tests/issues.rs"]
 mod issues;
+#[path = "tests/key_routing.rs"]
+mod key_routing;
 #[path = "tests/labels.rs"]
 mod labels;
 #[path = "tests/lineage.rs"]
@@ -48,6 +50,7 @@ mod links;
 mod memory;
 #[path = "tests/operator_focus.rs"]
 mod operator_focus;
+mod pane_geometry;
 #[path = "tests/project_sessions.rs"]
 mod project_sessions;
 #[path = "tests/projects.rs"]
@@ -476,7 +479,7 @@ pub(super) fn runtime() -> Runtime {
 /// worker it spawns fails on its own without touching this runtime, so a
 /// test can drive the real focus event rather than a shortcut into the
 /// read record.
-fn live_runtime() -> Runtime {
+pub(super) fn live_runtime() -> Runtime {
     let mut runtime = runtime();
     let socket_path = std::env::temp_dir()
         .join(format!(
@@ -1129,8 +1132,10 @@ fn a_created_tab_joins_its_requested_checkout_while_an_external_tab_follows_its_
             .map(|checkout| checkout.path.clone())
     };
 
-    // Acknowledged before the session carries the tab.
+    // Acknowledged before the session carries the tab, which the answer
+    // draws (PRD instant-pane-topology D-05).
     acknowledge(&mut runtime, "w-order:t2");
+    assert!(runtime.take_republish_request());
     runtime.ingest_session(Ok(payload(&["w-order:t1", "w-order:t2", "w-order:t3"])));
     assert_eq!(
         ordered_tab_ids(&runtime, &checkout_id),
@@ -1141,7 +1146,7 @@ fn a_created_tab_joins_its_requested_checkout_while_an_external_tab_follows_its_
         Some(birth_cwd.as_str()),
         "a tab made outside Hide is placed by its pane cwd"
     );
-    assert!(!runtime.take_created_tab_republish());
+    assert!(!runtime.take_republish_request());
 
     // The session placed the tab before the acknowledgment arrived, so the
     // acknowledgment asks for one more publish, which moves it.
@@ -1152,7 +1157,7 @@ fn a_created_tab_joins_its_requested_checkout_while_an_external_tab_follows_its_
         Some(birth_cwd.as_str())
     );
     acknowledge(&mut runtime, "w-order:t4");
-    assert!(runtime.take_created_tab_republish());
+    assert!(runtime.take_republish_request());
     runtime.ingest_session(Ok(payload(&all)));
     assert_eq!(
         ordered_tab_ids(&runtime, &checkout_id),

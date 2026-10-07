@@ -1907,10 +1907,19 @@ fn connected_device_runtime() -> Runtime {
 }
 
 /// `target`'s Herdr as it reports one workspace with the tabs `tabs`, tab
-/// `t1` zoomed or not.
+/// `t1` holding a second pane (`t1b`) for a zoom to hide, zoomed or not.
 fn device_report(target: &str, path: &str, tabs: &[&str], zoomed: bool) -> RemoteSessionSnapshot {
     let tabs = tabs.iter().map(|tab| (*tab, path)).collect::<Vec<_>>();
     let mut raw = session(vec![herdr_workspace(target, "w1", path, &tabs)]);
+    let t1 = format!("remote:{target}:tab:t1");
+    if let Some(tab) = raw.workspaces[0].checkouts[0]
+        .tabs
+        .iter_mut()
+        .find(|tab| tab.id.as_deref() == Some(t1.as_str()))
+    {
+        tab.panes
+            .push(pane(&format!("remote:{target}:pane:t1b"), path));
+    }
     raw.pane_layouts
         .push(crate::model::RemotePaneLayoutSnapshot {
             workspace_id: format!("remote:{target}:workspace:w1"),
@@ -1993,6 +2002,34 @@ fn close_pane_t2() -> RemoteControlRequest {
         pane_id: format!("remote:{TARGET}:pane:t2"),
         confirmed: true,
     }
+}
+
+/// Zoom has nothing to hide on a tab's only pane: the device's Herdr answers
+/// it unchanged (`single_pane`), so no session would confirm it, and the
+/// operation left waiting turned away every later split, zoom and close in
+/// the tab. Such a zoom is not sent, and the tab stays free.
+#[test]
+fn a_zoom_on_a_device_tabs_only_pane_is_not_sent() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    let mut report = device_report(TARGET, &t.main, &["t1"], false);
+    report.workspaces[0].checkouts[0].tabs[0].panes.truncate(1);
+    runtime.ingest_remote_session(TARGET, Ok(report));
+    let requests = recording_device(&mut runtime);
+
+    assert!(!zoom_t1(&mut runtime, "zoom-1"));
+    assert!(
+        runtime.remote_operations.is_empty(),
+        "nothing waits on the tab"
+    );
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "the device was not asked"
+    );
+    assert_eq!(
+        diagnostic_messages(&runtime, "remote.control.zoom_single_pane"),
+        ["Pane remote:mini:pane:t1 on mini is its tab's only pane; zoom was not sent"]
+    );
 }
 
 /// A device's session update that shows a pane operation's effect can reach

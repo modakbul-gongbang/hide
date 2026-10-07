@@ -1,5 +1,5 @@
 // What the Agents tab shows for each machine (PRD settings-cleanup D-06 to
-// D-13, B8 to B20, B67): the seven supported agents in the kit's order, which
+// D-13, B8 to B20, B67): the supported agents in the kit's order, which
 // of them the machine has, and the one line each row owes the operator. Every
 // value is the kit snapshot's; nothing here decides what an agent supports.
 
@@ -7,21 +7,21 @@ import type { Device, KitAgent, KitPiece, RemoteStatus } from "../snapshot";
 import { deviceState, kitPartNeedsReinstall } from "../settings";
 
 /** The agents Hide supports, in the order every machine lists them (D-06). */
-export const SUPPORTED_AGENTS = ["claude-code", "codex", "gemini-cli", "grok", "opencode", "pi", "cursor"] as const;
+export const SUPPORTED_AGENTS = ["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor"] as const;
 
 /**
  * Where an agent's own installation guide lives, for the Install link of a row
  * whose program the machine does not have (B8). The kit's `doc_url` is its
  * skills page and the row's Docs link; these are the vendors' installation
- * pages, each read on 2026-10-06.
+ * pages, each read on 2026-10-06 (omp's on 2026-10-07).
  */
 const INSTALL_DOCS: Record<string, string> = {
   "claude-code": "https://code.claude.com/docs/en/setup",
   codex: "https://learn.chatgpt.com/docs/codex/cli",
-  "gemini-cli": "https://geminicli.com/docs/get-started/installation/",
   grok: "https://github.com/xai-org/grok-build",
   opencode: "https://opencode.ai/docs/",
   pi: "https://pi.dev/",
+  omp: "https://omp.sh/docs/quickstart",
   cursor: "https://cursor.com/docs/cli/installation",
 };
 
@@ -34,10 +34,10 @@ const INSTALL_DOCS: Record<string, string> = {
 const DOCS: Record<string, string> = {
   "claude-code": "https://code.claude.com/docs/en/skills",
   codex: "https://learn.chatgpt.com/docs/build-skills",
-  "gemini-cli": "https://geminicli.com/docs/cli/skills/",
   grok: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
   opencode: "https://opencode.ai/docs/skills/",
   pi: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
+  omp: "https://omp.sh/docs/skills",
   cursor: "https://cursor.com/docs/context/skills",
 };
 
@@ -52,7 +52,7 @@ export function installDocUrl(agentId: string): string | null {
 }
 
 /**
- * The seven supported agents of one machine in the supported order. An older
+ * The supported agents of one machine in the supported order. An older
  * helper that still lists agents Hide dropped shows none of them: the list is
  * the supported set, whatever a machine reports.
  */

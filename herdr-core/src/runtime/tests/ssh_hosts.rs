@@ -1,24 +1,37 @@
 //! Add device's host list through the core: the event starts one listing, a
 //! second request joins it, and the answer names each alias's address and the
-//! device that already holds it. `ssh` is a stand-in script that records what
-//! it was asked; nothing connects anywhere.
+//! device that already holds it. The test decides each alias's answer and
+//! records what was asked; nothing connects anywhere, and no child races the
+//! `ssh -G` deadline (issue 728).
 
 use super::*;
-use crate::executable_fixture::write_executable;
 use crate::model::DeviceRegistration;
+use hide_node::ssh::hosts::Resolve;
+use hide_node_link::device::{SshAddress as Address, SshHostProblem as Problem};
 
-/// Answers `ssh -F <config> -G -- <alias>` the way `ssh -G` does, and logs the
-/// call so a test can count what ran.
-const STAND_IN: &str = r#"#!/bin/sh
-dir=$(dirname "$0")
-echo "$*" >> "$dir/calls"
-case "$5" in
-  broken) exit 255 ;;
-  studio|studio-ip) printf 'user grab\nhostname 10.0.0.2\nport 22\n' ;;
-  fresh|old-alias) printf 'user grab\nhostname 10.0.0.9\nport 2222\n' ;;
-  *) printf 'user grab\nhostname %s.example\nport 22\n' "$5" ;;
-esac
-"#;
+/// Answers each alias the way `ssh -G` would for the test's config, and
+/// records the home and alias of every call.
+fn answers(asked: Arc<Mutex<Vec<(PathBuf, String)>>>) -> Resolve {
+    Arc::new(move |home, alias, _stop| {
+        asked
+            .lock()
+            .unwrap()
+            .push((home.to_owned(), alias.to_owned()));
+        let address = |host: &str, port| {
+            Ok(Address {
+                user: "grab".to_owned(),
+                host: host.to_owned(),
+                port,
+            })
+        };
+        match alias {
+            "broken" => Err(Problem::SshFailed),
+            "studio" | "studio-ip" => address("10.0.0.2", 22),
+            "fresh" | "old-alias" => address("10.0.0.9", 2222),
+            other => address(&format!("{other}.example"), 22),
+        }
+    })
+}
 
 fn registration(id: &str, label: &str, alias: &str) -> DeviceRegistration {
     DeviceRegistration {
@@ -49,9 +62,9 @@ fn the_host_list_names_each_alias_its_address_and_the_device_that_holds_it() {
         "Host *\n  ServerAliveInterval 30\nHost studio studio-ip fresh broken\n",
     )
     .unwrap();
-    let ssh = home.join("ssh");
-    write_executable(&ssh, STAND_IN);
-    runtime.devices = Arc::new(hide_node::ssh::Connector::new(None).with_ssh_program(ssh));
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    runtime.devices =
+        Arc::new(hide_node::ssh::Connector::new(None).with_resolve(answers(Arc::clone(&asked))));
     // "Studio Mac" is added under `studio`; "Old" under an alias the config
     // no longer names that reaches the same address as `fresh`.
     runtime.snapshot.ui_state.device_registrations = vec![
@@ -108,26 +121,27 @@ fn the_host_list_names_each_alias_its_address_and_the_device_that_holds_it() {
     assert_eq!(row("broken").added_as, None);
     assert!(!listing.truncated);
 
-    // One `ssh -G` per alias, with the account's own config named.
-    let calls = std::fs::read_to_string(home.join("calls")).unwrap();
-    let config = home.join(".ssh/config");
-    let mut asked: Vec<&str> = calls.lines().collect();
+    // One question per alias, under the account's own home.
+    let mut asked = asked.lock().unwrap().clone();
     asked.sort_unstable();
-    let expected = |alias: &str| format!("-F {} -G -- {alias}", config.display());
-    let mut want = [
-        expected("broken"),
-        expected("fresh"),
-        expected("old-alias"),
-        expected("studio"),
-        expected("studio-ip"),
-    ];
-    want.sort_unstable();
-    assert_eq!(asked, want.iter().map(String::as_str).collect::<Vec<_>>());
+    let under_home = |alias: &str| (home.clone(), alias.to_owned());
+    assert_eq!(
+        asked,
+        [
+            under_home("broken"),
+            under_home("fresh"),
+            under_home("old-alias"),
+            under_home("studio"),
+            under_home("studio-ip"),
+        ]
+    );
 }
 
 #[test]
 fn a_missing_config_or_program_lists_nothing_or_names_the_problem() {
     let mut runtime = super::devices::runtime_with_home();
+    // The real `ssh -G` path, with a program that cannot start: that fails at
+    // once, so no deadline is involved.
     runtime.devices = Arc::new(
         hide_node::ssh::Connector::new(None).with_ssh_program(PathBuf::from("/nonexistent/ssh")),
     );

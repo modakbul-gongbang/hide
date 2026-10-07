@@ -3,6 +3,7 @@
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub const MAX_FILES: usize = 8;
 pub const MAX_PATH_BYTES: usize = 4096;
@@ -41,6 +42,11 @@ pub fn check_cancelled(cancelled: &std::sync::atomic::AtomicBool) -> Result<(), 
         Ok(())
     }
 }
+
+/// How long a committed file is safe from eviction. The pasted token is the
+/// staged file's path, so the core waits no longer than this for a terminal
+/// to paste it into.
+pub const COMMIT_GRACE: Duration = Duration::from_secs(60);
 
 /// One picked file, read whole and unchanged while it was read.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

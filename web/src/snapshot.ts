@@ -692,6 +692,14 @@ export type TerminalPane = {
   transport_message: string | null;
   /** This client only observes the pane and Herdr did not move it for the last wheel; absent while false. */
   scroll_held_elsewhere?: boolean;
+  /** A geometry change for this pane's tab is unconfirmed: the grid stays as it is until Herdr applies it; absent while false. */
+  grid_held?: boolean;
+};
+
+/** Where keys sent against a creation request go (PRD instant-pane-topology D-11). */
+export type InputRequest = {
+  request_id: string;
+  state: "pending" | "ready" | "discarded";
 };
 
 export type AsyncOperation = {
@@ -991,7 +999,7 @@ export type KitAgent = {
   chosen: boolean;
   skill: KitPiece;
   hook: KitPiece | null;
-  /** Herdr's own integration for the agent; null for an agent the pinned Herdr has none for (Gemini CLI). */
+  /** Herdr's own integration for the agent; every supported agent has one, so null only from a device helper whose build predates the field. */
   herdr?: KitPiece | null;
   /** Hide does only some of what it does for Claude Code with this agent: the row wears the Partial chip, on or off. */
   partial?: boolean;
@@ -1131,7 +1139,7 @@ export type CoreDiagnostic = { kind: string; message: string; occurred_at: numbe
 export type AiProvider = {
   id: string;
   label: string;
-  /** The install kit's adapter id for the same agent (`claude-code`, `codex`, `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`). */
+  /** The id the logos key the same agent by: the install kit's adapter id (`claude-code`, `codex`, `grok`, `opencode`, `pi`, `cursor`), or `gemini-cli` for Gemini CLI, which Hide AI still uses though the kit no longer lists it. */
   agent: string;
   /** `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, or `unread`. */
   state: string;
@@ -1422,7 +1430,7 @@ export type SnapshotRest = {
     operator_focus?: { client_id: string; sequence: number }[];
   };
   pane_layouts?: PaneLayout[];
-  terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
+  terminal?: { pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
     device_rail_visible?: boolean;

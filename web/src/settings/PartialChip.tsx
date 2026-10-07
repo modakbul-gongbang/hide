@@ -17,7 +17,6 @@ export function PartialChip({ agent }: { agent: KitAgent }) {
   const { t } = useInterfaceTranslation();
   const features = agent.features ?? [];
   const docs = docsUrl(agent.id);
-  const screenOnly = features.some((feature) => feature.id === "herdr_integration" && !feature.supported);
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -43,8 +42,6 @@ export function PartialChip({ agent }: { agent: KitAgent }) {
             </li>
           ))}
         </ul>
-        {/* B15: an agent Herdr has no integration for says how its status is judged. */}
-        {screenOnly ? <p className="mt-sm text-caption text-muted-foreground">{t("agents.screenOnly", { agent: agent.label })}</p> : null}
         {docs ? (
           <a
             href={docs}

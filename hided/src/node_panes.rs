@@ -385,6 +385,9 @@ mod tests {
         let record = refusal_record("mini", Some(&long), &long, "node");
         assert_eq!(record["pane_id"].as_str().unwrap().chars().count(), 256);
         assert_eq!(record["reason"].as_str().unwrap().chars().count(), 64);
-        assert_eq!(refusal_record("mini", None, "streams_full", "node")["pane_id"], Value::Null);
+        assert_eq!(
+            refusal_record("mini", None, "streams_full", "node")["pane_id"],
+            Value::Null
+        );
     }
 }

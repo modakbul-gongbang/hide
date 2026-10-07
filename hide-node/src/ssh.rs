@@ -37,7 +37,7 @@ use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 mod attachments;
 mod device;
 pub mod host;
-mod hosts;
+pub mod hosts;
 
 pub use device::{Connector, SshDevice};
 pub use host::{PaneEvents, PaneEventsSlot, RemoteHost};

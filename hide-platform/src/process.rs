@@ -338,10 +338,12 @@ impl OwnedChild {
         })
     }
 
-    /// Captures piped stdout/stderr until both close and the child exits.
-    /// Reads are nonblocking on Unix and peek only available pipe bytes on
-    /// Windows; there are no reader threads or joins. An inherited pipe
-    /// cannot extend the absolute deadline, and neither pipe can exceed the
+    /// Captures piped stdout/stderr until the child exits, then ends what it
+    /// left in its tree and reads what the pipes still hold until they are
+    /// empty, as [`run_to_end`] does: a write end held outside the tree does
+    /// not hold the capture open. Reads are nonblocking on Unix and peek only
+    /// available pipe bytes on Windows; there are no reader threads or joins.
+    /// Nothing extends the absolute deadline, and neither pipe can exceed the
     /// caller's combined limit or [`MAX_CAPTURE_BYTES`]. Stdin stays owned
     /// by the caller and is neither read nor replaced here.
     ///
@@ -372,16 +374,34 @@ impl OwnedChild {
             if let Some(pipe) = &err {
                 sys::nonblocking(pipe).map_err(CaptureFailureKind::Io)?;
             }
+            let mut exited = false;
+            let mut tree_ended = false;
             loop {
                 if Instant::now() >= deadline {
                     return Err(CaptureFailureKind::Deadline);
                 }
+                if !exited && sys::has_exited(&self.child).map_err(CaptureFailureKind::Io)? {
+                    // The walk needs the leader unreaped, the group check
+                    // needs it reaped.
+                    self.kill_tree().map_err(CaptureFailureKind::Io)?;
+                    self.try_wait()
+                        .map_err(CaptureFailureKind::Io)?
+                        .ok_or_else(|| {
+                            CaptureFailureKind::Io(io::Error::other(
+                                "observed exit could not be reaped",
+                            ))
+                        })?;
+                    exited = true;
+                }
+                // Asked before the reads, so they come after the last write
+                // anything in the tree could make.
+                if exited && !tree_ended {
+                    tree_ended =
+                        sys::tree_ended(&self.child, &self.tie).map_err(CaptureFailureKind::Io)?;
+                }
                 let out_progress = read_capture(&mut out, &mut stdout, stderr.len(), output_limit)?;
                 let err_progress = read_capture(&mut err, &mut stderr, stdout.len(), output_limit)?;
-                if out.is_none()
-                    && err.is_none()
-                    && sys::has_exited(&self.child).map_err(CaptureFailureKind::Io)?
-                {
+                if tree_ended && !out_progress && !err_progress {
                     break;
                 }
                 if !out_progress && !err_progress {
@@ -639,10 +659,17 @@ const RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 const END_UNCONFIRMED_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Runs `command` as an [`OwnedChild`] with no input and capped outputs.
-/// The original deadline and stop apply through pipe draining, including after
-/// normal exit. Cleanup precedes that drain on every exit; the tree's end is
-/// confirmed by the leader's observed exit (`confirm_end`), and uncertainty
-/// retains ownership in the error.
+/// The answer is the leader's code and what its tree wrote: once the leader
+/// exits, its tree is ended, and once nothing of it is left running the
+/// pipes are read until they are empty. The run does not wait for every
+/// write end to close, because one can be held outside the tree for as long
+/// as its holder lives: a helper that left the group, or a child another
+/// thread started while this run's pipes were being made (macOS makes a pipe
+/// and marks it close-on-exec in two calls, and a child started between them
+/// keeps both ends). The original deadline and stop apply through draining.
+/// Cleanup precedes that drain on every exit; the leader's end is confirmed
+/// by its observed exit (`confirm_end`), and uncertainty retains ownership
+/// in the error.
 pub fn run_to_end(
     command: &mut Command,
     deadline: std::time::Duration,
@@ -725,6 +752,7 @@ fn capture_run(
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let (mut out_end, mut err_end) = (false, false);
     let mut status = None;
+    let mut tree_ended = false;
     loop {
         if status.is_none() && sys::has_exited(&child.child).map_err(RunFailure::Wait)? {
             // Observe without reaping: the leader's identity still belongs to
@@ -733,6 +761,11 @@ fn capture_run(
             status = Some(child.try_wait().map_err(RunFailure::Wait)?.ok_or_else(|| {
                 RunFailure::Wait(io::Error::other("observed exit could not be reaped"))
             })?);
+        }
+        // Asked before the reads, so they come after the last write anything
+        // in the tree could make.
+        if status.is_some() && !tree_ended {
+            tree_ended = sys::tree_ended(&child.child, &child.tie).map_err(RunFailure::Wait)?;
         }
         if stop.load(Ordering::Relaxed) {
             return Err(RunFailure::Stopped);
@@ -744,7 +777,10 @@ fn capture_run(
             drain_available(&mut stdout, &mut out, &mut out_end).map_err(RunFailure::Wait)?;
         let err_read =
             drain_available(&mut stderr, &mut err, &mut err_end).map_err(RunFailure::Wait)?;
-        if let Some(status) = status.filter(|_| out_end && err_end) {
+        // A pass that read nothing after the tree ended found both pipes
+        // empty: one read holds at most a buffer's worth, so a pass that read
+        // something is followed by another.
+        if let Some(status) = status.filter(|_| tree_ended && !out_read && !err_read) {
             return Ok(Finished {
                 code: status.code(),
                 stdout: String::from_utf8_lossy(&out).into_owned(),
@@ -905,6 +941,13 @@ pub fn cwd_of(pid: u32) -> io::Result<PathBuf> {
     sys::cwd_of(pid)
 }
 
+/// The name of the program `pid` runs, as the system lists it: the file name
+/// of its image on Windows, the command name elsewhere, which Linux keeps to
+/// its first 15 bytes. `NotFound` when the process is gone.
+pub fn name_of(pid: u32) -> io::Result<String> {
+    sys::name_of(pid)
+}
+
 /// Counts and sizes the process tree rooted at `pid`. `NotFound` when `pid`
 /// does not exist.
 pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
@@ -920,8 +963,12 @@ pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
     })
 }
 
-/// Every process under `root`, parents before children.
-fn descendants(root: u32) -> io::Result<Vec<u32>> {
+/// Every process under `root`, parents before children, read from one look
+/// at the system's process table. A root that has ended, or has no
+/// children, has none. On Windows a child is only one that started after its
+/// parent, because the table keeps a parent's pid after the parent has exited
+/// and another process may hold that pid now.
+pub fn descendants(root: u32) -> io::Result<Vec<u32>> {
     let mut walk = sys::Walk::new()?;
     let mut found: Vec<u32> = Vec::new();
     let mut level = vec![root];
@@ -1239,11 +1286,18 @@ mod sys {
         {
             return Err(io::Error::last_os_error());
         }
+        // macOS also answers for a stopped child, `WEXITED` alone or not, and
+        // a stopped child has not ended: only an exit, a kill or a core dump
+        // is the end `waitpid` can then reap.
+        let ended = matches!(
+            info.si_code,
+            libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+        );
         #[cfg(target_os = "macos")]
-        return Ok(info.si_pid != 0);
+        return Ok(info.si_pid != 0 && ended);
         #[cfg(target_os = "linux")]
         // SAFETY: waitid initialized siginfo_t above.
-        return Ok(unsafe { info.si_pid() } != 0);
+        return Ok(unsafe { info.si_pid() } != 0 && ended);
     }
 
     /// The highest descriptor the fallback marks; one above it stays
@@ -1369,6 +1423,74 @@ mod sys {
             ended |= signal(member as libc::pid_t, libc::SIGKILL).is_ok();
         }
         Ok(ended)
+    }
+
+    /// Whether nothing is left running in the child's group, by the answer
+    /// `is_alive` gives each member: a zombie has ended, a process still on
+    /// its way out has not, so no member can write any more once this holds.
+    /// Signal 0 to the group cannot say it: macOS refuses it with `EPERM`
+    /// both when only zombies are left and while a killed member is still
+    /// exiting. Asked once the leader is reaped; the system hands no new
+    /// process the group's id while a member keeps it. A member that left the
+    /// group was signalled by `kill_tree_of` but is not waited for here,
+    /// since only its pid would name it.
+    pub(super) fn tree_ended(child: &Child, _: &Tie) -> io::Result<bool> {
+        Ok(!group_members(child.id())?.into_iter().any(is_alive))
+    }
+
+    /// The processes whose group is `group`, zombies included.
+    #[cfg(target_os = "macos")]
+    fn group_members(group: u32) -> io::Result<Vec<u32>> {
+        let group = libc::pid_t::try_from(group)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // `proc_listpgrppids` counts pids, as `proc_listchildpids` does (see
+        // `Walk::children_of`).
+        // SAFETY: the first call asks for the size with a null buffer; the
+        // second writes at most `capacity` ints into a buffer we own.
+        unsafe {
+            let needed = libc::proc_listpgrppids(group, std::ptr::null_mut(), 0);
+            if needed < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // Slack for members that appear between the two calls.
+            let capacity = needed as usize + 16;
+            let mut buffer = vec![0i32; capacity];
+            let byte_len = (capacity * std::mem::size_of::<i32>()) as libc::c_int;
+            let written = libc::proc_listpgrppids(group, buffer.as_mut_ptr().cast(), byte_len);
+            if written < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            buffer.truncate((written as usize).min(capacity));
+            Ok(buffer
+                .into_iter()
+                .filter(|member| *member > 0)
+                .map(|member| member as u32)
+                .collect())
+        }
+    }
+
+    /// The processes whose group is `group`, zombies included.
+    #[cfg(target_os = "linux")]
+    fn group_members(group: u32) -> io::Result<Vec<u32>> {
+        let mut members = Vec::new();
+        for entry in std::fs::read_dir("/proc")? {
+            let Ok(entry) = entry else { continue };
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            // A process that exits during the pass is simply not listed.
+            if linux::fields(pid)
+                .and_then(|fields| linux::field::<u32>(&fields, 2))
+                .is_ok_and(|member_of| member_of == group)
+            {
+                members.push(pid);
+            }
+        }
+        Ok(members)
     }
 
     pub(super) fn kill_tree(pid: u32) -> io::Result<()> {
@@ -1515,6 +1637,27 @@ mod sys {
     }
 
     #[cfg(target_os = "macos")]
+    pub(super) fn name_of(pid: u32) -> io::Result<String> {
+        let info = mac::bsd_info(pid)?;
+        // `pbi_name` keeps twice as much of the name as `pbi_comm`, and is
+        // empty for a process that never set it.
+        let name = if info.pbi_name[0] != 0 {
+            &info.pbi_name[..]
+        } else {
+            &info.pbi_comm[..]
+        };
+        let bytes: Vec<u8> = name
+            .iter()
+            .map(|&byte| byte as u8)
+            .take_while(|&byte| byte != 0)
+            .collect();
+        if bytes.is_empty() {
+            return Err(io::Error::other("the process lists no name"));
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn cwd_of(pid: u32) -> io::Result<PathBuf> {
         use std::os::unix::ffi::OsStringExt;
 
@@ -1627,10 +1770,9 @@ mod sys {
     mod linux {
         use super::*;
 
-        /// The fields of `/proc/<pid>/stat` after the command name, which may
-        /// itself contain spaces and parentheses (hence the last `) `).
-        pub(in super::super) fn fields(pid: u32) -> io::Result<Vec<String>> {
-            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|error| {
+        /// The text of `/proc/<pid>/<file>`.
+        pub(in super::super) fn read(pid: u32, file: &str) -> io::Result<String> {
+            std::fs::read_to_string(format!("/proc/{pid}/{file}")).map_err(|error| {
                 // A process that exits during the read answers `ESRCH`, which
                 // Rust does not name.
                 if error.raw_os_error() == Some(libc::ESRCH) {
@@ -1638,7 +1780,13 @@ mod sys {
                 } else {
                     error
                 }
-            })?;
+            })
+        }
+
+        /// The fields of `/proc/<pid>/stat` after the command name, which may
+        /// itself contain spaces and parentheses (hence the last `) `).
+        pub(in super::super) fn fields(pid: u32) -> io::Result<Vec<String>> {
+            let stat = read(pid, "stat")?;
             let (_, rest) = stat
                 .rsplit_once(") ")
                 .ok_or_else(|| io::Error::other("unreadable process status"))?;
@@ -1664,6 +1812,12 @@ mod sys {
     #[cfg(target_os = "linux")]
     pub(super) fn start_time(pid: u32) -> io::Result<u64> {
         linux::field(&linux::fields(pid)?, 19)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn name_of(pid: u32) -> io::Result<String> {
+        let name = linux::read(pid, "comm")?;
+        Ok(name.strip_suffix('\n').unwrap_or(&name).to_owned())
     }
 
     #[cfg(target_os = "linux")]
@@ -1746,8 +1900,8 @@ mod sys {
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
         GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
-        TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, QueryFullProcessImageNameW,
+        ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
     };
 
     use super::*;
@@ -2157,6 +2311,26 @@ mod sys {
             child.kill()?;
             return Ok(true);
         }
+        let active = active_processes(tie)?;
+        // SAFETY: the job handle is open for as long as `tie` lives.
+        if unsafe { TerminateJobObject((tie.0).0, 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(active > 0)
+    }
+
+    /// Whether nothing is left running in the child's job. A terminated job
+    /// ends its processes after `TerminateJobObject` returns, so this is
+    /// asked until it holds. A child whose assignment failed is alone in its
+    /// tree, and its exit was seen before this is asked.
+    pub(super) fn tree_ended(_: &Child, tie: &Tie) -> io::Result<bool> {
+        if !tie.1 {
+            return Ok(true);
+        }
+        Ok(active_processes(tie)? == 0)
+    }
+
+    fn active_processes(tie: &Tie) -> io::Result<u32> {
         // SAFETY: an all-zero accounting structure is a valid value.
         let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
         // SAFETY: the job handle is open for as long as `tie` lives and
@@ -2173,11 +2347,7 @@ mod sys {
         if queried == 0 {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: as above.
-        if unsafe { TerminateJobObject((tie.0).0, 1) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(accounting.ActiveProcesses > 0)
+        Ok(accounting.ActiveProcesses)
     }
 
     pub(super) fn kill_tree(pid: u32) -> io::Result<()> {
@@ -2238,6 +2408,21 @@ mod sys {
             return Err(io::Error::last_os_error());
         }
         Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+    }
+
+    pub(super) fn name_of(pid: u32) -> io::Result<String> {
+        let process = open_live(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        let mut buffer = [0_u16; 1024];
+        let mut length = buffer.len() as u32;
+        // SAFETY: the handle is open, and the buffer holds the `length` units
+        // the call is told of.
+        let named =
+            unsafe { QueryFullProcessImageNameW(process.0, 0, buffer.as_mut_ptr(), &mut length) };
+        if named == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let image = String::from_utf16_lossy(&buffer[..length as usize]);
+        Ok(image.rsplit('\\').next().unwrap_or(&image).to_owned())
     }
 
     pub(super) fn cwd_of(_: u32) -> io::Result<PathBuf> {

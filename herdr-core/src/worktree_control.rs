@@ -1718,11 +1718,13 @@ impl ProcessWait {
     }
 }
 
-/// A process of a pane, named by its pid and start so a pid the system hands
-/// to another process later is not mistaken for it.
+/// A process of a pane, identified by its pid and start so a pid the system
+/// hands to another process later is not mistaken for it, and named by its
+/// program so a failure tells the operator which one to end.
 struct PaneProcess {
     pid: u32,
     started: u64,
+    name: String,
 }
 
 /// What `node`'s kernel says about each of `pids`, in order.
@@ -1743,8 +1745,13 @@ fn process_starts(
     Ok(starts)
 }
 
-/// The shell and foreground processes Herdr reports for `pane_id`. A process
-/// that already ended is not listed: there is nothing to wait for.
+/// The processes of `pane_id`: the shell and foreground processes Herdr
+/// reports, and every process under the shell, all read on `node`. Herdr
+/// reports no process between the two, and one can work in the same folder:
+/// on Windows a pane's `cmd.exe` runs the agent through `powershell.exe`,
+/// which outlived both reported processes in CI and held the worktree folder
+/// (issue 707). A process that already ended is not listed: there is nothing
+/// to wait for.
 fn pane_processes(
     connector: &dyn ApiConnector,
     node: &dyn crate::node_access::NodeLink,
@@ -1756,11 +1763,21 @@ fn pane_processes(
         wire::pane_process_info_params(pane_id)?,
     )?;
     let group = wire::pane_process_group(value)?;
-    let mut pids: Vec<u32> = group
-        .shell_pid
+    // Pid 0 and 1 are the system's, never a pane's.
+    let shell = group.shell_pid.filter(|pid| *pid > 1);
+    let under_shell = match shell {
+        Some(shell) => crate::node_access::call_as::<Vec<u32>>(
+            node,
+            Call::ProcessDescendants { pid: shell },
+            PROCESS_READ_TIMEOUT,
+        )
+        .map_err(|error| format!("the processes under shell {shell} could not be read: {error}"))?,
+        None => Vec::new(),
+    };
+    let mut pids: Vec<u32> = shell
         .into_iter()
         .chain(group.foreground_pids)
-        // Pid 0 and 1 are the system's, never a pane's.
+        .chain(under_shell)
         .filter(|pid| *pid > 1)
         .collect();
     pids.sort_unstable();
@@ -1768,7 +1785,9 @@ fn pane_processes(
     let mut running = Vec::new();
     for (pid, start) in pids.clone().into_iter().zip(process_starts(node, pids)?) {
         match start {
-            ProcessStart::Running { started } => running.push(PaneProcess { pid, started }),
+            ProcessStart::Running { started, name } => {
+                running.push(PaneProcess { pid, started, name });
+            }
             ProcessStart::Gone => {}
             ProcessStart::Unreadable { reason } => return Err(reason),
         }
@@ -1777,7 +1796,7 @@ fn pane_processes(
 }
 
 /// Waits until none of `held` is running or `deadline` passes, checking once
-/// more at the deadline, and names the pids still running when it does.
+/// more at the deadline, and names the processes still running when it does.
 /// `pause` is how long it lets the processes go on, which a test replaces.
 fn wait_for_processes_to_end(
     node: &dyn crate::node_access::NodeLink,
@@ -1793,8 +1812,11 @@ fn wait_for_processes_to_end(
             // ended; a process that cannot be read is not claimed to be gone.
             for (process, start) in held.drain(..).zip(starts) {
                 match start {
-                    ProcessStart::Running { started } if started == process.started => {
-                        running.push(process);
+                    // The program it runs now: one that started another
+                    // since it was first read is named by what holds the
+                    // folder.
+                    ProcessStart::Running { started, name } if started == process.started => {
+                        running.push(PaneProcess { name, ..process });
                     }
                     ProcessStart::Running { .. } | ProcessStart::Gone => {}
                     ProcessStart::Unreadable { reason } => return Err(reason),
@@ -1807,9 +1829,9 @@ fn wait_for_processes_to_end(
         }
         let Some(left) = deadline.checked_duration_since(Instant::now()) else {
             return Err(format!(
-                "Herdr closed the panes but their processes are still running (pid {}), so the folder may still be held",
+                "Herdr closed the panes but their processes are still running ({}), so the folder may still be held",
                 held.iter()
-                    .map(|process| process.pid.to_string())
+                    .map(|process| format!("{} pid {}", process.name, process.pid))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -2742,9 +2764,63 @@ mod tests {
         assert!(held.is_empty());
     }
 
+    /// A shell with a child of its own that Herdr does not report, and that
+    /// child's pid. On Windows a pane's `cmd.exe` runs the agent through
+    /// `powershell.exe`, and Herdr reports only the shell and the agent.
+    #[cfg(unix)]
+    struct ShellWithChild {
+        shell: std::process::Child,
+        child: u32,
+    }
+    #[cfg(unix)]
+    impl ShellWithChild {
+        fn start() -> Self {
+            let mut shell = Command::new("sh")
+                .args(["-c", "sleep 30 & echo $!; wait"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(shell.stdout.take().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let child = line.trim().parse().unwrap();
+            Self { shell, child }
+        }
+        fn end_shell(&mut self) {
+            let _ = self.shell.kill();
+            let _ = self.shell.wait();
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for ShellWithChild {
+        fn drop(&mut self) {
+            self.end_shell();
+            let _ = hide_platform::process::kill_tree(self.child);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
-    fn a_process_still_running_at_the_deadline_fails_the_wait_and_names_its_pid() {
+    fn a_process_the_shell_started_holds_the_wait_after_the_shell_has_ended() {
+        let mut tree = ShellWithChild::start();
+        // Herdr names the shell alone, as its foreground process too.
+        let server = server(vec![process_info("w1:p1", tree.shell.id())]);
+        let node = hide_node::Local::of_process();
+        let mut held = pane_processes(&server, &node, "w1:p1").unwrap();
+        tree.end_shell();
+        let error = wait_for_processes_to_end(&node, &mut held, Instant::now(), |_| {
+            panic!("no time is left to wait")
+        })
+        .unwrap_err();
+        // The child is `sh` until it has become `sleep`, which may be after
+        // the shell printed its pid; the name is the other test's subject.
+        assert!(error.contains(&format!("pid {})", tree.child)), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_still_running_at_the_deadline_fails_the_wait_and_names_it() {
         let child = LongLived::start();
         let pid = child.0.id();
         let server = server(vec![process_info("w1:p1", pid)]);
@@ -2759,7 +2835,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error.contains(&format!("still running (pid {pid})")),
+            error.contains(&format!("still running (sleep pid {pid})")),
             "{error}"
         );
     }
@@ -2769,6 +2845,7 @@ mod tests {
         let mut held = vec![PaneProcess {
             pid: u32::MAX - 1,
             started: 1,
+            name: "gone".to_owned(),
         }];
         wait_for_processes_to_end(
             &hide_node::Local::of_process(),
@@ -2792,13 +2869,37 @@ mod tests {
                 "pid {shell}"
             );
         }
-        // The shell is also the foreground process, and is listed once.
-        let server = server(vec![process_info("w1:p1", me)]);
-        let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
-        assert_eq!(
-            held.iter().map(|process| process.pid).collect::<Vec<_>>(),
-            [me]
+        // The shell is also the foreground process, and is listed once. It
+        // is a child of its own: the test process's pid would also have
+        // every other running test's children under it (issue 746).
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("ping");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        } else {
+            let mut command = Command::new("sleep");
+            command.arg("30");
+            command
+        };
+        let mut shell = command.stdout(std::process::Stdio::null()).spawn().unwrap();
+        let pid = shell.id();
+        let server = server(vec![process_info("w1:p1", pid)]);
+        let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1");
+        let tree = hide_platform::process::descendants(pid);
+        let _ = shell.kill();
+        let _ = shell.wait();
+        let held = held
+            .unwrap()
+            .iter()
+            .map(|process| process.pid)
+            .collect::<Vec<_>>();
+        let tree = tree.unwrap();
+        assert_eq!(held.iter().filter(|held| **held == pid).count(), 1);
+        assert!(
+            held.iter().all(|held| *held == pid || tree.contains(held)),
+            "only the shell and what runs under it: {held:?}"
         );
+        assert!(!held.contains(&me));
     }
 
     #[test]
