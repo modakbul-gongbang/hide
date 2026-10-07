@@ -405,6 +405,49 @@ mod tests {
         assert!(stayed_open, "one busy proof must not end a healthy link");
     }
 
+    #[test]
+    fn a_full_control_limit_ends_only_its_link_without_blocking_the_reader() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        // Occupy the executor so every admitted response stays queued until
+        // the reader has handled the burst. No call deadline orders the test.
+        let (started, ready) = std::sync::mpsc::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let worker = runtime.spawn_blocking(move || {
+            started.send(()).unwrap();
+            held.recv().unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        let panes = Arc::new(NodePanes::new(runtime.handle().clone()));
+        let link = RemoteHost::detached("mini");
+        let other = RemoteHost::detached("other");
+        let reader_link = link.clone();
+        let events = Events(panes);
+        let returned = runtime.block_on(async move {
+            tokio::spawn(async move {
+                // The control allowance is 32 queued plus running responses.
+                // No server state means each open must be answered with close.
+                for stream in 1..=33 {
+                    events.event("mini", &reader_link, NodeEvent::StreamOpen { stream });
+                }
+                events.event("mini", &reader_link, NodeEvent::StreamClosed { stream: 1 });
+            })
+            .await
+        });
+        let closed = link.closed_reason();
+        let other_stayed_open = other.closed_reason().is_none();
+        release.send(()).unwrap();
+        link.close("fixture finished");
+        other.close("fixture finished");
+        runtime.block_on(worker).unwrap();
+        assert!(returned.is_ok(), "the SSH reader panicked at the control limit");
+        assert!(closed.is_some(), "saturated control responses kept their link open");
+        assert!(other_stayed_open, "one saturated link ended another link");
+    }
+
     /// B30: a refusal is recorded with the node, the pane and the reason,
     /// and what a device chose is cut to a bounded prefix whoever records it.
     #[test]
