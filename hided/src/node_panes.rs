@@ -418,7 +418,10 @@ mod tests {
         });
         let stayed_open = link.closed_reason().is_none();
         link.close("fixture finished");
-        assert!(returned.is_ok(), "the SSH reader panicked at the proof limit");
+        assert!(
+            returned.is_ok(),
+            "the SSH reader panicked at the proof limit"
+        );
         assert!(stayed_open, "one busy proof must not end a healthy link");
     }
 
@@ -460,8 +463,14 @@ mod tests {
         link.close("fixture finished");
         other.close("fixture finished");
         runtime.block_on(worker).unwrap();
-        assert!(returned.is_ok(), "the SSH reader panicked at the control limit");
-        assert!(closed.is_some(), "saturated control responses kept their link open");
+        assert!(
+            returned.is_ok(),
+            "the SSH reader panicked at the control limit"
+        );
+        assert!(
+            closed.is_some(),
+            "saturated control responses kept their link open"
+        );
         assert!(other_stayed_open, "one saturated link ended another link");
     }
 
