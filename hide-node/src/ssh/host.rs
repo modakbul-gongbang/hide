@@ -442,6 +442,34 @@ impl RemoteHost {
         Arc::as_ptr(&self.inner) as usize
     }
 
+    /// A link with no device behind it: it has an identity and can be
+    /// closed, and every call on it times out. For tests of what a link's
+    /// identity decides.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn detached(target: &str) -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a test runtime");
+        let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(tokio::io::sink());
+        RemoteHost {
+            inner: Arc::new(Inner {
+                target: target.to_owned(),
+                runtime: Arc::new(RemoteRuntime(Some(runtime))),
+                closing: Arc::new(tokio::sync::Notify::new()),
+                _session_channel: Arc::new(Semaphore::new(1))
+                    .try_acquire_owned()
+                    .expect("a fresh permit"),
+                writer: tokio::sync::Mutex::new(writer),
+                pending: Mutex::new(HashMap::new()),
+                closed: Mutex::new(None),
+                gate: Gate::new(),
+                next_id: AtomicU64::new(1),
+                roots: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
     /// Why the connection ended, once it has.
     pub fn closed_reason(&self) -> Option<String> {
         lock_recover(&self.inner.closed).clone()
@@ -1568,6 +1596,43 @@ fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct Heard(Mutex<Vec<(String, NodeEvent)>>);
+
+    impl PaneEvents for Heard {
+        fn event(&self, node: &str, _link: &RemoteHost, event: NodeEvent) {
+            lock_recover(&self.0).push((node.to_owned(), event));
+        }
+
+        fn closed(&self, _node: &str, _link: &RemoteHost) {}
+    }
+
+    /// Letter-720: a node cannot speak for another node's panes. The node an
+    /// event belongs to is the link it came up, never a field of the line,
+    /// so a line naming another node reaches the core as this link's.
+    #[test]
+    fn a_link_s_events_carry_its_own_node_whatever_the_line_says() {
+        let link = RemoteHost::detached("ssh:device-a");
+        let heard = Arc::new(Heard::default());
+        let slot: PaneEventsSlot = Arc::default();
+        let _ = slot.set(Arc::clone(&heard) as Arc<dyn PaneEvents>);
+        let hook = PaneHook {
+            node: "node-a".to_owned(),
+            events: slot,
+        };
+        let line = json!({
+            "event": "pane_proof", "request": 7, "pane_id": "w1:p1",
+            "terminal_id": "t1", "shell_pid": 42, "shell_started": 9,
+            "nonce": "n", "one_shot": false,
+            "node": "node-b", "device_id": "node-b",
+        });
+        deliver_event(&link.inner, Some(&hook), line.to_string().as_bytes());
+        let heard = lock_recover(&heard.0);
+        assert_eq!(heard.len(), 1);
+        assert_eq!(heard[0].0, "node-a");
+        assert!(matches!(&heard[0].1, NodeEvent::PaneProof { pane_id, .. } if pane_id == "w1:p1"));
+    }
 
     fn folder(uid: u32, mode: u32) -> FileAttributes {
         FileAttributes {

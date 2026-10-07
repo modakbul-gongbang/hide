@@ -1,12 +1,17 @@
 //! Real loopback SSH boundary, with fixture-only keys and owned channel jobs.
 //! The account is a private HOME; streamlocal opens only its exact Herdr socket.
+//! Shared by the device link's tests (`remote_delivery`, `node_contract`),
+//! each of which uses part of it.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -20,7 +25,12 @@ use tokio::net::{TcpListener, UnixStream};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
-use super::Environment;
+/// The private account the server's sessions run as: every process it
+/// starts is built here, with that account's home and environment.
+pub trait Account: Send + Sync + 'static {
+    fn command(&self, program: &OsStr) -> Command;
+    fn home(&self) -> &Path;
+}
 
 const CONNECTION_CAP: usize = 8;
 const CHANNEL_CAP: usize = 32;
@@ -31,8 +41,10 @@ struct Shared {
     jobs: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     failures: Mutex<Vec<String>>,
     connections: Mutex<Vec<(server::Handle, watch::Sender<bool>)>>,
-    environment: Environment,
+    environment: Box<dyn Account>,
     socket: PathBuf,
+    /// Connections accepted since the server started.
+    accepted: AtomicUsize,
     client_key: russh::keys::PublicKey,
 }
 
@@ -54,6 +66,7 @@ enum Control {
 
 pub struct Ssh {
     pub port: u16,
+    shared: Arc<Shared>,
     controls: tokio::sync::mpsc::Sender<Control>,
     thread: Option<JoinHandle<()>>,
     finished: mpsc::Receiver<Result<()>>,
@@ -61,7 +74,7 @@ pub struct Ssh {
 
 impl Ssh {
     pub fn start(
-        environment: Environment,
+        environment: impl Account,
         socket: PathBuf,
         host_key: &Path,
         client_key: &Path,
@@ -82,10 +95,12 @@ impl Ssh {
             jobs: Mutex::new(Vec::new()),
             failures: Mutex::new(Vec::new()),
             connections: Mutex::new(Vec::new()),
-            environment,
+            environment: Box::new(environment),
             socket,
+            accepted: AtomicUsize::new(0),
             client_key,
         });
+        let kept = Arc::clone(&shared);
         let (controls, receiver) = tokio::sync::mpsc::channel(4);
         let (ready, readiness) = mpsc::sync_channel(1);
         let (ended, finished) = mpsc::sync_channel(1);
@@ -105,6 +120,7 @@ impl Ssh {
         // reaches the same stop-and-join boundary.
         let mut ssh = Self {
             port: 0,
+            shared: kept,
             controls,
             thread: Some(thread),
             finished,
@@ -113,6 +129,11 @@ impl Ssh {
             .recv_timeout(STOP_BOUND)
             .context("private SSH readiness")??;
         Ok(ssh)
+    }
+
+    /// How many connections clients have opened to this server.
+    pub fn accepted(&self) -> usize {
+        self.shared.accepted.load(Ordering::SeqCst)
     }
 
     pub fn online(&self, value: bool) -> Result<()> {
@@ -188,6 +209,7 @@ async fn serve(
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
                 if !online || sessions.len() >= CONNECTION_CAP { continue; }
+                shared.accepted.fetch_add(1, Ordering::SeqCst);
                 // OpenSSH sets TCP_NODELAY on its sockets. Without it a reply
                 // split over two writes waits for the client's delayed ACK
                 // (about 40 ms on Linux), and the install's serial 32 KB SFTP
@@ -312,7 +334,7 @@ impl server::Handler for Handler {
             session.channel_failure(id)?;
             return Ok(());
         }
-        let mut command = self.shared.environment.command("/bin/sh");
+        let mut command = self.shared.environment.command(OsStr::new("/bin/sh"));
         command.args(["-c", text]);
         self.start_process(id, command, session)
     }
@@ -331,11 +353,10 @@ impl server::Handler for Handler {
             .into_iter()
             .find(|path| Path::new(path).is_file())
             .context("system SFTP server unavailable")?;
-        let mut command = self.shared.environment.command(program);
-        command.args(["-d"]).arg(&self.shared.environment.home);
+        let mut command = self.shared.environment.command(OsStr::new(program));
+        command.args(["-d"]).arg(self.shared.environment.home());
         self.start_process(id, command, session)
     }
-
 }
 
 impl Handler {

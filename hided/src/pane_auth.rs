@@ -354,6 +354,14 @@ impl Registry {
 
     /// Revokes `token` when `node` vouched for it over `link`; a node can
     /// withdraw only what it vouched for.
+    /// The credential `token` names, when `node` vouched for it over `link`:
+    /// a command a device's node relays runs only on a credential that same
+    /// node vouched for over that same connection (PRD core-host-node B18).
+    pub fn vouched(&self, token: &str, node: &str, link: &RemoteHost) -> Option<Capability> {
+        self.get(token)
+            .filter(|capability| capability.vouched_by(node, link))
+    }
+
     pub fn revoke_vouched(&self, node: &str, link: &RemoteHost, token: &str) {
         if let Ok(mut entries) = self.entries.lock()
             && entries
@@ -879,6 +887,77 @@ fn answer_bootstrap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn device_attestation(node: &str) -> Attestation {
+        Attestation {
+            pane_id: format!("remote:{node}:pane:w1:p1"),
+            context: Context {
+                device_id: node.to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/checkout".to_owned(),
+            },
+            binding: Binding::Pane {
+                terminal_id: "t1".to_owned(),
+                shell_pid: 42,
+                shell_started: 9,
+            },
+        }
+    }
+
+    fn device_grant(node: &str, link: &RemoteHost) -> RemoteGrant {
+        RemoteGrant {
+            node: node.to_owned(),
+            link: link.clone(),
+            source_pane_id: "w1:p1".to_owned(),
+            one_shot: false,
+        }
+    }
+
+    /// B18 and letter-720: a device credential answers only on the link it
+    /// was vouched for over: not on another node's link, not on its own
+    /// node's next connection, and not once its link closed or was revoked.
+    #[test]
+    fn a_device_credential_answers_only_on_the_link_that_vouched_for_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link_a = RemoteHost::detached("ssh:a");
+        let link_b = RemoteHost::detached("ssh:b");
+        let next_a = RemoteHost::detached("ssh:a");
+        let (token, issued) = registry
+            .issue_remote(
+                &device_attestation("node-a"),
+                device_grant("node-a", &link_a),
+            )
+            .unwrap();
+        assert!(issued);
+        assert!(registry.vouched(&token, "node-a", &link_a).is_some());
+        assert!(registry.vouched(&token, "node-b", &link_b).is_none());
+        assert!(registry.vouched(&token, "node-b", &link_a).is_none());
+        assert!(registry.vouched(&token, "node-a", &next_a).is_none());
+        registry.revoke_link("node-a", &link_a);
+        assert!(registry.vouched(&token, "node-a", &link_a).is_none());
+        assert!(registry.get(&token).is_none());
+
+        // A link that ends takes its credentials with it, and issues none.
+        let (token, _) = registry
+            .issue_remote(
+                &device_attestation("node-a"),
+                device_grant("node-a", &next_a),
+            )
+            .unwrap();
+        next_a.close("lost");
+        assert!(registry.get(&token).is_none());
+        assert_eq!(
+            registry
+                .issue_remote(
+                    &device_attestation("node-a"),
+                    device_grant("node-a", &next_a)
+                )
+                .err(),
+            Some("hide_unavailable")
+        );
+    }
 
     #[tokio::test]
     async fn long_state_directory_keeps_a_short_private_bootstrap_socket() {

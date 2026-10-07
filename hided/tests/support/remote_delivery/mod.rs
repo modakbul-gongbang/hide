@@ -2,6 +2,7 @@
 //! Every candidate child has an owned process tree; counts and reads are capped.
 
 mod renderer;
+#[path = "../ssh_server.rs"]
 mod ssh;
 
 use std::collections::BTreeMap;
@@ -24,6 +25,16 @@ const READ_CAP: usize = 1024 * 1024;
 pub struct Environment {
     pub home: PathBuf,
     values: BTreeMap<OsString, OsString>,
+}
+
+impl ssh::Account for Environment {
+    fn command(&self, program: &OsStr) -> Command {
+        Environment::command(self, program)
+    }
+
+    fn home(&self) -> &Path {
+        &self.home
+    }
 }
 
 impl Environment {

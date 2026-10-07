@@ -632,8 +632,11 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
         return;
     }
-    match state.pane_capabilities.get(&handshake.token) {
-        Some(capability) if capability.vouched_by(&node, &link) => {
+    match state
+        .pane_capabilities
+        .vouched(&handshake.token, &node, &link)
+    {
+        Some(capability) => {
             let connection = state.connections.fetch_add(1, Ordering::SeqCst);
             scoped_client_loop(
                 socket,
