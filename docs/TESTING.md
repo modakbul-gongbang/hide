@@ -116,8 +116,8 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Set `terminal.default_shell` in the private Herdr config, because Windows Herdr does not select its shell from `SHELL`.
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
-  Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
-  Every `agent start` the fixture sends (setup's and every `fixture.run`'s) goes through `startAgentAtShell`, which sends it only while the pinned Herdr counts the shell as available (`docs/ARCHITECTURE.md`, Starting an agent), as the product's `agent_start::start_at_shell` does.
+  Before each initial agent start, the fixture waits for the prompt and for the shell to be available to `agent start`, decided by the one check below (`shellAvailability`), within the existing ten-second setup bound.
+  Every `agent start` the fixture sends (setup's and every `fixture.run`'s) goes through `startAgentAtShell`, which sends it only while `shellAvailability` says the pinned Herdr counts the shell as available (`docs/ARCHITECTURE.md`, Starting an agent), as the product's `agent_start::start_at_shell` does.
   On macOS and Linux that is while `pane process-info` says the shell alone holds the terminal; on Windows it is while no process names the shell as its parent, which `pane process-info` does not show, so the fixture lists those processes with the compiled `hide-children.exe`.
   A refusal as `agent_pane_busy` typed nothing, so the fixture goes back to waiting within the same ten-second bound; any other answer is the start's.
   A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has.
