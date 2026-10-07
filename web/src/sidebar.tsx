@@ -26,7 +26,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentGroupTitle, agentPlaces, allAgents, deviceListedAgents, type ListedAgent } from "./navigation";
+import { agentTree as sectionTree, agentGroupTitle, agentPlaces, allAgents, deviceListedAgents, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -617,14 +617,11 @@ function AgentCounts({ counts }: { counts: AgentScope["groups"] }) {
  * a child to a parent on another device.
  */
 function agentTree(listed: ListedAgent[], scope: AgentScope | null) {
-  const index = new Map(listed.map((row) => [row.agent.pane_id, row]));
   const agents = listed.map((row) => row.agent);
   const presentations = new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, scope!)]));
-  const sections = scope?.sections.map((section) => ({ ...section, rows: section.rows.map((row) => {
-    const listed = index.get(row.pane_id);
-    if (!listed) throw new Error(`Section references a missing agent: ${row.pane_id}`);
-    return { ...listed, depth: row.depth, descendants: presentations.get(row.pane_id)!.badgeDescendants };
-  }) })) ?? [];
+  const sections = sectionTree(listed, scope).sections.map((section) => ({ ...section, rows: section.rows.map((row) => ({
+    ...row, descendants: presentations.get(row.agent.pane_id)!.badgeDescendants,
+  })) }));
   return { sections, presentation: (agent: AgentRow) => presentations.get(agent.pane_id)! };
 }
 /** The first snapshot has not arrived: neither an empty list nor a zero is known yet. */
