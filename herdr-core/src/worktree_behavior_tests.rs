@@ -598,9 +598,10 @@ fn changes_before_sentinel(
 
 /// Settles the repositories' own setup writes before a test measures: they
 /// can reach the watch after it started, and they are real changes of the
-/// projects the test then expects to stay quiet. A read they already started
-/// may still be running, so it is joined and its answer taken until the
-/// reader answers the current request with nothing pending.
+/// projects the test then expects to stay quiet. Reads they started are
+/// joined and answered, and a write still inside its debounce is waited out,
+/// until no read runs and nothing is pending.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn settle_setup_writes(
     sentinel: &Repository,
     reader: &mut WorktreeReader,
@@ -608,12 +609,21 @@ fn settle_setup_writes(
 ) {
     changes_before_sentinel(sentinel, reader, "settled");
     reader.git_watch.pending.clear();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
     loop {
         reader.inner.join_pending();
-        match reader.read_if_due(request.clone()) {
-            Some(answer) if !answer.observations_current => {}
-            _ => return,
+        let answer = reader.read_if_due(request.clone());
+        if !reader.inner.reading()
+            && reader.git_watch.pending.is_empty()
+            && answer.is_none_or(|answer| answer.observations_current)
+        {
+            return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the setup writes never settled within 15 seconds"
+        );
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
