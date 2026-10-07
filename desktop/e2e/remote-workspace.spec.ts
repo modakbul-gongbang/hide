@@ -18,6 +18,7 @@ import type { Duplex } from "node:stream";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
+import { browserPartition } from "../src/main/browserSync";
 import { claudeSettings, deviceBridges, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
 import { endChild, HIDE_CLI, hostLog, isolate, launch, nodeOf, test, type Isolated } from "./fixture";
 
@@ -391,7 +392,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await new Promise<void>((resolve) => tlsServer!.listen(0, "127.0.0.1", resolve));
     const tlsPort = (tlsServer.address() as AddressInfo).port;
     const remoteWorkspace = `ssh-e2e\u0000${fs.realpathSync(path.join(remote.root, "fixture"))}`;
-    const tlsPartition = `persist:hide-browser-${createHash("sha256").update(`${remoteWorkspace}\u0000web`).digest("hex").slice(0, 32)}`;
+    const tlsPartition = browserPartition(remoteWorkspace, `https://localhost:${tlsPort}/secure`, nodeOf(run.env));
     await app.evaluate(({ session }, partition) => {
       session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
         callback(request.hostname === "localhost" ? 0 : -3);
