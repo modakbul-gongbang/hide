@@ -4,6 +4,9 @@ use super::scope::Member;
 use crate::model::{SidebarAgentSnapshot, WorkspaceSnapshot};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+mod cross;
+pub use cross::{CrossChip, CrossDevice};
+pub(super) use cross::{GraphMember, Lineage};
 
 type Badges = BTreeMap<String, BTreeMap<&'static str, usize>>;
 
@@ -12,6 +15,7 @@ pub struct Graph {
     pub attention: u8,
     pub recency: String,
     pub checkouts: BTreeMap<String, Checkout>,
+    pub cross: BTreeMap<String, Vec<CrossChip>>,
     /// The three opened folds plus project scope form a fixed 16-way selector.
     /// Identical badge maps share one payload, including the empty map.
     pub variants: [usize; 16],
@@ -23,6 +27,7 @@ impl Default for Graph {
             attention: 4,
             recency: String::new(),
             checkouts: BTreeMap::new(),
+            cross: BTreeMap::new(),
             variants: [0; 16],
             tucked: vec![BTreeMap::new()],
         }
@@ -42,6 +47,7 @@ pub(super) fn project(
     project: &WorkspaceSnapshot,
     members: &[Member],
     agents: &[&SidebarAgentSnapshot],
+    lineage: &Lineage<'_>,
 ) -> Graph {
     let by_pane: HashMap<_, _> = agents
         .iter()
@@ -56,6 +62,12 @@ pub(super) fn project(
         }
     });
     let mut value = Graph::default();
+    for member in members {
+        value.cross.insert(
+            member.pane_id.clone(),
+            lineage.chips(project, by_pane[member.pane_id.as_str()]),
+        );
+    }
     for checkout in &project.checkouts {
         let mut own: Vec<_> = members
             .iter()

@@ -705,6 +705,26 @@ impl Cache {
                     .map(move |a| (a.pane_id.as_str(), (d.id, d.label)))
             })
             .collect();
+        let mut graph_members = Vec::new();
+        for (device_index, device) in devices.iter().enumerate() {
+            let by_pane: HashMap<_, _> = device
+                .agents
+                .iter()
+                .rev()
+                .map(|agent| (agent.pane_id.as_str(), *agent))
+                .collect();
+            for project in device.projects.iter().filter(|p| !p.is_home) {
+                for member in members(&[project], &device.agents) {
+                    graph_members.push(super::graph::GraphMember {
+                        project,
+                        agent: by_pane[member.pane_id.as_str()],
+                        checkout_id: member.checkout_id,
+                        device_label: (device_index != 0).then_some(device.label),
+                    });
+                }
+            }
+        }
+        let graph_lineage = super::graph::Lineage::new(graph_members);
         let mut overall_listed = Vec::new();
         let mut overall_members = Vec::new();
         let mut overall_projects = Vec::new();
@@ -764,8 +784,12 @@ impl Cache {
                 }
                 projected.prs =
                     crate::agent_state::work::board::project(project, &device.agents, &trees);
-                projected.graph =
-                    super::graph::project(project, &projected.members, &device.agents);
+                projected.graph = super::graph::project(
+                    project,
+                    &projected.members,
+                    &device.agents,
+                    &graph_lineage,
+                );
                 for checkout in &project.checkouts {
                     let pane_ids: HashSet<_> = checkout
                         .tabs

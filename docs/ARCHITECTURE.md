@@ -300,6 +300,8 @@ Device scopes also carry connected row listings and pane places, and the PR proj
 `agent_state/tally/scope.rs` owns their calculation and one bounded cache of the current input and output, refreshed on agent or catalog reconciliation, with no worker, timer, subprocess, I/O or serialization.
 Existing close targets also carry `tally/close.rs` consequences: confirmation priority, stop-work rows, and outside-descendant rows and counts.
 `tally/graph.rs` supplies graph attention, ordered membership, fold classes and tucked marks for the fixed sixteen fold/scope combinations, deduplicating equal maps.
+Its `graph/cross.rs` supplies cross-project chip membership, attention order, counts and device context from stable device IDs, retaining the first global pane occurrence across the local and last-known remote catalogs.
+The web resolves the projected project/device IDs for navigation and translates local device context without regrouping or recounting chips.
 `work.rs` also publishes the request row’s selected PR and ordered issue keys, including folded-chip recency, while `tally.rs` owns local and remote device and removal totals.
 `tally/relations.rs` supplies command-palette lineage groups and their issue keys, and `tally/cleanup.rs` supplies checkout-use counts, preserving last-known disconnected descendants separately from live close targets.
 Text search and pixel geometry stay in the web; filters select from the core's priority order without deriving a new status.

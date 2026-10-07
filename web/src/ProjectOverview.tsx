@@ -8,7 +8,7 @@ import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { DiskFact, LowFreeFact, openDiskCleanup } from "./DiskEntrance";
 import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen";
-import { overviewProject } from "./navigation";
+import { boardProjects, overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { foldId } from "./agentGraph";
@@ -63,6 +63,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const now = Date.now();
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
+  const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
   const rows = useMemo(() => workspace ? requestRows(lensAgents, deviceAgents ?? [], workspace.agent_scope) : [], [lensAgents, deviceAgents, workspace]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
   const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
@@ -185,7 +186,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       ) : view === "agents" ? (
         // A device that does not answer shows its reason above and no graph: the last picture is not left standing (B32).
         availability.state === "ready" ? (
-          <AgentGraph projects={projects} agents={lensAgents} scope="project" selectedBox={lens.box} filter={lens.graph} onFilter={(graph) => setLens({ graph })} folds={lens.folds} handlers={lensActions} now={now} />
+          <AgentGraph projects={projects} agents={lensAgents} scope="project" selectedBox={lens.box} filter={lens.graph} onFilter={(graph) => setLens({ graph })} folds={lens.folds} everyone={everyone} handlers={lensActions} now={now} />
         ) : (
           <div className="flex-1" data-graph-unavailable={availability.state} />
         )

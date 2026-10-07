@@ -25,6 +25,7 @@ import {
   type CloseWatch,
   type CloseWatchFrame,
 } from "./buffers";
+import { NO_GRAPH_FILTER } from "./agentGraph";
 import { createCatalogObserver } from "./agentPicker";
 import { closeScope, closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
@@ -1326,7 +1327,7 @@ export function createActions(send: DispatchFn) {
      * Overview shows, as one action. The screen is this page's own state, so
      * the only event is the device's (PRD cmdk-navigation B20).
      */
-    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null } | { session: SessionTarget }) {
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null } | { session: SessionTarget } | { box: string; fold: string | null }) {
       const state = ui();
       const next = state.overviewProjectId === projectId ? state.overviewLens : projectEntryLens(rest(), projectId);
       const selected =
@@ -1334,9 +1335,12 @@ export function createActions(send: DispatchFn) {
           ? pullRequestLens(next, lens.pullRequest)
           : lens && "session" in lens
             ? { ...next, tab: "sessions" as const, focusTask: null, panel: null, session: lens.session }
-            : lens
-              ? { ...next, tab: "issues" as const, focusTask: lens.issue, panel: lens.issue }
-              : next;
+            : lens && "box" in lens
+              ? // A cross-project chip's other end (issue 718): its box selected and unfolded, with no filter to hide it.
+                { ...next, tab: "agents" as const, box: lens.box, graph: NO_GRAPH_FILTER, folds: lens.fold === null || next.folds.includes(lens.fold) ? next.folds : [...next.folds, lens.fold] }
+              : lens
+                ? { ...next, tab: "issues" as const, focusTask: lens.issue, panel: lens.issue }
+                : next;
       const modal = state.screen?.kind === "workspace" && Boolean(frontCheckout(rest()) && rest()?.workspace_view);
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
       useUiStore.setState({ overviewProjectId: projectId, overviewLens: selected, overviewOpen: modal, overviewReturnFocus: target, overlay: "none", ...(!modal ? { screen: { kind: "main" as const, deviceId } } : {}) });

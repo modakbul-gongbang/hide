@@ -10,7 +10,7 @@ import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
-import { AgentGraph, GraphFilterControls } from "./GraphView";
+import { AgentGraph, GraphFilterControls, type GraphReveal } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
 import { lensHandlers } from "./OverviewLenses";
 import { scopeAgents } from "./overviewLens";
@@ -58,6 +58,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // The Agents graph's folds and filter are this screen's own page state, gone with it (agents-graph-view B29).
   const [folds, setFolds] = useState<readonly string[]>([]);
   const [graphFilter, setGraphFilter] = useState<GraphFilter>(NO_GRAPH_FILTER);
+  // The box a cross-project chip selected; no box is selected here until one does (issue 718).
+  const [graphBox, setGraphBox] = useState<string | null>(null);
   const [focusTask, setFocusTask] = useState<string | null>(null);
   // The Tasks view's issue panel and filter, this screen's own page state (PRD overview-lenses-issues).
   const [panel, setPanel] = useState<string | null>(null);
@@ -73,6 +75,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
   const agentScope = deviceScope(rest, deviceId);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
+  const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
   const rows = useMemo(() => agentScope ? requestRows(lensAgents, projects.flatMap((project) => project.agents), agentScope) : [], [lensAgents, projects, agentScope]);
   // The request view's expanded rows and fold, this screen's own page state.
   const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
@@ -132,6 +135,11 @@ export function MainScreen({ actions }: { actions: Actions }) {
     },
     toggleFold: (fold) => setFolds((open) => toggledFold(open, fold)),
   }), [actions, setView]);
+  const selectGraphBox = useCallback((box: string, { fold, clearFilter }: GraphReveal) => {
+    if (fold !== null) setFolds((open) => (open.includes(fold) ? open : [...open, fold]));
+    if (clearFilter) setGraphFilter(NO_GRAPH_FILTER);
+    setGraphBox(box);
+  }, []);
   // With the issue panel open the board and the panel scroll on their own (D-43).
   const scrolls = view !== "projects" && !(view === "tasks" && panelCard(tasks, panel) !== null);
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
@@ -169,6 +177,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
             setView(value as MainView);
             setFocusTask(null);
             setPanel(null);
+            setGraphBox(null);
           }}
         >
           <TabsList aria-label={t("overview.viewLabel")}>
@@ -225,7 +234,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           page={page}
         />
       ) : view === "agents" ? (
-        <AgentGraph projects={projects} agents={lensAgents} scope="all" selectedBox={null} filter={graphFilter} onFilter={setGraphFilter} folds={folds} handlers={lensActions} now={Date.now()} />
+        <AgentGraph projects={projects} agents={lensAgents} scope="all" selectedBox={graphBox} filter={graphFilter} onFilter={setGraphFilter} folds={folds} everyone={everyone} onSelectBox={selectGraphBox} handlers={lensActions} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>{t("overview.empty")}</p>

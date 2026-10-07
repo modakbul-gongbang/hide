@@ -134,6 +134,26 @@ function latest(values: readonly LensAgent[]): string {
 
 // --- the model ----------------------------------------------------------------
 
+/**
+ * A delegation into another project, drawn as a chip on each end's row (issue
+ * 718): `out` on the parent's row, one per project it delegated into, and `in`
+ * on the child's. A project's graph is its own (D-11), so no line crosses
+ * projects; the chip is how the two ends find each other.
+ */
+export type CrossChip = {
+  direction: "out" | "in";
+  /** The project at the other end. */
+  project: Workspace;
+  /** The other end's device when it is not this row's, `THIS_DEVICE` for this machine; null on one device. */
+  device: string | null;
+  /** The agents at the other end, the most urgent first. */
+  paneIds: string[];
+  names: string[];
+  count: number;
+  /** The box holding the first of them, the one a click selects. */
+  box: string;
+};
+
 /** One agent's row in a box. */
 export type GraphRow = {
   value: LensAgent;
@@ -158,6 +178,8 @@ export type GraphRow = {
   tucked: BadgeCounts | null;
   /** Kept only to link a matching row to its parent chain, so drawn faded (B27). */
   dim: boolean;
+  /** The delegations into or from other projects, out before in (issue 718). */
+  cross: CrossChip[];
 };
 
 export type GraphTray = { key: string; top: number; bottom: number; paneIds: string[] };
@@ -234,6 +256,8 @@ export type GraphOptions = {
   /** The box a way in selected; a box that is not drawn leaves the project's primary box selected (B1). */
   selectedBox: string | null;
   filter: GraphFilter;
+  /** Every agent of every project on every device, where a delegation into another project finds its other end. */
+  everyone: readonly LensAgent[];
 };
 
 export function foldId(kind: FoldKind, projectId: string): string {
@@ -255,14 +279,15 @@ export function buildGraph(projects: readonly BoardProject[], agents: readonly L
   const filtering = graphFilterActive(options.filter);
   const ofProject = new Map<Workspace, LensAgent[]>();
   for (const value of agents) push(ofProject, value.project, value);
+  const otherProjects = new Map(options.everyone.map((value) => [projectKey(value.project.id, value.project.device_id), value.project]));
   const sections = projects
-    .map((project) => projectGraph(project, ofProject.get(project.workspace) ?? [], options, filtering))
+    .map((project) => projectGraph(project, ofProject.get(project.workspace) ?? [], options, filtering, otherProjects))
     .filter((section): section is ProjectGraph => section !== null);
   if (options.scope === "all") sections.sort((a, b) => a.attention - b.attention || b.recency.localeCompare(a.recency));
   return { sections, empty: sections.length === 0 && !filtering, filterEmpty: sections.length === 0 && filtering };
 }
 
-function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean): ProjectGraph | null {
+function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean, otherProjects: ReadonlyMap<string, Workspace>): ProjectGraph | null {
   const { geometry: g } = options;
   const state = workspace.agent_scope.graph;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
@@ -320,7 +345,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
   // Rows, trays and each box's own height.
   const rowOf = new Map<string, GraphRow>();
   const infos: Info[] = drawn.map((entry) => {
-    const { rows, trays, inner } = rowsOf(entry, matched, g);
+    const { rows, trays, inner } = rowsOf(entry, matched, g, otherProjects);
     for (const row of rows) rowOf.set(row.paneId, row);
     const box: GraphBox = {
       id: entry.checkout.id,
@@ -374,7 +399,8 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     boxes,
     edges,
     folds: filtering ? [] : foldList,
-    selected: options.selectedBox === null ? null : shownIds.has(options.selectedBox) ? options.selectedBox : (drawn.find((entry) => entry.primary)?.checkout.id ?? null),
+    // On All projects only the section that draws the selected box selects it; one project falls back to its primary box (B1).
+    selected: options.selectedBox === null ? null : shownIds.has(options.selectedBox) ? options.selectedBox : options.scope === "all" ? null : (drawn.find((entry) => entry.primary)?.checkout.id ?? null),
     rows: rowOf,
     width: boxes.length === 0 ? 0 : width + g.pad,
     height: boxes.length === 0 ? 0 : height + g.pad,
@@ -383,8 +409,32 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
   };
 }
 
+/** The fold line holding a box, selected from the core's cleanup/resting decision. */
+export function foldHolding(workspace: Workspace, checkoutId: string, scope: GraphOptions["scope"]): string | null {
+  if (!workspace.checkouts.some((checkout) => checkout.id === checkoutId)) return null;
+  const facts = workspace.agent_scope.graph.checkouts[checkoutId];
+  if (!facts) throw new Error(`Missing graph checkout: ${checkoutId}`);
+  const kind = facts.primary && scope === "project" ? null : facts.fold;
+  return kind === null ? null : foldId(kind, workspace.id);
+}
+
+function projectKey(id: string, deviceId: string): string {
+  return JSON.stringify([deviceId, id]);
+}
+
+/** Resolve navigation targets and translated device context without changing core membership or order. */
+function crossChipsOf(value: LensAgent, otherProjects: ReadonlyMap<string, Workspace>): CrossChip[] {
+  const chips = value.project.agent_scope.graph.cross[value.agent.pane_id];
+  if (!chips) throw new Error(`Missing graph cross-project row: ${value.agent.pane_id}`);
+  return chips.map((chip) => {
+    const project = otherProjects.get(projectKey(chip.project_id, chip.project_device_id));
+    if (!project) throw new Error(`Missing graph cross-project target: ${chip.project_id}`);
+    return { direction: chip.direction, project, device: chip.device === null ? null : chip.device.label ?? THIS_DEVICE, paneIds: chip.pane_ids, names: chip.names, box: chip.box_id, count: chip.count };
+  });
+}
+
 /** One box's rows: agents sharing a tab stand together on one tray and a delegation inside the box is indented under its parent (B6, B7). */
-function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphGeometry): { rows: GraphRow[]; trays: GraphTray[]; inner: number } {
+function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphGeometry, otherProjects: ReadonlyMap<string, Workspace>): { rows: GraphRow[]; trays: GraphTray[]; inner: number } {
   const { checkout, members } = entry;
   const inBox = new Set(members.map((value) => value.agent.pane_id));
   const tabOf = new Map<string, Tab>();
@@ -440,6 +490,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
       parent: parentId,
       tucked: null,
       dim: matched ? !matched.has(value.agent.pane_id) : false,
+      cross: crossChipsOf(value, otherProjects),
     };
     rows.push(row);
     top += height;

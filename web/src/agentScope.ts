@@ -103,7 +103,19 @@ export type CloseSubtree = {
   target_unknown: boolean;
 };
 
+export type AgentGraphCross = {
+  direction: "out" | "in";
+  project_id: string;
+  project_device_id: string;
+  /** Null means the same device; a null label names this machine. */
+  device: { label: string | null } | null;
+  pane_ids: string[];
+  names: string[];
+  box_id: string;
+  count: number;
+};
 export type AgentGraphScope = {
+  cross: Record<string, AgentGraphCross[]>;
   attention: 0 | 1 | 2 | 3 | 4;
   recency: string;
   checkouts: Record<string, { primary: boolean; cleanup: "merged" | "missing" | null; fold: "empty" | "cleanup" | "resting" | null; members: string[]; rank: 0 | 1 | 2 | 3 | 4; resting: boolean }>;

@@ -6,7 +6,7 @@ import type { AgentRow, Workspace } from "../src/snapshot";
 export function legacyGraphScope(project: Workspace, members: AgentScope["members"], agents: readonly AgentRow[]): AgentGraphScope {
   const byPane = new Map(agents.map((a) => [a.pane_id, a]));
   const primary = project.checkouts.find((c) => c.is_primary === true) ?? (project.is_git ? null : project.checkouts[0]);
-  const value: AgentGraphScope = { attention: 4, recency: "", checkouts: {}, variants: [], tucked: [{}] };
+  const value: AgentGraphScope = { cross: {}, attention: 4, recency: "", checkouts: {}, variants: [], tucked: [{}] };
   for (const checkout of project.checkouts) {
     const own = members.filter((m) => m.checkout_id === checkout.id).map((m) => byPane.get(m.pane_id)!);
     own.sort((a, b) => a.state.graph_rank - b.state.graph_rank || (b.last_activity ?? "").localeCompare(a.last_activity ?? ""));

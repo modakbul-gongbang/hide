@@ -53,7 +53,8 @@
       ],
       "tucked": [
         {}
-      ]
+      ],
+      "cross": {}
     },
     "closes": {
       "": {
@@ -545,7 +546,12 @@
       ],
       "tucked": [
         {}
-      ]
+      ],
+      "cross": {
+        "p-parent": [],
+        "p-child": [],
+        "p-dag": []
+      }
     },
     "closes": {},
     "raised": [
@@ -926,7 +932,12 @@
       ],
       "tucked": [
         {}
-      ]
+      ],
+      "cross": {
+        "p-parent": [],
+        "p-child": [],
+        "p-dag": []
+      }
     },
     "closes": {},
     "raised": [],
@@ -1233,7 +1244,8 @@
         ],
         "tucked": [
           {}
-        ]
+        ],
+        "cross": {}
       },
       "closes": {},
       "raised": [],
@@ -1470,7 +1482,8 @@
         ],
         "tucked": [
           {}
-        ]
+        ],
+        "cross": {}
       },
       "closes": {},
       "raised": [],

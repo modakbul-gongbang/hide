@@ -631,6 +631,11 @@ A removal dialog whose target has left the catalog keeps its existing result wit
 The three fold toggles and project/all selection have sixteen combinations, with identical badge maps shared in the snapshot.
 The renderer selects a combination, filters text and draws geometry; a filtered box reads the first remaining row in core priority order.
 `runtime::tests::agent_scopes::graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor` pins nested hidden marks and Git-only fold invalidation.
+`graph/cross.rs` projects one outgoing chip per other project, ordered by its most urgent child and then latest activity, followed by the incoming parent chip.
+The first global pane occurrence wins, same-project delegation stays an indent or line, and distinct device IDs retain context even when their labels match.
+Disconnected catalogs retain their chips, matching the graph’s existing last-known membership.
+The chip’s count, names and first checkout are projected together; the web resolves navigation and translates the local device label.
+`runtime::tests::agent_scopes::graph_cross_project_chips_preserve_order_counts_and_stable_device_context` pins the incoming graph screen values and cache invalidation.
 
 `tally.rs` also owns local and remote device counts and project-removal running-agent totals.
 Device scopes publish the current listed rows by source index, preserving duplicate physical rows and local-first order, and the first checkout place for each pane.

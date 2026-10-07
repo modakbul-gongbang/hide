@@ -13,6 +13,156 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
 }
 
 #[test]
+fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
+    // Incoming main PR 749 screen: Build before Spec, then Docs; no local
+    // delegation chip, and distinct device IDs retain equal-label context.
+    let mut runtime = runtime();
+    let local_id = runtime.snapshot.navigator.devices[0].id.clone();
+    runtime.snapshot.navigator.devices[0].label = "mini".into();
+    let mut agents = rows();
+    agents[0].identity_label = "Lead".into();
+    agents[1].pane_id = "spec".into();
+    agents[1].identity_label = "Spec".into();
+    agents[1].state.graph_rank = 1;
+    agents[1].last_activity = "2026-10-08T01:00:00Z".into();
+    agents[1].lineage_parent_pane_id = Some("root".into());
+    let mut build = agents[1].clone();
+    build.pane_id = "build".into();
+    build.identity_label = "Build".into();
+    build.last_activity = "2026-10-08T02:00:00Z".into();
+    let mut docs = build.clone();
+    docs.pane_id = "docs".into();
+    docs.identity_label = "Docs".into();
+    docs.state.graph_rank = 3;
+    let mut helper = build.clone();
+    helper.pane_id = "helper".into();
+    agents.extend([build, docs, helper]);
+    runtime.snapshot.navigator.agents = agents;
+    let project = |id: &str, names: &[&str]| {
+        let mut project = workspace(
+            id,
+            id,
+            "/fixture",
+            names
+                .iter()
+                .map(|name| checkout(id, name, "/fixture", Some(pane(name, "/fixture"))))
+                .collect(),
+        );
+        project.device_id.clone_from(&local_id);
+        project
+    };
+    runtime.snapshot.navigator.workspaces = vec![
+        project("ide", &["root", "helper"]),
+        project("sasu", &["spec", "build"]),
+        project("docs", &["docs"]),
+    ];
+    assert!(runtime.refresh_agent_scopes());
+    let chips = &runtime.snapshot.navigator.workspaces[0]
+        .agent_scope
+        .graph
+        .cross["root"];
+    assert_eq!(
+        chips
+            .iter()
+            .map(|c| (c.project_id.as_str(), c.count))
+            .collect::<Vec<_>>(),
+        [("sasu", 2), ("docs", 1)]
+    );
+    assert_eq!(chips[0].names, ["Build", "Spec"]);
+    assert_eq!(chips[0].box_id, "build");
+    assert!(chips[0].device.is_none());
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .graph
+            .cross["helper"]
+            .is_empty()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[1]
+            .agent_scope
+            .graph
+            .cross["spec"][0]
+            .names,
+        ["Lead"]
+    );
+    assert!(!runtime.refresh_agent_scopes());
+    runtime.snapshot.navigator.agents[2].identity_label = "Builder".into();
+    assert!(
+        runtime.refresh_agent_scopes(),
+        "a label change updates chip names"
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .graph
+            .cross["root"][0]
+            .names,
+        ["Builder", "Spec"]
+    );
+
+    let mut remote_device = crate::workspace::local_device(&crate::node::test_node());
+    remote_device.id = "other-device".into();
+    remote_device.label = "mini".into();
+    remote_device.kind = "remote".into();
+    runtime.snapshot.navigator.devices.push(remote_device);
+    let mut remote_project = project("remote-docs", &["remote:other-device:pane:p1"]);
+    remote_project.device_id = "other-device".into();
+    let mut remote_agent = runtime.snapshot.navigator.agents[3].clone();
+    remote_agent.pane_id = "remote:other-device:pane:p1".into();
+    runtime.snapshot.status.remote = vec![RemoteStatusSnapshot {
+        target_id: "other-device".into(),
+        state: "connected".into(),
+        message: None,
+        herdr_version: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+        session: Some(RemoteSessionSnapshot {
+            workspaces: vec![remote_project],
+            agents: vec![remote_agent],
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
+        }),
+    }];
+    assert!(runtime.refresh_agent_scopes());
+    let remote_chips = &runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces[0]
+        .agent_scope
+        .graph
+        .cross["remote:other-device:pane:p1"];
+    assert_eq!(remote_chips[0].project_device_id, local_id);
+    assert_eq!(remote_chips[0].device.as_ref().unwrap().label, None);
+    let chips = &runtime.snapshot.navigator.workspaces[0]
+        .agent_scope
+        .graph
+        .cross["root"];
+    assert_eq!(chips[2].project_id, "remote-docs");
+    assert_eq!(
+        chips[2].device.as_ref().unwrap().label.as_deref(),
+        Some("mini")
+    );
+    runtime.snapshot.status.remote[0].state = "disconnected".into();
+    assert!(runtime.refresh_agent_scopes());
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .graph
+            .cross["root"][2]
+            .count,
+        1,
+        "last-known disconnected chips remain visible"
+    );
+}
+
+#[test]
 fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     let mut runtime = runtime();
     let mut agents = rows();
