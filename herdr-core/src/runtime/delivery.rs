@@ -196,6 +196,9 @@ impl Runtime {
     /// Until that snapshot publishes, the host's panes are unknown and no
     /// registration on it is ended.
     pub(crate) fn begin_delivery_pane_read(&mut self, device: &str) {
+        if !self.delivery_pane_owner_registered(device) {
+            return;
+        }
         let floor = self
             .delivery_ledger
             .as_ref()
@@ -221,6 +224,9 @@ impl Runtime {
         payload: &SessionSnapshotPayload,
         host_scope: Option<&str>,
     ) {
+        if !self.delivery_pane_owner_registered(device) {
+            return;
+        }
         // An agent's pane is one of the panes; a payload of agents alone
         // (a device read before its layout) still names them.
         let panes: HashSet<&str> = payload
@@ -267,6 +273,18 @@ impl Runtime {
                 read,
                 previous.as_ref(),
             ));
+    }
+
+    /// A retired remote coordinator may finish before its off-lock join,
+    /// but only a registered device still owns a pane read.
+    fn delivery_pane_owner_registered(&self, device: &str) -> bool {
+        device == self.node.as_str()
+            || self
+                .snapshot
+                .ui_state
+                .device_registrations
+                .iter()
+                .any(|registration| registration.id == device)
     }
 
     /// The registrations the delivery store has still to end.
