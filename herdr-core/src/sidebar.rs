@@ -585,7 +585,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
     let completed = agent_completed(&agent);
-    let blocked = agent.agent_status.as_deref() == Some("blocked");
+    let blocked = agent_blocked(&agent);
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
             agent

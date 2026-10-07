@@ -671,11 +671,22 @@ pub(crate) fn derive_read_state(
 pub(crate) fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
     if agent.label.as_ref().is_some_and(|label| label.question) {
         AgentDemand::Question
-    } else if agent.agent_status.as_deref() == Some("blocked") {
+    } else if agent_blocked(agent) {
         AgentDemand::Approval
     } else {
         AgentDemand::None
     }
+}
+
+/// Session plan approval holds the same state as Herdr's blocked prompt.
+/// A current-state read cannot hold an agent that is already working again.
+pub(crate) fn agent_blocked(agent: &SessionAgentPayload) -> bool {
+    agent.agent_status.as_deref() == Some("blocked")
+        || (agent.agent_status.as_deref() != Some("working")
+            && agent
+                .facts
+                .as_ref()
+                .is_some_and(|facts| facts.awaiting_operator))
 }
 
 /// The activity axis. A state Herdr does not name is reported as unknown

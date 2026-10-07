@@ -278,6 +278,19 @@ pub(crate) fn is_waiting_for_operator(agent: &SidebarAgentSnapshot) -> bool {
     agent.demand != "none" || agent.blocked
 }
 
+/// A session plan approval Enter starts the person's next request, unlike
+/// an Enter at Herdr's ordinary blocked prompt. Preserve the observed status
+/// when present and the existing row fallback when it is not.
+pub(crate) fn submit_answers_prompt(
+    agent: &SidebarAgentSnapshot,
+    observed_status: Option<&str>,
+) -> bool {
+    match observed_status {
+        Some(status) => status == "blocked",
+        None => agent.blocked && agent.activity != "stopped",
+    }
+}
+
 pub(crate) fn is_seen(agent: &SidebarAgentSnapshot) -> bool {
     agent.group == "seen"
 }

@@ -981,8 +981,9 @@ pub struct SidebarAgentSnapshot {
     /// Whether this pane has changed since the operator last had it focused.
     /// Owned by Hide per pane, never by Herdr's tab-scoped seen.
     pub unread: bool,
-    /// Herdr reports an approval prompt on this pane right now. It holds the
-    /// row in Needs You whether or not the operator has read it.
+    /// An approval prompt waits on this pane right now: Herdr reports one, or
+    /// the agent's session says its plan waits for the operator's approval.
+    /// It holds the row in Needs You whether or not the operator has read it.
     pub blocked: bool,
     /// Derived: `needs_you`, `done`, `working`, or `seen`.
     pub group: String,

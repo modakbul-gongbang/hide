@@ -4,9 +4,11 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::delivery::doorbell::Turn;
 use crate::delivery::ledger::Ledger;
 use crate::delivery::worker::{Authority, Client, Prepared, PreparedHuman};
 use crate::delivery::{Actor, Command};
+use crate::labels::overlay::LabelOverlay;
 use crate::sidebar::SessionSnapshotPayload;
 use crate::workspace_control::{Caller, Context, Query};
 
@@ -34,6 +36,7 @@ pub(crate) struct Observation {
     pub entered_working_at_unix_ms: u64,
     pub session: Option<hide_session::session_activity::SessionActivityRequest>,
     pub host_scope: Option<String>,
+    pub turn: Turn,
 }
 
 impl Observation {
@@ -50,16 +53,21 @@ impl Observation {
             entered_working_at_unix_ms: 0,
             session: None,
             host_scope: None,
+            turn: Turn::NotReported,
         }
     }
 }
 
 impl Runtime {
+    /// `labels` is the device's label overlay, whose session reads say what
+    /// an agent waits for; without one, an agent whose read reports turns is
+    /// not known to wait for nothing.
     pub(crate) fn observe_delivery(
         &mut self,
         device: &str,
         payload: &SessionSnapshotPayload,
         host_scope: Option<&str>,
+        labels: Option<&LabelOverlay>,
     ) {
         let now = unix_milliseconds();
         let mut present = HashSet::new();
@@ -119,10 +127,17 @@ impl Runtime {
                 .map(|old| old.status_changed_at_unix_ms)
                 .or_else(|| persisted.map(|watch| watch.status_changed_at_unix_ms))
                 .unwrap_or(now);
-            let session_kind = match kind {
-                "codex" => Some(hide_session::Agent::Codex),
-                "claude" | "claude-code" | "claude_code" => Some(hide_session::Agent::Claude),
-                _ => None,
+            // The same reading of the kind the bell target uses, so a pane
+            // the bell reaches is never one whose session read is skipped.
+            let session_kind = crate::agent_hooks::runtime_of(kind).map(|runtime| match runtime {
+                hide_agent_hooks::runtime::AgentRuntime::Codex => hide_session::Agent::Codex,
+                hide_agent_hooks::runtime::AgentRuntime::ClaudeCode => hide_session::Agent::Claude,
+            });
+            let turn = match session_kind {
+                Some(kind) if kind.reports_turns() => labels
+                    .and_then(|labels| labels.waiting(agent))
+                    .map_or(Turn::Unread, Turn::Read),
+                _ => Turn::NotReported,
             };
             let session = session_kind
                 .zip(agent.agent_session.as_ref())
@@ -161,6 +176,7 @@ impl Runtime {
                 host_scope: host_scope
                     .filter(|scope| scope.len() <= 4096)
                     .map(str::to_owned),
+                turn,
             };
             self.delivery_observations.insert(pane_id, observation);
         }
@@ -727,7 +743,7 @@ pub(crate) mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"recipient-session"},
         ]})).unwrap();
-        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
         runtime.snapshot.status.herdr.state = "connected".into();
         let panes = ["sender", "recipient"]
             .into_iter()
@@ -844,8 +860,9 @@ pub(crate) mod tests {
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,
              "lineage_session":crate::wire::session_digest(native)},
         ]})).unwrap();
-        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
         let observation = runtime.delivery_observations.get_mut("recipient").unwrap();
+        read_nothing_waits(observation);
         observation.status_changed_at_unix_ms = 0;
         observation.last_input_at_unix_ms = 0;
         observation.last_submit_at_unix_ms = 0;
@@ -875,7 +892,25 @@ pub(crate) mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":status,"state_change_seq":sequence,"lineage_session":"recipient-session"},
         ]})).unwrap();
-        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
+        read_nothing_waits(runtime.delivery_observations.get_mut("recipient").unwrap());
+    }
+
+    /// The recipient's session read says nothing waits for the operator in
+    /// its current state, as the label overlay answers once it has read it;
+    /// what the read says is tested on its own
+    /// (`the_session_read_decides_the_turn_for_the_current_state_only`).
+    pub(crate) fn read_nothing_waits(observation: &mut Observation) {
+        observation.turn = Turn::Read(hide_session::turns::Waiting::Nothing);
+    }
+
+    /// What the recipient's session read says, as a doorbell test sets it.
+    pub(crate) fn recipient_turn(runtime: &mut Runtime, turn: Turn) {
+        runtime
+            .delivery_observations
+            .get_mut("recipient")
+            .unwrap()
+            .turn = turn;
     }
 
     /// The three facts the bell reads, per pane, optionally set to zero so a
@@ -980,6 +1015,146 @@ pub(crate) mod tests {
         assert_eq!(written(&mut guard), (false, false, false));
     }
 
+    /// The overlay a label worker would publish for a Codex pane whose
+    /// session read, under Herdr state `seq`, found a finished plan turn.
+    fn plan_overlay(pane: &str, native: &str, seq: u64) -> LabelOverlay {
+        use hide_session::turns::TurnMark;
+        let turn = Some("turn-1".to_owned());
+        read_overlay(
+            pane,
+            native,
+            seq,
+            &[
+                TurnMark::Started {
+                    turn: turn.clone(),
+                    mode: hide_session::turns::TurnMode::Plan,
+                },
+                TurnMark::Plan { turn: turn.clone() },
+                TurnMark::Completed { turn },
+            ],
+        )
+    }
+
+    /// The overlay for a Codex pane whose session read, under Herdr state
+    /// `seq`, found these records.
+    fn read_overlay(
+        pane: &str,
+        native: &str,
+        seq: u64,
+        marks: &[hide_session::turns::TurnMark],
+    ) -> LabelOverlay {
+        let mut turns = hide_session::turns::TurnTracker::default();
+        for (offset, mark) in marks.iter().enumerate() {
+            turns.fold(offset as u64 * 10, mark);
+        }
+        let record = crate::labels::store::PaneRecord {
+            owner: hide_session::label_reference_token("codex", "id", native),
+            turns: Some(turns),
+            turns_seq: Some(seq),
+            ..Default::default()
+        };
+        LabelOverlay::of_records([(&pane.to_owned(), &record)], true, false)
+    }
+
+    /// PRD codex-plan-approval-hold D-04, D-06, D-07: the bell's turn fact is
+    /// the overlay's read for the agent's current state and session; another
+    /// state, another session or no overlay is not known for an agent whose
+    /// read reports turns, and an agent whose read reports none is unchanged.
+    #[test]
+    fn the_session_read_decides_the_turn_for_the_current_state_only() {
+        use crate::delivery::doorbell::Turn;
+        use hide_session::turns::Waiting;
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        let overlay = plan_overlay("recipient", "recipient-native", 2);
+        let observe = |guard: &mut Runtime, agent: &str, seq: u64, native: &str, labels| {
+            let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+                {"id":"recipient","pane_id":"recipient","agent":agent,"agent_status":"done",
+                 "state_change_seq":seq,"lineage_session":"recipient-session",
+                 "agent_session":{"kind":"id","value":native}},
+            ]}))
+            .unwrap();
+            guard.observe_delivery(crate::node::TEST_NODE, &payload, None, labels);
+            guard.delivery_observations["recipient"].turn
+        };
+        assert_eq!(
+            observe(&mut guard, "codex", 2, "recipient-native", Some(&overlay)),
+            Turn::Read(Waiting::PlanApproval)
+        );
+        assert_eq!(
+            observe(&mut guard, "codex", 3, "recipient-native", Some(&overlay)),
+            Turn::Unread,
+            "a newer state than the read"
+        );
+        assert_eq!(
+            observe(&mut guard, "codex", 2, "another-native", Some(&overlay)),
+            Turn::Unread,
+            "another session in the pane"
+        );
+        assert_eq!(
+            observe(&mut guard, "codex", 2, "recipient-native", None),
+            Turn::Unread
+        );
+        assert_eq!(
+            observe(&mut guard, "claude", 2, "recipient-native", None),
+            Turn::NotReported
+        );
+        assert_eq!(
+            observe(&mut guard, " Codex", 2, "recipient-native", Some(&overlay)),
+            Turn::Unread,
+            "the kind as the bell target reads it"
+        );
+    }
+
+    /// B5: Herdr can read Codex done before its session file records the end
+    /// of the turn. Only a plan-mode turn can end waiting for approval, so an
+    /// ordinary turn still running in the file rings as before; an unfinished
+    /// plan-mode turn is not known and holds until the next state is read.
+    #[test]
+    fn a_turn_not_yet_ended_in_the_file_rings_unless_it_runs_in_plan_mode() {
+        use crate::delivery::doorbell::Hold;
+        use hide_session::turns::{TurnMark, TurnMode};
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        let verdict = |guard: &mut Runtime, mode: TurnMode| {
+            let started = TurnMark::Started {
+                turn: Some("turn-1".to_owned()),
+                mode,
+            };
+            let overlay = read_overlay("recipient", "recipient-native", 2, &[started]);
+            let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+                {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"done",
+                 "state_change_seq":2,"lineage_session":"recipient-session",
+                 "agent_session":{"kind":"id","value":"recipient-native"}},
+            ]}))
+            .unwrap();
+            guard.observe_delivery(crate::node::TEST_NODE, &payload, None, Some(&overlay));
+            let long_ago = unix_milliseconds().saturating_sub(10 * 60_000);
+            let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+            observation.last_input_at_unix_ms = long_ago;
+            observation.last_submit_at_unix_ms = long_ago;
+            observation.status_changed_at_unix_ms = long_ago;
+            guard
+                .delivery_bell_verdict(&target.actor, unix_milliseconds())
+                .err()
+        };
+        assert_eq!(
+            verdict(&mut guard, TurnMode::Other),
+            None,
+            "a default-mode turn rings"
+        );
+        assert_eq!(
+            verdict(&mut guard, TurnMode::Plan),
+            Some(Hold::SessionUnread)
+        );
+        assert_eq!(
+            verdict(&mut guard, TurnMode::Unknown),
+            Some(Hold::SessionUnread)
+        );
+    }
+
     #[test]
     fn the_bell_verdict_names_a_replaced_session_and_an_absent_pane() {
         use crate::delivery::doorbell::Hold;
@@ -1002,13 +1177,13 @@ pub(crate) mod tests {
         let replaced: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,"lineage_session":"replacement-session"},
         ]})).unwrap();
-        guard.observe_delivery(crate::node::TEST_NODE, &replaced, None);
+        guard.observe_delivery(crate::node::TEST_NODE, &replaced, None, None);
         assert_eq!(
             guard.delivery_bell_verdict(&target.actor, now).err(),
             Some(Hold::Session)
         );
         let empty: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[]})).unwrap();
-        guard.observe_delivery(crate::node::TEST_NODE, &empty, None);
+        guard.observe_delivery(crate::node::TEST_NODE, &empty, None, None);
         assert_eq!(
             guard.delivery_bell_verdict(&target.actor, now).err(),
             Some(Hold::Absent)
@@ -1116,7 +1291,7 @@ pub(crate) mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,"lineage_session":own},
         ]})).unwrap();
-        guard.observe_delivery(crate::node::TEST_NODE, &payload, None);
+        guard.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
         let context = authority(&target.actor).context;
         clocks(&mut guard, "recipient", true);
         guard
@@ -1325,7 +1500,7 @@ pub(crate) mod tests {
                     catalog: Default::default(),
                 });
             let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{"id":"remote-sender","pane_id":"sender","agent":"claude","agent_status":"working","state_change_seq":1,"lineage_session":"remote-session"}]})).unwrap();
-            guard.observe_delivery("device", &payload, Some("fixture-device"));
+            guard.observe_delivery("device", &payload, Some("fixture-device"), None);
             context = guard
                 .workspace_control_query("device", caller, Query::Info)
                 .unwrap()
