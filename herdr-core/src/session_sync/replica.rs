@@ -13,10 +13,14 @@ const RETIRED_ID_WINDOW: usize = 64;
 const EARLY_FOCUS_LIMIT: usize = 16;
 
 /// How many panes a replica holds waiting for their cwd to be confirmed
-/// (`unconfirmed_cwds`). The coordinator confirms each pane right after the
-/// event that announced it, so the set holds one pane at a time; a pane past
-/// the cap keeps the cwd it was announced with and is logged.
+/// (`unconfirmed_cwds`). A pane waits at most `CWD_READ_LIMIT` coordinator
+/// ticks, so the map holds the panes created in the last two seconds; a pane
+/// past the cap keeps the cwd it was announced with and is logged.
 const UNCONFIRMED_CWD_LIMIT: usize = 64;
+
+/// How many times the coordinator reads one pane's cwd before it takes the
+/// last answer without a second one agreeing (`pane_cwd.unsettled`).
+const CWD_READ_LIMIT: u32 = 8;
 
 static NEXT_REPLICA_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -56,11 +60,13 @@ pub(crate) struct SessionReplica {
     /// Panes announced by `pane_created` whose cwd Herdr has not confirmed.
     /// Herdr 0.9.1 can announce a new pane with a cwd that is not the one it
     /// was created in (`/tmp` for a tab created in the project folder, seen
-    /// on CI), while a read of the same pane afterwards answers the right
-    /// one. Herdr sends no later event for that pane, and `agent.list` lists
-    /// agent terminals only, so one `pane.get` read is what confirms it
+    /// on CI), and on a loaded machine a read right afterwards can still
+    /// answer a folder above it. Herdr sends no event when the cwd settles,
+    /// and `agent.list` lists agent terminals only, so `pane.get` reads are
+    /// what confirm it: once right after the event, then once per
+    /// coordinator tick until an answer repeats the one before it
     /// (`confirm_pane_cwd`).
-    unconfirmed_cwds: BTreeSet<String>,
+    unconfirmed_cwds: BTreeMap<String, UnconfirmedCwd>,
     /// How many events this replica has applied since its snapshot. Herdr's
     /// stream carries no sequence, so this is the only position a diagnostic
     /// can name.
@@ -69,6 +75,19 @@ pub(crate) struct SessionReplica {
     /// Herdr's topology and carries none; each publish lays them on
     /// `published_state`.
     tab_moves: crate::sidebar::SessionTabMoves,
+}
+
+/// A pane's cwd while Herdr's answers for it may still move.
+#[derive(Clone)]
+struct UnconfirmedCwd {
+    /// The cwd the pane was announced with, then the one Herdr last answered;
+    /// an answer equal to it confirms the pane.
+    last: Option<String>,
+    reads: u32,
+    /// Whether a coordinator tick has passed since the pane was announced.
+    /// The first read follows the event at once, so the next one waits a
+    /// whole tick rather than landing in the same instant.
+    ticked: bool,
 }
 
 /// How an event that disagrees with the replica is treated.
@@ -132,7 +151,7 @@ impl SessionReplica {
             pending_active_tab_focuses: BTreeSet::new(),
             retired_ids: VecDeque::new(),
             early_focuses: Vec::new(),
-            unconfirmed_cwds: BTreeSet::new(),
+            unconfirmed_cwds: BTreeMap::new(),
             applied_events: 0,
             tab_moves,
         };
@@ -706,13 +725,43 @@ impl SessionReplica {
     /// Panes whose cwd came from their creation event and has not been
     /// read back from Herdr yet.
     pub(crate) fn panes_awaiting_cwd(&self) -> Vec<String> {
-        self.unconfirmed_cwds.iter().cloned().collect()
+        self.unconfirmed_cwds
+            .iter()
+            .filter(|(_, wait)| wait.reads == 0)
+            .map(|(pane_id, _)| pane_id.clone())
+            .collect()
     }
 
-    /// Holds a pane's cwd as unconfirmed until the coordinator reads it back.
+    /// Panes a coordinator tick reads again: those whose last answer did not
+    /// repeat the one before it, once a tick has passed since their event.
+    pub(crate) fn take_cwd_rereads(&mut self) -> Vec<String> {
+        let mut due = Vec::new();
+        for (pane_id, wait) in &mut self.unconfirmed_cwds {
+            if wait.ticked {
+                due.push(pane_id.clone());
+            }
+            wait.ticked = true;
+        }
+        due
+    }
+
+    /// Holds a pane's cwd as unconfirmed until Herdr answers it twice alike.
     fn await_cwd(&mut self, pane_id: String) {
         if self.unconfirmed_cwds.len() < UNCONFIRMED_CWD_LIMIT {
-            self.unconfirmed_cwds.insert(pane_id);
+            let last = self
+                .state
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == pane_id)
+                .and_then(|pane| pane.cwd.clone());
+            self.unconfirmed_cwds.insert(
+                pane_id,
+                UnconfirmedCwd {
+                    last,
+                    reads: 0,
+                    ticked: false,
+                },
+            );
         } else {
             crate::diagnostic!(json!({
                 "component": "session_sync",
@@ -725,17 +774,34 @@ impl SessionReplica {
     }
 
     /// Applies a `pane.get` answer to a pane waiting for its cwd, and reports
-    /// whether the cwd changed. The read is the confirmation whatever it
-    /// says, so the pane stops waiting either way; an answer with no cwd (the
-    /// pane closed before the read, or Herdr knows none) keeps what the event
-    /// said.
+    /// whether the cwd changed. An answer equal to the one before it (the
+    /// event's cwd for the first read) confirms the pane; a different one is
+    /// published and the pane keeps waiting, until `CWD_READ_LIMIT` reads
+    /// take the last answer. An answer with no cwd (the pane closed before
+    /// the read, or Herdr knows none) ends the wait and keeps the cwd held.
     pub(crate) fn confirm_pane_cwd(&mut self, pane_id: &str, cwd: Option<String>) -> bool {
-        if !self.unconfirmed_cwds.remove(pane_id) {
-            return false;
-        }
-        let Some(cwd) = cwd else {
+        let Some(wait) = self.unconfirmed_cwds.get_mut(pane_id) else {
             return false;
         };
+        let Some(cwd) = cwd else {
+            self.unconfirmed_cwds.remove(pane_id);
+            return false;
+        };
+        wait.reads += 1;
+        if wait.last.as_deref() == Some(cwd.as_str()) {
+            self.unconfirmed_cwds.remove(pane_id);
+        } else if wait.reads >= CWD_READ_LIMIT {
+            self.unconfirmed_cwds.remove(pane_id);
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "pane_cwd.unsettled",
+                "pane_id": pane_id,
+                "reads": CWD_READ_LIMIT,
+                "applied_events": self.applied_events,
+            }));
+        } else {
+            wait.last = Some(cwd.clone());
+        }
         let Some(pane) = self
             .state
             .panes
@@ -1261,8 +1327,9 @@ impl SessionReplica {
                     return Err(malformed_event(event, "created pane already exists"));
                 }
                 self.pending_layouts.insert(input_pane.tab_id.clone());
-                self.await_cwd(input_pane.pane_id.clone());
+                let pane_id = input_pane.pane_id.clone();
                 self.state.panes.push(input_pane);
+                self.await_cwd(pane_id);
             }
             ReplicaEvent::PaneClosed {
                 workspace_id: input_workspace_id,
@@ -1659,7 +1726,7 @@ impl SessionReplica {
             .panes
             .retain(|pane| pane.workspace_id != workspace_id);
         self.unconfirmed_cwds
-            .retain(|pane_id| self.state.panes.iter().any(|pane| &pane.pane_id == pane_id));
+            .retain(|pane_id, _| self.state.panes.iter().any(|pane| &pane.pane_id == pane_id));
         self.state
             .layouts
             .retain(|layout| layout.workspace_id != workspace_id);
