@@ -8,7 +8,7 @@
 // on one project's Overview it opens the other project's Overview with that
 // box selected. Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,6 +21,17 @@ test.describe.configure({ timeout: 180_000 });
 
 function git(cwd: string, args: string[]): void {
   execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: "ignore" });
+}
+
+/** Every chip's project name in `row` is drawn whole: not cut by an ellipsis and not squeezed to nothing. */
+async function expectNamesWhole(row: Locator): Promise<void> {
+  const names = row.locator("[data-graph-cross-name]");
+  await expect(names).not.toHaveCount(0);
+  for (const name of await names.all()) {
+    const size = await name.evaluate((element) => ({ text: element.textContent, client: element.clientWidth, scroll: element.scrollWidth }));
+    expect(size.client, `chip name ${size.text} is drawn`).toBeGreaterThan(0);
+    expect(size.scroll, `chip name ${size.text} is not cut`).toBeLessThanOrEqual(size.client);
+  }
 }
 
 type Stack = { herdr: HerdrFixture; daemon: Daemon; lead: string; spec: string; build: string; docs: string };
@@ -99,6 +110,10 @@ test("All projects: a delegation into another project is a chip at each end, and
     const selected = main.locator('[data-graph-box][data-selected="true"]');
     await expect(selected.locator(`[data-graph-row="${build}"]`)).toBeVisible();
     await expect(selected).toBeInViewport();
+    // Hovered and focused, the row shows its hint where the age was; the title gives way, never a chip's project name.
+    await row(lead).locator("[data-graph-open]").hover({ position: { x: 4, y: 4 } });
+    await expect(row(lead).locator("[data-graph-row-hint]")).toBeVisible();
+    await expectNamesWhole(row(lead));
     await screenshot(page, "graph-cross-project-selected-light");
   } finally {
     stack.daemon.stop();

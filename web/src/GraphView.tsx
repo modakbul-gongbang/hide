@@ -549,7 +549,10 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
         {row.depth > 0 ? <CornerDownRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" data-graph-indent="true" /> : null}
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
         <AgentMark kind={agent.agent_kind} />
-        <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", row.cross.length > 0 && "min-w-1/4", asking && "font-semibold")}>{agent.identity_label}</span>
+        {/* The title takes what is left, so it gives way before a chip's project name, the one thing a chip says (issue 718). */}
+        <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", asking && "font-semibold")} data-graph-row-title="true">
+          {agent.identity_label}
+        </span>
         {row.cross.map((chip) => (
           <CrossProjectChip key={`${chip.direction}:${chip.project.id}`} chip={chip} onClick={() => onCross(chip)} />
         ))}
@@ -601,7 +604,7 @@ function CrossProjectChip({ chip, onClick }: { chip: CrossChip; onClick: () => v
         }}
       >
         <Arrow aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-        <span className="min-w-0 truncate font-sans">{chip.project.label}</span>
+        <span className="min-w-0 truncate font-sans" data-graph-cross-name="true">{chip.project.label}</span>
         {device ? <span className="min-w-0 truncate font-sans text-subtle-foreground">{device}</span> : null}
         {chip.paneIds.length > 1 ? <span className="shrink-0">{chip.paneIds.length}</span> : null}
       </button>
