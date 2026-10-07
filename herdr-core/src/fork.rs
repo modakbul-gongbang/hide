@@ -113,13 +113,37 @@ pub fn task_agent_name(kind: &str, pane_id: &str) -> String {
 const FORK_PREFIX: &str = "fork-";
 
 /// Whether Hide made `name` up for the `kind` agent in `pane_id` rather than
-/// someone giving it: that pane's task or wake name, or any fork's, which
+/// someone giving it: that pane's task or wake name, or a fork's, which
 /// spells its parent's pane and a sequence. Such a name only spells a pane
 /// id, so ⌘K neither draws nor finds an agent by it.
 pub(crate) fn hide_made_name(name: &str, kind: &str, pane_id: &str) -> bool {
-    name == task_agent_name(kind, pane_id)
-        || name == wake_name(pane_id)
-        || name.starts_with(FORK_PREFIX)
+    name == task_agent_name(kind, pane_id) || name == wake_name(pane_id) || is_fork_name(name)
+}
+
+/// Whether `name` has the shape `fork_name` gives it: the parent's pane, the
+/// fork's sequence and its time in milliseconds, or that cut by
+/// `bounded_name` to the limit with a digest at its end. The fork's parent is
+/// not known from the child's row, so the shape is all there is to compare;
+/// a name someone gave that merely starts with `fork-` keeps its name.
+fn is_fork_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(FORK_PREFIX) else {
+        return false;
+    };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    let mut parts = rest.rsplitn(3, '-');
+    let whole = matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(millis), Some(sequence), Some(parent))
+            if digits(millis) && digits(sequence) && !parent.is_empty()
+    );
+    let cut = name.len() == MAX_NAME_CHARACTERS
+        && name.rsplit_once('-').is_some_and(|(_, digest)| {
+            digest.len() == DIGEST_CHARACTERS
+                && digest
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        });
+    whole || cut
 }
 
 fn bounded_name(full: String) -> String {
@@ -131,6 +155,9 @@ fn bounded_name(full: String) -> String {
     format!("{}-{}", &full[..head], digest)
 }
 
+/// How many hex characters `digest_of` writes.
+const DIGEST_CHARACTERS: usize = 12;
+
 /// Twelve hex characters of a hash of the whole name, so what truncation drops
 /// still tells two names apart. `DefaultHasher::new` is seeded with fixed
 /// keys, so the same name gives the same digest in every process.
@@ -138,7 +165,11 @@ fn digest_of(value: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
-    format!("{:012x}", hasher.finish() & 0xffff_ffff_ffff)
+    format!(
+        "{:0width$x}",
+        hasher.finish() & 0xffff_ffff_ffff,
+        width = DIGEST_CHARACTERS
+    )
 }
 
 fn sanitize(value: &str) -> String {
@@ -229,6 +260,30 @@ mod tests {
     fn two_forks_of_one_parent_do_not_share_a_name() {
         assert_ne!(fork_name("w1:p2", "abc"), fork_name("w1:p2", "def"));
         assert_eq!(fork_name("w1:p2", "abc"), "fork-w1-p2-abc");
+    }
+
+    /// ⌘K draws and finds an agent by a name someone gave it, never by one
+    /// Hide made up from a pane id.
+    #[test]
+    fn only_the_names_hide_made_from_a_pane_read_as_hide_made() {
+        let long_parent = "workspace-with-a-very-long-name:pane-42";
+        for made in [
+            task_agent_name("claude", "w4:p1"),
+            wake_name("w4:p1"),
+            fork_name("w2X:p2F", "2-1788624371518"),
+            fork_name(long_parent, "17-1788624371518"),
+        ] {
+            assert!(hide_made_name(&made, "claude", "w4:p1"), "{made:?}");
+        }
+        for given in [
+            "observer-instant-pane-topology",
+            "fork-reviewer",
+            "fork-w1-p2-review",
+            "hide-claude-w8-p1",
+            "hide-codex-w4-p1",
+        ] {
+            assert!(!hide_made_name(given, "claude", "w4:p1"), "{given:?}");
+        }
     }
 
     #[test]
