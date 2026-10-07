@@ -1379,7 +1379,10 @@ mod tests {
             )
             .unwrap();
             assert_eq!(restored, before, "{state:?}");
-            assert!(pull(&restored, &parent).unwrap().ids.is_empty(), "{state:?}");
+            assert!(
+                pull(&restored, &parent).unwrap().ids.is_empty(),
+                "{state:?}"
+            );
             assert_eq!(restored.watches.len(), 1, "{state:?}");
         }
     }
