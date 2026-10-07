@@ -100,28 +100,6 @@ pub fn list_folder(
     })
 }
 
-/// How long a watch poll waits for its stamps; the next poll asks again.
-const STAMPS_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// A stamp per watched folder of a checkout (`hide_node_link::list::stamps`), for a
-/// device Explorer's watch. A replaced root is refused and stays pinned: only
-/// an explicit read by the operator adopts the folder now at that path.
-pub fn folder_stamps(
-    channel: &(impl NodeLink + ?Sized),
-    root: &str,
-    folders: &[String],
-) -> Result<Vec<Option<String>>, LinkError> {
-    let root_ref = pinned_root(channel, root, STAMPS_TIMEOUT)?;
-    call_as(
-        channel,
-        Call::Stamps {
-            root: root_ref,
-            folders: folders.to_vec(),
-        },
-        STAMPS_TIMEOUT,
-    )
-}
-
 /// One range of a device file's bytes (`hide_host::bytes::read`).
 pub fn read_bytes(
     channel: &(impl NodeLink + ?Sized),
