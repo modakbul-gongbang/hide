@@ -1175,10 +1175,11 @@ fn publish_replica(
         observe_labels(worker, replica);
         worker.overlay()
     });
-    // Observe native state before label overlays add UI timestamps; the
-    // overlay is only consulted for what each session read says the agent
-    // waits for. This is bounded memory work; no delivery I/O or notifier
-    // is started here.
+    // Observe native state from the payload before the overlay is laid on
+    // it (the remote path below), so no label adds UI timestamps to what
+    // delivery sees; the overlay is only consulted for what each session
+    // read says the agent waits for. This is bounded memory work; no
+    // delivery I/O or notifier is started here.
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
@@ -1188,7 +1189,8 @@ fn publish_replica(
         // reads as the folder of a confirmed pane beside it, or as the
         // checkout a tab Hide created was asked for, decided under the lock
         // that reads those tabs. Only a pane with neither holds the publish
-        // until the read, which publishes then; nothing is observed for it.
+        // until the read, which publishes then; delivery and arrivals observe
+        // nothing for it (the label worker above has already seen it).
         if !awaiting.is_empty() {
             let clamped_tabs = if context.is_local() {
                 guard
