@@ -1789,7 +1789,7 @@ pub(crate) mod tests {
              "lineage_session":crate::wire::session_digest("child-native")},
         ]}))
         .unwrap();
-        runtime.observe_delivery(crate::node::TEST_NODE, &payload, Some("scope"));
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, Some("scope"), None);
         let mut ledger = (*runtime.delivery_state().unwrap()).clone();
         for (id, pane) in [("agent-1", "lead"), ("agent-2", "child")] {
             ledger.agents.push(crate::coordination::AgentRecord {
@@ -1842,6 +1842,7 @@ pub(crate) mod tests {
             crate::node::TEST_NODE,
             &only_lead(),
             Some("scope"),
+            None,
         );
         // Any transaction commits the pending ends with it.
         client
@@ -1913,7 +1914,7 @@ pub(crate) mod tests {
         ledger.next_id += 1;
         guard.delivery_ledger = Ok(Arc::new(ledger));
         // The snapshot lists only the lead.
-        guard.observe_delivery(crate::node::TEST_NODE, &only_lead(), Some("scope"));
+        guard.observe_delivery(crate::node::TEST_NODE, &only_lead(), Some("scope"), None);
         assert_eq!(
             guard
                 .delivery_registrations_gone()
