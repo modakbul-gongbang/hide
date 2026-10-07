@@ -91,6 +91,18 @@ pub fn links_store(state_dir: &Path) -> PathBuf {
     state_dir.join("links.sqlite3")
 }
 
+/// The Software Factory store: Factories, Tasks, questions, records and
+/// events; its owner is the core's Factory engine thread.
+pub fn factory_store(state_dir: &Path) -> PathBuf {
+    state_dir.join("factory.sqlite3")
+}
+
+/// The Factory's private files beside its store: PRD attachments by hash and
+/// verify log tails.
+pub fn factory_files(state_dir: &Path) -> PathBuf {
+    state_dir.join("factory-files")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {

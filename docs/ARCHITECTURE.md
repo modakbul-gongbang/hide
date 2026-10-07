@@ -872,6 +872,15 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
 
 `herdr-core/src/labels/tests.rs` owns the behavior and `desktop/e2e/session-labels.spec.ts` proves it end to end; [status-model.md](status-model.md#task-identity) names the regression owners.
 
+### The Factory host
+
+The Software Factory's engine runs on its own thread, `herdr-core-factory`, beside the delivery worker and the label analyzer, its judgments run on a second thread, `herdr-core-factory-judge`, with a router of their own, and worker starts, which wait for Herdr, run on a third, `factory-starts`, so a start never holds a command or a worker's report.
+The engine is the `hide-factory` crate, which does not know the runtime or Herdr; the host in `herdr-core/src/factory.rs` gives it a clock, the project's git and `gh`, the verify runner, and a worker port, and `runtime/factory.rs` holds the few places that take `Mutex<Runtime>` to read owned data or hand the core a request.
+No file, SQLite, network or subprocess work happens under the runtime lock, and a command reaches the engine through a bounded queue instead of a call into the runtime.
+`hided` routes `hide factory` over the pane-capability socket and refuses a device caller.
+`Core::drop` stops the Factory host first, so its verify runs and external calls end with the daemon.
+[factory.md](factory.md) owns the engine, the store, the roles and the read model.
+
 ### The mobile companion
 
 Everything a phone touches lives in `hided/src/mobile/`, and `herdr-core` does not know phones exist; its only addition is `Runtime::remote_herdr_api`, which lends the Herdr API connection it already holds for a connected SSH device.

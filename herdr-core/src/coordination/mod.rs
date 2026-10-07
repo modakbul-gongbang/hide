@@ -218,6 +218,14 @@ pub(crate) fn apply(
 ) -> Result<Value, String> {
     match mutation {
         Mutation::Register { record, check } => {
+            // Only a Factory registers under its own reserved name (D-14).
+            if (record.actor.code_owned() && !record.actor.same_identity(caller))
+                || (!record.actor.code_owned()
+                    && (crate::delivery::reserved_name(&record.name)
+                        || crate::delivery::reserved_name(&record.pane)))
+            {
+                return Err("reserved_name".into());
+            }
             if record.parent.as_ref().is_some_and(|id| {
                 !ledger
                     .agents
@@ -523,7 +531,7 @@ fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
     Ok(format!("{prefix}-{id}"))
 }
 
-pub(crate) use executor::{link_fork, run};
+pub(crate) use executor::{link_fork, register_code_owned, run};
 
 #[cfg(test)]
 mod tests {
@@ -578,6 +586,58 @@ mod tests {
             args: vec!["--model".into(), "fixture model".into()],
         }
     }
+    fn register_as(
+        ledger: &mut Ledger,
+        record: AgentRecord,
+        caller: &Actor,
+    ) -> Result<Value, String> {
+        apply(
+            ledger,
+            caller,
+            &Mutation::Register {
+                record,
+                check: false,
+            },
+            1,
+        )
+    }
+
+    #[test]
+    fn only_a_factory_registers_under_a_factory_name() {
+        let mut ledger = Ledger::default();
+        // A pane named or placed like a Factory is refused.
+        let named = record("factory:f-1", "native-impostor", None);
+        let caller = named.actor.clone();
+        assert_eq!(
+            register_as(&mut ledger, named, &caller).unwrap_err(),
+            "reserved_name"
+        );
+        let mut placed = record("pane-1", "native-pane", None);
+        placed.name = "factory:f-1".into();
+        let caller = placed.actor.clone();
+        assert_eq!(
+            register_as(&mut ledger, placed, &caller).unwrap_err(),
+            "reserved_name"
+        );
+        // A pane cannot register the Factory's own record either.
+        let factory = Actor::factory("f-1");
+        let mut owned = record("factory:f-1", "factory:f-1", None);
+        owned.actor = factory.clone();
+        let pane = record("pane-2", "native-pane-2", None).actor;
+        assert_eq!(
+            register_as(&mut ledger, owned.clone(), &pane).unwrap_err(),
+            "reserved_name"
+        );
+        // The Factory registers itself, and its worker as its child.
+        let id = register(&mut ledger, owned, &factory);
+        let worker = record("worker-pane", "native-worker", Some(id.clone()));
+        let child = register(&mut ledger, worker, &factory);
+        assert_eq!(
+            ledger.agents.iter().find(|r| r.id == child).unwrap().parent,
+            Some(id)
+        );
+    }
+
     #[test]
     fn registration_check_is_read_only_and_execution_identity_replays_after_reload() {
         let mut ledger = Ledger::default();

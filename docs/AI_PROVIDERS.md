@@ -1,7 +1,7 @@
 # Background AI providers
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
-Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
+Its consumers are the core's agent label analyzer (`herdr-core/src/labels/analyzer.rs`), Project Memory extraction under `hide-memory/`, the Software Factory's judgments (see [The Factory's judgments](#the-factorys-judgments)), and the Start dialog's worktree name; later features reuse the same boundary rather than a provider client of their own.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -236,6 +236,14 @@ A request that completes under the cap clears the restart count; three consecuti
 On a platform without the kernel query the measurement is `Unavailable`: the process caps are not enforced and the log line says `measurement=unavailable` rather than a zero.
 The label worker treats `OverBudget` as an environmental failure: it keeps the goal, drops the turn's line and end, and asks again after ten minutes, the same as any other environmental failure (`AnalysisFailure::retry_after`).
 
+## The Factory's judgments
+
+The Software Factory asks for its intake review, drift check, natural-language checks, watch and environment diagnosis through `hide-ai`, and [factory.md](factory.md#intake-review-and-judgments) owns what each asks.
+The Factory does not share the label analyzer's router: it has its own `AiRouter` (`herdr-core/src/ai.rs`, `factory_router`) and its own queue on a judgment thread, so a Factory request never waits behind a label and a label never waits behind a Factory request.
+The queue's terms are one request in flight, intake reviews before every other judgment, and 16 waiting judgments per Factory; a request that does not fit, or that fails, is handed to a person and is never read as a pass.
+Each request has a 180 second deadline and a schema version, and the router keeps its default caps.
+Because the routers are independent, they share the account's usage and the machine's CPU but not a queue; label latency has to be measured with a Factory running under load before the two are called independent.
+
 ## Weekly usage display
 
 The sidebar footer's Weekly Usage chips and popover ([UI_BEHAVIOR.md: Weekly usage](UI_BEHAVIOR.md#weekly-usage)) show a separate read-only capability owned by `herdr-core/src/usage.rs`.
@@ -338,7 +346,7 @@ The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.f
 A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
 Every `ai.request.finished` of a provider that declares itself measurable (`AiBackend::measurable()`, today only codex, whose app-server is resident) also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
-Hide's core writes the events of its own routers and backends (the label analyzer, the Settings probe and Project Memory) to its diagnostic log, `Logs/core.jsonl` beside `state.json`, as records with `component` `ai` and the event name as `kind`.
+Hide's core writes the events of its own routers and backends (the label analyzer, the Factory's judgments, the Settings probe and Project Memory) to its diagnostic log, `Logs/core.jsonl` beside `state.json`, as records with `component` `ai` and the event name as `kind`.
 
 ## Known gaps
 

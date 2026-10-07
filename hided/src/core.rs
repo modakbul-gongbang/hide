@@ -27,6 +27,13 @@ enum Command {
         command: herdr_core::delivery::Command,
         reply: Sender<Result<herdr_core::delivery::worker::Prepared, String>>,
     },
+    FactoryPrepare {
+        pane_id: String,
+        expected: Context,
+        hint: Option<String>,
+        command: hide_factory::Command,
+        reply: Sender<Result<herdr_core::factory::PreparedFactory, String>>,
+    },
     SetFileRoots {
         roots: Vec<(std::path::PathBuf, std::fs::File)>,
         reply: Sender<Result<(), String>>,
@@ -126,6 +133,33 @@ impl CoreHandle {
         result
             .recv()
             .map_err(|_| "delivery_unavailable".to_owned())?
+    }
+
+    /// A `hide factory` command, checked on the owner thread like a delivery.
+    pub fn prepare_factory(
+        &self,
+        device: &str,
+        pane: &str,
+        expected: &Context,
+        hint: Option<String>,
+        command: hide_factory::Command,
+    ) -> Result<herdr_core::factory::PreparedFactory, String> {
+        if device != herdr_core::workspace::LOCAL_DEVICE_ID {
+            return Err("factory_local_only".into());
+        }
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::FactoryPrepare {
+                pane_id: pane.to_owned(),
+                expected: expected.clone(),
+                hint,
+                command,
+                reply,
+            })
+            .map_err(|_| "factory_unavailable".to_owned())?;
+        result
+            .recv()
+            .map_err(|_| "factory_unavailable".to_owned())?
     }
 
     pub fn set_file_roots(
@@ -376,6 +410,21 @@ fn owner_loop(
         match command {
             Command::DeliveryHuman { reply } => {
                 let _ = reply.send(core.prepare_delivery_human());
+            }
+            Command::FactoryPrepare {
+                pane_id,
+                expected,
+                hint,
+                command,
+                reply,
+            } => {
+                let _ = reply.send(core.prepare_factory(
+                    herdr_core::workspace::LOCAL_DEVICE_ID,
+                    &pane_id,
+                    &expected,
+                    hint.as_deref(),
+                    command,
+                ));
             }
             Command::DeliveryPrepare {
                 device_id,

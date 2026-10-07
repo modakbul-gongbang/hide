@@ -21,6 +21,9 @@ use crate::pane_auth::Reference;
 use crate::state_file::SCHEMA_VERSION;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// Longer than the daemon's own Factory answer limit, so the daemon's reason
+/// arrives rather than a local timeout.
+const FACTORY_TIMEOUT: Duration = Duration::from_secs(110);
 const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
@@ -253,6 +256,27 @@ pub fn request_delivery(
     )
 }
 
+/// A `hide factory` command. `add` may wait for its intake review, so the
+/// answer has longer than a Workspace request to arrive.
+pub fn request_factory(
+    path: &Path,
+    command: &hide_factory::Command,
+    hint: Option<&str>,
+) -> Result<Value, String> {
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    run_exchange_within(
+        path,
+        &reference,
+        json!({
+            "type":"factory", "request_id":request_id, "command":command, "caller_pane":hint
+        }),
+        &request_id,
+        true,
+        FACTORY_TIMEOUT,
+    )
+}
+
 /// The relay socket for one `hide browser` page command: the same scoped
 /// handshake and claim as every Workspace request, after which the socket
 /// carries CDP frames to the caller's display. A refusal keeps the daemon's
@@ -329,12 +353,23 @@ fn run_exchange(
     request_id: &str,
     action: bool,
 ) -> Result<Value, String> {
+    run_exchange_within(path, reference, payload, request_id, action, TIMEOUT)
+}
+
+fn run_exchange_within(
+    path: &Path,
+    reference: &Reference,
+    payload: Value,
+    request_id: &str,
+    action: bool,
+    timeout: Duration,
+) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| "request_unavailable".to_owned())?;
     let (value, mut socket) = runtime.block_on(async {
-        tokio::time::timeout(TIMEOUT, exchange_response(reference, payload, request_id))
+        tokio::time::timeout(timeout, exchange_response(reference, payload, request_id))
             .await
             .map_err(|_| "request_timeout".to_owned())?
     })?;

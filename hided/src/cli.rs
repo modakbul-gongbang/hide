@@ -13,6 +13,8 @@ use crate::state_file::{self, DaemonState};
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandKind {
     Delivery(herdr_core::delivery::Command),
+    /// `hide factory ...`
+    Factory(crate::factory_cli::FactoryRequest),
     Help,
     Open,
     /// `hide connect`: `open` without the browser, answered as one JSON line
@@ -77,6 +79,7 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         Some(topic @ ("request" | "inbox" | "watch")) => {
             crate::delivery_cli::parse(topic, iter).map(CommandKind::Delivery)
         }
+        Some("factory") => crate::factory_cli::parse(iter).map(CommandKind::Factory),
         Some("browser") => parse_browser(iter),
         Some("workspace") => match (iter.next().map(String::as_str), iter.next()) {
             (Some("bootstrap"), None) => Ok(CommandKind::WorkspaceBootstrap),
@@ -317,6 +320,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
     if kind == CommandKind::Help {
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
+        println!("{}", hide_factory::command::USAGE);
         println!(
             "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given."
         );
@@ -334,6 +338,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 &kind,
                 CommandKind::WorkspaceBootstrap
                     | CommandKind::Delivery(_)
+                    | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
                     | CommandKind::ViewList
                     | CommandKind::ViewStatus { .. }
@@ -365,6 +370,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 crate::delivery_cli::run(&env, command)
             }
         }
+        CommandKind::Factory(request) => crate::factory_cli::run(&env, request),
         CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
