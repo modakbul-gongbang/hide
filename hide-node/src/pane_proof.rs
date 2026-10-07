@@ -127,6 +127,8 @@ pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    // Windows cannot read a process's working directory (`cwd_of`).
+    #[cfg(unix)]
     #[test]
     fn caller_directory_reads_the_callers_working_directory() {
         let expected = hide_platform::path::to_wire(
@@ -134,6 +136,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(caller_directory(std::process::id() as i32), Ok(expected));
+    }
+
+    #[test]
+    fn a_caller_that_is_gone_is_unavailable() {
         assert_eq!(caller_directory(i32::MAX), Err("caller_unavailable"));
     }
 }

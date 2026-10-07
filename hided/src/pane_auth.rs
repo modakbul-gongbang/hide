@@ -1071,8 +1071,6 @@ mod tests {
         core.shutdown();
     }
 
-    // Windows cannot read a process's working directory (`cwd_of`).
-    #[cfg(unix)]
     fn checkout_attestation(nonce: &str, checkout: &str) -> Attestation {
         Attestation {
             pane_id: checkout_caller_id(nonce, checkout),
