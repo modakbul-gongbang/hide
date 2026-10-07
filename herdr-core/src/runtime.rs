@@ -456,10 +456,11 @@ const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 /// waiting stops.
 const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
 
-/// How many sent, unanswered tab moves Hide remembers at once. Each lives at
-/// most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab switches faster
-/// than that evicts the oldest and reports it.
-const TAB_FOCUS_REQUEST_LIMIT: usize = 16;
+// How many sent, unanswered tab moves Hide remembers at once, the same
+// number of Herdr's moves the replica keeps. Each lives at most
+// `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab switches faster than
+// that evicts the oldest and reports it.
+use crate::sidebar::TAB_FOCUS_LIMIT;
 
 /// A pane focus Hide has already made and told Herdr about.
 ///
@@ -1354,8 +1355,11 @@ pub struct Runtime {
     /// created with focus. Which Herdr move is Hide's own answer, and when a
     /// move Herdr makes is followed, are read from it (`tab_focus.rs`).
     tab_focus_requests: Vec<tab_focus::TabFocusRequest>,
-    /// The tabs active in their Herdr workspaces at the last session, so the
-    /// next one says which tabs Herdr has moved to since.
+    /// How many of the replica's tab moves have been read, and of which
+    /// replica, so the next session says which moves are new.
+    herdr_tab_moves_read: Option<(u64, u64)>,
+    /// The tabs active in their Herdr workspaces at the last replica session.
+    /// When moves were dropped, the difference from it stands in for them.
     herdr_active_tabs_seen: BTreeSet<String>,
     /// The tab Herdr had focused at the last session update. A follow needs
     /// Herdr's focus to have moved; a focused tab that merely differs from
@@ -1901,6 +1905,7 @@ impl Runtime {
             pending_read_record_reconciliation: HashSet::new(),
             visible_tab_ids: BTreeMap::new(),
             tab_focus_requests: Vec::new(),
+            herdr_tab_moves_read: None,
             herdr_active_tabs_seen: BTreeSet::new(),
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,

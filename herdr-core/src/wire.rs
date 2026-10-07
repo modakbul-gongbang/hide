@@ -181,6 +181,7 @@ fn decode_snapshot_response(value: Value) -> Result<res::SessionSnapshot, Sessio
 fn convert_snapshot(snapshot: res::SessionSnapshot) -> ProjectionState {
     ProjectionState {
         tab_focus: None,
+        tab_moves: None,
         focused_pane_id: snapshot.focused_pane_id,
         focused_workspace_id: snapshot.focused_workspace_id,
         workspaces: snapshot.workspaces.into_iter().map(Into::into).collect(),

@@ -9,22 +9,30 @@
 //! answered, so Herdr applies the requests in the order they were sent; and
 //! Herdr delivers its events in order within a subscription (Socket API,
 //! Event subscriptions), so the moves they make arrive in that order too.
+//! The replica keeps those moves, one per `tab_focused`, and each session
+//! carries the ones it has not been read with (`SessionTabMoves`): a session
+//! ending on t2 cannot say whether Herdr went t2 or t2, t3, t2.
 //!
 //! The rest is derived from the list:
 //!
-//! - A Herdr move to a tab answers the earliest request on that tab, and
-//!   every request sent before that one has been applied already: its move
-//!   arrived earlier or was folded into the same session. They leave with it.
-//! - A request answered where Herdr already was moves nothing, and the
-//!   pinned Herdr publishes no event for focusing the tab it shows, so the
-//!   answer is the whole answer. Where Herdr was is said by the request
-//!   before it in the same workspace, or with none left, by what Hide last
-//!   read from Herdr. A session alone never confirms anything: until the
-//!   moves of earlier requests have arrived it shows Herdr from before them.
-//! - A refused request leaves at once; a lost or silent one waits out the
+//! - Each Herdr move answers the earliest request on its tab, and every
+//!   request sent before that one has been applied already, so they leave
+//!   with it. A session alone never answers anything: until the moves of
+//!   earlier requests have arrived it shows Herdr from before them.
+//! - A request for the tab Herdr shows moves nothing, and the pinned Herdr
+//!   publishes no event for it, so its answer is the whole answer. Herdr
+//!   does publish one for any other tab, another workspace's active tab
+//!   included, so which tab Herdr shows is one value, not one per workspace;
+//!   each request records it as it leaves (the tab of the request before it,
+//!   or with none outstanding, the tab the last session showed).
+//! - A refused request leaves at once and moved nothing, so the request
+//!   after it takes over where Herdr was; a lost or silent one waits out the
 //!   deadline, since Herdr may still apply it.
 //! - Herdr moving on its own is followed only when nothing Hide asked for in
 //!   that checkout is outstanding, sent or still waiting on the lane.
+//! - When moves were dropped between two sessions (more than
+//!   `TAB_FOCUS_LIMIT`, or a new replica after a reconnect), the tabs newly
+//!   active since the last session stand in for them.
 //!
 //! A request still waiting on the lane is not in the list. The lane holds it
 //! (and the pane focus intent its turn will send), and nothing of it can
@@ -38,10 +46,9 @@ use super::*;
 pub(super) struct TabFocusRequest {
     pub(super) checkout_id: String,
     pub(super) tab_id: String,
-    /// The Herdr workspace holding the tab, when Hide knows it. Herdr keeps
-    /// an active tab per workspace, so where Herdr is in it when this lands
-    /// is set by the request before this one in the same workspace.
-    workspace_id: Option<String>,
+    /// The tab Herdr shows just before applying this request, as Hide knew
+    /// when it left.
+    herdr_before: Option<String>,
     /// The pane focus that moves Herdr to this tab; `None` for a tab focus
     /// or a creation.
     pub(super) pane_control_serial: Option<u64>,
@@ -53,15 +60,31 @@ impl TabFocusRequest {
     fn expired_at(&self, now_unix_ms: u64) -> bool {
         now_unix_ms.saturating_sub(self.requested_at_unix_ms) >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
     }
+}
 
-    /// An unknown workspace is taken as shared: reading Herdr's position off
-    /// an earlier request can only make Hide wait for a move, never take a
-    /// move it is waiting for as Herdr's own.
-    fn shares_workspace_with(&self, other: &Self) -> bool {
-        match (&self.workspace_id, &other.workspace_id) {
-            (Some(left), Some(right)) => left == right,
-            _ => true,
-        }
+/// Outstanding tab asks as `(checkout, tab)`, in the order Herdr applies
+/// them (`Runtime::tab_asks`).
+pub(super) struct TabAsks(Vec<(String, String)>);
+
+impl TabAsks {
+    /// Whether Hide has asked Herdr for this tab and not yet seen it answered.
+    pub(super) fn asked(&self, tab_id: &str) -> bool {
+        self.0.iter().any(|(_, tab)| tab == tab_id)
+    }
+
+    /// Whether Hide has a tab move outstanding in this checkout: Herdr is
+    /// about to be moved again, so a move it makes now is not followed.
+    pub(super) fn outstanding_in(&self, checkout_id: &str) -> bool {
+        self.0.iter().any(|(checkout, _)| checkout == checkout_id)
+    }
+
+    /// The tab Hide last asked for in this checkout.
+    pub(super) fn newest_in(&self, checkout_id: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .rev()
+            .find(|(checkout, _)| checkout == checkout_id)
+            .map(|(_, tab)| tab.as_str())
     }
 }
 
@@ -93,27 +116,26 @@ impl Runtime {
     }
 
     fn send_tab_move(&mut self, checkout_id: String, tab_id: String, serial: Option<u64>) {
-        let workspace_id = self
-            .snapshot
-            .pane_layouts
-            .iter()
-            .find(|layout| layout.tab_id == tab_id)
-            .map(|layout| layout.workspace_id.clone());
+        let herdr_before = self
+            .tab_focus_requests
+            .last()
+            .map(|earlier| earlier.tab_id.clone())
+            .or_else(|| self.herdr_focused_tab_seen.clone());
         self.tab_focus_requests.push(TabFocusRequest {
             checkout_id,
             tab_id,
-            workspace_id,
+            herdr_before,
             pane_control_serial: serial,
             requested_at_unix_ms: unix_milliseconds(),
         });
-        if self.tab_focus_requests.len() > TAB_FOCUS_REQUEST_LIMIT {
+        if self.tab_focus_requests.len() > TAB_FOCUS_LIMIT {
             let evicted = self.tab_focus_requests.remove(0);
             crate::diagnostic!(serde_json::json!({
                 "component": "view_state",
                 "kind": "tab.focus.request_evicted",
                 "checkout_id": evicted.checkout_id,
                 "tab_id": evicted.tab_id,
-                "limit": TAB_FOCUS_REQUEST_LIMIT,
+                "limit": TAB_FOCUS_LIMIT,
             }));
         }
     }
@@ -122,17 +144,30 @@ impl Runtime {
     /// of it reached Herdr.
     pub(super) fn unsend_tab_focus(&mut self, tab_id: &str) {
         if let Some(index) = self.tab_focus_index(tab_id) {
-            self.tab_focus_requests.remove(index);
+            self.withdraw_tab_move(index);
         }
     }
 
     /// The pane focus `serial` moves no tab: Herdr refused it, its pane went,
     /// or its control never ran.
     pub(super) fn drop_pane_focus_tab(&mut self, serial: Option<u64>) {
-        if let Some(serial) = serial {
+        if let Some(index) = serial.and_then(|serial| {
             self.tab_focus_requests
-                .retain(|request| request.pane_control_serial != Some(serial));
+                .iter()
+                .position(|request| request.pane_control_serial == Some(serial))
+        }) {
+            self.withdraw_tab_move(index);
         }
+    }
+
+    /// Removes a request that moved nothing; Herdr is where it was before
+    /// it, so the request after it starts from there.
+    fn withdraw_tab_move(&mut self, index: usize) -> TabFocusRequest {
+        let withdrawn = self.tab_focus_requests.remove(index);
+        if let Some(next) = self.tab_focus_requests.get_mut(index) {
+            next.herdr_before.clone_from(&withdrawn.herdr_before);
+        }
+        withdrawn
     }
 
     /// Herdr answered the tab focus for `tab_id`.
@@ -142,9 +177,8 @@ impl Runtime {
         }
     }
 
-    /// Herdr answered the pane focus `serial`. Read before the answer
-    /// updates where Hide knows Herdr is. A move still to come gets its
-    /// deadline from this answer.
+    /// Herdr answered the pane focus `serial`. A move still to come gets
+    /// its deadline from this answer.
     pub(super) fn answer_pane_focus_tab(&mut self, serial: u64) {
         let Some(index) = self
             .tab_focus_requests
@@ -161,16 +195,16 @@ impl Runtime {
     /// Herdr refused the tab focus for `tab_id`, or its answer was lost.
     /// A refusal moved nothing; a lost answer may still have been applied,
     /// so it waits out its deadline. Only the newest ask is reported: an
-    /// older one is not what the screen shows.
+    /// older one is not what the screen shows. A refusal with no request
+    /// left (the control failed before it left, or its deadline had passed)
+    /// is newest unless something was asked after it.
     pub(super) fn refuse_tab_focus(&mut self, tab_id: &str, message: &str, definite: bool) {
-        let Some(index) = self.tab_focus_index(tab_id) else {
-            return;
-        };
-        let newest = index + 1 == self.tab_focus_requests.len() && self.queued_tab_ask().is_none();
-        if definite {
-            self.tab_focus_requests.remove(index);
+        let index = self.tab_focus_index(tab_id);
+        let sent_after = index.is_some_and(|index| index + 1 < self.tab_focus_requests.len());
+        if definite && let Some(index) = index {
+            self.withdraw_tab_move(index);
         }
-        if newest {
+        if !sent_after && self.queued_tab_ask().is_none() {
             self.report_refused_view_focus(ViewFocusSlot::Tab, tab_id, message);
         }
     }
@@ -207,70 +241,87 @@ impl Runtime {
     }
 
     /// Takes the moves Herdr has made since the last session as answers and
-    /// returns the requests they answered. A move is a tab newly active in
-    /// its workspace, or Herdr's focus arriving at a tab: an A-to-B-to-A run
-    /// folded into one session leaves the active tab where it was.
+    /// returns the requests they answered, each move answering the earliest
+    /// request on its tab with every request sent before it. A snapshot read
+    /// outside the event stream has no moves and answers nothing; the
+    /// stream's next session brings them. When some were dropped, the tabs
+    /// newly active since the last session, and Herdr's focus arriving at a
+    /// tab, stand in for them, and the gap is recorded.
     pub(super) fn take_tab_focus_answers(
         &mut self,
         herdr: &HerdrTabView,
+        moves: Option<&crate::sidebar::SessionTabMoves>,
         herdr_focus_moved: bool,
     ) -> Vec<TabFocusRequest> {
+        let Some(moves) = moves else {
+            return Vec::new();
+        };
         let active = herdr.active_tab_ids();
-        let mut moved = active
-            .difference(&self.herdr_active_tabs_seen)
-            .cloned()
-            .collect::<Vec<_>>();
-        if herdr_focus_moved && let Some(focused) = herdr.focused_tab_id.as_ref() {
-            moved.push(focused.clone());
+        let read = self
+            .herdr_tab_moves_read
+            .replace((moves.generation, moves.applied));
+        // The first session from the stream starts the count; nothing before
+        // it is known to have moved.
+        let Some((generation, consumed)) = read else {
+            self.herdr_active_tabs_seen = active;
+            return Vec::new();
+        };
+        let mut answered = Vec::new();
+        match moves.since(generation, consumed) {
+            Some(fresh) => {
+                for tab_id in fresh {
+                    if let Some(position) = self.earliest_tab_move(tab_id) {
+                        answered.extend(self.tab_focus_requests.drain(..=position));
+                    }
+                }
+            }
+            None => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "view_state",
+                    "kind": "tab.focus.moves_gap",
+                    "read_generation": generation,
+                    "read": consumed,
+                    "generation": moves.generation,
+                    "applied": moves.applied,
+                    "kept": moves.recent.len(),
+                }));
+                let mut moved = active
+                    .difference(&self.herdr_active_tabs_seen)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if herdr_focus_moved && let Some(focused) = herdr.focused_tab_id.as_ref() {
+                    moved.push(focused.clone());
+                }
+                if let Some(last) = moved
+                    .iter()
+                    .filter_map(|tab_id| self.earliest_tab_move(tab_id))
+                    .max()
+                {
+                    answered.extend(self.tab_focus_requests.drain(..=last));
+                }
+            }
         }
         self.herdr_active_tabs_seen = active;
-        let answered = moved
-            .iter()
-            .filter_map(|tab_id| {
-                self.tab_focus_requests
-                    .iter()
-                    .position(|request| request.tab_id == *tab_id)
-            })
-            .max();
-        match answered {
-            Some(last) => self.tab_focus_requests.drain(..=last).collect(),
-            None => Vec::new(),
-        }
+        answered
     }
 
-    /// Whether Hide has a tab move outstanding in this checkout, sent or
-    /// still waiting on the lane: Herdr is about to be moved again, so a
-    /// move it makes now is not followed.
-    pub(super) fn tab_moves_outstanding(&self, checkout_id: &str) -> bool {
+    fn earliest_tab_move(&self, tab_id: &str) -> Option<usize> {
         self.tab_focus_requests
             .iter()
-            .any(|request| request.checkout_id == checkout_id)
-            || self
-                .queued_tab_asks()
-                .any(|(checkout, _)| checkout == checkout_id)
+            .position(|request| request.tab_id == tab_id)
     }
 
-    /// Whether Hide has asked Herdr for this tab and not yet seen it answered.
-    pub(super) fn tab_move_asked(&self, tab_id: &str) -> bool {
-        self.tab_focus_requests
-            .iter()
-            .any(|request| request.tab_id == tab_id)
-            || self.queued_tab_asks().any(|(_, tab)| tab == tab_id)
-    }
-
-    /// The tab Hide last asked for in this checkout.
-    pub(super) fn newest_tab_ask_in(&self, checkout_id: &str) -> Option<String> {
-        self.queued_tab_asks()
-            .filter(|(checkout, _)| checkout == checkout_id)
-            .last()
-            .map(|(_, tab)| tab)
-            .or_else(|| {
-                self.tab_focus_requests
-                    .iter()
-                    .rev()
-                    .find(|request| request.checkout_id == checkout_id)
-                    .map(|request| request.tab_id.clone())
-            })
+    /// Every tab move Hide has asked for and not seen answered, in the
+    /// order Herdr will apply them: the sent ones, then those still waiting
+    /// on the lane. Collected once for a pass that asks about each checkout.
+    pub(super) fn tab_asks(&self) -> TabAsks {
+        TabAsks(
+            self.tab_focus_requests
+                .iter()
+                .map(|request| (request.checkout_id.clone(), request.tab_id.clone()))
+                .chain(self.queued_tab_asks())
+                .collect(),
+        )
     }
 
     /// The tab Hide last asked for anywhere.
@@ -315,14 +366,7 @@ impl Runtime {
     /// applied it, and says whether it did.
     fn settle_where_herdr_already_was(&mut self, index: usize) -> bool {
         let request = &self.tab_focus_requests[index];
-        let herdr_there = match self.tab_focus_requests[..index]
-            .iter()
-            .rev()
-            .find(|earlier| earlier.shares_workspace_with(request))
-        {
-            Some(earlier) => earlier.tab_id == request.tab_id,
-            None => self.herdr_active_tab_ids.contains(&request.tab_id),
-        };
+        let herdr_there = request.herdr_before.as_ref() == Some(&request.tab_id);
         if herdr_there {
             let request = self.tab_focus_requests.remove(index);
             crate::diagnostic!(serde_json::json!({
