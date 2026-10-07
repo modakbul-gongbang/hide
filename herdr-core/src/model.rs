@@ -733,11 +733,11 @@ pub struct KitAgentSnapshot {
     /// Every feature of the Partial popover, in the table's order, with
     /// whether this build does it for the agent (`hide_kit::agents::Feature`).
     pub features: Vec<KitFeatureSnapshot>,
-    /// The agent's sessions open on this machine now, counted for the row's
-    /// "N connected" and "N not connected" (B16, B17); `None` for an agent
-    /// Hide cannot tell a connection of (B19) and for a machine whose
-    /// sessions are not read yet.
-    pub sessions: Option<KitAgentSessionsSnapshot>,
+    /// How many of the agent's sessions run on this machine now, for the
+    /// row's "N sessions" (B16); a sleeping agent is not running and is not
+    /// counted. `None` for an agent whose sessions Hide does not read (B19)
+    /// and for a machine whose sessions are not read yet.
+    pub sessions: Option<u32>,
     /// The official page the adapter's answers come from.
     pub doc_url: String,
 }
@@ -746,31 +746,6 @@ pub struct KitAgentSnapshot {
 pub struct KitFeatureSnapshot {
     pub id: hide_kit::Feature,
     pub supported: bool,
-}
-
-/// One agent's open sessions on one machine, by whether Hide hears them.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct KitAgentSessionsSnapshot {
-    pub connected: u32,
-    /// Each open session Hide does not hear, in the order the sidebar lists
-    /// their panes. Capped at [`MAX_NOT_CONNECTED_SESSIONS`]; `connected` and
-    /// the list's length together are the open sessions up to the cap.
-    pub not_connected: Vec<NotConnectedSessionSnapshot>,
-    /// The count of not connected sessions beyond the cap, so the number the
-    /// row says stays true while the list is bounded.
-    pub not_connected_hidden: u32,
-}
-
-/// Cap on the sessions one agent row lists; a person fixes them one pane at a
-/// time, and a longer list is a count.
-pub const MAX_NOT_CONNECTED_SESSIONS: usize = 32;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct NotConnectedSessionSnapshot {
-    pub pane_id: String,
-    pub title: String,
-    pub project: String,
-    pub reason: PaneConnectionReason,
 }
 
 impl KitAgentSnapshot {
@@ -5136,8 +5111,10 @@ mod wire_enum_tests {
                 hide_kit::Feature::Skill
                 | hide_kit::Feature::Guidance
                 | hide_kit::Feature::Letters
+                | hide_kit::Feature::Bell
                 | hide_kit::Feature::Memory
                 | hide_kit::Feature::Subagents
+                | hide_kit::Feature::SpawnGuard
                 | hide_kit::Feature::HerdrIntegration
                 | hide_kit::Feature::Sleep
                 | hide_kit::Feature::Fork

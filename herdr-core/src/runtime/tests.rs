@@ -75,6 +75,7 @@ mod ssh_hosts_list;
 mod terminal;
 #[path = "tests/tree_close.rs"]
 mod tree_close;
+mod ui_state_focus;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
 mod view_bookmarks;

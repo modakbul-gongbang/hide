@@ -176,6 +176,12 @@ Only incomplete intents resume their recorded creation and registration steps; s
 Remote starts use Hide's existing device start path.
 The unsupported reconciliation/resume/session flags and relay, escalate, graph and events commands are absent.
 
+An agent that starts another through Herdr directly (`herdr agent start`, or `herdr pane run`/`send-text` of an agent's program) gets no registered parent, no lineage line and no watch, and nobody is woken when that child stops.
+So the Claude Code and Codex hook has a `PreToolUse` spawn guard that refuses such a call in a pane of a registered checkout and hands back the `hide agent spawn --parent here ...` command to use instead ([agent-hooks.md](agent-hooks.md#the-spawn-guard) owns what it parses, how it decides, and what it does when the daemon is unreachable).
+It changes nothing about the spawn above: the child still opens in its own tab, ties to its parent and starts the watch, and the guard only decides which command starts it.
+A launch chained behind another command is refused whole, and a launch inside `bash -c`, `$(...)`, a script or an alias is not seen, so a child started that way has no parent line, as before the guard.
+A first spawn of a new Codex child can answer `native_identity_unavailable` until that Codex has bound its session after its first turn; running the same `hide agent spawn` again with the same intent converges on the same child.
+
 The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
 An unchanged native observation and append-only registration count skip planning; unrelated letter/watch writes and label/process/catalog publications do not start a lineage pass.
 The native pane and positive session select the matching retained registration, including an ended one, independently of append order.

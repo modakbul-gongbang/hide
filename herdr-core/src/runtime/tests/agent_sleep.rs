@@ -200,6 +200,34 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
     );
 }
 
+/// A sleeping agent has ended its process, so no hook can speak from its
+/// pane: the pane is not a session Hide cannot hear, and the agent's row in
+/// Settings does not count it among the sessions running now.
+#[test]
+fn a_sleeping_agent_is_neither_counted_nor_called_not_connected() {
+    use super::agent_connection::{connection_of, diagnosis, installed, kit_rows, sessions_of};
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    kit_rows(&mut runtime, None);
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    runtime.ingest_session(Ok(session(Some(4))));
+    // Awake, the session started before the hook: it runs and is judged.
+    assert_eq!(sessions_of(&runtime, "claude-code"), Some(1));
+    assert_eq!(
+        connection_of(&runtime, SLEEPER).and_then(|connection| connection.reason),
+        Some(crate::model::PaneConnectionReason::StartedBeforeHide)
+    );
+
+    runtime.dispatch_json(&event(
+        "agent_sleep",
+        serde_json::json!({"pane_id": SLEEPER}),
+    ));
+    assert!(runtime.ingest_agent_sleep_end(SLEEPER, Ok(4)));
+    runtime.ingest_session(Ok(session(None)));
+    assert_eq!(pane(&runtime)["sleep"]["state"], "sleeping");
+    assert_eq!(connection_of(&runtime, SLEEPER), None);
+    assert_eq!(sessions_of(&runtime, "claude-code"), Some(0));
+}
+
 /// #268: a sleep record written before labels carried an owner proves no
 /// session, so its row falls back to the provider title with no progress.
 #[test]

@@ -277,8 +277,10 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         registered.to_str()
     );
 
-    // A delayed whole-state write can carry an older focus anchor. It must
-    // update checkout, workspace and History identity together.
+    // A delayed whole-state write can carry an older focus anchor. The
+    // checkout is the core's, moved only by its own event, so the write moves
+    // nothing, and checkout, workspace and History stay together because none
+    // of them changes (issue 672; this once asserted the write moved them).
     let update_focus = |runtime: &mut Runtime, checkout_id: &str| {
         let event = serde_json::to_vec(&serde_json::json!({
             "schema_version": 2,
@@ -293,30 +295,27 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         .unwrap();
         assert!(runtime.dispatch_json(&event));
     };
+    let identity = |runtime: &mut Runtime| {
+        let request = runtime
+            .changes_request()
+            .map(|request| (request.root_path, request.root.device_id));
+        let navigator = &runtime.snapshot.navigator;
+        (
+            navigator.focused_workspace_id.clone(),
+            navigator.focused_checkout_id.clone(),
+            navigator.root_path.clone(),
+            navigator.changes_root_path.clone(),
+            request,
+        )
+    };
     focus(&mut runtime, "sibling-local", "sibling-checkout");
+    let sibling = identity(&mut runtime);
+    assert_eq!(sibling.0.as_deref(), Some("sibling-local"));
+    assert_eq!(sibling.1.as_deref(), Some("sibling-checkout"));
     update_focus(&mut runtime, &local_checkout_id);
-    assert_eq!(
-        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
-        Some(local_id.as_str())
-    );
-    assert_eq!(
-        runtime.snapshot.navigator.root_path.as_deref(),
-        repository.to_str()
-    );
-    assert_eq!(
-        runtime.snapshot.navigator.changes_root_path.as_deref(),
-        registered.to_str()
-    );
-    assert_eq!(runtime.changes_request().unwrap().root_path, registered);
+    assert_eq!(identity(&mut runtime), sibling);
     update_focus(&mut runtime, "remote-checkout");
-    assert_eq!(
-        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
-        Some("remote-collision")
-    );
-    assert_eq!(
-        runtime.changes_request().unwrap().root.device_id,
-        "remote-device"
-    );
+    assert_eq!(identity(&mut runtime), sibling);
 }
 
 /// A registration on another device names a path on that machine. Even when

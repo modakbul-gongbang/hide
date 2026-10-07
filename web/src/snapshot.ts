@@ -993,8 +993,8 @@ export type KitAgent = {
   partial?: boolean;
   /** Every feature of the Partial popover in the table's order (`hide_kit::Feature` ids); `supported` is what this build does. */
   features?: { id: KitFeatureId; supported: boolean }[];
-  /** The agent's open sessions on this machine; null for an agent with no connection to judge (Partial agents) and before the machine's sessions are read. */
-  sessions?: KitAgentSessions | null;
+  /** How many of the agent's sessions run on this machine now, a sleeping agent not counted; null for an agent whose sessions Hide does not read (Partial agents) and before the machine's sessions are read. */
+  sessions?: number | null;
   doc_url: string;
 };
 
@@ -1002,20 +1002,15 @@ export type KitFeatureId =
   | "skill"
   | "guidance"
   | "letters"
+  | "bell"
   | "memory"
   | "subagents"
+  | "spawn_guard"
   | "herdr_integration"
   | "sleep"
   | "fork"
   | "start"
   | "titles";
-
-/** `KitAgentSessionsSnapshot`: `not_connected` lists at most 32 sessions, and `not_connected_hidden` counts the rest. */
-export type KitAgentSessions = {
-  connected: number;
-  not_connected: { pane_id: string; title: string; project: string; reason: PaneConnectionReason }[];
-  not_connected_hidden: number;
-};
 
 /** How the last turn-off of Codex's shared server on a machine ended (`CodexDaemonOffSnapshot`). */
 export type CodexDaemonOff =

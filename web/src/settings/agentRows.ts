@@ -142,20 +142,15 @@ export function agentLeftover(agent: KitAgent): KitPiece | null {
 }
 
 /**
- * The status an agent that is on wears (B16, B19): what is connected, what is
- * not, or Ready when it is set up and has no session. A Partial agent, one
- * that is off and one whose sessions were not read yet wear none.
+ * The status an agent that is on wears (B16, B19): how many of its sessions
+ * run now, or Ready when it is set up and has none. A Partial agent, one that
+ * is off and one whose sessions were not read yet wear none.
  */
-export type AgentStatus =
-  | { kind: "none" }
-  | { kind: "ready" }
-  | { kind: "sessions"; connected: number; notConnected: number };
+export type AgentStatus = { kind: "none" } | { kind: "ready" } | { kind: "sessions"; count: number };
 
 export function agentStatus(agent: KitAgent): AgentStatus {
-  // An agent whose program is gone has no sessions to hear and is never Ready (B9).
-  if (!agent.enabled || agent.partial || !agent.sessions || agent.availability !== "available") return { kind: "none" };
-  const { connected, not_connected, not_connected_hidden } = agent.sessions;
-  const notConnected = not_connected.length + not_connected_hidden;
-  if (connected === 0 && notConnected === 0) return { kind: "ready" };
-  return { kind: "sessions", connected, notConnected };
+  // An agent whose program is gone has no sessions and is never Ready (B9).
+  if (!agent.enabled || agent.partial || agent.sessions == null || agent.availability !== "available") return { kind: "none" };
+  if (agent.sessions === 0) return { kind: "ready" };
+  return { kind: "sessions", count: agent.sessions };
 }

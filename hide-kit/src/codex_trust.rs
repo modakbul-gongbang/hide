@@ -2,7 +2,9 @@
 //!
 //! `hide_agent_hooks::codex_trust` does the work; this decides when. A pass
 //! that finds the Codex hook part in place asks Codex to record trust for it,
-//! so Codex starts without its "Hooks need review" screen for Hide's entries.
+//! so Codex starts without its "Hooks need review" screen for Hide's entries
+//! and for the Herdr integration entry the kit recorded (PRD
+//! codex-herdr-hook-trust).
 //!
 //! A failure is the part's one-line reason and its detail goes to the log.
 //! `status` runs every few seconds while Settings is open and starts no
@@ -17,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use hide_agent_hooks::codex_trust::{
-    TrustFailure, TrustFailureKind, TrustOutcome, trust_own_hooks,
+    HookEntry, TrustFailure, TrustFailureKind, TrustOutcome, trust_own_hooks,
 };
 
 use crate::KitTarget;
@@ -32,16 +34,19 @@ fn memory() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, String>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Asks Codex to trust Hide's entries and answers the reason the part is not
-/// ready, when it is not. Nothing is asked of a machine with no Codex, and a
-/// Codex with no hook trust says nothing (D-07).
-pub(crate) fn ensure(target: &KitTarget) -> Option<String> {
+/// Asks Codex to trust Hide's entries, and the entries the kit recorded
+/// Herdr's integration writing (`herdr`, empty unless the kit installed it),
+/// and answers the reason the part is not ready, when it is not. Nothing is
+/// asked of a machine with no Codex, and a Codex with no hook trust says
+/// nothing (D-07).
+pub(crate) fn ensure(target: &KitTarget, herdr: &[HookEntry]) -> Option<String> {
     let reason = match target.codex.as_deref() {
         None => None,
         Some(codex) => match trust_own_hooks(
             codex,
             &target.home,
             &target.kit_dir.join(hide_agent_hooks::HELPER_BINARY_NAME),
+            herdr,
             &target.stop,
         ) {
             TrustOutcome::Unsupported | TrustOutcome::Trusted { .. } => None,

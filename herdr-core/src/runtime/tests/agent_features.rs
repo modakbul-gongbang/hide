@@ -23,6 +23,21 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
         for feature in [Feature::Letters, Feature::Memory, Feature::Subagents] {
             assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
         }
+        // The doorbell rings for the core's own target list.
+        assert_eq!(
+            adapter.supports(Feature::Bell),
+            crate::delivery::doorbell::bell_target(kind),
+            "{kind}: bell"
+        );
+        // The guard is the hook's `PreToolUse` entry, so an agent has it
+        // exactly when the hook the core instruments for it registers that
+        // event.
+        assert_eq!(
+            adapter.supports(Feature::SpawnGuard),
+            hook && hide_agent_hooks::HookEvent::ALL
+                .contains(&hide_agent_hooks::HookEvent::PreToolUse),
+            "{kind}: spawn guard"
+        );
         assert_eq!(
             adapter.supports(Feature::Sleep),
             crate::agent_sleep::sleeps_kind(kind),

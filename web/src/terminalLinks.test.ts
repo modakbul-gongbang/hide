@@ -157,6 +157,14 @@ describe("bounded Korean interpretations", () => {
     expect(group![4]!.spans).toEqual([{ row: 0, start: 1, end: 14 }]);
   });
 
+  it("reads a particle after a URL's closing mark as prose, since a URL cannot be checked", () => {
+    const [group] = linkCandidates([row("PR #682 (https://github.com/o/r/pull/682)이 끝", 60)], 0).filter((each) => each[0]!.target.kind === "url");
+    expect(group!.map((candidate) => [candidate.text, candidate.target])).toEqual([["https://github.com/o/r/pull/682", { kind: "url", url: "https://github.com/o/r/pull/682" }]]);
+    expect(group![0]!.spans).toEqual([{ row: 0, start: 9, end: 40 }]);
+    expect(parseToken("(https://example.com/a_(b))에서도")).toMatchObject({ text: "https://example.com/a_(b)", lead: 1, trail: 4 });
+    expect(parseToken("https://ko.wikipedia.org/wiki/서울이")?.target).toEqual({ kind: "url", url: new URL("https://ko.wikipedia.org/wiki/서울이").href });
+  });
+
   it("does not truncate unsupported words or unbounded particle chains", () => {
     for (const token of ["docs/a.md)한국어", "docs/a.md)에서라도", "docs/a.md)에도만", "docs/a.md에서도"]) {
       const [group] = linkCandidates([row(token, 40)], 0);

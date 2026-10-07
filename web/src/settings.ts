@@ -7,6 +7,7 @@ import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
 import type { AgentRow, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitComponent, RemoteStatus, Workspace } from "./snapshot";
+import { redact } from "./redact";
 
 type Translate = TFunction<"translation">;
 
@@ -412,16 +413,6 @@ export function draftExported(exported: ReadonlyMap<string, string>, current: (t
     const text = exported.get(tabId);
     return text !== undefined && (current(tabId) ?? text) === text;
   };
-}
-
-// A secret-shaped run: the page token and anything like it (32+ hex), or a
-// `token=`/`key=`/`secret=`/`password=` assignment. Diagnostics are copied to be
-// pasted elsewhere, so they never carry one even when a message quoted it.
-const SECRET_RUN = /\b[0-9a-f]{32,}\b/gi;
-const SECRET_ASSIGNMENT = /\b(token|key|secret|password|passphrase)=([^\s&]+)/gi;
-
-export function redact(text: string): string {
-  return text.replace(SECRET_ASSIGNMENT, "$1=[redacted]").replace(SECRET_RUN, "[redacted]");
 }
 
 export type DiagnosticsInput = {

@@ -49,7 +49,10 @@ pub fn hook_stdout_with_context(
             _ => PURPOSE_CONTEXT.to_owned(),
         },
         HookEvent::UserPromptSubmit => memory_context.filter(|value| !value.is_empty())?.to_owned(),
-        HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return None,
+        HookEvent::SubagentStart
+        | HookEvent::SubagentStop
+        | HookEvent::Stop
+        | HookEvent::PreToolUse => return None,
     };
     let output = match runtime {
         AgentRuntime::ClaudeCode | AgentRuntime::Codex => serde_json::json!({
@@ -282,11 +285,13 @@ impl AgentRuntime {
 
 /// The hook events Hide registers.
 ///
-/// These four are exactly the events both shipped runtimes declare, verified
+/// These are exactly the events both shipped runtimes declare, verified
 /// against the installed Claude Code binary and the Codex configuration on
-/// 2026-09-09 (PRD D-09). An event only one runtime has is not registered:
-/// a key a runtime does not know is a key its settings validator may reject,
-/// and the sweep at `Stop` already covers what `SessionEnd` would.
+/// 2026-09-09 (PRD D-09), and `PreToolUse`, observed on Claude Code 2.1.292
+/// and codex-cli 0.160.0 on 2026-10-07 (PRD herdr-spawn-guard D-06). An event
+/// only one runtime has is not registered: a key a runtime does not know is a
+/// key its settings validator may reject, and the sweep at `Stop` already
+/// covers what `SessionEnd` would.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookEvent {
     /// A new session took over this pane: the pane's counts start again.
@@ -302,15 +307,20 @@ pub enum HookEvent {
     /// is what clears a count left behind by a `SubagentStop` that never
     /// arrived (PRD B31, D-53).
     Stop,
+    /// A tool call is about to run. Hide's entry selects the shell tool by its
+    /// matcher and refuses only a call that starts an agent through Herdr
+    /// directly (`crate::spawn_guard`); every other call passes untouched.
+    PreToolUse,
 }
 
 impl HookEvent {
-    pub const ALL: [HookEvent; 5] = [
+    pub const ALL: [HookEvent; 6] = [
         Self::SessionStart,
         Self::UserPromptSubmit,
         Self::SubagentStart,
         Self::SubagentStop,
         Self::Stop,
+        Self::PreToolUse,
     ];
 
     pub fn name(self) -> &'static str {
@@ -320,6 +330,7 @@ impl HookEvent {
             Self::SubagentStart => "SubagentStart",
             Self::SubagentStop => "SubagentStop",
             Self::Stop => "Stop",
+            Self::PreToolUse => "PreToolUse",
         }
     }
 
