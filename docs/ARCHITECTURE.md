@@ -255,6 +255,10 @@ If normal placement is full, the unresolved child waits and the core moves its k
 Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; instead it is a signal in every ancestor's read fingerprint, so the ancestor turns unread and its badge reports the count, while the ancestor's own group stays whatever its own axes say.
 The lineage is therefore built before the read axis is applied on every ingest, and there is no clock, timer or second store for it.
+The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifecycle, completion, ownership and read state, `turn.rs` derives groups, request verbs and runtime action gates, `work.rs` associates PRs and issues and assigns each duty, and `tally.rs` owns marks, representative ranks and scope counts.
+`sidebar.rs` retains payload and snapshot assembly, `request_view.rs` retains request block assembly and timestamp persistence, and `pet.rs` selects a pose from the local summary.
+These functions operate on the facts already projected by the core, including remote rows; they introduce no reader, timer, worker or I/O under the runtime lock.
+The existing `sidebar::tests`, `request_view::tests`, `pet::tests` and `runtime::tests::lineage` exercise these shared rules through their original projection callers.
 `docs/status-model.md` owns both rules.
 The Agents `My Work` view filters only the core-final Delegated answer and leaves visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
 Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.

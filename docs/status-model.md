@@ -11,7 +11,8 @@ What it needs from the operator, whether it is running, whether it has reported 
 - Read: read, unread.
 - Ownership: operator, delegated.
 
-`herdr-core/src/sidebar.rs` is the single owner of all five.
+`herdr-core/src/agent_state/axes.rs` is the single owner of all five.
+`agent_state/turn.rs` derives the group, request verb, close and rest gates from them; `sidebar.rs` assembles the snapshot rows.
 It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant badge, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
@@ -20,7 +21,7 @@ It is read back off the row: a row whose lineage depth is greater than zero is d
 
 ## agent_status provenance and background waits
 
-Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `sidebar.rs`.
+Herdr owns the raw `agent_status`; Hide reads it through `agent.list`/`agent.get`, converts it at `herdr-core/src/wire.rs` and derives its axes in `agent_state/axes.rs`.
 For Claude Code and Codex, Herdr's [official agent reference](https://herdr.dev/docs/agents/) describes terminal-screen inference as the lifecycle source, rather than lifecycle state reported by their session hooks.
 A native session reference or display-only hook token does not prove that a tool is running or that its command completed.
 Other integrations can have full lifecycle reporting, so this screen-inference statement is specific to those two agents, not every agent Herdr supports.
@@ -237,7 +238,7 @@ A new agent in the pane, whether a wake, the operator or a restore started it, i
 
 ### Workspace aggregation
 
-`sidebar.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
+`agent_state/tally.rs` owns Workspace aggregation from the canonical agent projection after pane-level read state is applied.
 Each Workspace counts unique agent pane IDs physically owned by its tabs, independent of sidebar visibility, raised rows, parent collapse, or Workspace collapse.
 The existing status synchronization indexes pane ownership once and visits each canonical agent once; it adds no timer, I/O, or per-frame work and publishes only changed summaries.
 A descendant running in another checkout contributes to that checkout, even if its lineage row appears beneath a parent elsewhere.
@@ -256,7 +257,7 @@ A read error in Seen cannot outrank an unread question in Needs You.
 The Workspace draws the representative agent's exact mark, color, and emphasis through the shared presentation.
 
 The web shell draws no representative chip; it draws a status badge in its place.
-The same pass counts each agent under the mark its own row draws (`RowMark` in `sidebar.rs`, the one decision behind the row's symbol): error, approval, question, working, done, and idle, the hollow ring of a quiet agent the operator has already seen.
+The same pass counts each agent under the mark its own row draws (`RowMark` in `agent_state/tally.rs`, the one decision behind the row's symbol): error, approval, question, working, done, and idle, the hollow ring of a quiet agent the operator has already seen.
 A row Herdr reports as unknown draws `~` and is counted in none of them, so the badge claims nothing the projection cannot vouch for.
 The counts ride the summary as `marks`, and a project's badge is its checkouts' counts added up.
 The badge draws one mark and count per state, worst first (`× ! ? ● ✓ ○`), zero states left out, in the marks and colors the rows use, so it says what opening the rows would show.
@@ -324,13 +325,13 @@ The pet's badge row counts three of the sidebar's groups, in the same order; See
 A count of zero hides that badge.
 
 The pet's "act now" number is the whole Needs You count and its done number is the whole Done count, so a badge can never disagree with the section it stands for.
-`herdr-core/src/pet.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
+`herdr-core/src/agent_state/tally.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
 The pet dashboard's count tiles read the same four groups, plus the rows whose server stopped answering.
 
 ## The subagent badge
 
 The badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
-`pet.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
+`agent_state/tally.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
 It is the one count the hook can vouch for; Herdr's own wire carries no ambient counts, and nothing here scans transcripts or output.
 
 Regression owner: `subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_quiet_while_disconnected`.
@@ -492,6 +493,9 @@ Projection adds bounded-by-metadata strings per agent to the existing snapshot b
 
 ### The request view's verb
 
+`agent_state/work.rs` owns the row’s PR and issue association, the live PR ordering and the one row holding each PR’s duty.
+`agent_state/turn.rs::verb_of` owns the verb independently of the sidebar group.
+`request_view.rs` assembles the block and keeps verb timestamps through the existing ledger.
 Each agent row also carries a `request` block (`herdr-core/src/request_view.rs`, PRD overview-request-view): the operator's last request with who sent it, the last reply, the row's pull requests, and one verb the request view groups by.
 The verb is computed in the core from the axes above and the row's pull requests, never by the shell, and the first rule that holds wins:
 a demand (a question or an approval) is `answer`; a running agent is `working`; then, over the open pull requests whose duty the row holds, failed checks are `fix` and passing, absent or unknown checks are `review`; a turn the label read as `unfinished`, on a row with no working descendants, is `stopped`; running checks are `waiting`; an unread completion, or a pull request settled since the operator's last request and since the operator last opened the row's result (`result_opened_unix_ms` in the verb record), is `result`; a quiet root with working descendants, or a turn the label read as `waiting` (on something other than a pull request), is `waiting`; anything else is `idle`.

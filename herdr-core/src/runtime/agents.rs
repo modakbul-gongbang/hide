@@ -838,16 +838,20 @@ impl Runtime {
         let now = unix_milliseconds();
         let connected = self.snapshot.status.herdr.state == "connected";
         let agents = &self.snapshot.navigator.agents;
-        let summary = pet::summarize(agents, connected);
+        let summary = crate::agent_state::summarize(agents, connected);
         if summary.needs_you + summary.working > 0 {
             self.pet_active_at_unix_ms = now;
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;
-        let subagents_active = pet::subagents_active(agents, &self.pane_hook_tokens, connected);
+        let subagents_active =
+            crate::agent_state::subagents_active(agents, &self.pane_hook_tokens, connected);
         let attention_pane_ids = if connected {
-            pet::observe_unseen(&mut self.pet_unseen_observed, agents, now);
-            pet::attention_order(&self.snapshot.navigator.agents, &self.pet_unseen_observed)
+            crate::agent_state::observe_unseen(&mut self.pet_unseen_observed, agents, now);
+            crate::agent_state::attention_order(
+                &self.snapshot.navigator.agents,
+                &self.pet_unseen_observed,
+            )
         } else {
             Vec::new()
         };
@@ -948,7 +952,7 @@ impl Runtime {
     ) -> bool {
         let focused = self.operator_focused_pane_id.clone();
         let mut changes = if scope == ReadRecordScope::Local {
-            crate::sidebar::reconcile_read_records(
+            crate::agent_state::reconcile_read_records(
                 agents,
                 &mut self.snapshot.ui_state.pane_read_records,
                 &mut self.pending_read_record_reconciliation,
@@ -957,7 +961,7 @@ impl Runtime {
             Vec::new()
         };
         if let Some(live_pane_ids) = live_pane_ids {
-            changes.extend(crate::sidebar::prune_read_records(
+            changes.extend(crate::agent_state::prune_read_records(
                 &mut self.snapshot.ui_state.pane_read_records,
                 live_pane_ids,
                 scope,
@@ -967,7 +971,7 @@ impl Runtime {
                     .retain(|pane_id| live_pane_ids.contains(pane_id));
             }
         }
-        changes.extend(crate::sidebar::apply_read_state(
+        changes.extend(crate::agent_state::apply_read_state(
             agents,
             &mut self.snapshot.ui_state.pane_read_records,
             focused.as_deref(),
@@ -1025,22 +1029,22 @@ impl Runtime {
         // The lineage comes first because the read fingerprint carries what
         // each row's descendants are doing, and that is only known once the
         // tree is built (PRD B5).
-        let lineage_pruned = crate::sidebar::prune_lineage_expansion(
+        let lineage_pruned = crate::agent_state::prune_lineage_expansion(
             &mut self.snapshot.ui_state.expanded_agent_pane_ids,
             &session.agents,
             ReadRecordScope::Remote(&prefix),
         );
-        crate::sidebar::apply_lineage(
+        crate::agent_state::apply_lineage(
             &mut session.agents,
             &session.workspaces,
             &self.snapshot.ui_state.expanded_agent_pane_ids,
         );
-        let mut changes = crate::sidebar::prune_read_records(
+        let mut changes = crate::agent_state::prune_read_records(
             &mut self.snapshot.ui_state.pane_read_records,
             &live_pane_ids,
             ReadRecordScope::Remote(&prefix),
         );
-        changes.extend(crate::sidebar::apply_read_state(
+        changes.extend(crate::agent_state::apply_read_state(
             &mut session.agents,
             &mut self.snapshot.ui_state.pane_read_records,
             focused.as_deref(),
@@ -1073,7 +1077,7 @@ impl Runtime {
     /// disk write.
     pub(super) fn record_read_record_changes(
         &mut self,
-        changes: &[crate::sidebar::ReadRecordChange],
+        changes: &[crate::agent_state::ReadRecordChange],
     ) {
         for change in changes {
             crate::diagnostic!(serde_json::json!({
@@ -2345,7 +2349,7 @@ impl Runtime {
             }));
         }
         self.unresolved_machine_lineage = unresolved;
-        crate::sidebar::apply_lineage(
+        crate::agent_state::apply_lineage(
             &mut agents,
             &workspaces,
             &self.snapshot.ui_state.expanded_agent_pane_ids,

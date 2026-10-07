@@ -1,0 +1,11 @@
+//! The authority for agent state on every surface.
+//! Axes and facts enter here; shells draw the resulting values.
+
+pub(crate) mod axes;
+pub(crate) mod tally;
+pub(crate) mod turn;
+pub(crate) mod work;
+
+pub(crate) use axes::*;
+pub(crate) use tally::*;
+pub(crate) use turn::*;

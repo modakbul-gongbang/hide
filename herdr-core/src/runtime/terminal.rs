@@ -532,9 +532,11 @@ impl Runtime {
         if row.blocked {
             return;
         }
-        services
-            .input
-            .record(pane_id, unix_milliseconds(), row.activity == "working");
+        services.input.record(
+            pane_id,
+            unix_milliseconds(),
+            crate::agent_state::is_running(row),
+        );
     }
     /// The agent row for a pane on this machine or on a device.
     fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {

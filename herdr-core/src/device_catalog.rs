@@ -416,7 +416,7 @@ pub(crate) fn group(
             project.checkouts.insert(0, main);
         }
     }
-    crate::sidebar::sync_checkout_agent_summaries(&mut projects, &raw.agents);
+    crate::agent_state::sync_checkout_agent_summaries(&mut projects, &raw.agents);
     crate::project_context::sort_projects(&mut projects, &raw.agents);
 
     let find_tab = |tab_id: &str| {
@@ -604,7 +604,7 @@ pub(crate) fn apply_registrations(
     let running = session
         .agents
         .iter()
-        .filter(|agent| agent.activity == crate::sidebar::AgentActivity::Working.name())
+        .filter(|agent| crate::agent_state::is_running(agent))
         .map(|agent| agent.pane_id.clone())
         .collect::<BTreeSet<_>>();
     for project in &mut session.workspaces {

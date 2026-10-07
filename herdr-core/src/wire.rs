@@ -387,7 +387,7 @@ pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
 pub(crate) const CHILD_SESSION_TOKEN: &str = "child_session";
 
 /// The digest of the parent's agent session when the relationship was written.
-/// `sidebar::apply_lineage` compares it with the parent pane's current session,
+/// `crate::agent_state::apply_lineage` compares it with the parent pane's current session,
 /// because only there are both rows at hand, on this machine or another.
 pub(crate) const PARENT_SESSION_TOKEN: &str = "parent_session";
 
@@ -445,7 +445,7 @@ impl From<res::AgentInfo> for ProjectedAgent {
         };
         // A relationship is the spawner's claim plus the child still being the
         // session the claim was written for. The parent's session is checked
-        // where the parent's row is known (`sidebar::apply_lineage`).
+        // where the parent's row is known (`crate::agent_state::apply_lineage`).
         let own_session = v
             .agent_session
             .as_ref()

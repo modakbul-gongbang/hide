@@ -715,7 +715,7 @@ impl Runtime {
 
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
-        crate::sidebar::sync_checkout_agent_summaries(
+        crate::agent_state::sync_checkout_agent_summaries(
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );
@@ -2679,7 +2679,7 @@ impl Runtime {
             // The lineage is built before the read axis is applied, because
             // the read fingerprint carries what each row's descendants are
             // asking for and that is only known once the tree exists.
-            if crate::sidebar::prune_lineage_expansion(
+            if crate::agent_state::prune_lineage_expansion(
                 &mut self.snapshot.ui_state.expanded_agent_pane_ids,
                 &agents,
                 ReadRecordScope::Local,
@@ -2687,7 +2687,7 @@ impl Runtime {
                 self.persist_ui_state();
                 changed = true;
             }
-            crate::sidebar::apply_lineage(
+            crate::agent_state::apply_lineage(
                 &mut agents,
                 &self.snapshot.navigator.workspaces,
                 &self.snapshot.ui_state.expanded_agent_pane_ids,
@@ -3765,7 +3765,7 @@ impl Runtime {
                         {
                             checkout.purpose = next;
                         }
-                        crate::sidebar::sync_checkout_agent_summaries(
+                        crate::agent_state::sync_checkout_agent_summaries(
                             &mut session.workspaces,
                             &session.agents,
                         );
@@ -4821,7 +4821,7 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
-        crate::sidebar::sync_checkout_agent_summaries(
+        crate::agent_state::sync_checkout_agent_summaries(
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );

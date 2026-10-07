@@ -1035,7 +1035,7 @@ pub struct SidebarAgentSnapshot {
     /// The pane this agent was spawned from, as the `parent_pane` token its
     /// spawner declared (Herdr records no lineage). It is a claim that holds
     /// only while both panes still host the sessions it was written for:
-    /// `wire.rs` checks the child's, `sidebar::apply_lineage` the parent's and
+    /// `wire.rs` checks the child's, `crate::agent_state::apply_lineage` the parent's and
     /// clears the claim when either moved on, so an agent that took over a
     /// pane is a root rather than a child of whoever the pane's last agent
     /// was spawned by.
@@ -4885,7 +4885,7 @@ mod wire_enum_tests {
         assert_wire(&contract, "pull_request_checks", &checks);
         checked.insert("pull_request_checks");
 
-        use crate::request_view::RequestVerb;
+        use crate::agent_state::RequestVerb;
         let verbs = [
             RequestVerb::Answer,
             RequestVerb::Fix,

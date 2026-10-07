@@ -442,7 +442,7 @@ impl AgentSleepStore {
         agents
             .iter()
             .filter(|agent| sleep_refusal(agent).is_none())
-            .filter(|agent| agent.group == "seen")
+            .filter(|agent| crate::agent_state::is_seen(agent))
             .filter(|agent| !on_screen.contains(&agent.pane_id))
             .filter(|agent| !self.records.contains_key(&agent.pane_id))
             .filter(|agent| {
@@ -483,14 +483,8 @@ pub fn sleep_refusal(agent: &SidebarAgentSnapshot) -> Option<&'static str> {
     if agent.sleep.is_some() {
         return Some("This agent is already asleep");
     }
-    if agent.activity == "working" || agent.group == "working" {
-        return Some("This agent is working");
-    }
-    if agent.demand != "none" || agent.blocked {
-        return Some("This agent is waiting for you");
-    }
-    if agent.activity != "stopped" {
-        return Some("Hide cannot tell what this agent is doing");
+    if let Some(reason) = crate::agent_state::rest_refusal(agent) {
+        return Some(reason);
     }
     if agent.session_id.is_none() {
         return Some("Herdr has not reported this agent's conversation");
@@ -699,7 +693,7 @@ mod tests {
             assert!(store.settle_payload(&mut session).is_empty());
             let mut rows = vec![parent.clone()];
             rows.extend(crate::sidebar::project_agents(session).agents);
-            crate::sidebar::apply_lineage(&mut rows, &[], &[]);
+            crate::agent_state::apply_lineage(&mut rows, &[], &[]);
             rows.remove(1).lineage_parent_pane_id
         };
         assert_eq!(lineage_of(&child).as_deref(), Some("w1:p1"));
@@ -722,7 +716,7 @@ mod tests {
         let mut rows = rows;
         store.annotate(&mut rows);
         for row in &mut rows {
-            crate::sidebar::rederive(row);
+            crate::agent_state::rederive(row);
         }
         let row = &rows[0];
         assert_eq!(

@@ -621,7 +621,7 @@ impl SessionReplica {
         // Remote rows use the same representative-agent and purpose fallback
         // ladder as local rows. Run this after target-scoping pane ids so the
         // summary can join each agent to its projected checkout.
-        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &agents);
+        crate::agent_state::sync_checkout_agent_summaries(&mut workspaces, &agents);
 
         // A remote project list follows the same activity order as a local
         // one, so a user reading two devices reads one rule. The agent pane

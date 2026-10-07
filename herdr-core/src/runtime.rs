@@ -59,6 +59,7 @@ use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
+use crate::agent_state::ReadRecordScope;
 use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::handle::ChangeNotifier;
@@ -80,7 +81,7 @@ use crate::model::{
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
-use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
+use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
 fn conversation_agent_kind(kind: &str) -> bool {
@@ -855,7 +856,7 @@ fn sync_pane_status(
             changed = true;
         }
     }
-    changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
+    changed |= crate::agent_state::sync_checkout_agent_summaries(workspaces, agents);
     changed |= sync_strip_agent_identity(workspaces, agents);
     changed |= crate::project_context::sort_projects(workspaces, agents);
     changed
