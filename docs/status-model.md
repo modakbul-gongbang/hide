@@ -352,7 +352,8 @@ A count Hide cannot read is reported as unknown and never as zero, because a zer
 
 ### Not connected, and what fixes it
 
-A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the mark above so the header and the Agents tab cannot disagree about which sessions Hide hears (PRD settings-cleanup D-09, D-11, B16, B26 to B31).
+A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the mark above (PRD settings-cleanup D-09, D-11, B26 to B31).
+Settings counts sessions and never these connections, so a pane that needs a Reopen says so only in its own header.
 It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by nothing else:
 
 | Instrumentation | Connection |
