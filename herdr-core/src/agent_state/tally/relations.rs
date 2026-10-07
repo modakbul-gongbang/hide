@@ -105,10 +105,9 @@ pub(super) fn project(
             .lineage_parent_pane_id
             .as_deref()
             .and_then(|p| by_pane.get(p))
+            && !inside.contains(parent.pane_id.as_str())
         {
-            if !inside.contains(parent.pane_id.as_str()) {
-                rows.push(row(parent, depth + 1, Some("parent")));
-            }
+            rows.push(row(parent, depth + 1, Some("parent")));
         }
         walk(
             agent,

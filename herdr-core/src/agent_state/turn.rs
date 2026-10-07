@@ -546,7 +546,7 @@ pub fn rederive(agent: &mut SidebarAgentSnapshot) {
 
 /// What a row asks of the operator now, in the order the view draws its
 /// groups (D-06).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestVerb {
     /// A question or an approval waits on the operator.
@@ -563,6 +563,7 @@ pub enum RequestVerb {
     Working,
     /// Its pull request's checks, its descendants, or something it named.
     Waiting,
+    #[default]
     Idle,
 }
 
@@ -815,12 +816,6 @@ pub mod push {
             });
             (notices, seen)
         }
-    }
-}
-
-impl Default for RequestVerb {
-    fn default() -> Self {
-        Self::Idle
     }
 }
 

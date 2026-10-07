@@ -458,11 +458,21 @@ pub(super) fn scope(
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct GraphInput {
+    is_git: bool,
+    checkouts: Vec<(bool, bool, bool, Option<crate::model::PullRequestBadge>)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CheckoutInput {
+    id: String,
+    summary: crate::model::CheckoutAgentSummary,
+    tabs: Vec<(Option<String>, Vec<super::close::PaneInput>)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct PlaceInput {
-    graph_facts: (
-        bool,
-        Vec<(bool, bool, bool, Option<crate::model::PullRequestBadge>)>,
-    ),
+    graph_facts: GraphInput,
     device: String,
     project: String,
     home: bool,
@@ -471,11 +481,7 @@ struct PlaceInput {
     repository: Option<String>,
     checkout_work: Vec<(Option<String>, bool, bool, Option<String>)>,
     checkout_labels: Vec<(String, Option<String>, Option<u32>)>,
-    checkouts: Vec<(
-        String,
-        crate::model::CheckoutAgentSummary,
-        Vec<(Option<String>, Vec<super::close::PaneInput>)>,
-    )>,
+    checkouts: Vec<CheckoutInput>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -569,20 +575,21 @@ impl Cache {
                 .iter()
                 .flat_map(|d| &d.projects)
                 .map(|p| PlaceInput {
-                    graph_facts: (
-                        p.is_git,
-                        p.checkouts
+                    graph_facts: GraphInput {
+                        is_git: p.is_git,
+                        checkouts: p
+                            .checkouts
                             .iter()
                             .map(|c| {
                                 (
                                     c.is_primary,
                                     c.landed,
                                     c.worktree.as_ref().is_some_and(|w| w.missing),
-                                    c.pull_request.as_ref().map(|p| p.badge.clone()),
+                                    c.pull_request.as_ref().map(|p| p.badge),
                                 )
                             })
                             .collect(),
-                    ),
+                    },
                     device: p.device_id.clone(),
                     project: p.id.clone(),
                     home: p.is_home,
@@ -615,23 +622,19 @@ impl Cache {
                     checkouts: p
                         .checkouts
                         .iter()
-                        .map(|c| {
-                            (
-                                c.id.clone(),
-                                c.agent_summary.clone(),
-                                c.tabs
-                                    .iter()
-                                    .map(|t| {
-                                        (
-                                            t.id.clone(),
-                                            t.panes
-                                                .iter()
-                                                .map(super::close::PaneInput::from)
-                                                .collect(),
-                                        )
-                                    })
-                                    .collect(),
-                            )
+                        .map(|c| CheckoutInput {
+                            id: c.id.clone(),
+                            summary: c.agent_summary.clone(),
+                            tabs: c
+                                .tabs
+                                .iter()
+                                .map(|t| {
+                                    (
+                                        t.id.clone(),
+                                        t.panes.iter().map(super::close::PaneInput::from).collect(),
+                                    )
+                                })
+                                .collect(),
                         })
                         .collect(),
                 })
