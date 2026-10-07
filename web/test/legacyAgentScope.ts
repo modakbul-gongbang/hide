@@ -158,7 +158,7 @@ export function legacyRest(rest: SnapshotRest, agents: AgentRow[]): SnapshotRest
     ...projects.filter((p) => !p.is_home).map((workspace) => ({ workspace, agents, device: null })),
     ...remotes.flatMap((r) => (r.session?.workspaces ?? []).filter((p) => !p.is_home).map((workspace) => ({ workspace, agents: r.session!.agents ?? [], device: rest.navigator?.devices?.find((d) => d.id === r.target_id)?.label ?? r.target_id }))),
   ];
-  const everyone = drawScopeAgents(graphProjects);
+  const everyone = scopeAgents(graphProjects);
   for (const { workspace } of graphProjects) workspace.agent_scope.graph.cross = legacyGraphCross(workspace, everyone);
   const deviceScopes = new Map<string, AgentScope>();
   const local = legacyScope(scopeAgents(projects.filter((p) => !p.is_home).map((workspace) => ({ workspace, agents, device: null }))), agents);
