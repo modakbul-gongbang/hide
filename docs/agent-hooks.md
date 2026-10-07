@@ -167,10 +167,22 @@ The mark lives in the same record as the choices, so it outlasts a quit between 
 The core follows it (`ui_state.agent_onboarding`), applies the answer to this Mac and to every device whose own record waits, and sends the saved choice once per run to a device that reports waiting later; one that still waits afterwards is logged, not asked again on every report.
 
 Claude Code and Codex are the agents the kit has always had a hook for.
-Hide supports seven agents: Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor, in that order.
+Hide supports seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order.
 Every agent is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
-A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, Herdr's integration name for it (none for Gemini CLI), and the official page the row's answers come from (`doc_url`).
+A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, Herdr's integration name for it, and the official page the row's answers come from (`doc_url`).
 A test fails a row with no `https` `doc_url`, and a row with no program, so a claim in the table below always has a page behind it and every agent can be found.
+
+### Which agents Hide supports
+
+Hide supports an agent only when the pinned Herdr ships an integration for it (`herdr integration install <target>`, listed by `herdr integration status`).
+Lineage, the mailbox identity, labels and sleep all read the session id that integration gives Herdr, and an agent without one could only have its state judged from its screen, a second kind of row that behaves unlike every other; so the support list follows Herdr's, and an agent Herdr has no target for is not listed (Gemini CLI left for that reason and is retired below).
+`AgentAdapter::herdr` is therefore required, not optional.
+Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook.
+Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook that adds context, the guidance hook.
+Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
+It is then one row of `ADAPTERS`, the web shell's `SUPPORTED_AGENTS`, `DOCS` and `INSTALL_DOCS` (`web/src/settings/agentRows.ts`), the logo manifest, and the expected row of `hide-kit/src/tests/agent_cases.rs`.
+
+### What the kit puts down
 
 Two pieces are written per agent into the agent's own files, and nothing else; a third, Herdr's integration, is put in through Herdr's own CLI (below):
 
@@ -189,9 +201,8 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   It prints no Memory capsule, because the Memory receipt is read from Claude and Codex transcripts, and it keeps no counters and writes no file.
   A second delivery of the same session therefore changes nothing: the output is a pure function of the daemon's answer, and a test runs the hook twice and compares.
 
-Gemini CLI and Cursor each keep their entry the way their documentation shapes it.
-Gemini takes an entry in `~/.gemini/settings.json`.
-A removal takes Hide's hook out of whatever group holds it and drops the group only when no hook is left, so another tool's hook that shares a group with Hide's (`{"matcher": "*", "hooks": [Hide's, theirs]}`) stays.
+Cursor keeps its entry the way its documentation shapes it.
+A removal takes Hide's hook out of whatever group holds it and drops the group only when no hook is left, so another tool's hook that shares a group with Hide's stays.
 Cursor takes `~/.cursor/hooks.json` (`{"version": 1, "hooks": {"sessionStart": [{"command", "timeout"}]}}`, seconds), a file it shares with the operator's own hooks ([hooks](https://cursor.com/docs/hooks)).
 Cursor's documentation requires `version` (a positive integer, `1`), so Hide creates the file with it and adds `"version": 1` to an existing file only when it has none, which keeps the operator's own hooks beside Hide's valid; a `version` the operator wrote is left as it is.
 The documentation calls `command` a "script path or command" and does not say whether a shell parses it, so Hide writes the one form that means the same either way: the helper's absolute path and its arguments, with no `if`, `exec` or quoting (a path with a character a shell would read keeps the guarded, quoted form).
@@ -206,7 +217,7 @@ Grok and OpenCode can run the hooks in `~/.claude/settings.json` too, and Hide w
 What it does not do inside them is take or confirm letters: a letter is addressed to the pane's own session and is confirmed once that session has seen it, so a hook that runs inside another agent's session would take the letter and confirm it to nobody who reads it (PRD settings-cleanup D-25).
 `hide_agent_hooks::runtime::ForeignOrigin` finds such a session by what its agent sets for the processes it starts: `CURSOR_VERSION` for Cursor, `OPENCODE` or `OPENCODE_PID` for OpenCode, and `GROK_HOOK_EVENT` or `GROK_SESSION_ID` for Grok.
 `hide-agent-hooks/tests/letter_origin.rs` runs the built helper beside a stand-in `hide` that answers `inbox` with one letter and records its calls, once outside and once inside each of them.
-The guidance hook is not written on Windows, because its command is a shell command and Gemini CLI's documentation names no Windows form.
+The guidance hook is not written on Windows, because its command is a shell command and Cursor's documentation names no Windows form.
 
 The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`, `herdr:<agent>`), and an older build ignores them.
 With no choice on record Claude Code and Codex are on, as they have been since their hooks became part of the kit, and every other agent is off.
@@ -217,7 +228,7 @@ A guidance hook also needs the agent's own settings folder, which Hide does not 
 ### Installed means the program is found
 
 An agent is installed on a machine when one of its programs is found there, the way the operator's terminal would find it; a folder the agent creates does not count, because an editor makes `~/.cursor` without the `cursor-agent` CLI and a CLI that was removed leaves its folder behind (`~/.pi/agent` without `pi`).
-The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `gemini`, `grok`, `opencode`, `pi` and `cursor-agent`.
+The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `grok`, `opencode`, `pi`, `omp` and `cursor-agent`.
 Cursor's installer now calls its command `agent` and keeps `cursor-agent` as a second name; Hide looks for `cursor-agent` only, because Grok's installer also puts an `agent` on the `PATH`.
 The program names live in the kit's adapter table alone; Hide AI keeps no list of them, and an agent it cannot use yet is listed as not installed from what the kit found (`AiRequest.cli_found`).
 
@@ -249,28 +260,28 @@ Every row gets the skill stub where the system column says so.
 | --- | --- | --- | --- | --- |
 | Claude Code | `~/.claude/skills` (all) | done: six-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
 | Codex | `~/.agents/skills` (macOS, Linux) | done: six-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
-| Gemini CLI | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | none: the pinned Herdr lists no Gemini CLI target, so its state is read from its screen | [skills](https://geminicli.com/docs/cli/skills/), hooks at geminicli.com/docs/hooks |
 | Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | `grok` | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
 | OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything | `opencode` | [skills](https://opencode.ai/docs/skills/) |
 | Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
+| omp | `~/.agents/skills` (macOS, Linux) | none: TS extensions like Pi's, which a later change gives Hide's letters and guard; no command hook | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
 | Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
 
 Each row also carries what Hide can do for that agent as a list of features (`hide_kit::agents::Feature`, `KitAgentSnapshot.features`), and an agent with any feature missing is Partial, which is what the Agents tab's Partial popover lists:
 
-| Feature | Supported when | Claude Code, Codex | Gemini CLI | Grok, OpenCode, Pi | Cursor |
-| --- | --- | --- | --- | --- | --- |
-| `skill` | always | yes | yes | yes | yes |
-| `guidance` | Hide writes a guidance hook | yes | yes | no | yes |
-| `letters`, `memory`, `subagents`, `spawn_guard` | the six-event hook, so `HookSupport::Part` | yes | no | no | no |
-| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no |
-| `herdr_integration` | the row has a Herdr target | yes | no | yes | yes |
-| `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no | no |
+| Feature | Supported when | Claude Code, Codex | Grok, OpenCode, Pi, omp | Cursor |
+| --- | --- | --- | --- | --- |
+| `skill` | always | yes | yes | yes |
+| `guidance` | Hide writes a guidance hook | yes | no | yes |
+| `letters`, `memory`, `subagents`, `spawn_guard` | the six-event hook, so `HookSupport::Part` | yes | no | no |
+| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no |
+| `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes |
+| `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no |
 
 Claude Code and Codex are the only agents whose sessions Hide reads, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
-`herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`, the adapter's `herdr`), so a flag cannot say yes where the core says no.
+`herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`), so a flag cannot say yes where the core says no, and holds each row's Herdr target to the kind Herdr reports its panes as.
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
-The other thirteen agents earlier builds supported are no longer rows (see Retired agents below).
+The other fourteen agents earlier builds supported are no longer rows (see Retired agents below).
 Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration or its model settings, and it runs no installer for an agent.
 The one thing it records in an agent's own state is Codex's trust for Hide's own hooks, below.
 
@@ -284,25 +295,27 @@ The integration is put in only when the agent is on, installed and has made its 
 For Codex the kit also keeps what Herdr's install wrote into `~/.codex/hooks.json`, because Codex asks the operator to review a hook before it runs and Hide records that trust for the entries it installed ([Codex trusts Hide's own hooks](#codex-trusts-hides-own-hooks)); it goes from the record with the `herdr:codex` piece.
 Hide takes out only what it put in: an integration that was already in place when Hide first looked is the operator's and stays, whether the agent is switched on or off or the machine leaves Hide, and an older one of the operator's is not replaced.
 One of Hide's own that is older is replaced, and one the operator removed by hand stays removed until Reinstall, as for every other piece.
-Gemini CLI has no target in the pinned Herdr, so its row carries no integration piece and that is not a failure; a failed install shows on that agent's row alone and the other agents are untouched.
+A failed install shows on that agent's row alone and the other agents are untouched; an agent that has not made its folder yet (omp's `~/.omp/agent`, Pi's `~/.pi/agent`) reads that on its row, and neither Hide nor Herdr makes the folder.
+The integration goes in on the first pass after the folder exists that switches the agent on, the launch pass included.
 
 ### Which agents ask for a review
 
 Only Codex asks the operator to approve a hook before it runs.
-A survey on 2026-10-07 read each agent's official documentation and the executables installed on the maintainer's machine: Claude Code, Grok, OpenCode and Gemini CLI run a hook or plugin from the user folder with no approval screen, and the check a project folder's hook gets is a folder trust, not a hook review.
+A survey on 2026-10-07 read each agent's official documentation and the executables installed on the maintainer's machine: Claude Code, Grok and OpenCode run a hook or plugin from the user folder with no approval screen, and the check a project folder's hook gets is a folder trust, not a hook review.
 Pi's user extensions and Cursor's current CLI hooks are read from their documentation and were not run, so they are an inference.
 Hide therefore writes no trust for any other agent, and an agent that starts asking for approval of a user-folder hook is a new row for this section and a new trust step beside Codex's, not a change to Codex's.
 
 ### Retired agents
 
-Earlier builds supported thirteen more agents: GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code and Mistral Vibe.
+Earlier builds supported fourteen more agents: GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code, Mistral Vibe and Gemini CLI.
+Gemini CLI left later than the others, when the support list became the agents the pinned Herdr ships an integration for; its retirement takes Hide's `hide-guidance` group out of `~/.gemini/settings.json` and leaves the operator's hooks, settings, sign-in and sessions there as they are.
 The kit takes out what it put on a machine for them, once, by ownership: only a piece the record names is looked at, and then only what carries Hide's own marker, the skill stub's marker line and the hook entry's `hide-guidance` source.
 A file the operator wrote or edited stays, and a file that does not parse is left as it is and reported on the machine's retirement line; its record entry stays too, so the next pass tries again.
 Each piece leaves the record once it is out and an agent with nothing left in the record is not looked at again, so a second pass asks and rescans nothing.
 The shared skill stub stays while a supported agent that reads it is on and installed, or was switched on by the operator and has lost its program.
 Its record entry is what is retried, so a stub that could not be removed (a folder the account cannot write to) is removed by a later pass even after the retired agents that owned it have left the record.
-`hide-agent-hooks` keeps the layouts of the six retired guidance hooks only so this removal can find them, and a hook entry that an earlier build left behind prints nothing and writes nothing when it runs.
-This is a transition path: it goes with the release after the one that ships it.
+`hide-agent-hooks` keeps the layouts of the seven retired guidance hooks only so this removal can find them, and a hook entry that an earlier build left behind prints nothing and writes nothing when it runs.
+This is a transition path: it goes with the release after the one that ships Gemini CLI's retirement.
 
 ### Codex trusts Hide's own hooks
 

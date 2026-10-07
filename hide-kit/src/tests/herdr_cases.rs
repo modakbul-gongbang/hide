@@ -134,24 +134,60 @@ fn an_integration_taken_out_by_hand_stays_out_until_reinstall() {
     assert_eq!(fixture.integration("pi"), "current");
 }
 
+/// omp is a row like Pi: Herdr's `omp` target installs into the agent's own
+/// `~/.omp/agent`, and neither Hide nor Herdr makes that folder (B6, B7).
 #[test]
-fn gemini_cli_has_no_integration_and_that_is_not_a_failure() {
+fn omp_gets_herdrs_omp_integration_in_its_own_folder_and_loses_it_when_switched_off() {
     let fixture = Fixture::new();
-    install(&fixture, "gemini", ".gemini");
+    executable(&fixture.home().join(".local/bin/omp"), "#!/bin/sh\n");
 
-    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let report = apply(&fixture.target, &Scope::agents(["omp"], []));
 
-    let gemini = agent(&report, "gemini-cli");
-    assert!(gemini.herdr.is_none(), "{gemini:?}");
-    assert!(!gemini.needs_attention(), "{gemini:?}");
+    let omp = agent(&report, "omp");
+    let piece = omp.herdr.as_ref().unwrap();
+    assert_eq!(piece.state, ComponentState::Absent, "{omp:?}");
     assert!(
-        fixture
-            .integration_changes()
-            .iter()
-            .all(|call| !call.contains("gemini")),
-        "{:?}",
-        fixture.integration_changes()
+        piece
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("omp has not created its own folder"),
+        "{piece:?}"
     );
+    assert!(!omp.needs_attention(), "{omp:?}");
+    assert!(changes_for(&fixture, "omp").is_empty());
+    assert!(
+        !fixture.home().join(".omp").exists(),
+        "Hide makes no omp folder"
+    );
+    // The skill does not wait for omp's folder: it is the shared one.
+    assert_eq!(omp.skill.state, ComponentState::Installed, "{omp:?}");
+
+    std::fs::create_dir_all(fixture.home().join(".omp/agent")).unwrap();
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let piece = agent(&report, "omp").herdr.clone().unwrap();
+    assert_eq!(piece.state, ComponentState::Installed);
+    assert_eq!(
+        piece.location.as_deref(),
+        Some(
+            fixture
+                .home()
+                .join(".omp/agent")
+                .display()
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(fixture.integration("omp"), "current");
+    assert!(record(&fixture).contains("herdr:omp"));
+    assert_eq!(changes_for(&fixture, "omp"), ["integration install omp"]);
+
+    let report = apply(&fixture.target, &Scope::agents([], ["omp"]));
+
+    assert_eq!(herdr_state(&report, "omp"), ComponentState::Off);
+    assert_eq!(fixture.integration("omp"), "none");
+    assert!(!record(&fixture).contains("herdr:omp"));
 }
 
 #[test]
@@ -159,10 +195,10 @@ fn a_failed_install_fails_that_agents_row_only_and_the_next_pass_converges() {
     let fixture = Fixture::new();
     apply(&fixture.target, &Scope::automatic());
     install(&fixture, "pi", ".pi/agent");
-    install(&fixture, "gemini", ".gemini");
+    install(&fixture, "omp", ".omp/agent");
     std::fs::write(fixture.home().join("herdr-fails"), "").unwrap();
 
-    let report = apply(&fixture.target, &Scope::agents(["pi", "gemini-cli"], []));
+    let report = apply(&fixture.target, &Scope::agents(["pi"], []));
 
     let pi = agent(&report, "pi");
     let piece = pi.herdr.as_ref().unwrap();
@@ -175,7 +211,9 @@ fn a_failed_install_fails_that_agents_row_only_and_the_next_pass_converges() {
         herdr_state(&report, "claude-code"),
         ComponentState::Installed
     );
-    assert!(!agent(&report, "gemini-cli").needs_attention());
+    // An agent that is off is not asked for, so the failure is not its.
+    assert!(!agent(&report, "omp").needs_attention());
+    assert!(changes_for(&fixture, "omp").is_empty());
     assert!(!record(&fixture).contains("herdr:pi"));
 
     std::fs::remove_file(fixture.home().join("herdr-fails")).unwrap();
