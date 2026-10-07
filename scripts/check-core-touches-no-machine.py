@@ -45,6 +45,8 @@ BANNED = [
     (r"\.(try_exists|is_symlink)\(\)", "reads the file system; ask a node"),
     (r"\b(std::)?env::(current_exe|current_dir|set_current_dir|home_dir)\b",
      "reads where this process runs; that is a node's"),
+    (r"\bhide_factory::exec\b|\bSystemRunner\b",
+     "runs a Factory command on this machine; that is a node's"),
     (r"\bhide_ai::settings::(load|save)\b",
      "reads or writes the AI choice file; keep it in one of the core's stores"),
 ]
@@ -88,6 +90,13 @@ LATER_LAYERS = {
     "herdr-core/src/remote/retirement.rs": (3, "2b: the SSH transport moves into hide-node"),
     "herdr-core/src/remote/attachments.rs": (1, "2b: the SSH transport moves into hide-node"),
     "herdr-core/src/ssh_hosts.rs": (7, "2b: reading ~/.ssh/config is the node's with the transport"),
+    "herdr-core/src/factory.rs": (
+        15,
+        "2b: the Factory engine main added after layer 2a runs its git, gh and "
+        "check commands, worktree removal, disk and program reads on this "
+        "machine; they move to the core's own node over its link, and its store "
+        "and AI choice stay as core stores",
+    ),
     "herdr-core/src/live.rs": (3, "3: the terminal attach child moves to the node's terminal path"),
     "herdr-core/src/terminal_attachments.rs": (2, "3: pasted attachments move with the terminal path"),
     "herdr-core/src/labels/generator.rs": (

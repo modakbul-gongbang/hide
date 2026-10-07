@@ -360,9 +360,9 @@ pub(crate) fn memory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> 
 /// The Software Factory's own router (PRD software-factory D-13, D-44): the
 /// operator's provider choice with one request in flight, separate from the
 /// label and Project Memory routers so its queue never takes their budget.
-pub(crate) fn factory_router(settings: &AiSettings) -> AiRouter {
+pub(crate) fn factory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
     AiRouter::new(
-        backends(&settings.models_by_provider(), None),
+        backends(node, &settings.models_by_provider(), None),
         settings.router_config(),
         Arc::new(DiagnosticLogSink),
     )
