@@ -959,6 +959,90 @@ pub(crate) mod tests {
         );
     }
 
+    /// `hide agent show here` answers who the caller is, so only a
+    /// pane-bound credential can ask, as for every delivery command, and a
+    /// pane-bound one whose hint names another pane is refused. What it
+    /// answers is the caller's own record and never another pane's, with no
+    /// renderer connected.
+    #[test]
+    fn only_the_attested_pane_asks_who_it_is() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        runtime.lock().unwrap().install_delivery_client(client);
+        let context = authority(&target.actor).context;
+        let show = |id: &str| Command::Agents {
+            command: crate::coordination::Command::Show { id: id.into() },
+        };
+        let checkout =
+            crate::workspace_control::checkout_caller_id(&"a".repeat(32), "/checkouts/fixture");
+        let ask = |caller: &str, hint: Option<&str>, id: &str| {
+            let prepared = runtime.lock().unwrap().prepare_delivery(
+                "local",
+                caller,
+                &context,
+                hint,
+                show(id),
+            )?;
+            prepared.run(Duration::from_secs(5))
+        };
+        assert_eq!(
+            ask(&checkout, Some("recipient"), "here").err().as_deref(),
+            Some("agent_pane_required")
+        );
+        assert_eq!(
+            ask("sender", Some("recipient"), "here").err().as_deref(),
+            Some("caller_identity_conflict")
+        );
+        assert_eq!(
+            ask("recipient", None, "here").err().as_deref(),
+            Some("participant_unavailable")
+        );
+        {
+            let mut guard = runtime.lock().unwrap();
+            let actor = guard.delivery_observations["recipient"].actor.clone();
+            let mut ledger = (*guard.delivery_state().unwrap()).clone();
+            ledger.agents.push(crate::coordination::AgentRecord {
+                id: "agent-7".into(),
+                name: "recipient".into(),
+                machine: "local".into(),
+                host_scope: "fixture-scope".into(),
+                native_machine: "fixture-machine".into(),
+                session: "recipient-session".into(),
+                instance: "terminal-recipient".into(),
+                pane: "recipient".into(),
+                parent: None,
+                project: None,
+                actor,
+                ended: false,
+            });
+            guard.delivery_ledger = Ok(Arc::new(ledger));
+        }
+        let own = ask("recipient", Some("recipient"), "here").unwrap();
+        assert_eq!(
+            (&own["id"], &own["pane"]),
+            (&json!("agent-7"), &json!("recipient"))
+        );
+        // Another pane of the same checkout is not that participant.
+        assert_eq!(
+            ask("sender", None, "here").err().as_deref(),
+            Some("participant_unavailable")
+        );
+        // Another pane shows the agent by name; a checkout-bound credential
+        // shows none, since every agent command needs a pane-bound caller.
+        assert_eq!(ask("sender", None, "agent-7").unwrap()["id"], "agent-7");
+        assert_eq!(
+            ask(&checkout, Some("sender"), "agent-7").err().as_deref(),
+            Some("agent_pane_required")
+        );
+        drop(worker);
+    }
+
     #[test]
     fn only_a_prompt_hook_of_the_panes_own_session_is_a_submission() {
         let root = tempfile::tempdir().unwrap();

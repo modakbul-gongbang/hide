@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary } from "../../web/e2e/herdr-fixture";
-import { HIDE_CLI } from "./fixture";
+import { HIDE_CLI, seedKitRecord } from "./fixture";
 const MARKER = ".hide-e2e-device-home";
 
 /** The private HOME the isolated sshd gives its sessions, refused unless it is declared a test HOME. */
@@ -87,19 +87,6 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
   seedClaude(home);
   seedKitRecord(home);
   return { claude, codex };
-}
-
-/**
- * An empty kit record, so this HOME reads as a machine the kit has run on. A
- * machine with no record is held for the first-run agent choice and gets no
- * hook until the operator answers it; these specs prove what the kit installs
- * once it may. The first-run dialog itself is covered by a component test, the
- * core's decision tests and the hide-kit hold tests, not by an e2e spec.
- */
-export function seedKitRecord(home: string): void {
-  const dir = path.join(home, ".hide", "kit");
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "installed.json"), `${JSON.stringify({ format: 1, installed: [] })}\n`);
 }
 
 /**
