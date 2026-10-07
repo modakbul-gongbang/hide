@@ -5,7 +5,7 @@ use crate::model::{SidebarAgentSnapshot, WorkspaceSnapshot};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 mod cross;
-pub use cross::{CrossChip, CrossDevice};
+pub use cross::CrossChip;
 pub(super) use cross::{GraphMember, Lineage};
 
 type Badges = BTreeMap<String, BTreeMap<&'static str, usize>>;
