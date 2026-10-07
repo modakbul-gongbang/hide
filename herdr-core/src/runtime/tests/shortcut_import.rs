@@ -8,7 +8,7 @@ fn runtime_at(state: &std::path::Path, native: &std::path::Path) -> Runtime {
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: Some("/tmp/herdr-core-shortcut-import.sock".to_owned()),
             herdr_bin_path: None,
             app_state_path: state.to_string_lossy().into_owned(),

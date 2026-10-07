@@ -42,7 +42,7 @@ function rest(focusedDevice = "local"): SnapshotRest {
       focused_device_id: focusedDevice,
       focused_workspace_id: "w-local",
       focused_checkout_id: "c-local",
-      devices: [{ id: "studio", label: "Studio", kind: "remote" }],
+      devices: [{ id: "local", label: "This Mac", kind: "local" }, { id: "studio", label: "Studio", kind: "remote" }],
       workspaces: [{ id: "w-local", device_id: "local", checkouts: [checkout("w-local", "c-local", "/repo")] }],
     },
     status: {
@@ -170,6 +170,7 @@ describe("a stored draft when its tab closes (S5.5 B10-B12, B44)", () => {
       hostId: "host-a",
       tabIds: [],
       deviceIds: ["mac"],
+      node: "local",
       workspace: "w",
       displayIds: ["d2"],
       error: { kind: "file.save_failed", occurred_at: 5 },
@@ -193,7 +194,7 @@ describe("a stored draft when its tab closes (S5.5 B10-B12, B44)", () => {
 
   it("ends as keep while the tab stays once nothing more can come of the close (interface-2)", () => {
     const watch: CloseWatch = { tabId: "t", workspace: "w", displayId: "d2", hostId: "host-a", device: "local", errorAt: null, contents: "draft", sawSave: false };
-    const open: CloseWatchFrame = { connection: "live", hostId: "host-a", tabIds: ["t"], deviceIds: [], workspace: "w", displayIds: ["d2"], error: null, draft: "draft", save: "settled" };
+    const open: CloseWatchFrame = { connection: "live", hostId: "host-a", tabIds: ["t"], deviceIds: [], node: "local", workspace: "w", displayIds: ["d2"], error: null, draft: "draft", save: "settled" };
     // The frame before the core took the close says nothing yet.
     expect(closeWithSaveOutcome(watch, open)).toEqual({ outcome: "wait", sawSave: false });
     // The save runs, then settles with the document still open (a newer

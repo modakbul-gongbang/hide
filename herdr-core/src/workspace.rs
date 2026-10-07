@@ -20,12 +20,13 @@ use crate::model::{
     CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, DeviceRegistration,
     DeviceSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
 };
+use crate::node::NodeId;
 
-pub const LOCAL_DEVICE_ID: &str = "local";
-
-pub fn local_device() -> DeviceSnapshot {
+/// The row for the machine the core runs on. Its id is the node id; its
+/// `kind` stays `local`, the role "the core's own machine", not a name.
+pub fn local_device(node: &NodeId) -> DeviceSnapshot {
     DeviceSnapshot {
-        id: LOCAL_DEVICE_ID.to_owned(),
+        id: node.to_string(),
         label: "This Mac".to_owned(),
         kind: "local".to_owned(),
         state: "ready".to_owned(),
@@ -52,9 +53,9 @@ pub fn local_device() -> DeviceSnapshot {
 /// This Mac, then each device the operator registered. A remote device
 /// starts `unavailable`; `Runtime::refresh_device_snapshots` reads its state
 /// off the remote status once the connection has reported.
-pub fn devices(registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
-    let mut result = vec![local_device()];
-    let mut seen = HashSet::from([LOCAL_DEVICE_ID.to_owned()]);
+pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
+    let mut result = vec![local_device(node)];
+    let mut seen = HashSet::from([node.to_string()]);
 
     for registration in registrations {
         if seen.insert(registration.id.clone()) {
@@ -78,11 +79,15 @@ pub fn devices(registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
     result
 }
 
+/// A registration of `path` on `device_id`, the node id for this machine.
 pub fn registration(
     path: &str,
     label: &str,
     device_id: &str,
 ) -> Result<WorkspaceRegistration, String> {
+    if device_id.trim().is_empty() {
+        return Err("workspace registration must name its device".to_owned());
+    }
     let path = normalized_path(Path::new(path))?;
     if path.as_os_str().is_empty() {
         return Err("workspace path must not be empty".to_owned());
@@ -101,11 +106,7 @@ pub fn registration(
         id: workspace_id_for_path(&path),
         label,
         path: path::to_wire_lossy(&path),
-        device_id: if device_id.trim().is_empty() {
-            LOCAL_DEVICE_ID.to_owned()
-        } else {
-            device_id.to_owned()
-        },
+        device_id: device_id.to_owned(),
         pinned: false,
         home: false,
     })
@@ -283,6 +284,7 @@ pub(crate) fn git_calls_on_this_thread() -> usize {
 }
 
 pub fn build_catalog(
+    node: &NodeId,
     registrations: &[WorkspaceRegistration],
     spaces: &[SessionSpace],
     worktrees: &WorktreeCatalogSnapshot,
@@ -295,7 +297,7 @@ pub fn build_catalog(
     // never changes which row the user is looking at.
     let mut result: Vec<WorkspaceSnapshot> = Vec::new();
     for space in spaces {
-        for projected in inspect_space(space) {
+        for projected in inspect_space(node, space) {
             match result
                 .iter_mut()
                 .find(|existing| existing.id == projected.id)
@@ -315,7 +317,7 @@ pub fn build_catalog(
     // here (PRD S5.5 B7). That device's catalog is its helper's to answer.
     for registration in registrations
         .iter()
-        .filter(|registration| registration.device_id == LOCAL_DEVICE_ID)
+        .filter(|registration| *node == registration.device_id)
     {
         let comparison = normalized_for_comparison(&project_root(Path::new(&registration.path)));
         let occupied = result.iter().position(|workspace| {
@@ -418,8 +420,7 @@ fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &Workspac
     workspace.pinned = registration.pinned;
     workspace.is_home = registration.home;
     workspace.device_id = registration.device_id.clone();
-    workspace.remote_target_id =
-        (registration.device_id != LOCAL_DEVICE_ID).then(|| registration.device_id.clone());
+    workspace.remote_target_id = None;
     for checkout in &mut workspace.checkouts {
         checkout.id = checkout_id_for_path(&registration.id, Path::new(&checkout.path));
         checkout.workspace_id = registration.id.clone();
@@ -434,7 +435,7 @@ fn adopt_registration(workspace: &mut WorkspaceSnapshot, registration: &Workspac
 /// without git. Every other worktree of the repository is added by
 /// [`apply_worktrees`] from the worktree reader's answer, which is what makes
 /// a worktree with no terminal a row the operator can select and start one in.
-fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
+fn inspect_space(node: &NodeId, space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
     let mut projects: Vec<WorkspaceSnapshot> = Vec::new();
     for cwd in &space.cwds {
         let path = Path::new(cwd);
@@ -472,7 +473,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     path: path::to_wire_lossy(&project_path),
                     remote_target_id: None,
                     expanded: true,
-                    device_id: LOCAL_DEVICE_ID.to_owned(),
+                    device_id: node.to_string(),
                     repo_name: name,
                     is_git: repository.is_some(),
                     default_branch: None,
@@ -810,7 +811,9 @@ fn inspect(
         id: id.to_owned(),
         label: label.to_owned(),
         path: path::to_wire_lossy(&normalized),
-        remote_target_id: (device_id != LOCAL_DEVICE_ID).then(|| device_id.to_owned()),
+        // Only this node's paths are inspected: the filesystem read here says
+        // nothing about another machine.
+        remote_target_id: None,
         expanded: true,
         device_id: device_id.to_owned(),
         repo_name: git_root_path
@@ -1029,10 +1032,10 @@ mod tests {
         let nested = worktree.join("src");
         fs::create_dir_all(&nested).expect("nested directory");
         let (_plain_scratch, folder) = temp_dir("no-spawn-plain");
-        let demo =
-            registration(root.to_str().unwrap(), "Demo", LOCAL_DEVICE_ID).expect("registration");
-        let plain =
-            registration(folder.to_str().unwrap(), "Plain", LOCAL_DEVICE_ID).expect("registration");
+        let demo = registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE)
+            .expect("registration");
+        let plain = registration(folder.to_str().unwrap(), "Plain", crate::node::TEST_NODE)
+            .expect("registration");
         let spaces = vec![
             SessionSpace {
                 id: "w1".to_owned(),
@@ -1052,7 +1055,12 @@ mod tests {
         ];
 
         let before = git_calls_on_this_thread();
-        let catalog = build_catalog(&[demo, plain], &spaces, &no_worktrees());
+        let catalog = build_catalog(
+            &crate::node::test_node(),
+            &[demo, plain],
+            &spaces,
+            &no_worktrees(),
+        );
         let roots = root_index(&spaces);
         assert_eq!(git_calls_on_this_thread(), before, "the catalog ran git");
 
@@ -1139,8 +1147,8 @@ mod tests {
             .expect("git worktree add");
         assert!(worktree.success());
 
-        let registration =
-            registration(root.to_str().unwrap(), "Demo", LOCAL_DEVICE_ID).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE)
+            .expect("registration");
         let snapshot = inspect_registered(&registration);
         // A registration is one row for where it is. The `feature` worktree
         // exists on disk but has no pane, so it is not a checkout row.
@@ -1151,6 +1159,7 @@ mod tests {
 
         // It becomes one once a Herdr workspace has a pane in it.
         let occupied = build_catalog(
+            &crate::node::test_node(),
             &[],
             &[SessionSpace {
                 id: "w1".to_owned(),
@@ -1178,8 +1187,8 @@ mod tests {
     #[test]
     fn flat_folder_is_visible_without_implicit_git_init() {
         let (_scratch, root) = temp_dir("flat");
-        let registration =
-            registration(root.to_str().unwrap(), "Flat", LOCAL_DEVICE_ID).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Flat", crate::node::TEST_NODE)
+            .expect("registration");
         let snapshot = inspect_registered(&registration);
         assert!(!snapshot.is_git);
         assert_eq!(snapshot.checkouts.len(), 1);
@@ -1193,8 +1202,9 @@ mod tests {
     #[test]
     fn a_space_occupying_a_registered_directory_does_not_duplicate_it() {
         let (_scratch, root) = temp_dir("temporary");
-        let registration = registration(root.to_str().unwrap(), "Registered", LOCAL_DEVICE_ID)
-            .expect("registration");
+        let registration =
+            registration(root.to_str().unwrap(), "Registered", crate::node::TEST_NODE)
+                .expect("registration");
         let spaces = [SessionSpace {
             id: "w1".to_owned(),
             label: "Registered".to_owned(),
@@ -1203,6 +1213,7 @@ mod tests {
         }];
 
         let catalog = build_catalog(
+            &crate::node::test_node(),
             std::slice::from_ref(&registration),
             &spaces,
             &no_worktrees(),
@@ -1222,7 +1233,7 @@ mod tests {
     #[test]
     fn a_project_keeps_its_identity_when_herdr_closes_its_workspace() {
         let (_scratch, root) = temp_dir("identity");
-        let registration = registration(root.to_str().unwrap(), "Identity", LOCAL_DEVICE_ID)
+        let registration = registration(root.to_str().unwrap(), "Identity", crate::node::TEST_NODE)
             .expect("registration");
         let space = SessionSpace {
             id: "w7".to_owned(),
@@ -1232,11 +1243,17 @@ mod tests {
         };
 
         let occupied = build_catalog(
+            &crate::node::test_node(),
             std::slice::from_ref(&registration),
             &[space],
             &no_worktrees(),
         );
-        let released = build_catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
+        let released = build_catalog(
+            &crate::node::test_node(),
+            std::slice::from_ref(&registration),
+            &[],
+            &no_worktrees(),
+        );
 
         assert_eq!(occupied[0].id, released[0].id);
         assert_eq!(occupied[0].label, released[0].label);
@@ -1261,12 +1278,23 @@ mod tests {
             ],
         };
         let registrations = [
-            registration(first.to_str().unwrap(), "First", LOCAL_DEVICE_ID).expect("first"),
-            registration(second.to_str().unwrap(), "Second", LOCAL_DEVICE_ID).expect("second"),
+            registration(first.to_str().unwrap(), "First", crate::node::TEST_NODE).expect("first"),
+            registration(second.to_str().unwrap(), "Second", crate::node::TEST_NODE)
+                .expect("second"),
         ];
 
-        let unregistered = build_catalog(&[], std::slice::from_ref(&space), &no_worktrees());
-        let catalog = build_catalog(&registrations, &[space], &no_worktrees());
+        let unregistered = build_catalog(
+            &crate::node::test_node(),
+            &[],
+            std::slice::from_ref(&space),
+            &no_worktrees(),
+        );
+        let catalog = build_catalog(
+            &crate::node::test_node(),
+            &registrations,
+            &[space],
+            &no_worktrees(),
+        );
 
         assert_eq!(unregistered.len(), 2);
         assert!(
@@ -1294,7 +1322,7 @@ mod tests {
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
-        let catalog = build_catalog(&[], &[space], &no_worktrees());
+        let catalog = build_catalog(&crate::node::test_node(), &[], &[space], &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         let canonical = fs::canonicalize(&root).expect("canonical root");
@@ -1322,7 +1350,7 @@ mod tests {
             },
         ];
 
-        let catalog = build_catalog(&[], &spaces, &no_worktrees());
+        let catalog = build_catalog(&crate::node::test_node(), &[], &spaces, &no_worktrees());
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].checkouts.len(), 1);
@@ -1428,7 +1456,7 @@ mod tests {
             path: root.to_string_lossy().into_owned(),
             remote_target_id: None,
             expanded: true,
-            device_id: LOCAL_DEVICE_ID.to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             repo_name: "fixture".to_owned(),
             is_git: false,
             default_branch: None,
@@ -1485,8 +1513,8 @@ mod tests {
         ));
         fs::create_dir_all(&idle).expect("idle worktree");
         fs::create_dir_all(&second).expect("second worktree");
-        let registration =
-            registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
+            .expect("registration");
         let worktrees = WorktreeCatalogSnapshot {
             projects: vec![ProjectWorktreesSnapshot {
                 root_path: root.to_string_lossy().into_owned(),
@@ -1515,6 +1543,7 @@ mod tests {
         };
 
         let catalog = build_catalog(
+            &crate::node::test_node(),
             &[registration],
             &[SessionSpace {
                 id: "w1".to_owned(),
@@ -1566,8 +1595,8 @@ mod tests {
     #[test]
     fn a_missing_worktree_is_a_row_that_says_it_is_missing() {
         let (_scratch, root) = temp_dir("missing-worktree");
-        let registration =
-            registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
+            .expect("registration");
         let worktrees = WorktreeCatalogSnapshot {
             projects: vec![ProjectWorktreesSnapshot {
                 root_path: root.to_string_lossy().into_owned(),
@@ -1584,7 +1613,7 @@ mod tests {
             }],
         };
 
-        let catalog = build_catalog(&[registration], &[], &worktrees);
+        let catalog = build_catalog(&crate::node::test_node(), &[registration], &[], &worktrees);
 
         let gone = catalog[0]
             .checkouts
@@ -1599,11 +1628,17 @@ mod tests {
     #[test]
     fn a_project_with_no_worktree_answer_keeps_the_rows_it_had() {
         let (_scratch, root) = temp_dir("no-answer");
-        let registration =
-            registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
+            .expect("registration");
 
-        let before = build_catalog(std::slice::from_ref(&registration), &[], &no_worktrees());
+        let before = build_catalog(
+            &crate::node::test_node(),
+            std::slice::from_ref(&registration),
+            &[],
+            &no_worktrees(),
+        );
         let unrelated = build_catalog(
+            &crate::node::test_node(),
             &[registration],
             &[],
             &WorktreeCatalogSnapshot {
@@ -1621,11 +1656,16 @@ mod tests {
     #[test]
     fn a_registration_no_space_occupies_stays_listed() {
         let (_scratch, root) = temp_dir("unopened");
-        let registration = registration(root.to_str().unwrap(), "Unopened", LOCAL_DEVICE_ID)
+        let registration = registration(root.to_str().unwrap(), "Unopened", crate::node::TEST_NODE)
             .expect("registration");
         let registration_id = registration.id.clone();
 
-        let catalog = build_catalog(&[registration], &[], &no_worktrees());
+        let catalog = build_catalog(
+            &crate::node::test_node(),
+            &[registration],
+            &[],
+            &no_worktrees(),
+        );
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration_id);

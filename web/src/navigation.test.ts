@@ -170,6 +170,7 @@ describe("an open from Main or an Overview", () => {
       navigator: {
         focused_device_id: "local",
         focused_checkout_id: front,
+        devices: [{ id: "local", kind: "local", label: "This Mac" }],
         workspaces: [
           { id: "w", checkouts: [
             { id: "c1", path: "/w", tabs: [{ id: "t1", panes: [{ id: "p1" }] }] },

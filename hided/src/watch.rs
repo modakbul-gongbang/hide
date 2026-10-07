@@ -179,10 +179,10 @@ impl WatchService {
     }
 }
 
-fn frame(path: &std::path::Path) -> String {
+fn frame(path: &std::path::Path, node: &str) -> String {
     serde_json::json!({
         "type": "directory_changed",
-        "payload": {"path": path.display().to_string(), "device_id": herdr_core::workspace::LOCAL_DEVICE_ID},
+        "payload": {"path": path.display().to_string(), "device_id": node},
     })
     .to_string()
 }
@@ -205,7 +205,7 @@ async fn run(
                         root = selected;
                         *requested.lock().expect("watch request set") = desired;
                         for path in reconcile(&mut watched, opened) {
-                            let _ = frames.send(frame(&path));
+                            let _ = frames.send(frame(&path, boundary.node().as_str()));
                         }
                     }
                 }
@@ -223,12 +223,12 @@ async fn run(
                 for path in changed {
                     if boundary.resolve_target(&path.to_string_lossy()).is_ok() {
                         if emitted.insert(path.clone()) {
-                            let _ = frames.send(frame(&path));
+                            let _ = frames.send(frame(&path, boundary.node().as_str()));
                         }
                         if let Some(root) = selected {
                             for rebound in refresh_on_change(&boundary, root, &desired, &mut watched, &path) {
                                 if emitted.insert(rebound.clone()) {
-                                    let _ = frames.send(frame(&rebound));
+                                    let _ = frames.send(frame(&rebound, boundary.node().as_str()));
                                 }
                             }
                         }

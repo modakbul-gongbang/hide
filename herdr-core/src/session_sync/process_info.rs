@@ -169,7 +169,7 @@ mod tests {
             json!({"type":"pane_process_info", "process_info":{"pane_id":params["pane_id"], "foreground_processes":[]}})
         });
         let runtime = Arc::new(std::sync::Mutex::new(Runtime::new(
-            serde_json::from_value(json!({"schema_version":crate::model::SCHEMA_VERSION, "herdr_socket_path":null, "app_state_path":"/tmp/hide-process-owner-unused.json"})).unwrap(),
+            serde_json::from_value(json!({"schema_version":crate::model::SCHEMA_VERSION, "node_id":"test-node", "herdr_socket_path":null, "app_state_path":"/tmp/hide-process-owner-unused.json"})).unwrap(),
             crate::environment::EnvironmentReport { statuses: Vec::new(), home_path: None, codex_home: None },
         )));
         let context = SessionSyncContext::remote(

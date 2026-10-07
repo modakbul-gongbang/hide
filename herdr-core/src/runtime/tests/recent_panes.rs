@@ -49,7 +49,7 @@ fn restart(path: &str) -> Runtime {
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
             herdr_bin_path: None,
             app_state_path: path.to_owned(),

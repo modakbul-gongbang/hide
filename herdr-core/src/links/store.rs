@@ -232,6 +232,90 @@ impl LinkStore {
             .map_err(failed)
     }
 
+    /// Whether any row still names `device` (PRD core-host-node B2).
+    pub fn has_device(&self, device: &str) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE device=?1) \
+                 OR EXISTS(SELECT 1 FROM sessions WHERE device=?1) \
+                 OR EXISTS(SELECT 1 FROM cursors WHERE device=?1)",
+                [device],
+                |row| row.get(0),
+            )
+            .map_err(failed)
+    }
+
+    /// A consistent copy of the whole file at `destination`, which must not
+    /// exist yet; the writer runs in WAL mode, so the main file alone may
+    /// miss committed rows.
+    pub fn copy_to(&self, destination: &Path) -> Result<(), String> {
+        let destination = destination.to_str().ok_or("links_copy_path_not_utf8")?;
+        self.connection
+            .execute("VACUUM INTO ?1", [destination])
+            .map(|_| ())
+            .map_err(failed)
+    }
+
+    /// Moves every row of device `from` to `to` in one transaction: each
+    /// table's `device` column and each project key, a digest of device and
+    /// root (PRD core-host-node B2). A row the move would land on fails the
+    /// whole move. Returns how many projects moved.
+    pub fn convert_device(&mut self, from: &str, to: &str) -> Result<usize, String> {
+        let tx = self.connection.transaction().map_err(failed)?;
+        let projects = {
+            let mut statement = tx
+                .prepare("SELECT key, root FROM projects WHERE device=?1")
+                .map_err(failed)?;
+            statement
+                .query_map([from], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(failed)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(failed)?
+        };
+        for (old, root) in &projects {
+            let new = hide_project::project_id(to, Path::new(root));
+            tx.execute(
+                "UPDATE projects SET key=?1, device=?2 WHERE key=?3",
+                params![new, to, old],
+            )
+            .map_err(|error| format!("moving project {old} to {new} failed: {error}"))?;
+            for table in ["prs", "worktrees"] {
+                tx.execute(
+                    &format!("UPDATE {table} SET project=?1 WHERE project=?2"),
+                    params![new, old],
+                )
+                .map_err(|error| format!("moving {table} of {old} to {new} failed: {error}"))?;
+            }
+        }
+        // Every other table that names a device, read from the schema so a
+        // table added later cannot keep the old name.
+        let tables = {
+            let mut statement = tx
+                .prepare(
+                    "SELECT m.name FROM sqlite_master m WHERE m.type='table' \
+                     AND m.name!='projects' AND EXISTS(SELECT 1 FROM \
+                     pragma_table_info(m.name) c WHERE c.name='device')",
+                )
+                .map_err(failed)?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(failed)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(failed)?
+        };
+        for table in tables {
+            tx.execute(
+                &format!("UPDATE \"{table}\" SET device=?1 WHERE device=?2"),
+                [to, from],
+            )
+            .map_err(|error| format!("moving {table} to {to} failed: {error}"))?;
+        }
+        tx.commit().map_err(failed)?;
+        Ok(projects.len())
+    }
+
     /// Each project's Copied history days, read from the search index's
     /// `policy` through a read-only ATTACH (D-22); a project with no row
     /// keeps the default. No index yet is no policy.

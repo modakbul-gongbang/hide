@@ -1002,7 +1002,7 @@ pub(super) struct RetryConnectPayload {
 
 /// The operator pressed Reinstall (PRD device-parity B8): on a machine's
 /// row, which repairs every part of it that needs it, or on one hook row,
-/// which names that part. `device_id` is `local` for this Mac.
+/// which names that part. `device_id` is the core's own node id for this Mac.
 #[derive(Debug, Deserialize)]
 pub(super) struct KitReinstallPayload {
     pub(super) device_id: String,
@@ -1016,7 +1016,7 @@ pub(super) struct KitReinstallPayload {
 
 /// The operator asked, from a not connected Codex pane's popover, for Codex's
 /// shared server to be turned off on one machine (PRD settings-cleanup B27).
-/// `device_id` is `local` for this Mac.
+/// `device_id` is the core's own node id for this Mac.
 #[derive(Debug, Deserialize)]
 pub(super) struct CodexDaemonDisablePayload {
     pub(super) device_id: String,
@@ -1723,9 +1723,9 @@ impl Runtime {
                 self.focus_pane(payload.pane_id, payload.origin, payload.request_id);
                 if payload.focus_device
                     && self.snapshot.status.last_error.is_none()
-                    && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+                    && !self.device_in_front(self.node.as_str())
                 {
-                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                    self.bring_device_forward(self.node.as_str().to_owned());
                 }
                 true
             }
@@ -1797,7 +1797,7 @@ impl Runtime {
                 if let Some(device) = payload
                     .device_id
                     .clone()
-                    .filter(|device| device != workspace::LOCAL_DEVICE_ID)
+                    .filter(|device| device != self.node.as_str())
                 {
                     if payload.new_folder {
                         self.set_error(
@@ -1844,6 +1844,7 @@ impl Runtime {
                     let path = payload.path.clone();
                     let result = live::spawn_workspace_creation(
                         context,
+                        self.node.clone(),
                         payload.path,
                         payload.label,
                         payload.initialize_git,
@@ -1894,7 +1895,8 @@ impl Runtime {
                                     super::projects::tab_host(
                                         workspace,
                                         checkout,
-                                        workspace::LOCAL_DEVICE_ID,
+                                        self.node.as_str(),
+                                        &self.node,
                                     ),
                                 )
                             })
@@ -1917,7 +1919,7 @@ impl Runtime {
                     );
                     return true;
                 };
-                let key = (workspace::LOCAL_DEVICE_ID.to_owned(), cwd.clone());
+                let key = (self.node.as_str().to_owned(), cwd.clone());
                 let area_id = payload.area_id.or_else(|| {
                     self.agent_layout_of(&key)
                         .map(|layout| layout.tree.active_area.clone())
@@ -2041,9 +2043,9 @@ impl Runtime {
                 }
                 if payload.focus_device
                     && self.snapshot.status.last_error.is_none()
-                    && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+                    && !self.device_in_front(self.node.as_str())
                 {
-                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                    self.bring_device_forward(self.node.as_str().to_owned());
                 }
                 changed
             }
@@ -2132,8 +2134,8 @@ impl Runtime {
                 self.refresh_pane_read_state();
                 self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
-                if payload.focus_device && !self.device_in_front(workspace::LOCAL_DEVICE_ID) {
-                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                if payload.focus_device && !self.device_in_front(self.node.as_str()) {
+                    self.bring_device_forward(self.node.as_str().to_owned());
                 }
                 // A first visit attaches the tab's panes now. Waiting for the
                 // next session update to do it left the canvas empty until
@@ -2334,7 +2336,10 @@ impl Runtime {
                     );
                     return true;
                 }
-                if id == workspace::LOCAL_DEVICE_ID
+                // `local` named this machine before node ids; a device under
+                // that name would read as this machine in an unconverted key.
+                if id == self.node.as_str()
+                    || id == crate::node::LEGACY_LOCAL_DEVICE_ID
                     || self
                         .snapshot
                         .ui_state
@@ -2370,7 +2375,7 @@ impl Runtime {
                 true
             }
             Event::RemoveDevice(payload) => {
-                if payload.device_id == workspace::LOCAL_DEVICE_ID {
+                if payload.device_id == self.node.as_str() {
                     self.set_error(
                         "device.local_remove_denied",
                         "This Mac cannot be removed",
@@ -2473,7 +2478,7 @@ impl Runtime {
                     .navigator
                     .focused_device_id
                     .as_deref()
-                    .filter(|device_id| *device_id != workspace::LOCAL_DEVICE_ID)
+                    .filter(|device_id| *device_id != self.node.as_str())
                 {
                     self.set_error(
                         "pane.device_mismatch",
@@ -2757,7 +2762,7 @@ impl Runtime {
                 }
                 // A device's focus is its Herdr session's, which the core
                 // follows; showing one of its files moves nothing here.
-                if device_id != workspace::LOCAL_DEVICE_ID {
+                if device_id != self.node.as_str() {
                     return true;
                 }
                 let pane_id = checkout.active_tab_id.as_deref().and_then(|id| {

@@ -11,15 +11,15 @@ import type { Device, WorkspaceRegistration } from "./snapshot";
 
 export type Host = { id: string; label: string };
 
-/** This Mac first, then every registered device, as the Host selector lists them. */
+/** This Mac (the core's own node) first, then every registered device, as the Host selector lists them. */
 export function addProjectHosts(devices: readonly Device[] | undefined, t: TFunction<"translation">): Host[] {
-  const local = devices?.find((device) => device.id === "local");
-  return [{ id: "local", label: local?.label ?? t("common.thisMac") }, ...(devices ?? []).filter((device) => device.id !== "local").map((device) => ({ id: device.id, label: device.label }))];
+  const local = devices?.find((device) => device.kind !== "remote");
+  return [{ id: local?.id ?? "", label: local?.label ?? t("common.thisMac") }, ...(devices ?? []).filter((device) => device !== local).map((device) => ({ id: device.id, label: device.label }))];
 }
 
 /** The host the dialog opens on: the focused device while it is still listed, this Mac otherwise. */
 export function initialHost(hosts: readonly Host[], focused: string | null | undefined): string {
-  return focused && hosts.some((host) => host.id === focused) ? focused : "local";
+  return focused && hosts.some((host) => host.id === focused) ? focused : (hosts[0]?.id ?? "");
 }
 
 /** A path without its trailing slashes, so `~/a/` and `~/a` are one folder. */
@@ -118,9 +118,9 @@ function validHost(host: string): boolean {
  * added project on this Mac (registrations are kept in the order they were
  * added), else the home folder.
  */
-export function defaultProjectParent(registrations: readonly WorkspaceRegistration[]): string {
+export function defaultProjectParent(registrations: readonly WorkspaceRegistration[], node: string): string {
   // The Home (`~/hide`) is no project, so it is not where the next one is expected to live.
-  const last = registrations.filter((row) => row.device_id === "local" && !row.home).at(-1);
+  const last = registrations.filter((row) => row.device_id === node && !row.home).at(-1);
   if (!last) return "~";
   const path = trimFolder(last.path);
   const cut = path.lastIndexOf("/");

@@ -130,6 +130,34 @@ async function withStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStor
   });
 }
 
+/** The device id the core gave its own machine before it named itself by its node id. */
+const FORMER_OWN_DEVICE = "local";
+
+/**
+ * Moves this host's drafts stored under the core's former own-device id to
+ * the node id it names itself by now (PRD core-host-node D-21), in one
+ * transaction: each keeps its contents and time, and a draft already stored
+ * under the node id wins when it is newer. Another host's drafts stay as
+ * they are, since `local` there named that host's machine.
+ */
+export async function adoptNodeDrafts(host: string, node: string): Promise<void> {
+  if (!node || node === FORMER_OWN_DEVICE) return;
+  await withStore<StoredBuffer[]>("readwrite", (store) => {
+    const all = store.getAll() as IDBRequest<StoredBuffer[]>;
+    all.onsuccess = () => {
+      const byId = new Map(all.result.map((row) => [row.id, row]));
+      for (const row of all.result) {
+        if (row.host !== host || row.device !== FORMER_OWN_DEVICE) continue;
+        const id = identity({ host, device: node, root: row.root, path: row.path });
+        const current = byId.get(id);
+        if (!current || current.updated_at < row.updated_at) store.put({ ...row, id, device: node });
+        store.delete(row.id);
+      }
+    };
+    return all;
+  });
+}
+
 /**
  * Claims an unverified draft for a document this host just opened on its own
  * machine, when one was stored for the same checkout root and path (or, from
@@ -137,8 +165,8 @@ async function withStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStor
  * document is newer and wins. A device's document never claims one: a draft
  * with no device may have been written for this machine only (B11).
  */
-export async function claimLegacyBuffer(key: BufferKey): Promise<void> {
-  if (key.device !== "local") return;
+export async function claimLegacyBuffer(key: BufferKey, node: string): Promise<void> {
+  if (key.device !== node) return;
   const database = await openDatabase();
   if (!database) return;
   await new Promise<void>((resolve) => {
@@ -397,6 +425,8 @@ export type CloseWatchFrame = {
   hostId: string | null | undefined;
   tabIds: string[];
   deviceIds: string[];
+  /** The core's own node id, which is never gone from the device list. */
+  node: string;
   /** The Workspace in front, by its key, and every display it shows. */
   workspace: string | null;
   displayIds: string[];
@@ -425,7 +455,7 @@ export function closeWithSaveOutcome(watch: CloseWatch, next: CloseWatchFrame): 
   const keep = { outcome: "keep" as const, sawSave: watch.sawSave };
   if (next.connection !== "live" || next.hostId !== watch.hostId) return keep;
   if (!next.tabIds.includes(watch.tabId)) {
-    if (watch.device !== "local" && !next.deviceIds.includes(watch.device)) return keep;
+    if (watch.device !== next.node && !next.deviceIds.includes(watch.device)) return keep;
     return { outcome: "landed", sawSave: watch.sawSave };
   }
   // Another document's failure read this way only keeps a draft, never loses one.

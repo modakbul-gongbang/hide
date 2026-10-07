@@ -81,7 +81,7 @@ impl Runtime {
         key: &(String, String),
         request_id: &str,
     ) {
-        if context.device_id == crate::workspace::LOCAL_DEVICE_ID {
+        if context.device_id == self.node.as_str() {
             self.bring_device_forward(context.device_id.clone());
             self.focus_checkout(&context.workspace_id, &context.checkout_id);
         } else {
@@ -106,7 +106,7 @@ impl Runtime {
         view_id: &str,
         load: u64,
     ) -> Option<BrowserRouteSource> {
-        let connected = if device_id == crate::workspace::LOCAL_DEVICE_ID {
+        let connected = if device_id == self.node.as_str() {
             self.snapshot.status.herdr.state == "connected"
         } else {
             self.snapshot
@@ -684,7 +684,7 @@ impl Runtime {
             if workspace.device_id != device_id {
                 continue;
             }
-            let connected = if workspace.device_id == "local" {
+            let connected = if self.node == workspace.device_id {
                 self.snapshot.status.herdr.state == "connected"
             } else {
                 self.snapshot.status.remote.iter().any(|remote| {
@@ -839,7 +839,7 @@ impl Runtime {
                 "watch.list",
             ]);
         }
-        if context.device_id == "local"
+        if self.node == context.device_id
             || self
                 .device_hosts
                 .get(&context.device_id)

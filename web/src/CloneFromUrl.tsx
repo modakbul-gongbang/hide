@@ -19,7 +19,7 @@ import { Button } from "./components/ui/button";
 import { DialogBody, DialogDescription, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { RegistrationStatus, useRegistration } from "./registration";
-import type { RepositoryClone, WorkspaceRegistration } from "./snapshot";
+import { localDeviceId, type RepositoryClone, type WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
 import { useErrorSince } from "./WorkspaceDialogs";
@@ -44,7 +44,7 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
   const target = useShellStore((s) => s.cloneTarget);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const [url, setUrl] = useState("");
-  const [parent, setParent] = useState(() => defaultProjectParent(registrations));
+  const [parent, setParent] = useState(() => defaultProjectParent(registrations, localDeviceId(useShellStore.getState().rest)));
   const [following, setFollowing] = useState<Following | null>(() => {
     const running = useShellStore.getState().rest?.repository_clone;
     return running && cloneRunning(running) ? { id: running.id } : null;
@@ -87,7 +87,7 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
     if (!canClone || !name) return;
     const path = `${parentPath.replace(/\/+$/, "")}/${name}`;
     setFollowing({ after: slot?.id ?? 0, at: Date.now(), path });
-    registration.send("local", path, () => actions.cloneRepository(url.trim(), parentPath, name));
+    registration.send(localDeviceId(useShellStore.getState().rest), path, () => actions.cloneRepository(url.trim(), parentPath, name));
   };
 
   const browse = async () => {
