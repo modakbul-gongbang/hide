@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { Actions } from "../actions";
-import { Group, Row } from "../components/settings-rows";
+import { Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -159,7 +159,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
         <Row label={t("factory.settings.defaultRuntime")}>
           <Choice value={config.default_runtime} options={[["claude", "Claude Code"], ["codex", "Codex"]]} onChange={(value) => set("default_runtime", value)} data="default_runtime" />
         </Row>
-        <Row label={t("factory.settings.harness")} detail={t("factory.settings.harnessDetail")}>
+        <Row label={t("factory.settings.harness")} detail={<Note>{t("factory.settings.harnessDetail")}</Note>}>
           <TextField value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
         </Row>
       </Group>
@@ -174,7 +174,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
             <TextField value={config.verification.checks.join(", ")} onCommit={(value) => set("ci", value)} data="ci" />
           </Row>
         ) : (
-          <Row label={t("factory.settings.verifyCommands")} detail={t("factory.settings.verifyCommandsDetail")}>
+          <Row label={t("factory.settings.verifyCommands")} detail={<Note>{t("factory.settings.verifyCommandsDetail")}</Note>}>
             <TextField value={verify} onCommit={(value) => set("verify", value)} data="verify" />
           </Row>
         )}
@@ -190,7 +190,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
         <Row label={t("factory.settings.quickCheck")}>
           <TextField value={config.quick_check ?? ""} onCommit={(value) => set("quick_check", value)} data="quick_check" />
         </Row>
-        <Row label={t("factory.settings.riskPaths")} detail={t("factory.settings.riskPathsDetail")}>
+        <Row label={t("factory.settings.riskPaths")} detail={<Note>{t("factory.settings.riskPathsDetail")}</Note>}>
           <TextField value={config.risk_paths.join(", ")} onCommit={(value) => set("risk_paths", value)} data="risk_paths" />
         </Row>
       </Group>
@@ -207,7 +207,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
         <AddCheck onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
       </Group>
       <Group title={t("factory.settings.notifyKeep")} data-factory-settings-group="keep">
-        <Row label={t("factory.settings.macosNotifications")} detail={t("factory.settings.macosNotificationsDetail")}>
+        <Row label={t("factory.settings.macosNotifications")} detail={<Note>{t("factory.settings.macosNotificationsDetail")}</Note>}>
           <Switch checked={config.macos_notifications} aria-label={t("factory.settings.macosNotifications")} data-factory-setting="macos_notifications" onCheckedChange={(on) => set("macos_notifications", on ? "on" : "off")} />
         </Row>
         {numbers(KEEP)}
@@ -235,7 +235,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
             <TextField value={(config.worker_args[runtime] ?? []).join(" ")} onCommit={(value) => set("worker_args", `${runtime}=${value}`)} data={`worker_args:${runtime}`} />
           </Row>
         ))}
-        <Row label={t("factory.settings.close")} detail={running ? t("factory.settings.closeRunning") : t("factory.settings.closeDetail")}>
+        <Row label={t("factory.settings.close")} detail={<Note>{running ? t("factory.settings.closeRunning") : t("factory.settings.closeDetail")}</Note>}>
           <Button variant="destructive" size="sm" disabled={running || write.state.phase === "sending"} data-factory-close="true" onClick={() => send({ verb: "close", project: factory.project })}>
             {t("factory.settings.close")}
           </Button>
