@@ -276,20 +276,67 @@ fn learned(fixture: &Fixture) -> Vec<String> {
         .collect()
 }
 
+/// The stand-in app-server's hash of a `SessionStart` entry: sha256 of the
+/// JSON list `[event, matcher, command]` as Python prints it.
+fn current_hash(matcher: Option<&Value>, command: &Value) -> Value {
+    use sha2::{Digest, Sha256};
+    let matcher = matcher.map_or("null".to_owned(), |matcher| matcher.to_string());
+    let listed = format!("[\"SessionStart\", {matcher}, {command}]");
+    let digest = Sha256::digest(listed.as_bytes());
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    json!(format!("sha256:{hex}"))
+}
+
+/// Whether Codex's record holds a trusted hash for the hook entry that runs
+/// `command`, whichever group index it sits at. The stand-in app-server hashes
+/// `[event, matcher, command]`, so a hash that is not the entry's current one
+/// (an entry edited since it was trusted) does not count.
 fn trusted(fixture: &Fixture, command: &str) -> bool {
-    let trust: serde_json::Map<String, Value> = serde_json::from_str(
-        &std::fs::read_to_string(codex_file(fixture, "fake-trust.json")).unwrap(),
-    )
-    .unwrap();
+    let trust: serde_json::Map<String, Value> =
+        std::fs::read_to_string(codex_file(fixture, "fake-trust.json"))
+            .map(|raw| serde_json::from_str(&raw).unwrap())
+            .unwrap_or_default();
     let document = hooks_document(fixture);
     let groups = document["hooks"]["SessionStart"].as_array().unwrap();
     groups.iter().enumerate().any(|(index, group)| {
-        group["hooks"][0]["command"] == command
-            && trust.contains_key(&format!(
-                "{}:session_start:{index}:0",
-                codex_file(fixture, "hooks.json").display()
-            ))
+        group["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .any(|(slot, hook)| {
+                let key = format!(
+                    "{}:session_start:{index}:{slot}",
+                    codex_file(fixture, "hooks.json").display()
+                );
+                let current = current_hash(group.get("matcher"), &hook["command"]);
+                hook["command"] == command
+                    && trust
+                        .get(&key)
+                        .is_some_and(|held| held["trusted_hash"] == current)
+            })
     })
+}
+
+/// Whether Codex holds any hash at all for an entry running `command`.
+fn trusted_at_all(fixture: &Fixture, command: &str) -> bool {
+    let trust: serde_json::Map<String, Value> =
+        std::fs::read_to_string(codex_file(fixture, "fake-trust.json"))
+            .map(|raw| serde_json::from_str(&raw).unwrap())
+            .unwrap_or_default();
+    let document = hooks_document(fixture);
+    document["hooks"]["SessionStart"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .any(|(index, group)| {
+            group["hooks"][0]["command"] == command
+                && trust.contains_key(&format!(
+                    "{}:session_start:{index}:0",
+                    codex_file(fixture, "hooks.json").display()
+                ))
+        })
 }
 
 #[test]
@@ -452,7 +499,7 @@ fn what_the_kit_learned_goes_when_the_integration_does() {
 }
 
 #[test]
-fn an_entry_the_operator_took_out_is_not_named_by_a_later_pass() {
+fn an_entry_the_operator_took_out_stays_recorded_and_nothing_new_is_trusted() {
     let fixture = with_codex_found();
     apply(&fixture.target, &Scope::automatic());
     let command = herdr_command(&fixture);
@@ -462,13 +509,102 @@ fn an_entry_the_operator_took_out_is_not_named_by_a_later_pass() {
         .unwrap()
         .truncate(1);
     std::fs::write(codex_file(&fixture, "hooks.json"), document.to_string()).unwrap();
-    // The kit's record still holds the entry; Herdr says the integration is
-    // current, so the kit installs nothing and learns nothing new.
+    let written = calls(&fixture, "config/batchWrite");
+
+    // Herdr says the integration is current, so the kit installs nothing and
+    // learns nothing: the record keeps what it saw Herdr write (the bytes are
+    // gated by the record's piece and matched exactly), and the pass asks
+    // Codex to record nothing for an entry that is not in the file.
     let report = apply(&fixture.target, &Scope::automatic());
+
     assert_eq!(codex_part(&report).state, ComponentState::Installed);
+    assert_eq!(learned(&fixture), std::slice::from_ref(&command));
+    assert!(!hooks_document(&fixture).to_string().contains(&command));
+    assert_eq!(calls(&fixture, "config/batchWrite"), written);
+}
+
+#[test]
+fn an_entry_another_writer_adds_after_herdrs_install_is_not_recorded_or_trusted() {
+    let fixture = with_codex_found();
+    // The foreign entry lands after Herdr's install, by the status probe that
+    // follows it: the "after" read has already been taken by then.
+    std::fs::write(fixture.home().join("herdr-late-writer"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert_eq!(codex_part(&report).state, ComponentState::Installed);
+    assert_eq!(learned(&fixture), [herdr_command(&fixture)]);
+    assert!(trusted(&fixture, &herdr_command(&fixture)));
+    assert!(
+        hooks_document(&fixture)
+            .to_string()
+            .contains("/foreign/late.sh")
+    );
+    assert!(!trusted(&fixture, "bash /foreign/late.sh"));
     assert_eq!(
         held_keys(&fixture),
         hide_agent_hooks::HookEvent::ALL.len() + 1
     );
-    assert!(!hooks_document(&fixture).to_string().contains(&command));
+}
+
+#[test]
+fn an_install_that_also_removed_someone_elses_entry_teaches_nothing() {
+    let fixture = with_codex_found();
+    std::fs::write(fixture.home().join("herdr-edits"), "").unwrap();
+
+    apply(&fixture.target, &Scope::automatic());
+
+    assert!(learned(&fixture).is_empty());
+    assert!(!trusted(&fixture, &herdr_command(&fixture)));
+}
+
+#[test]
+fn an_install_that_added_a_pile_of_entries_teaches_nothing() {
+    let fixture = with_codex_found();
+    std::fs::write(fixture.home().join("herdr-many"), "").unwrap();
+
+    apply(&fixture.target, &Scope::automatic());
+
+    assert!(learned(&fixture).is_empty());
+    assert!(!trusted(&fixture, &herdr_command(&fixture)));
+    assert!(!trusted(&fixture, "bash /extra/0.sh"));
+    // Hide's own entries are trusted whatever Herdr's install did.
+    assert_eq!(held_keys(&fixture), hide_agent_hooks::HookEvent::ALL.len());
+}
+
+#[test]
+fn a_record_the_kit_cannot_read_trusts_only_hides_own_entries() {
+    let fixture = with_codex_found();
+    apply(&fixture.target, &Scope::automatic());
+    let command = herdr_command(&fixture);
+    std::fs::remove_file(codex_file(&fixture, "fake-trust.json")).unwrap();
+    std::fs::write(
+        record::kit_state_dir(fixture.home()).join("installed.json"),
+        "{ not a record",
+    )
+    .unwrap();
+
+    apply(&fixture.target, &Scope::automatic());
+
+    assert!(!trusted_at_all(&fixture, &command));
+    assert_eq!(held_keys(&fixture), hide_agent_hooks::HookEvent::ALL.len());
+}
+
+#[test]
+fn recorded_hook_entries_count_only_while_the_record_holds_the_integration() {
+    let entry = hide_agent_hooks::codex_trust::HookEntry {
+        event: "SessionStart".to_owned(),
+        matcher: None,
+        handler_type: "command".to_owned(),
+        command: "x".to_owned(),
+    };
+    let mut record = record::Record::default();
+    assert!(record.set_herdr_hook_entries("codex", vec![entry.clone()]));
+    assert!(record.herdr_hook_entries("codex").is_empty());
+    record.insert_piece("herdr:codex");
+    assert_eq!(record.herdr_hook_entries("codex"), [entry]);
+    record.forget_piece("herdr:codex");
+    assert!(record.herdr_hook_entries("codex").is_empty());
+    record.insert_piece("herdr:codex");
+    assert!(record.herdr_hook_entries("codex").is_empty());
 }

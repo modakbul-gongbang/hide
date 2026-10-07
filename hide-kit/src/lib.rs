@@ -772,7 +772,15 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
     // other parts are already installed.
     if trust_codex
         && !target.stop.load(Ordering::Relaxed)
-        && let Some(failure) = codex_trust::ensure(target, record.herdr_hook_entries("codex"))
+        && let Some(codex) = agents::adapter_of_part(ComponentId::CodexHook)
+        && let Some(failure) = codex_trust::ensure(
+            target,
+            // Herdr's entries only while Herdr says its integration is in place.
+            codex
+                .herdr
+                .filter(|integration| applied.herdr_current(integration.name))
+                .map_or(&[][..], |_| record.herdr_hook_entries(codex.id)),
+        )
         && let Some(part) = components
             .iter_mut()
             .find(|part| part.id == ComponentId::CodexHook)

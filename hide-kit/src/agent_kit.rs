@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use hide_agent_hooks::codex_trust::{HookEntry, MAX_LEARNED_ENTRIES, learn_herdr_entries};
+use hide_agent_hooks::codex_trust::{HookEntry, learn_herdr_entries};
 use hide_agent_hooks::guidance::GuidanceAgent;
 use hide_agent_hooks::{HookStatus, InstallFailure};
 
@@ -627,6 +627,14 @@ pub(crate) struct Applied {
     pub(crate) retirement: Retirement,
 }
 
+impl Applied {
+    /// Whether Herdr reports its integration `name` current right now, which
+    /// is the only state in which what the kit recorded of it is trusted.
+    pub(crate) fn herdr_current(&self, name: &str) -> bool {
+        matches!(&self.herdr, Some(Ok(statuses)) if statuses.of(name) == Some(Integration::Current))
+    }
+}
+
 /// Applies the operator's per-agent choices in `scope` and what the pass
 /// owes every agent that is on.
 pub(crate) fn apply(
@@ -829,7 +837,7 @@ fn apply_herdr(
     changed: &mut bool,
 ) -> HerdrView {
     let before = Statuses::probe(target);
-    let mut installed_now: Vec<(&AgentAdapter, Option<HookFile>)> = Vec::new();
+    let mut installed_now: Vec<(&AgentAdapter, Option<HookFiles>)> = Vec::new();
     let mut touched = false;
     for adapter in ADAPTERS {
         let Some(integration) = adapter.herdr else {
@@ -891,13 +899,18 @@ fn apply_herdr(
         if !install_now {
             continue;
         }
-        // What Herdr is about to write is learned from the file it writes in
-        // (PRD codex-herdr-hook-trust D-02): the entries before the call,
-        // against the entries after it.
+        // What Herdr writes is learned from the file it writes in (PRD
+        // codex-herdr-hook-trust D-02): its entries before the call and right
+        // after it, so the window another writer could land an entry in is
+        // the one subprocess.
         let file_before = adapter.trusts_herdr_hook().then(|| read_hook_file(target));
         match herdr_integration::install(target, integration.name) {
             Ok(()) => {
-                installed_now.push((adapter, file_before));
+                let files = file_before.map(|before| HookFiles {
+                    before,
+                    after: read_hook_file(target),
+                });
+                installed_now.push((adapter, files));
                 touched = true;
             }
             Err(reason) => {
@@ -912,14 +925,14 @@ fn apply_herdr(
     // not take is not Hide's.
     let after = Statuses::probe(target);
     if let Some(Ok(statuses)) = &after {
-        for (adapter, file_before) in installed_now {
+        for (adapter, files) in installed_now {
             let Some(integration) = adapter.herdr else {
                 continue;
             };
             if statuses.of(integration.name) == Some(Integration::Current) && record_readable {
                 *changed |= record.insert_piece(&herdr_code(adapter));
-                if let Some(file_before) = file_before {
-                    *changed |= learn_herdr_hooks(target, record, adapter, file_before);
+                if let Some(files) = files {
+                    *changed |= learn_herdr_hooks(record, adapter, files);
                 }
             }
         }
@@ -934,19 +947,22 @@ fn read_hook_file(target: &KitTarget) -> HookFile {
     hide_agent_hooks::codex_trust::hook_entries(&target.home)
 }
 
+/// The hook file's entries around one integration install.
+struct HookFiles {
+    before: HookFile,
+    after: HookFile,
+}
+
 /// Keeps in the record the entries Herdr's integration for `adapter` wrote
 /// into the agent's hook file during the install just made, so Codex's trust
-/// can be for exactly those bytes. A file that could not be read, or an
-/// install that added more entries than Herdr's integration does, teaches
-/// nothing and leaves the review screen to the operator; the cause goes to the
-/// log. True when the record changed.
-fn learn_herdr_hooks(
-    target: &KitTarget,
-    record: &mut Record,
-    adapter: &AgentAdapter,
-    before: HookFile,
-) -> bool {
-    let event = |kind: &str, detail: String| {
+/// can be for exactly those bytes. A file that could not be read leaves the
+/// record as it was. An install that changed the file in a way an integration
+/// install does not (an entry of someone else's removed or edited, or more
+/// entries added than Herdr's integration adds) teaches nothing and forgets
+/// what was recorded, so the review screen is left to the operator; either
+/// cause goes to the log. True when the record changed.
+fn learn_herdr_hooks(record: &mut Record, adapter: &AgentAdapter, files: HookFiles) -> bool {
+    let event = |kind: &str, detail: &str| {
         eprintln!(
             "{}",
             serde_json::json!({
@@ -957,20 +973,17 @@ fn learn_herdr_hooks(
             })
         );
     };
-    let learned = before.and_then(|before| {
-        let after = read_hook_file(target)?;
-        learn_herdr_entries(&before, &after, record.herdr_hook_entries(adapter.id)).map_err(
-            |added| {
-                format!(
-                    "the install added {added} entries, more than the {MAX_LEARNED_ENTRIES} a Herdr integration adds"
-                )
-            },
-        )
-    });
-    match learned {
+    let (before, after) = match (files.before, files.after) {
+        (Ok(before), Ok(after)) => (before, after),
+        (Err(detail), _) | (_, Err(detail)) => {
+            event("herdr_hook_unread", &detail);
+            return false;
+        }
+    };
+    match learn_herdr_entries(&before, &after, record.herdr_hook_entries(adapter.id)) {
         Ok(entries) => record.set_herdr_hook_entries(adapter.id, entries),
-        Err(detail) => {
-            event("herdr_hook_not_learned", detail);
+        Err(refused) => {
+            event("herdr_hook_not_learned", &refused.to_string());
             record.set_herdr_hook_entries(adapter.id, Vec::new())
         }
     }

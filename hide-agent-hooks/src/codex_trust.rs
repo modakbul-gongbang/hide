@@ -277,11 +277,11 @@ pub struct HookEntry {
 }
 
 /// The most entries one integration install may add before the kit refuses to
-/// learn them: Herdr's Codex integration adds one, and a call that adds a
-/// pile is not one whose entries Hide vouches for.
-pub const MAX_LEARNED_ENTRIES: usize = 8;
+/// learn them: Herdr's Codex integration adds one (0.9.1), and a call that
+/// adds a pile is not one whose entries Hide vouches for.
+pub const MAX_LEARNED_ENTRIES: usize = 4;
 
-/// Every command entry of the account's `~/.codex/hooks.json`, or why the
+/// Every command-handler entry of the account's `~/.codex/hooks.json`, or why the
 /// file cannot be read (a missing or empty file is no entries).
 pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
     let path = AgentRuntime::Codex.config_path(home);
@@ -304,7 +304,7 @@ pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
                 .into_iter()
                 .flatten()
             {
-                let (Some(handler_type), Some(command)) = (
+                let (Some(COMMAND_HANDLER), Some(command)) = (
                     hook.get("type").and_then(Value::as_str),
                     hook.get("command").and_then(Value::as_str),
                 ) else {
@@ -313,7 +313,7 @@ pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
                 found.insert(HookEntry {
                     event: event.clone(),
                     matcher: matcher.clone(),
-                    handler_type: handler_type.to_owned(),
+                    handler_type: COMMAND_HANDLER.to_owned(),
                     command: command.to_owned(),
                 });
             }
@@ -322,31 +322,62 @@ pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
     Ok(found)
 }
 
+/// Why an install teaches the kit nothing about what Herdr wrote.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotLearned {
+    /// The install added more than [`MAX_LEARNED_ENTRIES`] entries.
+    TooMany(usize),
+    /// Entries that were in the file before the call, and are not ones the kit
+    /// recorded Herdr writing, are gone after it: the file changed in a way an
+    /// integration install does not change it, so something else wrote it.
+    Changed(usize),
+}
+
+impl std::fmt::Display for NotLearned {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooMany(count) => write!(
+                formatter,
+                "the install added {count} entries, more than the {MAX_LEARNED_ENTRIES} a Herdr integration adds"
+            ),
+            Self::Changed(count) => write!(
+                formatter,
+                "the install left {count} entries that were there before it changed or gone"
+            ),
+        }
+    }
+}
+
 /// What Herdr's integration install wrote, out of the entries the file held
 /// before the call and after it, given what the kit had recorded earlier.
 ///
-/// An entry the call added is Herdr's. A call that added none (Herdr leaves an
-/// entry it already wrote alone, and only replaces its script) keeps the
-/// entries recorded before that are still in the file, so a record never
-/// names an entry that is gone. More than [`MAX_LEARNED_ENTRIES`] added is
-/// refused with the count, and nothing is learned.
+/// The file may only have gained entries, or lost entries the kit already
+/// recorded as Herdr's (Herdr replacing its own older command): any other
+/// removal or edit means a writer other than Herdr's install touched the file
+/// in the window, and nothing is learned. The entries the call added are
+/// Herdr's, and so are the recorded entries still in the file (Herdr leaves an
+/// entry it already wrote alone and only replaces its script), so a record
+/// never names an entry that is gone. More than [`MAX_LEARNED_ENTRIES`] added
+/// is refused too.
 pub fn learn_herdr_entries(
     before: &BTreeSet<HookEntry>,
     after: &BTreeSet<HookEntry>,
     recorded: &[HookEntry],
-) -> Result<Vec<HookEntry>, usize> {
-    let added: Vec<HookEntry> = after.difference(before).cloned().collect();
+) -> Result<Vec<HookEntry>, NotLearned> {
+    let foreign_changes = before
+        .difference(after)
+        .filter(|entry| !recorded.contains(entry))
+        .count();
+    if foreign_changes > 0 {
+        return Err(NotLearned::Changed(foreign_changes));
+    }
+    let added: Vec<&HookEntry> = after.difference(before).collect();
     if added.len() > MAX_LEARNED_ENTRIES {
-        return Err(added.len());
+        return Err(NotLearned::TooMany(added.len()));
     }
-    if !added.is_empty() {
-        return Ok(added);
-    }
-    Ok(recorded
-        .iter()
-        .filter(|entry| after.contains(*entry))
-        .cloned()
-        .collect())
+    let kept = recorded.iter().filter(|entry| after.contains(*entry));
+    let learned: BTreeSet<HookEntry> = added.into_iter().chain(kept).cloned().collect();
+    Ok(learned.into_iter().collect())
 }
 
 /// One entry of `hooks/list`, as much of it as the decision reads.
@@ -1271,13 +1302,58 @@ mod tests {
     }
 
     #[test]
+    fn a_new_entry_and_a_recorded_one_still_in_the_file_are_both_learned() {
+        let herdr = herdr_entry();
+        let second = entry("Stop", "second herdr entry");
+        let before = set(&[herdr.clone(), entry("Stop", "other")]);
+        let mut after = before.clone();
+        after.insert(second.clone());
+        let learned = learn_herdr_entries(&before, &after, std::slice::from_ref(&herdr)).unwrap();
+        assert_eq!(learned.len(), 2);
+        assert!(learned.contains(&herdr) && learned.contains(&second));
+    }
+
+    #[test]
+    fn herdr_replacing_its_own_recorded_entry_is_followed() {
+        let old = herdr_entry();
+        let new = entry(
+            "SessionStart",
+            "bash '/acct/.codex/herdr-agent-state.sh' session --v2",
+        );
+        let before = set(&[old.clone(), entry("Stop", "other")]);
+        let after = set(&[new.clone(), entry("Stop", "other")]);
+        assert_eq!(learn_herdr_entries(&before, &after, &[old]), Ok(vec![new]));
+    }
+
+    #[test]
+    fn a_removal_or_edit_of_anyone_elses_entry_in_the_window_teaches_nothing() {
+        let herdr = herdr_entry();
+        let theirs = entry("Stop", "other tool");
+        let before = set(std::slice::from_ref(&theirs));
+        // Removed.
+        let removed = set(std::slice::from_ref(&herdr));
+        assert_eq!(
+            learn_herdr_entries(&before, &removed, &[]),
+            Err(NotLearned::Changed(1))
+        );
+        // Edited in place: the old entry is gone, a new one is there.
+        let edited = set(&[herdr, entry("Stop", "other tool, edited")]);
+        assert_eq!(
+            learn_herdr_entries(&before, &edited, &[]),
+            Err(NotLearned::Changed(1))
+        );
+        // A recorded entry removed alongside is not a reason of its own.
+        assert!(learn_herdr_entries(&set(&[herdr_entry()]), &set(&[]), &[herdr_entry()]).is_ok());
+    }
+
+    #[test]
     fn an_install_that_added_a_pile_teaches_nothing() {
         let many: Vec<HookEntry> = (0..=MAX_LEARNED_ENTRIES)
             .map(|n| entry("SessionStart", &format!("c{n}")))
             .collect();
         assert_eq!(
             learn_herdr_entries(&set(&[]), &set(&many), &[]),
-            Err(MAX_LEARNED_ENTRIES + 1)
+            Err(NotLearned::TooMany(MAX_LEARNED_ENTRIES + 1))
         );
         assert!(learn_herdr_entries(&set(&[]), &set(&many[..MAX_LEARNED_ENTRIES]), &[]).is_ok());
     }

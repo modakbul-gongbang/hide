@@ -2,7 +2,9 @@
 //!
 //! `hide_agent_hooks::codex_trust` does the work; this decides when. A pass
 //! that finds the Codex hook part in place asks Codex to record trust for it,
-//! so Codex starts without its "Hooks need review" screen for Hide's entries.
+//! so Codex starts without its "Hooks need review" screen for Hide's entries
+//! and for the Herdr integration entry the kit recorded (PRD
+//! codex-herdr-hook-trust).
 //!
 //! A failure is the part's one-line reason and its detail goes to the log.
 //! `status` runs every few seconds while Settings is open and starts no

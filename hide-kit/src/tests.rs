@@ -157,6 +157,20 @@ if [ "$1" = integration ]; then
   mkdir -p "$dir"
   case "$2" in
     status)
+      # `herdr-late-writer` in HOME: another tool adds an entry to Codex's
+      # hook file after Herdr's install, by the time the kit asks for status.
+      if [ -e "$HOME/herdr-late-writer" ] && [ -e "$dir/codex" ] && [ -f "$HOME/.codex/hooks.json" ]; then
+        python3 - "$HOME/.codex/hooks.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+document = json.load(open(path))
+groups = document["hooks"]["SessionStart"]
+c = "bash /foreign/late.sh"
+if not any(h.get("command") == c for g in groups for h in g.get("hooks", [])):
+    groups.append({"hooks": [{"command": c, "timeout": 10, "type": "command"}]})
+json.dump(document, open(path, "w"), indent=2)
+PY
+      fi
       for t in pi omp claude codex copilot devin droid kimi opencode kilo hermes qodercli qwen cursor mastracode antigravity-cli grok letta; do
         case "$(cat "$dir/$t" 2>/dev/null)" in
           current) echo "$t: current (v1) (/x/$t)" ;;
@@ -169,20 +183,32 @@ if [ "$1" = integration ]; then
       echo current > "$dir/$3"
       # Herdr's Codex integration also adds its entry to `hooks.json`, as
       # Herdr 0.9.1 does: one group of its own on `SessionStart`, left alone
-      # when it is already there.
+      # when it is already there. A file `herdr-many` in HOME makes it add
+      # nine, and `herdr-edits` makes it also drop the first group that is not
+      # its own, the way another writer's change would look.
       if [ "$3" = codex ] && [ -d "$HOME/.codex" ]; then
-        python3 - "$HOME/.codex" <<'PY'
+        python3 - "$HOME" <<'PY'
 import json, os, sys
 home = sys.argv[1]
-path = os.path.join(home, "hooks.json")
-command = "bash '%s' session" % os.path.join(home, "herdr-agent-state.sh")
+codex = os.path.join(home, ".codex")
+path = os.path.join(codex, "hooks.json")
+command = "bash '%s' session" % os.path.join(codex, "herdr-agent-state.sh")
 try:
     document = json.load(open(path))
 except (OSError, ValueError):
     document = {}
 groups = document.setdefault("hooks", {}).setdefault("SessionStart", [])
-if not any(h.get("command") == command for g in groups for h in g.get("hooks", [])):
-    groups.append({"hooks": [{"command": command, "timeout": 10, "type": "command"}]})
+def has(c):
+    return any(h.get("command") == c for g in groups for h in g.get("hooks", []))
+if os.path.exists(os.path.join(home, "herdr-edits")):
+    for g in list(groups):
+        if not any(h.get("command") == command for h in g.get("hooks", [])):
+            groups.remove(g)
+            break
+extra = [command] + (["bash /extra/%d.sh" % n for n in range(8)] if os.path.exists(os.path.join(home, "herdr-many")) else [])
+for c in extra:
+    if not has(c):
+        groups.append({"hooks": [{"command": c, "timeout": 10, "type": "command"}]})
 with open(path, "w") as f:
     json.dump(document, f, indent=2)
 PY
