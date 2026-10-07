@@ -692,6 +692,17 @@ mod tests {
     use super::*;
     use hide_node_link::factory::FactoryGit;
 
+    /// The offset is this machine's, in milliseconds east of UTC, and within
+    /// the fourteen hours any zone keeps.
+    #[test]
+    fn the_utc_offset_is_this_machine_s_in_milliseconds() {
+        let answer = handle(FactoryCall::UtcOffset, &Verifies::default(), &mut |_| true).unwrap();
+        let offset = answer.as_i64().expect("an offset is a whole number");
+        assert_eq!(offset, hide_platform::time::local_utc_offset_ms().unwrap());
+        assert!(offset.abs() <= 14 * 3_600_000);
+        assert_eq!(offset % 60_000, 0, "zones differ by whole minutes");
+    }
+
     /// A branch the removal could not delete is refused before the worktree
     /// goes, so a retry still finds the folder and the branch together.
     #[test]

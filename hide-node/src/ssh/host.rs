@@ -2112,10 +2112,7 @@ mod tests {
         assert!(ancestors("relative/helper").is_err());
         assert!(ancestors("/a/../b").is_err());
         assert!(owned_by(&folder(0, 0o755), me) && !owned_by(&folder(502, 0o755), me));
-        let walk = |home: &str, root: &str| {
-            let (start, below) = private_walk(home, root).unwrap();
-            (start, below)
-        };
+        let walk = |home: &str, root: &str| private_walk(home, root).unwrap();
         let pair = |start: &str, below: &str| (start.to_owned(), below.to_owned());
         assert_eq!(
             walk("/home/alice", "/home/alice/.hide/helper"),

@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread::{self, JoinHandle};
@@ -417,7 +417,7 @@ fn run(
             paths.files.join("logs"),
         );
         let ports = Ports {
-            clock: Box::new(SystemClock(machine.clone())),
+            clock: Box::new(SystemClock::new(machine.clone())),
             source: Box::new(projects.clone()),
             verifier: Box::new(projects.clone()),
             merge: Box::new(projects),
@@ -891,7 +891,25 @@ fn settle_sleeps(state: &Arc<Mutex<WorkerState>>, runtime: &Weak<Mutex<Runtime>>
 }
 
 /// The time, and the local day's offset as the core's own node reads it.
-struct SystemClock(Machine);
+/// A read the node cannot answer keeps the last offset it gave, so a busy
+/// moment does not move the done-today day; before any answer it is UTC.
+struct SystemClock {
+    machine: Machine,
+    /// The last offset the node answered; [`i64::MIN`] before the first.
+    last: AtomicI64,
+    /// Whether the last read failed, so a run of failures is said once.
+    failing: AtomicBool,
+}
+
+impl SystemClock {
+    fn new(machine: Machine) -> Self {
+        Self {
+            machine,
+            last: AtomicI64::new(i64::MIN),
+            failing: AtomicBool::new(false),
+        }
+    }
+}
 
 impl Clock for SystemClock {
     fn now(&self) -> UnixMs {
@@ -899,20 +917,23 @@ impl Clock for SystemClock {
     }
 
     fn utc_offset_ms(&self) -> i64 {
-        match self.0.call::<i64>("utc_offset", FactoryCall::UtcOffset) {
-            Ok(offset) => offset,
-            Err(failure) => {
-                // Counted in UTC until the system names its zone again; said once.
-                static SAID: std::sync::atomic::AtomicBool =
-                    std::sync::atomic::AtomicBool::new(false);
-                if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        match self.machine.read::<i64>(FactoryCall::UtcOffset) {
+            Ok(offset) => {
+                self.last.store(offset, Ordering::Relaxed);
+                self.failing.store(false, Ordering::Relaxed);
+                offset
+            }
+            Err(error) => {
+                let last = self.last.load(Ordering::Relaxed);
+                if !self.failing.swap(true, Ordering::Relaxed) {
                     crate::diagnostic!(serde_json::json!({
                         "component": "factory",
                         "kind": "clock.offset_unavailable",
-                        "error": failure.detail,
+                        "error": error.to_string(),
+                        "kept_last": last != i64::MIN,
                     }));
                 }
-                0
+                if last == i64::MIN { 0 } else { last }
             }
         }
     }
@@ -1709,7 +1730,59 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    /// The core's own node answering the offset in turn, then busy.
+    struct Offsets(Mutex<Vec<Result<i64, ()>>>);
+
+    impl NodeLink for Offsets {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
+            assert!(matches!(
+                call,
+                Call::Factory {
+                    call: FactoryCall::UtcOffset
+                }
+            ));
+            match self.0.lock().unwrap().remove(0) {
+                Ok(offset) => Ok(LinkAnswer::Parsed(json!(offset))),
+                Err(()) => Err(LinkError::Busy),
+            }
+        }
+
+        fn call_with_progress(
+            &self,
+            call: Call,
+            timeout: Duration,
+            _progress: &mut dyn FnMut(serde_json::Value) -> bool,
+        ) -> Result<LinkAnswer, LinkError> {
+            self.call(call, timeout)
+        }
+    }
+
+    fn clock(answers: Vec<Result<i64, ()>>) -> SystemClock {
+        SystemClock::new(Machine::new(
+            Arc::new(Offsets(Mutex::new(answers))),
+            Arc::new(AtomicBool::new(false)),
+        ))
+    }
+
+    /// A node too busy to answer keeps the day where it was: Seoul stays nine
+    /// hours east through a busy read, and only a clock that never heard is UTC.
+    #[test]
+    fn a_busy_node_keeps_the_last_offset_it_gave() {
+        const SEOUL: i64 = 9 * 3_600_000;
+        let heard = clock(vec![Ok(SEOUL), Err(()), Err(()), Ok(SEOUL - 3_600_000)]);
+        assert_eq!(heard.utc_offset_ms(), SEOUL);
+        assert_eq!(heard.utc_offset_ms(), SEOUL);
+        assert_eq!(heard.utc_offset_ms(), SEOUL);
+        assert_eq!(
+            heard.utc_offset_ms(),
+            SEOUL - 3_600_000,
+            "a new answer is taken"
+        );
+        assert_eq!(clock(vec![Err(())]).utc_offset_ms(), 0);
+    }
 
     #[test]
     fn the_same_report_after_the_task_moved_is_a_new_letter() {
