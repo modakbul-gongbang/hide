@@ -1539,12 +1539,15 @@ fn a_restart_keeps_the_plan_wait_and_reads_a_record_without_one_once() {
     let harness = Harness::new();
     let (_, done) = codex_plan_session(&harness, "done", 5);
     {
-        let (mut worker, woken, _) = harness.worker(harness.store());
+        let store = harness.store();
+        let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
         worker.set_summaries(false, Instant::now());
         observe(&mut worker, &done);
         settle(&mut worker, &woken);
+        store.flush();
     }
-    let (mut worker, woken, source) = harness.worker(harness.store());
+    let store = harness.store();
+    let (mut worker, woken, source) = harness.worker(Arc::clone(&store));
     worker.set_summaries(false, Instant::now());
     observe(&mut worker, &done);
     assert_eq!(
@@ -1554,6 +1557,7 @@ fn a_restart_keeps_the_plan_wait_and_reads_a_record_without_one_once() {
     settle(&mut worker, &woken);
     assert_eq!(source.reads.load(Ordering::SeqCst), 0);
     drop(worker);
+    store.flush();
 
     // The same record as an older daemon wrote it, with no turn read.
     let store = harness.store();
@@ -1562,6 +1566,7 @@ fn a_restart_keeps_the_plan_wait_and_reads_a_record_without_one_once() {
     record.turns = None;
     record.turns_seq = None;
     store.save_target(LOCAL_TARGET, &records);
+    store.flush();
     let (mut worker, woken, source) = harness.worker(harness.store());
     worker.set_summaries(false, Instant::now());
     observe(&mut worker, &done);
@@ -1626,10 +1631,15 @@ fn a_device_codex_plan_wait_comes_through_its_helper_and_an_older_helper_is_not_
         Arc::new(HelperWithoutTurns(harness.home.path().to_path_buf()));
     let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&older))));
     worker.set_summaries(false, Instant::now());
-    observe(&mut worker, &done);
+    // Herdr's next state, so this worker reads whatever the first one saved.
+    let next = ObservedAgent {
+        state_change_seq: 6,
+        ..done.clone()
+    };
+    observe(&mut worker, &next);
     settle(&mut worker, &woken);
     // The read landed and proved the session; only the wait is not known.
-    assert_eq!(waits(&worker, &done), (None, Some(false)));
+    assert_eq!(waits(&worker, &next), (None, Some(false)));
 }
 
 /// B6: a Codex session whose file is not there yet is not known to wait for
