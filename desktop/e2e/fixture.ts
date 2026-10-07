@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { bundledExecutable } from "../../web/e2e/bundled-app";
+import { bundledExecutable, linkBundle } from "../../web/e2e/bundled-app";
 import { aiSettingsFile } from "../../web/e2e/hided-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
@@ -319,6 +319,8 @@ async function start(appDir: string, env: Record<string, string>, executablePath
     if (child.exitCode !== null || child.signalCode !== null) owner.candidates.delete(child);
   }
   if (owner.candidates.size + owner.launching >= MAX_CANDIDATES_PER_HOME) throw new Error(`desktop fixture has ${MAX_CANDIDATES_PER_HOME} live or launching candidates; close an owned candidate before launching another`);
+  // The bundle is linked when an app is about to run its `hide`, so a fixture that launches nothing needs no build.
+  if (env.HIDE_CLI_PATH === bundledExecutable("hide")) linkBundle();
   const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
   owner.launching++;
   try {

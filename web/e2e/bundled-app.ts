@@ -18,36 +18,35 @@ import "./worker-owned";
 const DEBUG = path.resolve("..", "target", "debug");
 const BUNDLES = path.join(DEBUG, "e2e-apps");
 const BINARIES = ["hided", "hide", "hide-agent-hooks"];
-let resources: string | undefined;
+const ROOT = path.join(BUNDLES, String(process.pid));
+const RESOURCES = path.join(ROOT, "hide.app", "Contents", "Resources");
+let linked = false;
 
-/** This worker's `hide.app/Contents/Resources`, linked on first use. */
-export function bundledResources(): string {
-  if (resources) return resources;
+/** Where this worker's bundle keeps `name` (`hided`, `hide`, `hide-agent-hooks`); `linkBundle` makes it. */
+export function bundledExecutable(name: string): string {
+  return path.join(RESOURCES, fixtureExecutable(name));
+}
+
+/** Links this worker's bundle the first time a daemon is about to run from it. */
+export function linkBundle(): void {
+  if (linked) return;
   removeOrphans();
-  const root = path.join(BUNDLES, String(process.pid));
-  const dir = path.join(root, "hide.app", "Contents", "Resources");
   // A folder under this pid is an earlier process's that the pid was reused from.
-  fs.rmSync(root, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
+  fs.rmSync(ROOT, { recursive: true, force: true });
+  fs.mkdirSync(RESOURCES, { recursive: true });
   for (const name of BINARIES) {
     const built = path.join(DEBUG, fixtureExecutable(name));
     if (!fs.existsSync(built)) throw new Error(`${built} is missing; the lane must build it (scripts/verify-cargo.sh cli)`);
-    fs.linkSync(built, path.join(dir, fixtureExecutable(name)));
+    fs.linkSync(built, bundledExecutable(name));
   }
   process.once("exit", () => {
     try {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(ROOT, { recursive: true, force: true });
     } catch (error) {
-      console.error(`e2e app bundle ${root} was not removed at worker exit`, error);
+      console.error(`e2e app bundle ${ROOT} was not removed at worker exit`, error);
     }
   });
-  resources = dir;
-  return dir;
-}
-
-/** The bundled executable `name` (`hided`, `hide`, `hide-agent-hooks`). */
-export function bundledExecutable(name: string): string {
-  return path.join(bundledResources(), fixtureExecutable(name));
+  linked = true;
 }
 
 // A worker that was killed never ran its exit handler; its bundle would keep a

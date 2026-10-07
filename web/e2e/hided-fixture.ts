@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 import { ownUntilWorkerExit } from "./worker-owned";
-import { bundledExecutable } from "./bundled-app";
+import { bundledExecutable, linkBundle } from "./bundled-app";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
 
 /**
@@ -88,6 +88,7 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
     fs.mkdirSync(path.dirname(aiFile), { recursive: true });
     fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
   }
+  if (bundled) linkBundle();
   return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledExecutable("hided") : undefined);
 }
 
