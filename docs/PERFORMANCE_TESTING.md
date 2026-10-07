@@ -264,7 +264,7 @@ Record uptime, the restart time, and both sample windows in the run directory, a
 - Keep subprocesses, blocking I/O, and large serialization outside `Mutex<Runtime>`.
   `snapshot_delta_payload` (`herdr-core/src/runtime/snapshot_delta.rs`) takes owned data under the lock; `serialize_snapshot_delta` serializes without a runtime to lock.
   Extend `PrecomputedCatalog`, `CatalogCache`, and `PathIndex` (`herdr-core/src/session_sync.rs`, `herdr-core/src/workspace.rs`) rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
-  The coordinator asks the core's own node about every path a rebuild reads in one `Call::PathFacts` (at most `PATH_FACTS_LIMIT` paths per call) before it takes the lock, and reuses the answer for the same paths until the 30-second catalog refresh, so a burst of session updates over the same panes asks the node once.
+  The coordinator asks the core's own node about every path a rebuild reads in one `Call::PathFacts` (at most `PATH_FACTS_LIMIT` paths and `PATH_FACTS_ANSWER_LIMIT`, 16 MiB, of names and branch notes per answer; a larger answer is refused as too large and the rebuild records `catalog.path_facts_failed`) before it takes the lock, and reuses the answer for the same paths until the 30-second catalog refresh, so a burst of session updates over the same panes asks the node once.
 - Announce once per burst and clear the `ChangeNotifier` (`herdr-core/src/handle.rs`) latch before taking the snapshot lock.
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
