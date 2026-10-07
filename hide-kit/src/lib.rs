@@ -595,9 +595,9 @@ pub enum CodexDaemonOff {
     },
     /// `reason` is a code the screen turns into a line; `detail` is Codex's
     /// own words, for the core's log only. `StopFailed` always leaves the
-    /// setting off, and `Unreachable` may have (Hide quit or the device's
-    /// helper went away after Codex turned it off); every other reason
-    /// leaves it as it was.
+    /// setting off; `Unreachable` (Hide quit or the device's helper went
+    /// away) may leave it either way, before or after Codex turned it off;
+    /// every other reason leaves it as it was.
     Failed {
         reason: CodexDaemonOffFailure,
         #[serde(default)]

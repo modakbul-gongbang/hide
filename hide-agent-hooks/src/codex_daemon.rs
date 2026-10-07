@@ -589,6 +589,21 @@ mod tests {
         assert!(!home.path().join("running").exists());
     }
 
+    /// Hide quitting while the version check runs stops nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_quit_before_the_version_check_answers_never_runs_daemon_stop() {
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        assert!(stop(&codex, home.path(), &AtomicBool::new(true)).is_err());
+        assert!(
+            !calls(home.path())
+                .iter()
+                .any(|call| call.ends_with("daemon stop"))
+        );
+        assert!(home.path().join("running").exists());
+    }
+
     /// The confirmed stop never decides from the control socket: a daemon
     /// whose socket lives elsewhere (another Codex version or platform, a
     /// relocated CODEX_HOME) and whose version check fails is still stopped.
