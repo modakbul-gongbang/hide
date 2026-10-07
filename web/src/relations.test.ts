@@ -1,3 +1,4 @@
+import { legacyRest } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import { CHILD, OTHER, PARENT, RICH } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -20,6 +21,13 @@ describe("relations of an agent (PRD cmdk-navigation B2-B4)", () => {
       "agent:p-child *",
       "  ↑ agent:p-parent",
     ]);
+  });
+
+  it("keeps the first duplicate anchor and the last ancestor identity", () => {
+    const agents = [...RICH.navigator!.agents!, { ...CHILD, identity_label: "Later child", lineage_parent_pane_id: null }, { ...PARENT, identity_label: "Later parent" }];
+    const rest = legacyRest({ ...RICH, navigator: { ...RICH.navigator, agents } }, agents);
+    const rows = relationsOf(rest, { kind: "agent", paneId: CHILD.pane_id }, t, true)!.groups[0]!.rows.filter(row => row.kind === "agent");
+    expect(rows.map(row => [row.title, row.tag])).toEqual([[CHILD.identity_label, "here"], ["Later parent", "parent"]]);
   });
 
   it("leaves an agent outside the lineage out, even in the same checkout (B4)", () => {

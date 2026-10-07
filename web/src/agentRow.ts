@@ -6,8 +6,8 @@
 
 import type { TFunction } from "i18next";
 import { statusText } from "./agentStatus";
-import { chipTone, demandTone } from "./lineage";
-import type { AgentRow, MarkCounts } from "./snapshot";
+import { toneClass } from "./lineage";
+import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
 
 /**
  * Why a row's second line is on screen at rest.
@@ -22,15 +22,10 @@ export type LineMode = "request" | "news" | "quiet";
 
 export type RowLine = { text: string; mode: LineMode };
 
-const REQUESTS = new Set(["question", "approval", "error"]);
-
 /** The row's second line and why it shows, or null when the core gave it no sentence. */
-export function rowLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): RowLine | null {
-  const text = agent.detail?.trim();
-  if (!text) return null;
-  if (REQUESTS.has(agent.demand ?? "none")) return { text, mode: "request" };
-  if (agent.unread) return { text, mode: "news" };
-  return { text, mode: "quiet" };
+export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
+  const line = agent.state.line;
+  return line ? { text: line.text, mode: line.mode } : null;
 }
 
 /**
@@ -39,7 +34,7 @@ export function rowLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): 
  * the keyboard or a selection never adds a line or grows the row. A quiet
  * sentence is read in the row's tooltip.
  */
-export function sidebarLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): RowLine | null {
+export function sidebarLine(agent: Pick<AgentRow, "state">): RowLine | null {
   const line = rowLine(agent);
   return line && line.mode !== "quiet" ? line : null;
 }
@@ -50,10 +45,9 @@ export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
 }
 
 /** The colour of a line: a request in its demand's colour, dimmed like its mark once read, news bright, a revealed line subdued. */
-export function lineTone(line: RowLine, agent: Pick<AgentRow, "demand" | "emphasized">): string {
-  if (line.mode === "request") return demandTone(agent.demand ?? "none", agent.emphasized) ?? "text-warning";
-  if (line.mode === "news") return "text-foreground";
-  return "text-subtle-foreground";
+export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string {
+  if (line.mode === "request") return toneClass(agent.state.chip_tone);
+  return line.mode === "news" ? "text-foreground" : "text-subtle-foreground";
 }
 
 /**
@@ -61,9 +55,8 @@ export function lineTone(line: RowLine, agent: Pick<AgentRow, "demand" | "emphas
  * ring in the working colour (D-01); every other row reads its own axes the
  * way the chips do.
  */
-export function markTone(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" | "waiting_on_descendants">): string {
-  if (agent.waiting_on_descendants) return "text-agent-working";
-  return chipTone({ demand: agent.demand ?? "none", activity: agent.activity ?? "", emphasized: agent.emphasized });
+export function markTone(agent: Pick<TabAgent, "state">): string {
+  return toneClass(agent.state.mark_tone);
 }
 
 /** A badge's counts: a folded parent's descendants (no `idle`), or a project's or checkout's agents. */
@@ -118,10 +111,8 @@ export function badgeLabel(counts: BadgeCounts | undefined, live: number, t: TFu
  * parent's carries one (B9). The core decides the difference and names the
  * checkout; a root's context in a group list has no checkout to differ from.
  */
-export function branchChip(agent: Pick<AgentRow, "delegated" | "lineage_worktree_badge">): string | null {
-  if (!agent.delegated) return null;
-  const badge = agent.lineage_worktree_badge?.trim();
-  return badge ? badge : null;
+export function branchChip(agent: Pick<AgentRow, "state">): string | null {
+  return agent.state.branch_badge;
 }
 
 /**
@@ -136,66 +127,3 @@ export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, 
 
 /** A row in a drawn agent tree: the row, its device, and how deep it sits under the root drawn above it. */
 export type TreeRow = { agent: AgentRow; device: string | null; depth: number; descendants: number };
-
-/**
- * The rows one group section draws: its roots in the core's order, each
- * followed by its descendants in lineage order while the operator has it
- * unfolded (`lineage_collapsed` false). A delegated row is drawn under its
- * parent and never on its own, so a folded parent speaks for its children
- * through its badge. `byPane` indexes the device's own rows, since pane ids
- * are scoped to a device.
- */
-export function sectionTree(
-  roots: { agent: AgentRow; device: string | null }[],
-  byPane: (device: string | null, paneId: string) => AgentRow | undefined,
-  descendantsOf: (device: string | null, paneId: string) => number,
-): TreeRow[] {
-  const rows: TreeRow[] = [];
-  const visit = (agent: AgentRow, device: string | null, depth: number, seen: Set<string>) => {
-    if (seen.has(agent.pane_id)) return;
-    seen.add(agent.pane_id);
-    rows.push({ agent, device, depth, descendants: descendantsOf(device, agent.pane_id) });
-    if (agent.lineage_collapsed !== false) return;
-    for (const id of agent.lineage_child_pane_ids ?? []) {
-      const child = byPane(device, id);
-      if (child) visit(child, device, depth + 1, seen);
-    }
-  };
-  for (const { agent, device } of roots) {
-    if (agent.delegated) continue;
-    visit(agent, device, 0, new Set());
-  }
-  return rows;
-}
-
-/**
- * How many agents a group heading speaks for: each root it lists and every
- * live descendant beneath it, folded or not, so a delegated row counts once,
- * under the heading its parent is drawn in.
- */
-export function sectionCount(rows: TreeRow[]): number {
-  return rows.filter((row) => row.depth === 0).reduce((total, row) => total + 1 + row.descendants, 0);
-}
-
-/** The direct children the badge's popover lists, in lineage order, that are still rows. */
-export function directChildren(agent: AgentRow, byPane: (paneId: string) => AgentRow | undefined): AgentRow[] {
-  return (agent.lineage_child_pane_ids ?? []).map(byPane).filter((row): row is AgentRow => row !== undefined);
-}
-
-/**
- * The rows of a lineage drawn root first (`checkoutAgentRows`), less the
- * descendants of every parent the operator has folded (`lineage_collapsed`
- * not false), the same core choice the Agents list folds by (PRD
- * sidebar-readability D-6, B12). A folded parent's badge speaks for what is
- * left out.
- */
-export function unfoldedRows<Row extends { agent: Pick<AgentRow, "lineage_collapsed">; depth: number }>(rows: Row[]): Row[] {
-  const drawn: Row[] = [];
-  let foldedAt: number | null = null;
-  for (const row of rows) {
-    if (foldedAt !== null && row.depth > foldedAt) continue;
-    foldedAt = row.agent.lineage_collapsed === false ? null : row.depth;
-    drawn.push(row);
-  }
-  return drawn;
-}

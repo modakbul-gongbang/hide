@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -24,7 +25,7 @@ const view: WorkspaceView = {
   tool: "explorer", views_width: null, tools_width: null, views_called: 0, views_calls: 0,
 };
 function checkout(servers: { host: string; port: number }[]): Checkout {
-  return {
+  return { agent_scope: emptyScope(),
     id: "checkout:studio", workspace_id: "project:studio", label: "Studio", path: view.path,
     branch: null, purpose: null, is_worktree: false, exists: true, has_panes: true,
     pull_request: null, active_tab_id: "tab:studio", strip: [], next_tab_label: "2",
@@ -39,7 +40,7 @@ function checkout(servers: { host: string; port: number }[]): Checkout {
   };
 }
 function project(device: string, rows: Checkout[]): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id: "project:studio", label: "Studio", path: view.path, device_id: device,
     registered: true, temporary: false, pinned: false, checkouts: rows,
     inactive_checkouts: { expanded: false, checkout_ids: [] },

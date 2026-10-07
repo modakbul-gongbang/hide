@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -34,8 +35,8 @@ it("sends the project's path when the Inactive fold is clicked and draws the fol
   const shell = useShellStore.getState();
   const ui = useUiStore.getState();
   const row = (id: string, branch: string, primary: boolean) =>
-    ({ id, workspace_id: "project", label: branch, path: `/fixture/${id}`, branch, is_primary: primary, is_worktree: !primary, exists: true, active_tab_id: null, tabs: [], strip: [] }) as unknown as Checkout;
-  const project = (expanded: boolean): Workspace => ({
+    ({ agent_scope: emptyScope(), id, workspace_id: "project", label: branch, path: `/fixture/${id}`, branch, is_primary: primary, is_worktree: !primary, exists: true, active_tab_id: null, tabs: [], strip: [] }) as unknown as Checkout;
+  const project = (expanded: boolean): Workspace => ({ agent_scope: emptyScope(),
     id: "project", label: "Studio", path: "/fixture", device_id: "local", is_git: true, registered: true, temporary: false, pinned: false,
     checkouts: [row("main", "main", true), row("old", "feature/old", false)],
     inactive_checkouts: { expanded, checkout_ids: ["old"] },

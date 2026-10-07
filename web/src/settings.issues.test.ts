@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { githubAccess, githubAccessLine as githubAccessLineIn, issueSourceChoices as issueSourceChoicesIn } from "./settings";
@@ -32,7 +33,7 @@ const source = (patch: Partial<TaskSource>): TaskSource => ({
 
 const project = (patch: Partial<Workspace> & { github?: GithubStatus }): Workspace => {
   const { github, ...rest } = patch;
-  return {
+  return { agent_scope: emptyScope(),
     id: "w1",
     label: "app",
     path: "/p/app",

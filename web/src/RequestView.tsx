@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 import { ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, LinkIcon, SquareArrowOutUpRightIcon, SquareTerminalIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Actions } from "./actions";
@@ -54,6 +55,7 @@ import type { RequestLens } from "./ui";
 
 export type RequestViewProps = {
   rows: readonly RequestRow[];
+  agentScope: AgentScope | null;
   scope: "project" | "all";
   lens: RequestLens;
   onLens: (patch: Partial<RequestLens>) => void;
@@ -79,9 +81,9 @@ function FactoryTurnLine({ actions }: { actions: Actions }) {
   );
 }
 
-export const RequestView = memo(function RequestView({ rows, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
+export const RequestView = memo(function RequestView({ rows, agentScope, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
   const { t } = useInterfaceTranslation();
-  const groups = useMemo(() => requestGroups(rows), [rows]);
+  const groups = useMemo(() => agentScope ? requestGroups(rows, agentScope) : [], [rows, agentScope]);
   // While a window shows the view, the core re-reads running checks (D-32).
   // A hidden page is not showing it, and a reconnect is a new connection
   // whose demand starts empty, so the demand is declared each time the page
@@ -178,6 +180,7 @@ function sameViewInputs(before: RequestViewProps, after: RequestViewProps): bool
     const a = row.lens;
     const b = next.lens;
     if (row.verb !== next.verb || a.agent !== b.agent || a.task !== b.task || a.device !== b.device || a.checkout.branch !== b.checkout.branch || a.checkout.label !== b.checkout.label || row.children.length !== next.children.length || row.children.some((child, i) => child !== next.children[i])) return false;
+    if (a.project.agent_scope.work[a.agent.pane_id] !== b.project.agent_scope.work[b.agent.pane_id]) return false;
     if (a.project === b.project || projects.get(a.project) === b.project) return true;
     const p = a.project;
     const q = b.project;
@@ -232,7 +235,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
   const result = resultLine(row);
   const children = childrenSummary(row, t);
   const pulls = block?.pull_requests ?? [];
-  const shown = pullRequestChip(pulls);
+  const shown = pullRequestChip(row);
   const issues = rowIssueChips(row, project);
   const targets = useOpenTargets(agent, block?.reply?.text ?? "", pulls, device === null);
   const openPane = () => handlers.openAgent(agent.pane_id);
@@ -590,7 +593,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
               <StatusMark symbol={child.symbol} className={markTone(child)} />
               <AgentMark kind={child.agent_kind} />
               <span className="min-w-0 max-w-[40%] shrink-0 truncate text-foreground">{child.identity_label}</span>
-              <span className="shrink-0 text-subtle-foreground">{t(VERB_LABEL[child.request?.verb ?? (child.group === "working" ? "working" : "idle")])}</span>
+              <span className="shrink-0 text-subtle-foreground">{t(VERB_LABEL[child.state.verb])}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{child.request?.line ?? child.request?.reply?.text.split("\n").at(-1) ?? ""}</span>
               <button type="button" data-request-focus="chip" data-request-child-open={child.pane_id} className="shrink-0 rounded-xs text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => handlers.openAgent(child.pane_id)}>
                 {t("common.open")}

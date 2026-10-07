@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "../i18n/instance";
-import { GROUP_ORDER, GROUP_TITLE, QUICK_KEYS, REFUSAL_NOTICE, inputFailure, noticeText, type Refusal } from "./protocol";
+import { GROUP_TITLE, QUICK_KEYS, REFUSAL_NOTICE, inputFailure, noticeText, type Refusal } from "./protocol";
 import { startFailure } from "./start";
 
 const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
@@ -9,8 +9,8 @@ const japanese = initializeInterfaceI18n("ja").getFixedT(null, "translation");
 
 describe("the phone's key tables", () => {
   it("names the four groups in the shipped Korean and in English", () => {
-    expect(GROUP_ORDER.map((id) => korean(GROUP_TITLE[id]))).toEqual(["내 확인 대기", "끝", "진행 중", "확인함"]);
-    expect(GROUP_ORDER.map((id) => english(GROUP_TITLE[id]))).toEqual(["Needs your attention", "Done", "Working", "Seen"]);
+    expect(Object.values(GROUP_TITLE).map(korean)).toEqual(["내 확인 대기", "끝", "진행 중", "확인함"]);
+    expect(Object.values(GROUP_TITLE).map(english)).toEqual(["Needs your attention", "Done", "Working", "Seen"]);
   });
 
   it("names the quick keys by what they press", () => {

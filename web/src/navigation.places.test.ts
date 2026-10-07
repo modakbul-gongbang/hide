@@ -1,5 +1,6 @@
+import { agentPlaces } from "../test/legacyNavigation";
 import { describe, expect, it } from "vitest";
-import { agentPlaces } from "./navigation";
+
 import type { Checkout, Device, RemoteStatus, Workspace } from "./snapshot";
 
 function checkout(id: string, branch: string | null, label: string, panes: string[]): Checkout {

@@ -56,8 +56,8 @@ export const AgentRowItem = memo(function AgentRowItem({
   const branch = branchChip(agent);
   const folded = agent.lineage_collapsed !== false;
   const hasChildren = childRows.length > 0;
-  const attention = agent.group === "needs_you" || agent.unread;
-  const titleTone = agent.delegated && !attention ? "text-subtle-foreground" : attention || agent.emphasized ? "text-foreground" : "text-subtle-foreground";
+  const attention = agent.state.attention;
+  const titleTone = agent.state.title_emphasized ? "text-foreground" : "text-subtle-foreground";
   const label = rowAccessibleName(t, agent, device);
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, line?.text].filter(Boolean).join("\n");
   const shownAtRest = line ? lineShownAtRest(line, selected) : false;

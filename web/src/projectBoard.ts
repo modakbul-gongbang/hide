@@ -1,3 +1,4 @@
+import { scopeOccurrences, scopeRows, type AgentTreeScope, type AgentScope } from "./agentScope";
 // The Overview's Issues view (PRD task-agents-views, reworked issue-first
 // on 2026-09-28 and issues-only by PRD overview-lenses-issues) as pure
 // functions over the snapshot, for one Project or for All projects. Every
@@ -123,6 +124,7 @@ export type TaskCard = {
   more: number;
   /** An agent asks or finished and was not looked at: the only coloured card (B5). */
   needsYou: boolean;
+  turnKind: "question" | "review" | null;
   /** An open backlog issue of a project on this Mac: Start opens the Start dialog. */
   canStart: boolean;
   first: FirstAction;
@@ -179,21 +181,14 @@ export type TasksBoard = {
   source: SourceState;
 };
 
-/** How much an agent needs the operator; lower first. */
-function attention(agent: AgentRow): number {
-  if (agent.group === "needs_you") return agent.demand === "error" ? 0 : 1;
-  if (agent.group === "done") return 2;
-  if (agent.group === "working") return 3;
-  return 4;
-}
-
-/** The agents a card names: the two that need the operator most, in the core's order otherwise. */
-export function shownAgents(rows: BoardRow[]): { shown: AgentRow[]; more: number } {
-  const ranked = rows
-    .map((row, index) => ({ agent: row.agent, index }))
-    .sort((a, b) => attention(a.agent) - attention(b.agent) || a.index - b.index)
-    .map(({ agent }) => agent);
-  return { shown: ranked.slice(0, 2), more: Math.max(0, ranked.length - 2) };
+/** The representatives selected by the core for this tree. */
+export function shownAgents(tree: AgentTreeScope, agents: AgentRow[]): { shown: AgentRow[]; more: number } {
+  const refs = new Map(tree.rows.map(row => [row.pane_id, row]));
+  return { shown: scopeOccurrences(tree.shown.map(id => {
+    const row = refs.get(id);
+    if (!row) throw new Error(`Missing core tree representative: ${id}`);
+    return row;
+  }), agents), more: tree.more };
 }
 
 /** Needs-you cards first, each group in its original order; nothing else reorders a column. */
@@ -212,34 +207,12 @@ function prioritized<T extends { needsYou: boolean }>(cards: T[]): T[] {
  * first, whatever is folded; the Projects sidebar drops a folded row's
  * descendants itself (`unfoldedRows`).
  */
-export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
-  const owners = new Map<string, Checkout>();
-  for (const checkout of workspace.checkouts) {
-    for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
-  }
-  const byPane = new Map<string, AgentRow>();
-  for (const agent of agents) if (!byPane.has(agent.pane_id)) byPane.set(agent.pane_id, agent);
-  const treeRows = (roots: AgentRow[]): BoardRow[] => {
-    const rows: BoardRow[] = [];
-    const seen = new Set<string>();
-    const append = (agent: AgentRow, depth: number) => {
-      if (seen.has(agent.pane_id)) return;
-      seen.add(agent.pane_id);
-      rows.push({ agent, depth });
-      for (const childId of agent.lineage_child_pane_ids ?? []) {
-        const child = byPane.get(childId);
-        if (child) append(child, depth + 1);
-      }
-    };
-    for (const root of roots) append(root, 0);
-    return rows;
-  };
-  const checkoutRows = (checkout: Checkout): BoardRow[] => {
-    const local = agents.filter((agent) => owners.get(agent.pane_id)?.id === checkout.id);
-    const localIds = new Set(local.map((agent) => agent.pane_id));
-    return treeRows(local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id)));
-  };
-  return new Map(workspace.checkouts.map((checkout) => [checkout.id, checkoutRows(checkout)]));
+export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[], context: "device" | "global" | "visible" = "device"): Map<string, BoardRow[]> {
+  return new Map(workspace.checkouts.map((checkout) => {
+    const tree = context === "device" ? checkout.agent_scope.tree : checkout.agent_scope.global_tree;
+    const rows = context === "visible" ? tree.visible_rows : tree.rows;
+    return [checkout.id, scopeOccurrences(rows, agents).map((agent, index) => ({ agent, depth: rows[index]!.depth }))];
+  }));
 }
 
 function place(workspace: Workspace): BoardPlace {
@@ -274,7 +247,9 @@ function firstAction(stage: Stage, canStart: boolean, checkout: Checkout | null,
 }
 
 function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task, stage: Stage, rows: BoardRow[], now: number): TaskCard {
-  const { shown, more } = shownAgents(rows);
+  const tree = checkout?.agent_scope.tree;
+  const shown = tree ? scopeRows(tree.shown, rows.map((row) => row.agent)) : [];
+  const more = tree?.more ?? 0;
   const branch = checkout?.branch ?? checkout?.label ?? null;
   const sourceLabel = workspace.tasks?.source?.label ?? task.source;
   const local = !workspace.remote_target_id;
@@ -295,7 +270,8 @@ function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Che
     rows,
     shown,
     more,
-    needsYou: rows.some((row) => row.agent.group === "needs_you" || (row.depth === 0 && row.agent.group === "done")),
+    needsYou: tree?.needs_you ?? false,
+    turnKind: tree?.turn_kind ?? null,
     canStart,
     first: firstAction(stage, canStart, checkout, pr),
     editable: task.source === "local" && local,
@@ -643,13 +619,6 @@ export const PR_GROUP_LABEL: Record<PrGroup, MessageKey> = {
   merged: "board.prGroup.merged",
 };
 
-const PR_GROUPS: readonly PrGroup[] = ["turn", "fixing", "blocked", "merged"];
-
-/** An agent at work, a parent waiting on its working children included (status-model's activity axis, PRD Risks). */
-function isWorking(agent: AgentRow): boolean {
-  return agent.group === "working" || agent.waiting_on_descendants === true;
-}
-
 /** The issue a pull request works on: the task when the source lists it, else the reference its body closes. */
 export type PrIssue = { key: string; label: string; url: string | null; task: Task | null };
 
@@ -686,6 +655,7 @@ export type PrRow = {
 };
 
 export type PrBoard = {
+  counts: AgentScope["prs"]["counts"];
   groups: { group: PrGroup; rows: PrRow[] }[];
   /** Open pull requests, or null until GitHub has answered (B22). */
   open: number | null;
@@ -694,48 +664,6 @@ export type PrBoard = {
   /** That the last read failed, with the value's age; the reason is in the log (B22). */
   failure: ReadFailure | null;
 };
-
-const PR_ATTENTION = (agent: AgentRow) => (agent.group === "needs_you" ? 0 : agent.group === "done" ? 1 : isWorking(agent) ? 2 : 3);
-
-/** The ancestors of the checkout's agents, root first, then the checkout's own rows (B5). */
-function prLineage(rows: BoardRow[], agents: readonly AgentRow[]): BoardRow[] {
-  const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
-  const shown = new Set(rows.map((row) => row.agent.pane_id));
-  const result: BoardRow[] = [];
-  for (const row of rows) {
-    if (row.depth !== 0) continue;
-    const ancestors: AgentRow[] = [];
-    let parent = row.agent.lineage_parent_pane_id ? byPane.get(row.agent.lineage_parent_pane_id) : undefined;
-    while (parent && !shown.has(parent.pane_id) && ancestors.length < 8) {
-      ancestors.unshift(parent);
-      parent = parent.lineage_parent_pane_id ? byPane.get(parent.lineage_parent_pane_id) : undefined;
-    }
-    ancestors.forEach((agent, depth) => {
-      shown.add(agent.pane_id);
-      result.push({ agent, depth });
-    });
-    const start = rows.indexOf(row);
-    for (let index = start; index < rows.length && (index === start || (rows[index]?.depth ?? 0) > 0); index += 1) {
-      const next = rows[index] as BoardRow;
-      result.push({ agent: next.agent, depth: next.depth + ancestors.length });
-    }
-  }
-  return result;
-}
-
-/** The issue of a pull request: its checkout's linked task, else the first issue its body closes. */
-function prIssue(workspace: Workspace, checkout: Checkout | null, pr: PullRequest, tasks: Map<string, Task>): PrIssue | null {
-  const linked = checkout?.task_key ? tasks.get(checkout.task_key) : undefined;
-  if (linked) return { key: linked.key, label: linked.id ?? linked.title, url: linked.url, task: linked };
-  const repository = workspace.home_issues?.repository ?? null;
-  for (const reference of pr.closing_issues ?? []) {
-    const key = `github:${reference.repository}#${reference.number}`;
-    const task = tasks.get(key) ?? null;
-    const label = task?.id ?? (reference.repository === repository ? `#${reference.number}` : `${reference.repository}#${reference.number}`);
-    return { key, label, url: task?.url ?? `https://github.com/${reference.repository}/issues/${reference.number}`, task };
-  }
-  return null;
-}
 
 /**
  * The PRs tab (D-11, D-32, D-52) for one project: its pull requests grouped
@@ -749,7 +677,7 @@ function prIssue(workspace: Workspace, checkout: Checkout | null, pr: PullReques
 export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const { workspace, agents } = project;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-  const rowsByCheckout = checkoutAgentRows(workspace, agents);
+  const board = workspace.agent_scope.prs;
   const local = workspace.tasks?.source?.kind === "local";
   const rows: PrRow[] = [];
   for (const pr of workspace.pull_requests ?? []) {
@@ -757,27 +685,17 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     // The checkout the core connected it to (a settled pull request only at the
     // exact commit), never a branch of the same name: a branch used again for
     // new work is not the merged pull request's worktree to clean up.
-    const checkout = workspace.checkouts.find((row) => row.pull_request?.url === pr.url && (row.is_worktree || row.exists)) ?? null;
-    const boardRows = checkout ? (rowsByCheckout.get(checkout.id) ?? []) : [];
-    const panes = new Set(checkout?.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)) ?? []);
-    // The agent whose session made it is on its row too, wherever it works
-    // (overview-request-view D-45): the request view and this board share the link.
-    const made = (agent: AgentRow) => agent.request?.pull_requests.some((pull) => pull.created && pull.url === pr.url) === true;
-    const agentsHere = agents.filter((agent) => panes.has(agent.pane_id) || made(agent)).sort((a, b) => PR_ATTENTION(a) - PR_ATTENTION(b));
-    // Whose move it is stays the branch's: the maker may be at other work by now.
-    const onBranch = agentsHere.filter((agent) => panes.has(agent.pane_id));
+    const state = board.rows.find((row) => row.number === pr.number);
+    if (!state) throw new Error(`Missing core PR row: ${pr.number}`);
+    const checkout = state.checkout_id === null ? null : workspace.checkouts.find((c) => c.id === state.checkout_id);
+    if (checkout === undefined) throw new Error(`Missing PR checkout: ${state.checkout_id}`);
+    const agentsHere = scopeOccurrences(state.agents, agents);
     const chip = prChip(pr);
     const merged = pr.badge === "merged";
     const checks = chip.checks;
     const review = merged ? null : pr.review;
-    const group: PrGroup = merged
-      ? "merged"
-      : onBranch.some(isWorking)
-        ? "fixing"
-        : checks === "failed" || review === "changes_requested"
-          ? "blocked"
-          : "turn";
-    const issue = prIssue(workspace, checkout, pr, tasks);
+    const group = state.group;
+    const issue = state.issue ? { ...state.issue, task: state.issue.task_key ? tasks.get(state.issue.task_key) ?? null : null } : null;
     const folderGone = checkout !== null && (!checkout.exists || checkout.worktree?.missing === true);
     const worktree = checkout?.is_worktree === true && checkout.is_primary !== true;
     rows.push({
@@ -791,8 +709,8 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       checkout,
       issue,
       agents: agentsHere,
-      lineage: checkout ? prLineage(boardRows, agents) : [],
-      needsLook: onBranch.some((agent) => agent.group === "done"),
+      lineage: scopeOccurrences(state.lineage, agents).map((agent, index) => ({ agent, depth: state.lineage[index]!.depth })),
+      needsLook: state.needs_look,
       checks,
       review,
       at: merged ? (pr.merged_at_unix_ms ?? null) : (pr.updated_at_unix_ms ?? null),
@@ -801,8 +719,12 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       cleanup: merged && worktree ? (folderGone ? "record" : "worktree") : null,
     });
   }
-  const byRecent = (a: PrRow, b: PrRow) => (b.at ?? 0) - (a.at ?? 0) || b.number - a.number;
-  const groups = PR_GROUPS.map((group) => ({ group, rows: rows.filter((row) => row.group === group).sort(byRecent) })).filter((entry) => entry.rows.length > 0);
+  const byNumber = new Map(rows.map((row) => [row.number, row]));
+  const groups = board.groups.map((group) => ({ group: group.group, rows: group.numbers.map((number) => {
+    const row = byNumber.get(number);
+    if (!row) throw new Error(`Missing grouped PR: ${number}`);
+    return row;
+  }) }));
   const status = workspace.checkouts.find((checkout) => checkout.github)?.github ?? null;
   // A repository with no GitHub remote has no pull requests, which is an answer, not a failure (design 13).
   const noRemote = status?.failure_category === "no_github_remote";
@@ -811,7 +733,8 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const age = status?.last_success_at_unix_ms != null ? Math.max(0, Math.floor((now - status.last_success_at_unix_ms) / 60_000)) : null;
   return {
     groups,
-    open: answered ? rows.filter((row) => row.group !== "merged").length : null,
+    counts: board.counts,
+    open: answered ? board.open : null,
     reading: !answered && !failed,
     failure: failed ? { project: null, source: "GitHub", value: age === null ? "none" : { minutes: age } } : null,
   };

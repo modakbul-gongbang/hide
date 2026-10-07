@@ -1,3 +1,5 @@
+import { emptyScope } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import type { AgentStatusCode, Checkout, TaskOperation, Workspace } from "./snapshot";
 import * as manage from "./workspaceManage";
@@ -17,7 +19,7 @@ const purposeCountLabel = (text: string) => manage.purposeCountLabel(text, t);
 const purposeScope = (device: string | null, branch: string | null) => manage.purposeScope(device, branch, t);
 const remotePurposeProblem = (workspace: Workspace, remote: Parameters<typeof manage.remotePurposeProblem>[1]) => manage.remotePurposeProblem(workspace, remote, t);
 
-const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
+const workspace = (patch: Partial<Workspace> = {}): Workspace => ({ agent_scope: emptyScope(),
   id: "w1",
   label: "hide",
   path: "/Users/example/hide",
@@ -32,7 +34,7 @@ const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   ...patch,
 });
 
-const checkout = (patch: Partial<Checkout> = {}): Checkout => ({
+const checkout = (patch: Partial<Checkout> = {}): Checkout => ({ agent_scope: emptyScope(),
   id: "c1",
   workspace_id: "w1",
   label: "feature",
@@ -210,7 +212,7 @@ describe("row menus", () => {
       ["set_primary", "Not available for a checkout on another device."],
       ["reveal_external", "Only for files and folders on this computer."],
     ]);
-    const project = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
+    const project = projectMenu(workspace({ agent_scope: emptyScope(), device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
     expect(project.filter((item) => item.unavailable !== null).map((item) => item.id)).toEqual(["reveal_external"]);
   });
 
@@ -268,7 +270,7 @@ describe("row menus", () => {
   });
 
   it("draws an agent's menu with its ⌥n and without Mark as seen or Stop agent (B7, B8)", () => {
-    const agent = { id: "a", pane_id: "p1", identity_label: "배포 전 확인", agent_kind: "claude", symbol: "●", group: "working", status_code: "working" as const, changed_at_unix_ms: null, emphasized: false, unread: false, session_id: "0b5e-session" };
+    const agent = legacyAgentRow({ id: "a", pane_id: "p1", identity_label: "배포 전 확인", agent_kind: "claude", symbol: "●", group: "working", status_code: "working" as const, changed_at_unix_ms: null, emphasized: false, unread: false, session_id: "0b5e-session" });
     expect(drawn(agentMenu(agent, "⌥3"))).toEqual(["Show ⌥3", "─", "Copy title", "Copy session id", "Copy pane ID", "─", "Close tab…"]);
     expect(drawn(agentMenu(agent, ""))[0]).toBe("Show");
     expect(agentMenu({ ...agent, session_id: null }, "").find((item) => item.id === "copy_session_id")?.unavailable).toMatch(/no session id/);

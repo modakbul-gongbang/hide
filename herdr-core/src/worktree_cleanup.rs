@@ -199,33 +199,8 @@ pub(crate) struct CheckoutFacts {
     pub panes: Vec<String>,
 }
 
-/// What one agent is doing as far as removing its checkout is concerned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AgentUse {
-    /// Stopped: finished a turn or idle. Its pane may close.
-    Quiet,
-    Working,
-    /// Waiting on the operator: a question, an approval or a blocked prompt.
-    Waiting,
-    Unknown,
-}
-
-impl AgentUse {
-    /// From the status model's axes (`docs/status-model.md`): a demand or a
-    /// blocked prompt is waiting whatever else is reported, and an activity
-    /// other than `working` or `stopped` is not claimed to be idle.
-    pub(crate) fn of(demand: &str, blocked: bool, activity: &str) -> Self {
-        if demand != "none" || blocked {
-            Self::Waiting
-        } else {
-            match activity {
-                "working" => Self::Working,
-                "stopped" => Self::Quiet,
-                _ => Self::Unknown,
-            }
-        }
-    }
-}
+#[cfg(test)]
+use crate::agent_state::AgentUse;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReviewInput {

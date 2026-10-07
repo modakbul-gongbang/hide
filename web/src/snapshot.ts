@@ -1,3 +1,4 @@
+import type { AgentScope } from "./agentScope";
 // The parts of the core's `rest` section the web shell reads, typed as the
 // core serializes them (herdr-core/src/model.rs), plus the pure selectors that
 // resolve the operator's focused checkout, its visible tab and that tab's
@@ -9,7 +10,27 @@ import type { ProviderUsage } from "./generated/hided-ws";
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
 export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "attached" | "sleeping" | "waking" | "sleep_failed";
 
+export type StatusTone = { kind: "error" | "warning" | "working" | "success" | "subtle" | "news"; read: boolean };
+
+/** Agent decisions are projected by herdr-core::agent_state, never reconstructed by the shell. */
+export type AgentState = {
+  attention: boolean; needs_you: boolean; root: boolean;
+  title_emphasized: boolean; selection_emphasizes_title: boolean;
+  asking: boolean; working: boolean; waits_on_children: boolean;
+  chip_tone: StatusTone; mark_tone: StatusTone;
+  line: { text: string; mode: "request" | "news" | "quiet"; tone: StatusTone } | null;
+  branch_badge: string | null;
+  bucket: "turn" | "working" | "delegating" | "resting";
+  attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
+  edge: "ask" | "flow" | "wait" | "rest";
+  search_tone: "failed" | "attention" | "working" | "done" | "muted";
+  subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
+  link: "working" | "question" | "idle"; link_rank: 0 | 1 | 2;
+  verb: RequestVerb; request_todo: boolean; descendant_asking: number; request_since: number | null;
+};
+
 export type AgentRow = {
+  state: AgentState;
   id: string;
   pane_id: string;
   identity_label: string;
@@ -128,6 +149,7 @@ export type DescendantCounts = { error: number; approval: number; question: numb
 
 /** One agent in a line of them: a pane header chip or a lineage step's sibling (`AgentChipSnapshot`). */
 export type AgentChip = {
+  tone: StatusTone;
   pane_id: string;
   label: string;
   checkout_label?: string | null;
@@ -421,7 +443,7 @@ export type PaneRow = {
   sleep_action?: AgentSleepAction;
 };
 
-export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_code">;
+export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
 
 export type Tab = {
   agent?: TabAgent | null;
@@ -500,6 +522,7 @@ export type WorktreeDisk = {
 };
 
 export type Checkout = {
+  agent_scope: AgentScope;
   id: string;
   workspace_id: string;
   label: string;
@@ -537,6 +560,7 @@ export type Checkout = {
 };
 
 export type Workspace = {
+  agent_scope: AgentScope;
   id: string;
   label: string;
   path: string;
@@ -943,6 +967,7 @@ export type DeviceHost = {
 };
 
 export type Device = {
+  agent_scope: AgentScope;
   id: string;
   label: string;
   /** `local` for the daemon's own machine, `remote` for an SSH device. */
@@ -1402,6 +1427,7 @@ export type LinkSummaries = {
 export type SnapshotRest = {
   git_worktrees_loading?: boolean;
   navigator?: {
+    agent_scope?: AgentScope;
     focused_workspace_id?: string | null;
     focused_checkout_id?: string | null;
     /** The focused checkout's root, which the Explorer reveals under. */

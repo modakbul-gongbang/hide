@@ -12,15 +12,9 @@ export type LiveState = { kind: "working" | "question" | "idle"; agent: AgentRow
 
 export type SessionLine = { line: LinkedSession; live: LiveState | null };
 
-const ASKING = new Set(["question", "approval", "error"]);
-
 function liveState(agent: AgentRow): LiveState {
-  if (ASKING.has(agent.demand ?? "none")) return { kind: "question", agent };
-  if (agent.group === "working" || agent.waiting_on_descendants === true) return { kind: "working", agent };
-  return { kind: "idle", agent };
+  return { kind: agent.state.link, agent };
 }
-
-const LIVE_ORDER: Record<LiveState["kind"], number> = { question: 0, working: 1, idle: 2 };
 
 /**
  * The lines in the order the section draws them (B6, B18): asking and working
@@ -34,8 +28,8 @@ export function sessionLines(sessions: readonly LinkedSession[], agents: readonl
     const agent = [...line.ids, line.id].map((id) => bySession.get(id)).find(Boolean);
     return { line, live: agent ? liveState(agent) : null };
   });
-  const active = lines.filter((entry) => entry.live && entry.live.kind !== "idle").sort((a, b) => LIVE_ORDER[a.live!.kind] - LIVE_ORDER[b.live!.kind]);
-  return [...active, ...lines.filter((entry) => !entry.live || entry.live.kind === "idle")];
+  // A missing live row shares the record-order tier supplied for idle rows.
+  return lines.sort((a, b) => (a.live?.agent.state.link_rank ?? 2) - (b.live?.agent.state.link_rank ?? 2));
 }
 
 /** Six lines or more fold to the newest five (B16). */
