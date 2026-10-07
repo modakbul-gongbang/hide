@@ -1050,11 +1050,18 @@ impl RusshRemoteClient {
         operation_id: &str,
         stage: RemoteStage,
     ) -> RemoteResult<tokio::sync::OwnedSemaphorePermit> {
-        match tokio::time::timeout(
-            SSH_OPERATION_TIMEOUT,
-            Arc::clone(&self.connection.sessions).acquire_owned(),
-        )
-        .await
+        self.session_channel_within(operation_id, stage, SSH_OPERATION_TIMEOUT)
+            .await
+    }
+
+    async fn session_channel_within(
+        &self,
+        operation_id: &str,
+        stage: RemoteStage,
+        wait: Duration,
+    ) -> RemoteResult<tokio::sync::OwnedSemaphorePermit> {
+        match tokio::time::timeout(wait, Arc::clone(&self.connection.sessions).acquire_owned())
+            .await
         {
             Ok(Ok(permit)) => Ok(permit),
             _ => {
@@ -2450,6 +2457,63 @@ mod tests {
             "/tmp/known_hosts",
         )
         .unwrap()
+    }
+
+    /// Letter-720: past eight session channels on a device's connection, a
+    /// use waits for one to close and, once its wait ends, fails with a
+    /// record, so the connection never asks sshd for more than it allows.
+    #[test]
+    fn a_session_channel_past_the_cap_fails_with_a_record() {
+        static RECORDS: Mutex<Vec<serde_json::Value>> = Mutex::new(Vec::new());
+        assert!(crate::diagnostics::install(|record| {
+            RECORDS.lock().unwrap().push(record);
+        }));
+        let client = RusshRemoteClient::new(host()).unwrap();
+        let wait = Duration::from_millis(50);
+        client.runtime.block_on(async {
+            let mut held = Vec::new();
+            for _ in 0..MAX_SESSION_CHANNELS {
+                held.push(
+                    client
+                        .session_channel_within("remote-read", RemoteStage::Ssh, wait)
+                        .await
+                        .unwrap(),
+                );
+            }
+            let refused = client
+                .session_channel_within("attachment-stage", RemoteStage::Sftp, wait)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                refused.diagnostic().reason,
+                "the device's SSH connection already has 8 sessions open"
+            );
+            drop(held.pop());
+            held.push(
+                client
+                    .session_channel_within("attachment-stage", RemoteStage::Sftp, wait)
+                    .await
+                    .unwrap(),
+            );
+        });
+        // Other tests in the same process may write their own records.
+        let records: Vec<_> = RECORDS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|record| record["kind"] == "connection.sessions_full")
+            .cloned()
+            .collect();
+        assert_eq!(
+            records,
+            [json!({
+                "component": "remote",
+                "kind": "connection.sessions_full",
+                "target": "ssh:mini",
+                "operation": "attachment-stage",
+                "limit": 8,
+            })]
+        );
     }
 
     /// hided's reaper drops a removed device's last forward on its own runtime.
