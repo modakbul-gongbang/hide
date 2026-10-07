@@ -2445,6 +2445,27 @@ fn a_backlog_waiting_for_slots_reads_the_machine_once_a_minute() {
 }
 
 #[test]
+fn a_backlog_held_by_usage_limits_reads_the_machine_once_a_minute() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let until = h.world().now + 60 * MINUTE_MS;
+    h.world().usage_limits.insert(Runtime::Claude, until);
+    h.world().usage_limits.insert(Runtime::Codex, until);
+    let t = h.ready("Limited", &[]);
+    assert_eq!(h.state(&f, &t), TaskState::Waiting);
+    let reads = h.world().disk_reads;
+    for _ in 0..20 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    assert!(
+        h.world().disk_reads <= reads + 1,
+        "{} reads in 40 s",
+        h.world().disk_reads - reads
+    );
+}
+
+#[test]
 fn a_low_disk_holds_new_starts_and_the_hold_clears_on_recheck() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -3165,6 +3186,45 @@ fn a_failing_check_with_nothing_to_ask_or_an_unreadable_diff_holds_the_merge() {
     h.done(&f, &u);
     tick_until(&mut h, &f, &u, TaskState::MergeWaiting);
     assert_eq!(h.task(&f, &u).gates, vec![Gate::CheckFailed]);
+    let failed = h
+        .engine
+        .events(&f, Some(&u), 50)
+        .into_iter()
+        .find(|e| e.kind == "check.failed")
+        .unwrap();
+    assert!(
+        failed.detail["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("diff"),
+        "the log says what failed: {}",
+        failed.detail
+    );
+}
+
+#[test]
+fn a_periodic_check_failing_with_nothing_to_ask_holds_nothing() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.op(Command::Check {
+        project: None,
+        at: CheckPoint::Periodic,
+        instruction: "Still on track?".into(),
+    });
+    let t = h.ready("Running", &[]);
+    h.world().drift.insert(
+        t.clone(),
+        json!({"pass": false, "questions": [], "flags": []}),
+    );
+    h.advance(30 * 60_000);
+    h.engine.tick();
+    h.engine.tick();
+    assert!(
+        h.task(&f, &t).gates.is_empty(),
+        "{:?}",
+        h.task(&f, &t).gates
+    );
+    assert_eq!(h.state(&f, &t), TaskState::Running);
 }
 
 // ------------------------------------------------------------------ watch

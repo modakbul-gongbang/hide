@@ -515,9 +515,6 @@ fn publish_recipients(engine: Option<&Engine>, runtime: &Weak<Mutex<Runtime>>) {
     }
 }
 
-/// Runs one command with the caller's role (D-33). A worker's report travels
-/// as a ledger letter from its own pane, so a harness that only speaks the
-/// letter protocol lands on the same path (B25).
 /// The delivery intent of a worker's report. A retry of the same report in
 /// the same Task state is one letter; the same words after the Task moved
 /// (a `done` again once verification sent it back) are a new report.
@@ -538,6 +535,9 @@ fn hide_program() -> Option<String> {
         .then(|| program.to_string_lossy().into_owned())
 }
 
+/// Runs one command with the caller's role (D-33). A worker's report travels
+/// as a ledger letter from its own pane, so a harness that only speaks the
+/// letter protocol lands on the same path (B25).
 fn handle(
     engine: &mut Engine,
     runtime: &Weak<Mutex<Runtime>>,

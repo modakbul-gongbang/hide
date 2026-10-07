@@ -2905,8 +2905,11 @@ impl Engine {
         };
         // A diff that cannot be read gives the checks nothing to judge; that
         // is a check that cannot run, never a pass (B68).
-        let Ok(diff) = self.ports.merge.diff_text(&f, &task) else {
-            return self.check_failed(factory, id);
+        let diff = match self.ports.merge.diff_text(&f, &task) {
+            Ok(diff) => diff,
+            Err(failure) => {
+                return self.check_failed(factory, id, &format!("diff: {}", failure.detail));
+            }
         };
         let mut count = 0;
         let decisions = task.decisions.iter().map(|d| d.text.clone()).collect();
@@ -2930,7 +2933,7 @@ impl Engine {
                 );
                 count += 1;
             }
-            Err(_) => self.check_failed(factory, id),
+            Err(failure) => self.check_failed(factory, id, &format!("submit: {}", failure.stage)),
         }
         for (index, check) in f
             .config
@@ -2958,7 +2961,9 @@ impl Engine {
                     );
                     count += 1;
                 }
-                Err(_) => self.check_failed(factory, id),
+                Err(failure) => {
+                    self.check_failed(factory, id, &format!("submit: {}", failure.stage))
+                }
             }
         }
         self.checks_running
@@ -2966,24 +2971,28 @@ impl Engine {
     }
 
     /// A check that could not run is never skipped: merge waits for a person (B68).
-    fn check_failed(&mut self, factory: &str, id: &str) {
+    fn check_failed(&mut self, factory: &str, id: &str, reason: &str) {
         self.with_task(factory, id, |task| {
             if !task.gates.contains(&Gate::CheckFailed) {
                 task.gates.push(Gate::CheckFailed);
             }
         });
-        self.record(factory, Some(id), "check.failed", json!({}));
+        self.record(factory, Some(id), "check.failed", json!({"reason": reason}));
     }
 
-    fn apply_finding(&mut self, factory: &str, id: &str, value: &Value) {
+    /// `holds_merge` is true for the drift and after-done checks; a
+    /// periodic check on a running Task only asks and flags (B67).
+    fn apply_finding(&mut self, factory: &str, id: &str, value: &Value, holds_merge: bool) {
         let finding = match judgment::parse_finding(value) {
             Ok(finding) => finding,
-            Err(_) => return self.check_failed(factory, id),
+            Err(reason) if holds_merge => return self.check_failed(factory, id, &reason),
+            Err(_) => return,
         };
         // A failing answer with nothing to ask or flag still holds the merge
         // for a person.
-        if !finding.pass && finding.questions.is_empty() && finding.flags.is_empty() {
-            return self.check_failed(factory, id);
+        if holds_merge && !finding.pass && finding.questions.is_empty() && finding.flags.is_empty()
+        {
+            return self.check_failed(factory, id, "failed with nothing to ask");
         }
         let now = self.now();
         let deadline = self
@@ -4660,16 +4669,18 @@ impl Engine {
                             }
                         }
                         JudgmentOutcome::Answered { value } => {
-                            self.apply_finding(&factory, &task, value)
+                            self.apply_finding(&factory, &task, value, true)
                         }
                         JudgmentOutcome::Failed { .. } if drafting => {}
-                        JudgmentOutcome::Failed { .. } => self.check_failed(&factory, &task),
+                        JudgmentOutcome::Failed { reason } => {
+                            self.check_failed(&factory, &task, reason)
+                        }
                     }
                     self.advance_merge(&factory, &task);
                 }
                 (JudgmentOutcome::Answered { value }, Purpose::Periodic, Some(task)) => {
                     match judgment::parse_finding(value) {
-                        Ok(_) => self.apply_finding(&factory, &task, value),
+                        Ok(_) => self.apply_finding(&factory, &task, value, false),
                         Err(_) => self.record(
                             &factory,
                             Some(&task),
@@ -4846,7 +4857,13 @@ impl Engine {
         // Without a hold the machine is read before a start, and only when
         // one can happen: a backlog waiting on full slots does not read the
         // disk and fork `sysctl` on every tick.
-        let can_start = self.machine_max_workers > self.running_count()
+        let usable = |runtime: Runtime| {
+            self.runtime_blocked
+                .get(&runtime)
+                .is_none_or(|until| *until <= now)
+        };
+        let can_start = (self.machine_max_workers > self.running_count()
+            && (usable(Runtime::Claude) || usable(Runtime::Codex)))
             || candidates.iter().any(|t| {
                 t.state == TaskState::Relanding
                     || self
