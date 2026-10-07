@@ -18,8 +18,8 @@ use hide_platform::process::GuardedSpawnError;
 use hide_platform::process::{
     CaptureFailureKind, MAX_CAPTURE_BYTES, OWNER_LAUNCH_KEYS, OwnedChild, OwnerWatch,
     RUN_OUTPUT_CAP, RunFailure, cwd_of, descendants, descends_from, detach, is_alive, kill_tree,
-    measure_tree, parent_of, restrict_to_login_environment, run_to_end, start_time, terminate,
-    terminate_group,
+    measure_tree, name_of, parent_of, restrict_to_login_environment, run_to_end, start_time,
+    terminate, terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
@@ -922,6 +922,23 @@ fn every_process_under_a_root_is_listed_parents_first_and_the_root_is_not() {
     assert!(
         descendants(u32::MAX - 1).unwrap().is_empty(),
         "no process, no children"
+    );
+}
+
+#[test]
+fn a_process_is_named_by_the_program_it_runs() {
+    let program = std::env::current_exe().unwrap();
+    let program = program.file_name().unwrap().to_str().unwrap();
+    let name = name_of(std::process::id()).unwrap();
+    // Linux keeps the first 15 bytes of a command name.
+    assert!(
+        !name.is_empty() && program.starts_with(&name) && name.len() >= program.len().min(15),
+        "{name:?} for {program:?}"
+    );
+    assert_eq!(
+        name_of(u32::MAX - 1).unwrap_err().kind(),
+        ErrorKind::NotFound,
+        "no process, no name"
     );
 }
 

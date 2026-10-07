@@ -1674,11 +1674,13 @@ impl ProcessWait {
     }
 }
 
-/// A process of a pane, named by its pid and start so a pid the system hands
-/// to another process later is not mistaken for it.
+/// A process of a pane, identified by its pid and start so a pid the system
+/// hands to another process later is not mistaken for it, and named by its
+/// program so a failure tells the operator which one to end.
 struct PaneProcess {
     pid: u32,
     started: u64,
+    name: String,
 }
 
 impl PaneProcess {
@@ -1724,8 +1726,11 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
     pids.dedup();
     let mut running = Vec::new();
     for pid in pids {
-        match hide_platform::process::start_time(pid) {
-            Ok(started) => running.push(PaneProcess { pid, started }),
+        let read = hide_platform::process::start_time(pid).and_then(|started| {
+            hide_platform::process::name_of(pid).map(|name| PaneProcess { pid, started, name })
+        });
+        match read {
+            Ok(process) => running.push(process),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("process {pid} could not be read: {error}")),
         }
@@ -1734,7 +1739,7 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
 }
 
 /// Waits until none of `held` is running or `deadline` passes, checking once
-/// more at the deadline, and names the pids still running when it does.
+/// more at the deadline, and names the processes still running when it does.
 /// `pause` is how long it lets the processes go on, which a test replaces.
 fn wait_for_processes_to_end(
     held: &mut Vec<PaneProcess>,
@@ -1754,9 +1759,9 @@ fn wait_for_processes_to_end(
         }
         let Some(left) = deadline.checked_duration_since(Instant::now()) else {
             return Err(format!(
-                "Herdr closed the panes but their processes are still running (pid {}), so the folder may still be held",
+                "Herdr closed the panes but their processes are still running ({}), so the folder may still be held",
                 held.iter()
-                    .map(|process| process.pid.to_string())
+                    .map(|process| format!("{} pid {}", process.name, process.pid))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -2720,14 +2725,14 @@ mod tests {
         })
         .unwrap_err();
         assert!(
-            error.contains(&format!("still running (pid {})", tree.child)),
+            error.contains(&format!("still running (sleep pid {})", tree.child)),
             "{error}"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_process_still_running_at_the_deadline_fails_the_wait_and_names_its_pid() {
+    fn a_process_still_running_at_the_deadline_fails_the_wait_and_names_it() {
         let child = LongLived::start();
         let pid = child.0.id();
         let server = server(vec![process_info("w1:p1", pid)]);
@@ -2739,7 +2744,7 @@ mod tests {
         })
         .unwrap_err();
         assert!(
-            error.contains(&format!("still running (pid {pid})")),
+            error.contains(&format!("still running (sleep pid {pid})")),
             "{error}"
         );
     }
@@ -2749,6 +2754,7 @@ mod tests {
         let mut held = vec![PaneProcess {
             pid: u32::MAX - 1,
             started: 1,
+            name: "gone".to_owned(),
         }];
         wait_for_processes_to_end(&mut held, Instant::now(), |_| panic!("nothing to wait for"))
             .unwrap();
