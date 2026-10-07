@@ -12,9 +12,9 @@ import threading
 import time
 
 if __package__:
-    from .process_table import descendants, marked_descendants, snapshot
+    from .process_table import descendants, marked_descendants, require_complete, snapshot
 else:
-    from process_table import descendants, marked_descendants, snapshot
+    from process_table import descendants, marked_descendants, require_complete, snapshot
 
 MAX_CHILDREN = 16
 MAX_DESCENDANTS = 128
@@ -27,6 +27,20 @@ POLL_SECONDS = 0.1
 
 class ProcessError(RuntimeError):
     pass
+
+
+def linux_children_remain():
+    # After Popen's direct child has been waited, only owned adopted children
+    # remain. __WALL includes clone children with a non-SIGCHLD exit signal.
+    # ECHILD is the kernel's no-child proof; an empty sampled table is not.
+    for _ in range(MAX_DESCENDANTS + 1):
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG | 0x40000000)
+        except ChildProcessError:
+            return False
+        if pid == 0:
+            return True
+    raise ProcessError("adopted_child_reap_over_budget")
 
 
 class OwnedProcesses:
@@ -130,6 +144,7 @@ class OwnedProcesses:
 
     def usage(self):
         table = snapshot()
+        require_complete(table)
         current = {}
         for child in self.children:
             if child.poll() is None:
@@ -180,28 +195,44 @@ def guard(reader: int, argv: list[str]) -> int:
     threading.Thread(target=watch_owner, daemon=True).start()
     owner = OwnedProcesses(cancelled)
     child = None
+    guardian_identity = None
+    earliest = 0
     observed = {}
     failed = False
     marker = secrets.token_hex(32)
-    earliest = snapshot()[os.getpid()].birth
     deadline = time.monotonic() + RUN_SECONDS
+
+    def capture():
+        nonlocal failed
+        table = snapshot()
+        try:
+            require_complete(table)
+        except RuntimeError as error:
+            failed = True
+            sys.stderr.write("guardian_failure:" + str(error) + "\n")
+        return table
+
     try:
+        initial = snapshot()
+        require_complete(initial)
+        guardian_identity = initial[os.getpid()]
+        earliest = guardian_identity.birth
         child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker}, stdin=None, stdout=None,
                             stderr=None, _guarded=False)
         while not cancelled.is_set():
-            table = snapshot()
+            table = capture()
             current = descendants(table, os.getpid(), observed)
             # Record proven ancestry before optional orphan discovery can fail.
             observed.update(current)
             observed.pop(os.getpid(), None)
             if sys.platform == "darwin":
                 current.update(marked_descendants(table, marker, earliest,
-                               known={**observed, os.getpid(): table[os.getpid()]},
+                               known={**observed, os.getpid(): guardian_identity},
                                remember=observed.__setitem__))
                 current.update(descendants(table, os.getpid(), observed))
             current.pop(os.getpid(), None)
             observed.update(current)
-            if (any(p.rss < 0 and not p.zombie for p in current.values())
+            if (failed or any(p.rss < 0 and not p.zombie for p in current.values())
                     or len(current) > MAX_DESCENDANTS
                     or sum(max(0, p.rss) for p in current.values()) > MAX_RSS_BYTES):
                 failed = True
@@ -217,17 +248,17 @@ def guard(reader: int, argv: list[str]) -> int:
         failed = True
     finally:
         try:
-            table = snapshot()
+            table = capture()
             current = descendants(table, os.getpid(), observed)
             current.pop(os.getpid(), None)
             observed.update(current)
             for signum in (signal.SIGCONT, signal.SIGTERM, signal.SIGKILL):
-                table = snapshot()
+                table = capture()
                 observed.update(descendants(table, os.getpid(), observed))
-                if sys.platform == "darwin":
+                if sys.platform == "darwin" and guardian_identity is not None:
                     try:
                         marked_descendants(table, marker, earliest,
-                                           known={**observed, os.getpid(): table[os.getpid()]},
+                                           known={**observed, os.getpid(): guardian_identity},
                                            remember=observed.__setitem__)
                     except BaseException as error:
                         # An unrelated same-UID process can deny procargs reads.
@@ -253,12 +284,12 @@ def guard(reader: int, argv: list[str]) -> int:
                 child.wait(timeout=2)
             end = time.monotonic() + 2
             while True:
-                table = snapshot()
+                table = capture()
                 observed.update(descendants(table, os.getpid(), observed))
-                if sys.platform == "darwin":
+                if sys.platform == "darwin" and guardian_identity is not None:
                     try:
                         marked_descendants(table, marker, earliest,
-                                           known={**observed, os.getpid(): table[os.getpid()]},
+                                           known={**observed, os.getpid(): guardian_identity},
                                            remember=observed.__setitem__)
                     except BaseException as error:
                         sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
@@ -268,7 +299,9 @@ def guard(reader: int, argv: list[str]) -> int:
                 survivors = [pid for pid, item in observed.items()
                              if pid in table and table[pid].birth == item.birth
                              and not table[pid].zombie]
-                if not survivors:
+                unresolved_children = (linux_children_remain() if sys.platform.startswith("linux")
+                                       else bool(getattr(table, "vanished", ())))
+                if not survivors and not unresolved_children:
                     break
                 if time.monotonic() >= end:
                     failed = True

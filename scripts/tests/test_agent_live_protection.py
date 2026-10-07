@@ -5,6 +5,9 @@ real-pinned-server lane owns the measurement tool's protocol acceptance.
 """
 
 import json
+import contextlib
+import ctypes
+import io
 import os
 from pathlib import Path
 import signal
@@ -16,8 +19,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent_live_check.process_table import Process, descendants, marked_descendants, snapshot
-from agent_live_check.processes import OwnedProcesses, ProcessError, guard
+from agent_live_check.process_table import (Process, ProcessTable, descendants, marked_descendants,
+                                           require_complete, snapshot, validate_linux_procfs)
+from agent_live_check.processes import OwnedProcesses, ProcessError, guard, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 
@@ -115,6 +119,118 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_linux_procfs_must_name_the_same_namespace_without_hiding_processes(self):
+        mount = "1 0 0:5 / /proc rw - proc proc rw\n"
+        validate_linux_procfs("NSpid:\t42\n", mount, 42)
+        cases = [("NSpid:\t7000\t42\n", mount), ("NSpid:\t42\t42\n", mount),
+                 ("Pid:\t42\n", mount), ("NSpid:\t42\nNSpid:\t42\n", mount)]
+        for policy in ("1", "2", "4", "noaccess", "invisible", "ptraceable", "unknown"):
+            cases.append(("NSpid:\t42\n", mount.replace("- proc proc rw", "- proc proc rw,hidepid=" + policy)))
+        cases.extend([("NSpid:\t42\n", mount.replace("- proc", "- tmpfs")),
+                      ("NSpid:\t42\n", mount + "2 1 0:6 / /proc/80/stat rw - tmpfs none rw\n")])
+        for status, mounts in cases:
+            with self.subTest(status=status, mounts=mounts), self.assertRaises(RuntimeError):
+                validate_linux_procfs(status, mounts, 42)
+
+    def test_darwin_metadata_denial_preserves_a_peer_without_proving_absence(self):
+        import errno
+        own = os.getpid()
+        library = Mock()
+        def list_pids(buffer, unused):
+            buffer[0], buffer[1] = own, 111
+            return 2
+        def info(pid, flavor, unused, buffer, size):
+            if pid == 111:
+                ctypes.set_errno(errno.EPERM)
+                return 0
+            value = buffer._obj
+            if flavor == 3:
+                value.ppid, value.uid, value.sec, value.flags = 1, os.getuid(), 1, 2
+            return size
+        library.proc_listallpids.side_effect = list_pids
+        library.proc_pidinfo.side_effect = info
+        with patch("agent_live_check.process_table.sys.platform", "darwin"), \
+                patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            table = snapshot()
+        self.assertIn(own, table)
+        self.assertTrue(table[own].traced)
+        with self.assertRaisesRegex(RuntimeError, "process_table_subjects_unavailable"):
+            require_complete(table)
+        self.assertEqual(table.unavailable, [{"pid": 111, "errno": errno.EPERM}])
+
+    def test_uninspectable_subject_forces_failure_while_readable_owned_peer_is_ended(self):
+        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
+        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
+        before = {guardian.pid: guardian, child.pid: child}
+        partial = ProcessTable()
+        partial.update(before)
+        partial.unavailable.append({"pid": 222, "errno": 13})
+        ended = {guardian.pid: guardian}
+        native = Mock(returncode=0)
+        native.poll.return_value = 0
+        library = Mock()
+        library.prctl.return_value = 0
+        with patch("agent_live_check.processes.sys.platform", "linux"), \
+                patch("agent_live_check.processes.ctypes.CDLL", return_value=library), \
+                patch("agent_live_check.processes.threading.Thread"), \
+                patch("agent_live_check.processes.signal.signal"), \
+                patch("agent_live_check.processes.time.sleep"), \
+                patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
+                patch("agent_live_check.processes.snapshot", side_effect=[before] + [partial] * 5 + [ended]), \
+                patch("agent_live_check.processes.os.waitpid", side_effect=ChildProcessError), \
+                patch("agent_live_check.processes.os.kill") as kill, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(guard(-1, ["fixture"]), 125)
+        self.assertIn(unittest.mock.call(child.pid, signal.SIGKILL), kill.call_args_list)
+        self.assertEqual({call.args[0] for call in kill.call_args_list}, {child.pid})
+
+    def test_unknown_traced_child_requires_token_even_with_a_live_external_parent(self):
+        child = Process(111, 999, 111, 10, 0, False, os.getuid(), traced=True)
+        library = Mock()
+        def query(mib, unused, buffer, size, *rest):
+            data = b"HIDE_LIVE_CHECK_OWNER=fixture-run\0"
+            ctypes.memmove(buffer, data, len(data))
+            size._obj.value = len(data)
+            return 0
+        library.sysctl.side_effect = query
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            self.assertEqual(marked_descendants({111: child}, "fixture-run", 1), {111: child})
+        library.sysctl.assert_called_once()
+
+    def test_linux_final_empty_view_needs_kernel_no_child_proof_including_clone_children(self):
+        with patch("agent_live_check.processes.os.waitpid", side_effect=[(222, 0), (0, 0)]) as wait:
+            self.assertTrue(linux_children_remain())
+        self.assertTrue(all(call.args == (-1, os.WNOHANG | 0x40000000) for call in wait.call_args_list))
+        with patch("agent_live_check.processes.os.waitpid", side_effect=[(222, 0), ChildProcessError]):
+            self.assertFalse(linux_children_remain())
+
+    def test_darwin_disappearing_parent_cannot_make_final_empty_view_succeed(self):
+        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
+        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
+        helper = Process(333, 1, 333, 3, 0, False, os.getuid())
+        before = {guardian.pid: guardian, child.pid: child}
+        ended = {guardian.pid: guardian}
+        ambiguous = ProcessTable()
+        ambiguous.update(ended)
+        ambiguous.vanished.append(222)
+        def discover(table, marker, earliest, *, known, remember):
+            if helper.pid in table:
+                remember(helper.pid, helper)
+                return {helper.pid: helper}
+            return {}
+        native = Mock(returncode=0)
+        native.poll.return_value = 0
+        with patch("agent_live_check.processes.sys.platform", "darwin"), \
+                patch("agent_live_check.processes.threading.Thread"), \
+                patch("agent_live_check.processes.signal.signal"), \
+                patch("agent_live_check.processes.time.sleep"), \
+                patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
+                patch("agent_live_check.processes.marked_descendants", side_effect=discover), \
+                patch("agent_live_check.processes.snapshot", side_effect=[before] * 6 + [ambiguous, {**ended, helper.pid: helper}, ended]), \
+                patch("agent_live_check.processes.os.kill") as kill:
+            self.assertEqual(guard(-1, ["fixture"]), 0)
+        self.assertIn(unittest.mock.call(helper.pid, signal.SIGKILL), kill.call_args_list,
+                      "a disappeared shutdown parent hid its live child behind an empty final view")
+
     def test_owned_orphan_subtree_is_tracked_without_adopting_reused_or_external_roots(self):
         def item(pid, parent, birth):
             return Process(pid, parent, pid, birth, 1, False, os.getuid())
@@ -166,6 +282,7 @@ class ProcessProtection(unittest.TestCase):
                     patch("agent_live_check.processes.time.sleep"), \
                     patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
                     patch("agent_live_check.processes.snapshot", side_effect=[before] * initial_reads + [after_term, ended]), \
+                    patch("agent_live_check.processes.os.waitpid", side_effect=ChildProcessError), \
                     patch("agent_live_check.processes.os.kill") as kill:
                 self.assertEqual(guard(-1, ["fixture"]), 0)
             self.assertIn(unittest.mock.call(helper.pid, signal.SIGKILL), kill.call_args_list,

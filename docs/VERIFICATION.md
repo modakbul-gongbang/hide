@@ -152,6 +152,15 @@ Private copies have mode 0600, never update the account's login, and are removed
 An uncatchable controller kill can retain private copies in the ignored run directory; remove a stale run only after confirming its owned processes have ended.
 Authenticated probing currently requires macOS `sandbox-exec`; a real write/socket denial self-test must pass before a provider starts.
 Unsupported hosts fail closed.
+The process guardian supports macOS and the trusted Linux fixture lane; Linux authenticated probing remains unsupported.
+On macOS it retains birth-checked ancestry and discovers same-UID ordinary orphans and traced children through the inherited private owner token.
+The traced-child candidate follows XNU's [public process flag](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info.h#L104) and [tracer/original-parent reparenting](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_exit.c#L2420); a traced flag alone never proves ownership.
+On Linux a successfully established child subreaper retains ordinary daemonized descendants and nested owned subreapers through ancestry, rather than assuming their parent is PID 1.
+Every Linux process-table read requires a matching procfs PID namespace and unrestricted process visibility; an ancestor procfs, missing namespace evidence, restrictive `hidepid` policy or process-entry overmount fails the run before those PIDs can be signalled.
+These checks follow the kernel's [namespace ID rendering](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/fs/proc/array.c#L207), [procfs visibility contract](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/Documentation/filesystems/proc.rst#L2393) and [subreaper selection](https://github.com/torvalds/linux/blob/7b63ef2d55f24519e7e9e5f4d15dbea03f126e40/kernel/exit.c#L640).
+The ownership contract covers trusted same-UID CLI forks and execs, including ordinary double-fork/setsid daemonization; privileged identity changes, entry into an existing external PID namespace, external process brokers and deliberate removal of an unseen child's token are outside that contract and cannot support a cleanup or native-safety acceptance claim.
+Unavailable process metadata or owner-token inspection makes cleanup unconfirmed, while readable peers with current birth-matched ownership still receive bounded teardown.
+Linux's final poll also requires the subreaper's kernel no-child result, including clone children; macOS disappearance during enumeration or token lookup requires another view within the existing two-second teardown deadline, after which unresolved observation fails.
 `--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
 
 Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.
