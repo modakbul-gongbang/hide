@@ -2393,6 +2393,26 @@ fn three_failed_outside_reads_mark_the_board_stale_and_back_off() {
 // -------------------------------------------------------------- environment
 
 #[test]
+fn a_backlog_waiting_for_slots_reads_the_machine_once_a_minute() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    set_workers(&mut h, &f, 1);
+    let running = h.ready("Running", &[]);
+    let _waiting = h.ready("Waiting", &[]);
+    assert_eq!(h.state(&f, &running), TaskState::Running);
+    let reads = h.world().disk_reads;
+    for _ in 0..20 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    assert!(
+        h.world().disk_reads <= reads + 1,
+        "{} reads in 40 s",
+        h.world().disk_reads - reads
+    );
+}
+
+#[test]
 fn a_low_disk_holds_new_starts_and_the_hold_clears_on_recheck() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

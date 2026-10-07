@@ -90,6 +90,8 @@ pub struct World {
     /// Scripted watch answers, oldest first; no warnings when empty.
     pub watch: VecDeque<Value>,
     pub judge_down: bool,
+    /// How many times the free disk was read.
+    pub disk_reads: u32,
     /// The Task's diff cannot be read.
     pub diff_failure: bool,
     /// Every judgment answers as failed with this reason.
@@ -539,6 +541,7 @@ impl Judge for Shared {
 
 impl Environment for Shared {
     fn disk_free(&mut self, _project: &str) -> Option<u64> {
+        self.world().disk_reads += 1;
         self.world().disk_free
     }
     fn memory_pressure(&mut self) -> MemoryPressure {

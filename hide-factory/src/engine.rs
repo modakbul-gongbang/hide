@@ -3598,6 +3598,8 @@ impl Engine {
 
     /// Stops a worker; a refusal is recorded against its Task.
     fn stop_worker(&mut self, factory_id: &str, id: &str, worker: &WorkerRef) {
+        // A worker that ends frees disk and memory: read them again (B57).
+        self.hold_checked_at = None;
         if let Err(failure) = self.ports.workers.stop(worker) {
             self.external_failure(factory_id, Some(id), &failure);
         }
@@ -4809,12 +4811,6 @@ impl Engine {
         if self.halt_until.is_some_and(|until| until > now) {
             return;
         }
-        // Rule 1: hold starts below the disk floor or at critical memory
-        // pressure; re-checked when a worker ends or a minute passes (B57).
-        let due = self
-            .hold_checked_at
-            .is_none_or(|at| now.saturating_sub(at) >= ENV_RECHECK_MS)
-            || self.hold_reason.is_none();
         let mut candidates: Vec<Task> = self
             .all_tasks()
             .filter(|t| self.factories.get(&t.factory).is_some_and(|f| !f.closed))
@@ -4834,6 +4830,23 @@ impl Engine {
                 .cmp(&(a.state == TaskState::Relanding))
                 .then_with(|| dag::slot_order(a, b))
         });
+        // Rule 1: hold starts below the disk floor or at critical memory
+        // pressure; re-checked when a worker ends or a minute passes (B57).
+        // Without a hold the machine is read before a start, and only when
+        // one can happen: a backlog waiting on full slots does not read the
+        // disk and fork `sysctl` on every tick.
+        let can_start = self.machine_max_workers > self.running_count()
+            || candidates.iter().any(|t| {
+                t.state == TaskState::Relanding
+                    || self
+                        .starting
+                        .get(&(t.factory.clone(), t.id.clone()))
+                        .is_some_and(|(_, next)| *next <= now)
+            });
+        let due = self
+            .hold_checked_at
+            .is_none_or(|at| now.saturating_sub(at) >= ENV_RECHECK_MS)
+            || (self.hold_reason.is_none() && can_start);
         if due {
             self.hold_checked_at = Some(now);
             self.hold_reason = None;
