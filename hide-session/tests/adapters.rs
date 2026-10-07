@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use hide_session::label_transcript::{
     LabelEventKind, LabelTranscript, LabelTranscriptRequest, read,
 };
+use hide_session::turns::Waiting;
 use hide_session::{Agent, PrSighting};
 
 /// 2026-10-03T01:00:00Z, when every fixture's conversation starts.
@@ -77,6 +78,7 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
         cwd: Some("/work/app".to_owned()),
         checkpoint: None,
         subagents: BTreeMap::new(),
+        turns: None,
     }
 }
 
@@ -126,6 +128,7 @@ fn subagent_poll_fixture() -> (tempfile::TempDir, PathBuf, LabelTranscriptReques
         cwd: None,
         checkpoint: None,
         subagents: BTreeMap::new(),
+        turns: None,
     };
     (home, folder, request)
 }
@@ -719,4 +722,206 @@ fn an_opencode_row_that_holds_no_text_or_too_much_is_skipped_and_the_read_goes_o
             .any(|event| event.text.starts_with("2 x")),
         "the request after them is read"
     );
+}
+
+/// A Codex 0.160.1 session whose last turn ran in plan mode and proposed a
+/// plan (PRD codex-plan-approval-hold D-03, B12): the records Codex writes
+/// before it shows "Implement this plan?".
+const PLAN_SESSION: &str = "0199a000-0000-7000-8000-0000000000a1";
+
+fn plan_home() -> (tempfile::TempDir, PathBuf) {
+    let home = tempfile::tempdir().unwrap();
+    copy_tree(
+        &fixtures().join("codex-0.160.1-plan"),
+        &home.path().join(".codex"),
+    );
+    let rollout = home.path().join(format!(
+        ".codex/sessions/2026/10/07/rollout-2026-10-07T01-00-00-{PLAN_SESSION}.jsonl"
+    ));
+    (home, rollout)
+}
+
+fn plan_request() -> LabelTranscriptRequest {
+    LabelTranscriptRequest {
+        reference_value: PLAN_SESSION.to_owned(),
+        ..request(Agent::Codex)
+    }
+}
+
+/// The request that continues where `answer` stopped, as the label worker
+/// keeps it across reads and restarts (through its persisted form).
+fn continued(answer: &LabelTranscript) -> LabelTranscriptRequest {
+    fn persisted<T: serde::Serialize + serde::de::DeserializeOwned>(value: &T) -> T {
+        serde_json::from_slice(&serde_json::to_vec(value).unwrap()).unwrap()
+    }
+    LabelTranscriptRequest {
+        checkpoint: Some(persisted(&answer.checkpoint)),
+        turns: answer.turns.as_ref().map(persisted),
+        ..plan_request()
+    }
+}
+
+fn append(path: &Path, records: &[serde_json::Value]) {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    for record in records {
+        writeln!(file, "{record}").unwrap();
+    }
+}
+
+fn event(kind: &str, turn: &str, extra: serde_json::Value) -> serde_json::Value {
+    let mut payload = serde_json::json!({"type": kind, "turn_id": turn});
+    payload
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    serde_json::json!({"timestamp":"2026-10-07T01:02:00.000Z","type":"event_msg","payload":payload})
+}
+
+fn person(text: &str) -> serde_json::Value {
+    serde_json::json!({"timestamp":"2026-10-07T01:02:00.100Z","type":"response_item",
+        "payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}]}})
+}
+
+fn waiting(answer: &LabelTranscript) -> Option<Waiting> {
+    answer
+        .turns
+        .as_ref()
+        .expect("a Codex read reports its turns")
+        .waiting()
+}
+
+#[test]
+fn a_codex_plan_turn_waits_for_approval_until_the_next_turn_starts() {
+    let (home, rollout) = plan_home();
+    let proposed = read(home.path(), &plan_request()).unwrap();
+    assert_eq!(waiting(&proposed), Some(Waiting::PlanApproval));
+
+    // Approving starts the next turn in default mode.
+    append(
+        &rollout,
+        &[
+            event(
+                "task_started",
+                "turn-3",
+                serde_json::json!({"collaboration_mode_kind":"default"}),
+            ),
+            person("Implement the plan."),
+        ],
+    );
+    let approved = read(home.path(), &continued(&proposed)).unwrap();
+    assert_eq!(waiting(&approved), Some(Waiting::Nothing));
+}
+
+#[test]
+fn a_persons_message_after_the_plan_ends_the_wait() {
+    let (home, rollout) = plan_home();
+    let proposed = read(home.path(), &plan_request()).unwrap();
+    append(&rollout, &[person("계획을 조금 바꿔줘")]);
+    let answered = read(home.path(), &continued(&proposed)).unwrap();
+    assert_eq!(waiting(&answered), Some(Waiting::Nothing));
+}
+
+#[test]
+fn a_plan_mode_turn_that_ends_in_a_question_or_is_interrupted_does_not_wait() {
+    for ending in ["question", "interrupted"] {
+        let (home, rollout) = plan_home();
+        let first = read(home.path(), &plan_request()).unwrap();
+        let mut records = vec![
+            event(
+                "task_started",
+                "turn-3",
+                serde_json::json!({"collaboration_mode_kind":"plan"}),
+            ),
+            person("범위를 정해줘"),
+        ];
+        records.push(match ending {
+            "question" => serde_json::json!({"timestamp":"2026-10-07T01:02:01.000Z",
+                "type":"response_item","payload":{"type":"message","role":"assistant",
+                "content":[{"type":"output_text","text":"어느 화면부터 볼까요?"}]}}),
+            _ => event(
+                "turn_aborted",
+                "turn-3",
+                serde_json::json!({"reason":"interrupted"}),
+            ),
+        });
+        if ending == "question" {
+            records.push(event(
+                "task_complete",
+                "turn-3",
+                serde_json::json!({"last_agent_message":"어느 화면부터 볼까요?"}),
+            ));
+        }
+        append(&rollout, &records);
+        let after = read(home.path(), &continued(&first)).unwrap();
+        assert_eq!(waiting(&after), Some(Waiting::Nothing), "{ending}");
+    }
+}
+
+#[test]
+fn a_plan_turn_still_running_is_not_known_and_a_default_turn_is_not_waiting() {
+    let (plan, rollout) = plan_home();
+    let first = read(plan.path(), &plan_request()).unwrap();
+    append(
+        &rollout,
+        &[
+            event(
+                "task_started",
+                "turn-3",
+                serde_json::json!({"collaboration_mode_kind":"plan"}),
+            ),
+            person("다른 계획도 세워줘"),
+        ],
+    );
+    let running = read(plan.path(), &continued(&first)).unwrap();
+    assert_eq!(waiting(&running), None);
+
+    // The fixture's other agent session finishes a turn with no mode.
+    let codex = home(Agent::Codex);
+    assert_eq!(
+        waiting(&read_whole(codex.path(), Agent::Codex)),
+        Some(Waiting::Nothing)
+    );
+    let claude = home(Agent::Claude);
+    assert_eq!(read_whole(claude.path(), Agent::Claude).turns, None);
+}
+
+#[test]
+fn a_read_split_inside_the_plan_turn_and_resumed_at_its_anchor_answers_the_same() {
+    let (home, rollout) = plan_home();
+    let whole = std::fs::read_to_string(&rollout).unwrap();
+    let lines: Vec<&str> = whole.split_inclusive('\n').collect();
+    // Stop after the plan turn's person message, before its plan.
+    std::fs::write(&rollout, lines[..11].concat()).unwrap();
+    let first = read(home.path(), &plan_request()).unwrap();
+    assert_eq!(waiting(&first), None, "a plan turn still running");
+    std::fs::write(&rollout, whole).unwrap();
+    let second = read(home.path(), &continued(&first)).unwrap();
+    assert_eq!(waiting(&second), Some(Waiting::PlanApproval));
+
+    // A restarted reader resumes at the anchor, the turn's person message,
+    // with the tracker it kept: that message does not answer the plan.
+    let anchor = first.anchor.clone().expect("the read returned a person");
+    let resumed = LabelTranscriptRequest {
+        checkpoint: Some(anchor),
+        ..continued(&second)
+    };
+    assert_eq!(
+        waiting(&read(home.path(), &resumed).unwrap()),
+        Some(Waiting::PlanApproval)
+    );
+}
+
+#[test]
+fn a_replaced_session_file_folds_its_turns_again() {
+    let (home, rollout) = plan_home();
+    let proposed = read(home.path(), &plan_request()).unwrap();
+    // The file is replaced by one shorter than what was read: a rescan, so
+    // the previous turn's wait does not carry over.
+    let whole = std::fs::read_to_string(&rollout).unwrap();
+    let lines: Vec<&str> = whole.split_inclusive('\n').collect();
+    std::fs::write(&rollout, lines[..8].concat()).unwrap();
+    let rescanned = read(home.path(), &continued(&proposed)).unwrap();
+    assert!(rescanned.rescanned.is_some());
+    assert_eq!(waiting(&rescanned), Some(Waiting::Nothing));
 }

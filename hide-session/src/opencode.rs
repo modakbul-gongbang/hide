@@ -297,6 +297,7 @@ pub(crate) fn read(
         custom_title: None,
         pr_sightings: transcript.sightings,
         subagents: Default::default(),
+        turns: None,
     })
 }
 

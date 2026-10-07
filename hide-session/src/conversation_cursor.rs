@@ -229,6 +229,7 @@ impl ConversationCursor {
                 parsed.custom_title = line.custom_title;
             }
             parsed.pr_sightings.extend(line.pr_sightings);
+            parsed.turn_marks.extend(line.turn_marks);
             pending.clear();
         }
         parsed.links = found.finish();

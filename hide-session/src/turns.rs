@@ -1,0 +1,216 @@
+//! Whether an agent's last turn left it waiting for the operator, read from
+//! the structured records of its session file (PRD codex-plan-approval-hold
+//! D-01..D-04).
+//!
+//! The tracker knows no agent: an agent's line parser turns its own records
+//! into [`TurnMark`]s (today only Codex's, `codex_turn_mark`), and the
+//! tracker folds them into one derived fact, [`Waiting`], that the doorbell
+//! and the sidebar read without looking at the agent's kind. The caller keeps
+//! the tracker beside its read checkpoint and hands it back on the next read,
+//! so an incremental read continues the turn it was in.
+
+use serde::{Deserialize, Serialize};
+
+/// What the last turn leaves the operator to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Waiting {
+    /// The agent waits for nothing the operator must answer.
+    Nothing,
+    /// The agent proposed a plan and waits for the operator to approve it.
+    PlanApproval,
+}
+
+/// One structured record about a turn, as an agent's parser reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TurnMark {
+    /// A turn started; `plan` is whether it runs in plan mode.
+    Started { turn: Option<String>, plan: bool },
+    /// The turn proposed a plan.
+    Plan { turn: Option<String> },
+    /// The turn finished.
+    Completed { turn: Option<String> },
+    /// The turn was interrupted.
+    Aborted { turn: Option<String> },
+    /// A person's message.
+    Human,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Mode {
+    Plan,
+    Other,
+    /// The turn's start was not read (it began before where the read
+    /// started), so its mode is not known.
+    Unseen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum End {
+    Completed,
+    Aborted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Turn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    mode: Mode,
+    #[serde(default)]
+    plan: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    end: Option<End>,
+    /// A person wrote after the turn ended.
+    #[serde(default)]
+    answered: bool,
+}
+
+/// The last turn of a session as far as it has been read.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnTracker {
+    /// The offset of the first record not folded yet. A read that starts
+    /// earlier (a reader resuming at its anchor) folds nothing twice.
+    through: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last: Option<Turn>,
+}
+
+impl TurnTracker {
+    /// Folds the mark of the record at `offset`; a record before what was
+    /// already folded is ignored.
+    pub fn fold(&mut self, offset: u64, mark: &TurnMark) {
+        if offset < self.through {
+            return;
+        }
+        self.through = offset + 1;
+        match mark {
+            TurnMark::Started { turn, plan } => {
+                self.last = Some(Turn {
+                    id: turn.clone(),
+                    mode: if *plan { Mode::Plan } else { Mode::Other },
+                    plan: false,
+                    end: None,
+                    answered: false,
+                });
+            }
+            TurnMark::Plan { turn } => self.current(turn).plan = true,
+            TurnMark::Completed { turn } => {
+                let current = self.current(turn);
+                current.end = Some(End::Completed);
+                current.answered = false;
+            }
+            TurnMark::Aborted { turn } => self.current(turn).end = Some(End::Aborted),
+            TurnMark::Human => {
+                if let Some(turn) = self.last.as_mut().filter(|turn| turn.end.is_some()) {
+                    turn.answered = true;
+                }
+            }
+        }
+    }
+
+    /// What the last turn leaves the operator to do; `None` when the records
+    /// read do not settle it (a running turn whose mode was not plain, or a
+    /// finished plan whose turn's mode was not read).
+    pub fn waiting(&self) -> Option<Waiting> {
+        let Some(turn) = &self.last else {
+            return Some(Waiting::Nothing);
+        };
+        match (turn.end, turn.mode) {
+            (None, Mode::Other) => Some(Waiting::Nothing),
+            (None, Mode::Plan | Mode::Unseen) => None,
+            (Some(End::Aborted), _) => Some(Waiting::Nothing),
+            (Some(End::Completed), _) if turn.answered || !turn.plan => Some(Waiting::Nothing),
+            (Some(End::Completed), Mode::Plan) => Some(Waiting::PlanApproval),
+            (Some(End::Completed), Mode::Other) => Some(Waiting::Nothing),
+            (Some(End::Completed), Mode::Unseen) => None,
+        }
+    }
+
+    /// The turn a mark names: the last one when the ids agree or the mark
+    /// names none, otherwise a turn whose start was not read.
+    fn current(&mut self, id: &Option<String>) -> &mut Turn {
+        let same = match (&self.last, id) {
+            (Some(turn), Some(id)) => turn.id.as_ref().is_none_or(|known| known == id),
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if !same {
+            self.last = Some(Turn {
+                id: id.clone(),
+                mode: Mode::Unseen,
+                plan: false,
+                end: None,
+                answered: false,
+            });
+        }
+        self.last.as_mut().expect("a turn was just made")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(value: &str) -> Option<String> {
+        Some(value.to_owned())
+    }
+
+    fn folded(marks: &[TurnMark]) -> TurnTracker {
+        let mut tracker = TurnTracker::default();
+        for (offset, mark) in marks.iter().enumerate() {
+            tracker.fold(offset as u64 * 10, mark);
+        }
+        tracker
+    }
+
+    #[test]
+    fn a_finished_plan_turn_waits_until_a_person_writes_or_a_turn_starts() {
+        let plan = [
+            TurnMark::Started {
+                turn: id("t1"),
+                plan: true,
+            },
+            TurnMark::Human,
+            TurnMark::Plan { turn: id("t1") },
+            TurnMark::Completed { turn: id("t1") },
+        ];
+        assert_eq!(folded(&plan).waiting(), Some(Waiting::PlanApproval));
+
+        let mut answered = plan.to_vec();
+        answered.push(TurnMark::Human);
+        assert_eq!(folded(&answered).waiting(), Some(Waiting::Nothing));
+
+        let mut next = plan.to_vec();
+        next.push(TurnMark::Started {
+            turn: id("t2"),
+            plan: false,
+        });
+        assert_eq!(folded(&next).waiting(), Some(Waiting::Nothing));
+    }
+
+    #[test]
+    fn a_plan_whose_turn_start_was_not_read_is_unknown() {
+        let mut tracker = TurnTracker::default();
+        tracker.fold(0, &TurnMark::Plan { turn: id("t1") });
+        tracker.fold(10, &TurnMark::Completed { turn: id("t1") });
+        assert_eq!(tracker.waiting(), None);
+    }
+
+    #[test]
+    fn a_mark_already_folded_is_not_folded_again() {
+        let mut tracker = folded(&[
+            TurnMark::Started {
+                turn: id("t1"),
+                plan: true,
+            },
+            TurnMark::Plan { turn: id("t1") },
+            TurnMark::Completed { turn: id("t1") },
+        ]);
+        // A reader resuming at an earlier anchor sees the person's message
+        // that opened the turn again; it does not answer the plan.
+        tracker.fold(5, &TurnMark::Human);
+        assert_eq!(tracker.waiting(), Some(Waiting::PlanApproval));
+    }
+}
