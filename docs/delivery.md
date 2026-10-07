@@ -253,6 +253,8 @@ The core reads that from its own session sync of the host's Herdr, never from a 
 Nothing ends on uncertainty: a stream that lost events, a Herdr live handoff or restart and an unreachable Herdr publish no read until a fresh snapshot replaces it, a disconnected device publishes none, a sleeping or resumed agent keeps its pane, a registration on another Herdr socket of the same machine is not judged by this one's read, and a registration made after the snapshot was asked for waits until a read lists its pane.
 The delivery store ends it with the watches on it, as `hide agent end` does, and logs `agent.ended` once with the agent id, machine, pane and reason (`pane_left` or `pane_absent`); nothing reaches the screen.
 Removing a device retires its cached pane read and rejects late reads from its retired coordinator; removal does not prove its panes gone or end any registration or watch.
+Only the coordinator sharing the currently installed remote control connector may begin a pane read, publish delivery observations or replace the remote session and connection status.
+Each check holds the runtime lock through its write, including a second check after projecting a remote session; replacing the coordinator for the same device ID rejects the old one's late snapshot and failure, while the current coordinator may bootstrap before its first connected status.
 
 An agent started through Herdr directly bypasses Hide's responsibility record.
 The Claude Code and Codex `PreToolUse` spawn guard refuses such a call in a registered checkout and offers two filled commands: delegation with `--parent here`, or operator handoff without it ([agent-hooks.md](agent-hooks.md#the-spawn-guard)).
