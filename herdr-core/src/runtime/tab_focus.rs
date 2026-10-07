@@ -244,9 +244,10 @@ impl Runtime {
     /// returns the requests they answered, each move answering the earliest
     /// request on its tab with every request sent before it. A snapshot read
     /// outside the event stream has no moves and answers nothing; the
-    /// stream's next session brings them. When some were dropped, the tabs
-    /// newly active since the last session, and Herdr's focus arriving at a
-    /// tab, stand in for them, and the gap is recorded.
+    /// stream's next session brings them. When some were dropped while a
+    /// request waited, the tabs newly active since the last session, and
+    /// Herdr's focus arriving at a tab, stand in for them, and the gap is
+    /// recorded; with nothing waiting, a reconnect's new count is no gap.
     pub(super) fn take_tab_focus_answers(
         &mut self,
         herdr: &HerdrTabView,
@@ -275,6 +276,7 @@ impl Runtime {
                     }
                 }
             }
+            None if self.tab_focus_requests.is_empty() => {}
             None => {
                 crate::diagnostic!(serde_json::json!({
                     "component": "view_state",
