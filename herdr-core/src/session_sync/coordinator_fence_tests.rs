@@ -110,7 +110,7 @@ fn publish(context: &SessionSyncContext, replica: &mut SessionReplica) -> bool {
 fn install(runtime: &Arc<Mutex<Runtime>>, context: &SessionSyncContext) {
     let mut guard = runtime.lock().unwrap();
     guard.install_remote_control(live::RemoteControlContext::new(
-        DEVICE.into(),
+        DEVICE,
         Arc::clone(&context.api_connector),
         Arc::downgrade(runtime),
         ChangeNotifier::noop(),
@@ -192,7 +192,7 @@ impl Fixture {
     fn context(&self) -> SessionSyncContext {
         // Same device and endpoint, a fresh allocation just as each connect makes.
         SessionSyncContext::remote(
-            DEVICE.into(), DEVICE.into(), Arc::new(self.herdr.connector()),
+            DEVICE, DEVICE, Arc::new(self.herdr.connector()),
             Arc::downgrade(&self.runtime), ChangeNotifier::noop(),
         )
     }
