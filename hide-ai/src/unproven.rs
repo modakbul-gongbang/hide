@@ -62,14 +62,14 @@ mod tests {
     fn a_request_to_an_unproven_agent_is_refused_before_anything_runs() {
         let backend = UnprovenReadOnlyBackend::new(ProviderId::CURSOR);
         let request = AiRequest {
-            feature_id: "test",
+            feature_id: "test".into(),
             request_id: RequestId("r".to_owned()),
             subject_id: "s".to_owned(),
             system: String::new(),
             input: "transcript".to_owned(),
             output_schema: serde_json::json!({}),
             deadline: Duration::from_secs(1),
-            schema_version: "v1",
+            schema_version: "v1".into(),
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),

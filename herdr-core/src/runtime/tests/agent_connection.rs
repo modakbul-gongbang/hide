@@ -260,6 +260,7 @@ fn with_live(runtime: &mut Runtime) {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
 }
 
@@ -845,6 +846,7 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
             runtime: Arc::downgrade(&shared),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
+            node: Arc::new(hide_node::Local::of_process()),
         });
         assert!(reopen(&mut runtime, "w1:p2"));
         assert_eq!(

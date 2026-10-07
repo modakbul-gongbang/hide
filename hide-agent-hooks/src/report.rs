@@ -320,11 +320,7 @@ mod tests {
         assert_eq!(failure.pane_id, "w1:p1");
         assert_eq!(failure.event, "SessionStart");
         assert_eq!(failure.socket_path, socket.display().to_string());
-        assert!(
-            failure.error.contains("not running"),
-            "{}",
-            failure.error
-        );
+        assert!(failure.error.contains("not running"), "{}", failure.error);
         assert!(failure.message().contains("w1:p1"));
 
         record_outcome(&root, "w1:p1", HookEvent::Stop, &socket, &Ok(())).expect("clear");
