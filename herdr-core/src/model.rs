@@ -877,7 +877,7 @@ impl KitSnapshot {
                 .codex_daemon_off
                 .as_ref()
                 .map(|outcome| match outcome {
-                    hide_kit::CodexDaemonOff::Done => CodexDaemonOffSnapshot::Done,
+                    hide_kit::CodexDaemonOff::Done { .. } => CodexDaemonOffSnapshot::Done,
                     hide_kit::CodexDaemonOff::Failed { reason, .. } => {
                         CodexDaemonOffSnapshot::Failed { reason: *reason }
                     }

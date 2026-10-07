@@ -365,6 +365,8 @@ It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by no
 
 `can_reopen` is false for `setup_needed` and for a pane on another device, because a Reopen restarts the session through this Mac's Herdr.
 The shared server is the machine's last kit read (`KitSnapshot::shares_codex_server`): a read that says the setting is on, or that a daemon still answers with the setting off, is what turns a Codex pane's reason into the shared server, and a later read that says neither turns it back into `started_before_hide` at once (PRD codex-daemon-apply D-07, B9).
+A kit read happens at launch and on each device connection, on a Reinstall, when a Settings tab showing the kit opens and on this Mac every 5 seconds while it stays open, and in the answer to a turn-off request.
+Nothing else polls for a daemon, so one that another app starts later reaches the pane's reason at the next of those reads, not live.
 
 Reopen is one event, `pane_reopen { pane_id }`, and reuses the session-sleep path rather than a second one: the agent is ended the way sleep ends it and started again in the same pane with its own resume arguments, a Codex with `--no-daemon` first (`herdr-core/src/pane_reopen.rs`).
 Everything knowable before the agent is touched is refused before it is touched, so a refusal known at that point leaves the pane as it was: an agent that is working or waiting (`agent_busy`), a session Herdr never reported an id for or one with no resume arguments (`session_gone`), a Codex whose capability was never read (`codex_unread`), and a folder that is gone (`start_refused`).

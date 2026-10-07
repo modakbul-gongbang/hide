@@ -596,7 +596,10 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
     assert_eq!(off_of(&runtime), Some(Off::Pending));
     runtime.ingest_kit_report(
         crate::workspace::LOCAL_DEVICE_ID,
-        &report_with(false, Some(hide_kit::CodexDaemonOff::Done)),
+        &report_with(
+            false,
+            Some(hide_kit::CodexDaemonOff::Done { no_daemon: None }),
+        ),
     );
     assert_eq!(off_of(&runtime), Some(Off::Done));
     assert_eq!(
@@ -626,12 +629,23 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
     runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
     kit_rows(&mut runtime, Some(false));
     feed(&mut runtime, &[("w1:p1", "codex", false)]);
-    let reason = |runtime: &Runtime| connection_of(runtime, "w1:p1").and_then(|connection| connection.reason);
-    assert_eq!(reason(&runtime), Some(PaneConnectionReason::StartedBeforeHide));
-    assert!(!disable(&mut runtime, "local"), "nothing answers: nothing to turn off");
+    let reason = |runtime: &Runtime| {
+        connection_of(runtime, "w1:p1").and_then(|connection| connection.reason)
+    };
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::StartedBeforeHide)
+    );
+    assert!(
+        !disable(&mut runtime, "local"),
+        "nothing answers: nothing to turn off"
+    );
 
     runtime.ingest_kit_report(local, &read(Some(true), None));
-    assert_eq!(reason(&runtime), Some(PaneConnectionReason::CodexSharedServer));
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::CodexSharedServer)
+    );
     assert!(disable(&mut runtime, "local"));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
 
@@ -651,12 +665,27 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
             reason: hide_kit::CodexDaemonOffFailure::StopFailed
         })
     );
-    assert_eq!(reason(&runtime), Some(PaneConnectionReason::CodexSharedServer));
-    assert!(disable(&mut runtime, "local"), "a failed stop can be asked again");
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::CodexSharedServer)
+    );
+    assert!(
+        disable(&mut runtime, "local"),
+        "a failed stop can be asked again"
+    );
 
-    runtime.ingest_kit_report(local, &read(Some(false), Some(hide_kit::CodexDaemonOff::Done)));
+    runtime.ingest_kit_report(
+        local,
+        &read(
+            Some(false),
+            Some(hide_kit::CodexDaemonOff::Done { no_daemon: None }),
+        ),
+    );
     assert_eq!(off_of(&runtime), Some(Off::Done));
-    assert_eq!(reason(&runtime), Some(PaneConnectionReason::StartedBeforeHide));
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::StartedBeforeHide)
+    );
     assert!(!disable(&mut runtime, "local"));
 }
 

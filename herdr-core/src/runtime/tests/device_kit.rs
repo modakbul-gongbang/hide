@@ -1379,7 +1379,7 @@ fn turning_a_devices_codex_shared_server_off_is_one_helper_call_with_its_own_ans
     assert_eq!(kit(&shared).codex_daemon_on, Some(true));
 
     let mut done = with_daemon(false);
-    done.codex_daemon_off = Some(hide_kit::CodexDaemonOff::Done);
+    done.codex_daemon_off = Some(hide_kit::CodexDaemonOff::Done { no_daemon: None });
     *helper.answer.lock().unwrap() = Ok(done);
     dispatch(
         &shared,
@@ -1488,7 +1488,7 @@ fn wait_for_calls(helper: &KitDevice, count: usize) {
 fn shared_server(running: bool, off: Option<hide_kit::CodexDaemonOff>) -> KitReport {
     KitReport {
         codex_daemon: Some(true),
-        codex_daemon_on: Some(!matches!(off, Some(hide_kit::CodexDaemonOff::Done))),
+        codex_daemon_on: Some(!matches!(off, Some(hide_kit::CodexDaemonOff::Done { .. }))),
         codex_daemon_running: Some(running),
         codex_daemon_off: off,
         ..KitReport::default()
@@ -1513,7 +1513,10 @@ fn turn_offs(helper: &KitDevice) -> usize {
 }
 
 fn records_of(records: &[serde_json::Value], kind: &str) -> usize {
-    records.iter().filter(|record| record["kind"] == kind).count()
+    records
+        .iter()
+        .filter(|record| record["kind"] == kind)
+        .count()
 }
 
 /// PRD codex-daemon-apply B11: the confirmation named what disconnects now,
@@ -1536,10 +1539,28 @@ fn a_turn_off_for_a_device_whose_helper_is_away_is_refused_into_the_log() {
             serde_json::json!({ "device_id": DEVICE }),
         ));
     });
-    assert_eq!(records_of(&records, "codex_daemon_off.refused"), 1, "{records:?}");
+    assert_eq!(
+        records_of(&records, "codex_daemon_off.refused"),
+        1,
+        "{records:?}"
+    );
     assert_eq!(kit(&shared).codex_daemon_off, None);
-    assert!(shared.lock().unwrap().snapshot().status.last_error.is_none());
-    assert!(!shared.lock().unwrap().device_kit_pending.contains_key(DEVICE));
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot()
+            .status
+            .last_error
+            .is_none()
+    );
+    assert!(
+        !shared
+            .lock()
+            .unwrap()
+            .device_kit_pending
+            .contains_key(DEVICE)
+    );
 }
 
 /// B11: a connection that ends before the worker takes the turn-off drops
@@ -1575,7 +1596,11 @@ fn a_turn_off_confirmed_on_one_connection_never_runs_on_the_next() {
         let generation = runtime.device_host_generation(DEVICE);
         runtime.ingest_host_closed(DEVICE, generation, "connection lost".to_owned());
     });
-    assert_eq!(records_of(&records, "codex_daemon_off.dropped"), 1, "{records:?}");
+    assert_eq!(
+        records_of(&records, "codex_daemon_off.dropped"),
+        1,
+        "{records:?}"
+    );
     assert_eq!(
         kit(&shared).codex_daemon_off,
         Some(Off::Failed {
@@ -1599,7 +1624,7 @@ fn a_late_answer_for_a_turn_off_run_that_settled_changes_nothing() {
     use crate::model::CodexDaemonOffSnapshot as Off;
     let helper = KitDevice::answering(Ok(shared_server(
         false,
-        Some(hide_kit::CodexDaemonOff::Done),
+        Some(hide_kit::CodexDaemonOff::Done { no_daemon: None }),
     )));
     let shared = with_consent(Some(Arc::clone(&helper)));
     shared

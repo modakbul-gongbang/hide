@@ -585,8 +585,14 @@ pub fn status(target: &KitTarget) -> KitReport {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CodexDaemonOff {
     /// Codex answered that autostart is off, a read afterwards agrees, and
-    /// no daemon answers any more.
-    Done,
+    /// no daemon answers any more. `no_daemon` is what the version command
+    /// said when no daemon answered before the stop, so nothing was stopped;
+    /// it is for the core's log only, so a transient failure that read as
+    /// "no daemon" stays visible.
+    Done {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        no_daemon: Option<String>,
+    },
     /// `reason` is a code the screen turns into a line; `detail` is Codex's
     /// own words, for the core's log only. Only `StopFailed` leaves the
     /// setting off; every other reason leaves it as it was.
@@ -623,7 +629,7 @@ pub enum CodexDaemonOffFailure {
 /// operator confirmed.
 fn turn_codex_daemon_off(target: &KitTarget) -> CodexDaemonOff {
     use hide_agent_hooks::codex_daemon::{
-        DaemonSetting, SwitchFailure, read_setting, stop, turn_off,
+        DaemonSetting, Stopped, SwitchFailure, read_setting, stop, turn_off,
     };
     let failed = |reason, detail: String| CodexDaemonOff::Failed { reason, detail };
     let Some(codex) = target.codex.as_deref() else {
@@ -654,7 +660,10 @@ fn turn_codex_daemon_off(target: &KitTarget) -> CodexDaemonOff {
         Err(message) => return failed(CodexDaemonOffFailure::CodexRefused, message),
     }
     match stop(codex, &target.home, &target.stop) {
-        Ok(_) => CodexDaemonOff::Done,
+        Ok(Stopped::Stopped) => CodexDaemonOff::Done { no_daemon: None },
+        Ok(Stopped::AlreadyStopped { answer }) => CodexDaemonOff::Done {
+            no_daemon: Some(answer),
+        },
         Err(message) => failed(CodexDaemonOffFailure::StopFailed, message),
     }
 }

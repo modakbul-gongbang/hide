@@ -1167,7 +1167,14 @@ fn the_operators_request_turns_the_shared_daemon_off_once_and_says_so() {
 
     let report = apply(&fixture.target, &Scope::codex_daemon_off());
 
-    assert_eq!(report.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert!(
+        matches!(
+            &report.codex_daemon_off,
+            Some(CodexDaemonOff::Done { no_daemon: Some(_) })
+        ),
+        "{:?}",
+        report.codex_daemon_off
+    );
     assert_eq!(fixture.daemon_setting(), "false");
     assert_eq!(
         fixture.codex_writes(),
@@ -1194,21 +1201,42 @@ fn the_operators_request_also_stops_the_running_daemon_once() {
 
     let report = apply(&fixture.target, &Scope::codex_daemon_off());
 
-    assert_eq!(report.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert_eq!(
+        report.codex_daemon_off,
+        Some(CodexDaemonOff::Done { no_daemon: None })
+    );
     assert_eq!(fixture.daemon_setting(), "false");
     assert!(!fixture.daemon_running());
     assert_eq!(fixture.daemon_stops(), 1);
     assert_eq!(report.codex_daemon_running, Some(false));
 
     let again = apply(&fixture.target, &Scope::codex_daemon_off());
-    assert_eq!(again.codex_daemon_off, Some(CodexDaemonOff::Done));
-    assert_eq!(fixture.daemon_stops(), 1, "a daemon that is down is not stopped again");
+    assert!(
+        matches!(
+            &again.codex_daemon_off,
+            Some(CodexDaemonOff::Done { no_daemon: Some(_) })
+        ),
+        "{:?}",
+        again.codex_daemon_off
+    );
+    assert_eq!(
+        fixture.daemon_stops(),
+        1,
+        "a daemon that is down is not stopped again"
+    );
 
     // No daemon running: autostart goes off and nothing is stopped.
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     let report = apply(&fixture.target, &Scope::codex_daemon_off());
-    assert_eq!(report.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert!(
+        matches!(
+            &report.codex_daemon_off,
+            Some(CodexDaemonOff::Done { no_daemon: Some(_) })
+        ),
+        "{:?}",
+        report.codex_daemon_off
+    );
     assert_eq!(fixture.daemon_stops(), 0);
 }
 
@@ -1228,13 +1256,20 @@ fn a_stop_that_does_not_take_effect_is_stop_failed_and_a_retry_only_stops() {
     };
     assert_eq!(reason, CodexDaemonOffFailure::StopFailed);
     assert!(detail.contains("permission denied"), "{detail}");
-    assert_eq!(fixture.daemon_setting(), "false", "autostart is off already");
+    assert_eq!(
+        fixture.daemon_setting(),
+        "false",
+        "autostart is off already"
+    );
     assert!(fixture.daemon_running());
     assert_eq!(report.codex_daemon_running, Some(true));
 
     std::fs::remove_file(fixture.home().join("daemon-stop-fails")).unwrap();
     let retry = apply(&fixture.target, &Scope::codex_daemon_off());
-    assert_eq!(retry.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert_eq!(
+        retry.codex_daemon_off,
+        Some(CodexDaemonOff::Done { no_daemon: None })
+    );
     assert!(!fixture.daemon_running());
     assert_eq!(fixture.daemon_setting(), "false");
 

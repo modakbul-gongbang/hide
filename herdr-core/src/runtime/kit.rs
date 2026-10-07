@@ -857,12 +857,13 @@ impl Runtime {
             .host_consent
             .and_then(|consent| consent.cli_dir)
             .unwrap_or_else(|| self.host_cli_dir.clone());
-        let daemon_off_run = matches!(&job, KitJob::Apply(scope) if scope.codex_daemon_off).then(|| {
-            self.codex_daemon_off_runs += 1;
-            self.codex_daemon_off_running
-                .insert(device_id.to_owned(), self.codex_daemon_off_runs);
-            self.codex_daemon_off_runs
-        });
+        let daemon_off_run =
+            matches!(&job, KitJob::Apply(scope) if scope.codex_daemon_off).then(|| {
+                self.codex_daemon_off_runs += 1;
+                self.codex_daemon_off_running
+                    .insert(device_id.to_owned(), self.codex_daemon_off_runs);
+                self.codex_daemon_off_runs
+            });
         Some(DeviceKitCall {
             work: DeviceKitWork::Job(job),
             channel,

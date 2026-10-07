@@ -90,13 +90,17 @@ pub enum SwitchFailure {
 /// setting is changed only when Codex says it did: a refusal, a timeout and
 /// a stop leave it as it was.
 pub fn turn_off(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<(), SwitchError> {
-    let finished =
-        run(codex, home, &["features", "disable", DAEMON_FEATURE], DEADLINE, stop).map_err(|error| {
-            SwitchError {
-                failure: error.failure,
-                message: error.message,
-            }
-        })?;
+    let finished = run(
+        codex,
+        home,
+        &["features", "disable", DAEMON_FEATURE],
+        DEADLINE,
+        stop,
+    )
+    .map_err(|error| SwitchError {
+        failure: error.failure,
+        message: error.message,
+    })?;
     if finished.succeeded() {
         Ok(())
     } else {
@@ -112,6 +116,12 @@ pub fn turn_off(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<(), Swit
 /// never starts one. An exit-0 answer Hide cannot read is an error, never a
 /// daemon that is down.
 pub fn daemon_running(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<bool, String> {
+    daemon_answer(codex, home, stop).map(|answer| answer.is_none())
+}
+
+/// `None` while a daemon answers; otherwise what the version command said
+/// instead, so a failure that only looked like "no daemon" stays in the log.
+fn daemon_answer(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Option<String>, String> {
     let finished = run(
         codex,
         home,
@@ -120,14 +130,19 @@ pub fn daemon_running(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<bo
         stop,
     )?;
     if !finished.succeeded() {
-        return Ok(false);
+        return Ok(Some(failed(codex, "app-server daemon version", &finished)));
     }
-    parse_daemon_status(&finished.stdout).ok_or_else(|| {
-        format!(
+    match parse_daemon_status(&finished.stdout) {
+        Some(true) => Ok(None),
+        Some(false) => Ok(Some(format!(
+            "codex app-server daemon version answered: {}",
+            finished.stdout.trim()
+        ))),
+        None => Err(format!(
             "codex app-server daemon version printed an answer Hide cannot read: {}",
             finished.stdout.trim().lines().next().unwrap_or_default()
-        )
-    })
+        )),
+    }
 }
 
 fn parse_daemon_status(stdout: &str) -> Option<bool> {
@@ -136,12 +151,14 @@ fn parse_daemon_status(stdout: &str) -> Option<bool> {
 }
 
 /// What [`stop`] found.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Stopped {
     /// A daemon answered and Hide stopped it.
     Stopped,
     /// No daemon answered, so nothing was stopped (engineering rule 11).
-    AlreadyStopped,
+    /// `answer` is what the version command said, for the log: a transient
+    /// failure reads as no daemon, and this keeps it visible.
+    AlreadyStopped { answer: String },
 }
 
 /// Stops the shared daemon, which disconnects every Codex attached to it;
@@ -150,8 +167,8 @@ pub enum Stopped {
 /// and asked again after, so a daemon that answers then (another app or a
 /// `daemon bootstrap` manager started it again) is a failure, not a stop.
 pub fn stop(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Stopped, String> {
-    if !daemon_running(codex, home, stop)? {
-        return Ok(Stopped::AlreadyStopped);
+    if let Some(answer) = daemon_answer(codex, home, stop)? {
+        return Ok(Stopped::AlreadyStopped { answer });
     }
     let finished = run(
         codex,
@@ -449,10 +466,16 @@ mod tests {
             ]
         );
 
-        // The same apply again finds nothing to stop and stops nothing.
-        assert_eq!(
-            stop(&codex, home.path(), &quitting),
-            Ok(Stopped::AlreadyStopped)
+        // The same apply again finds nothing to stop and stops nothing, and
+        // says what the version command answered, exit code included.
+        let Ok(Stopped::AlreadyStopped { answer }) = stop(&codex, home.path(), &quitting) else {
+            panic!("a second stop found a daemon");
+        };
+        assert!(
+            answer.ends_with(
+                "app-server daemon version exited with code 1: Error: failed to connect"
+            ),
+            "{answer}"
         );
         assert_eq!(
             calls(home.path())

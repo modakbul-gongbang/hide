@@ -149,7 +149,7 @@ it("explains the shared server, asks before turning it off and stopping it, and 
   await act(async () => { useShellStore.setState(snapshot({ state: "done" }) as never); });
   await render(pane(not({ reason: "started_before_hide" })));
   expect(document.querySelector("[data-codex-shared-server-outcome]")?.getAttribute("data-codex-shared-server-outcome")).toBe("done");
-  expect(popover()?.textContent).toContain("Codex's shared server is off and stopped.");
+  expect(popover()?.textContent).toContain("Codex's shared server is off.");
   await unmount();
 });
 
