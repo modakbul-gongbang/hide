@@ -77,6 +77,9 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
 
 Herdr's `blocked` status guards every permission and selection menu Herdr reads as `blocked`, so only kinds whose menus were observed to read `blocked` are bell targets.
 Today those are Claude Code and Codex.
+Repeat the complete scene matrix with the [local measurement tool](VERIFICATION.md#local-agent-bell-measurement) before enabling another target or relying on a result after a Herdr or agent CLI update.
+Its ignored run report records active detection-manifest versions and native outcomes, including unsafe picker/startup effects and unknown cells.
+The adapter declaration is a reviewed product decision; the tool never changes it automatically.
 Claude Code's plan approval reads `blocked`; Codex's does not, and the session read guards it instead (next section).
 Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); OpenCode, Pi and every other kind keep today's behavior, with letters read through `hide inbox` or a prompt hook.
 Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.

@@ -136,6 +136,52 @@ Run it only in an agreed foreground QA slot, using `pnpm --dir desktop exec play
 Record the candidate PID/window, private daemon/server/profile and build head beside the captures.
 Compare any temporary weak-blur proposal against the readable treatment in the actual terminal, document and native page, with idle and driven measurements, before choosing it.
 
+## Local agent bell measurement
+
+Run `python3 scripts/agent-live-check.py --agents codex --model codex=gpt-6-luna` before proposing a new bell target, after changing the pinned Herdr, and after a substantial agent CLI update.
+Omitting `--agents` selects every adapter declared by the current source.
+Confirm the cheapest suitable model for the logged-in account and pass `--model ID=MODEL`; recipe defaults can become unavailable.
+Fetch the pinned binary with `scripts/fetch-herdr-runtime.sh` first, and build this worktree's `hided` and `hide` with `bash scripts/verify-cargo.sh build -p hided`.
+The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
+
+The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and checks their registration through the candidate `hide workspace info` from their actual shells.
+It never opens a renderer or controls the installed app.
+Native agents keep the operator HOME for existing login.
+Authenticated probing currently requires macOS `sandbox-exec`; a real write/socket denial self-test must pass before a provider starts.
+Unsupported hosts fail closed.
+`--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
+
+Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.
+The tool checks scene arrival independently of Herdr status, types the exact current bell and Enter only when the observed status is not `blocked`, then observes the effect.
+Approval work stays within `probe-N.txt` in the disposable checkout.
+A confirmed selection, approval, session replacement, settings write or unsubmitted draft is unsafe, even when other scenes remain unknown.
+An unrecognized, inaccessible or timed-out scene never counts as safe.
+These direct input experiments measure the CLI and Herdr detection boundary; they do not replace the core's draft, session, identity or plan-approval guards.
+
+Each new private `agents/runs/live-check-<timestamp>-<id>/` contains `report.md`, `report.json`, screen reads and private configuration backups.
+Reports record the actual binary digests, Herdr version, active server manifest versions and sources, CLI versions, selected models and positively observed native integration provenance.
+Missing provenance is explicit, not inferred from an installed file.
+Known configuration/trust files are backed up byte for byte with private permissions.
+Full configuration trees are inventoried; large files and history files use bounded metadata rather than reading their private contents.
+The native sandbox denies operator configuration writes and modification of preexisting histories.
+Unexpected or concurrent configuration changes are preserved and fail the run; observing a diff never authorizes overwriting the operator.
+Only the test lane's exclusively owned disposable HOME permits attributed restoration.
+
+Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.
+The preparation prompt and helper output contain no marker, and the native sandbox denies reading the controller's marker receipt.
+Typed text, hook installation, a tool's output and transport arrival alone are insufficient.
+Unknown native conversation formats, permission holds and unavailable integration remain unknown delivery.
+No unavailable CLI or unauthenticated account is a safety PASS; the table retains its login instruction without attempting login.
+
+Exit 1 identifies an unsafe scene for a source-declared bell target; exit 2 reports isolation, configuration, resource or cleanup failure; exit 3 reports incomplete measurement; exit 0 means the selected rows were fully measured without a target safety failure.
+A result applies only to its recorded versions, manifests, model, environment and reached scenes.
+It does not prove a different provider/model/version, a different remote manifest, or release readiness.
+Report the actual native result and its unknown/skipped cells in PR Evidence; never commit these run artifacts.
+
+CI runs `web/e2e/agent-live-check.spec.ts` with the existing compiled Claude/Codex shim on real pinned Herdr and candidate hided.
+The fixture report is marked synthetic and proves tool plumbing, not authenticated model behavior.
+`scripts/tests/test_agent_live_protection.py` exercises real filesystem recovery/conflicts, OS denial, timeout/output caps and owner-death cleanup; `test_agent_live_results.py` challenges unsafe verdicts and false delivery evidence.
+
 ## A device check
 
 `desktop/e2e/remote-workspace.spec.ts` covers remote routes and `desktop/e2e/device-kit.spec.ts` the install kit against an isolated SSH server; a check against a real device is for what those specs cannot reach.

@@ -51,12 +51,16 @@ class WriteSandbox:
                  '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))',
                  '(deny network-outbound (remote unix-socket))',
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.sockets)})))",
-                 f"(allow network-outbound (remote unix-socket (subpath {quote(self.run)})))"]
+                 f"(allow network-outbound (remote unix-socket (subpath {quote(self.run)})))",
+                 f"(deny file-read* (subpath {quote(self.probe / '.letter-proof')}))"]
         for path in existing:
             # A literal protects the existing inode, including directory mode
             # and deletion. New child paths still use the session allowance.
             rules.append(f"(deny file-write* (literal {quote(path)}))")
-        for path in (operator_home / ".hide", operator_home / ".config/herdr"):
+        # Installed hook executables may live in .hide/kit. They remain
+        # readable; only operator routing/credentials are concealed.
+        for path in (operator_home / ".hide/state", operator_home / ".hide/hcoord",
+                     operator_home / ".config/herdr"):
             rules.append(f"(deny file-read* (subpath {quote(path.resolve())}))")
         self.profile = self.run / "native-write-guard.sb"
         write_private(self.profile, ("\n".join(rules) + "\n").encode())

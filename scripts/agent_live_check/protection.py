@@ -130,14 +130,15 @@ def fingerprint(roots: list[Path], histories: list[Path] | None = None) -> dict[
                     if len(result) + len(pending) > MAX_CONFIG_FILES:
                         raise ProtectionError("config_tree_file_budget")
         elif stat.S_ISREG(info.st_mode):
-            if any(beneath(path, history) for history in histories):
+            if info.st_size > MAX_BACKUP_BYTES or any(beneath(path, history) for history in histories):
                 # History contents may be large and contain private prompts.
                 # Existing histories are immutable in the native sandbox; the
                 # full tree inventory records retained additions and changes.
-                result[name] = {"kind": "history", "size": info.st_size,
+                result[name] = {"kind": "metadata", "size": info.st_size,
                                 "mtime_ns": info.st_mtime_ns,
                                 "ctime_ns": info.st_ctime_ns,
-                                "mode": stat.S_IMODE(info.st_mode)}
+                                "mode": stat.S_IMODE(info.st_mode),
+                                "identity": [info.st_dev, info.st_ino]}
                 continue
             total += info.st_size
             if total > MAX_CONFIG_BYTES:
@@ -248,5 +249,11 @@ class ConfigGuard:
         directory_changes = [{"path": key, "kind": "added" if key not in self.inventory else "removed" if key not in after else "changed"}
                              for key in sorted(self.inventory.keys() | after.keys())
                              if self.inventory.get(key) != after.get(key)]
+        known_names = {str(path) for path in self.known}
+        for change in directory_changes:
+            path = Path(change["path"])
+            if (change["path"] not in known_names
+                    and not any(beneath(path, history) for history in self.histories)):
+                failures.append({"path": change["path"], "reason": "configuration_tree_change_preserved"})
         return {"restored": changes, "failures": failures,
                 "directory_changes": directory_changes}
