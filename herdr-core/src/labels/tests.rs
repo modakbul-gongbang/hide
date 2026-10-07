@@ -689,7 +689,7 @@ impl crate::node_access::NodeLink for OlderHelper {
 }
 
 /// The device helper in process, reading transcripts under its own HOME
-/// (the harness's), as `hide-host-helper` does under the device's.
+/// (the harness's), as `hided node serve` does under the device's.
 struct HelperAt(PathBuf);
 
 impl crate::node_access::NodeLink for HelperAt {

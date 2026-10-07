@@ -1,10 +1,10 @@
-//! A device's file host: `hide-host-helper` serving the `hide_host` contract
+//! A device's node: `hided node serve` answering the `hide_host` contract
 //! over one SSH exec channel (PRD S5.5 D-05, D-20, D-23).
 //!
 //! Nothing here runs without the operator's consent for that device, recorded
 //! on its registration and bound to the SSH identity the helper was first
 //! allowed on. The helper is installed (or replaced by a newer build) under the
-//! consented install root, started with `serve` on an exec channel of a
+//! consented install root, started with `node serve` on an exec channel of a
 //! dedicated SSH connection, and ends when that connection does: there is no
 //! daemon, no listening socket and no background install.
 //!
@@ -81,7 +81,9 @@ pub const DEFAULT_CLI_DIR: &str = "~/.local/bin";
 pub const MAX_RUNNING: usize = hide_host::serve::CONCURRENCY;
 pub const MAX_QUEUED: usize = 32;
 
-const HELPER_NAME: &str = "hide-host-helper";
+/// This program, which a device runs in its node role (`hided node serve`,
+/// PRD core-host-node D-02).
+const HELPER_NAME: &str = "hided";
 /// The pane-side Workspace CLI, the same `hide` this daemon ships, so a
 /// device's panes can reach this Hide through their return route.
 const CLI_NAME: &str = "hide";
@@ -110,9 +112,9 @@ impl HelperPackages {
     }
 
     /// The build for `os`/`arch` (Rust's names: `macos`, `aarch64`). A
-    /// `hide-host-helper-<os>-<arch>` file wins; an unsuffixed
-    /// `hide-host-helper` is accepted only for this daemon's own platform,
-    /// which is what a development build produces.
+    /// `hided-<os>-<arch>` file wins; an unsuffixed `hided` is accepted only
+    /// for this daemon's own platform, which is what the package and a
+    /// development build carry: the daemon's own program.
     pub fn find(&self, os: &str, arch: &str) -> Result<PathBuf, String> {
         self.find_named(HELPER_NAME, os, arch).map_err(|()| {
             format!(
@@ -762,7 +764,7 @@ pub fn establish(
 /// The refusal is the device's unavailable reason. A device always runs the
 /// helper this Hide carries, installed by the digest of its bytes, so only a
 /// rebuilt or reinstalled Hide clears it: a development `hided` carries the
-/// `hide-host-helper` beside its own executable (`host_helper_dir`), and a
+/// `hided` it runs as (`host_helper_dir`), and a
 /// stale build there is installed and refused again on every connection.
 fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
     (hello.protocol != PROTOCOL_VERSION).then(|| {
@@ -834,7 +836,7 @@ async fn start_helper(
         EstablishError::Helper(format!("The helper channel could not be opened: {error}"))
     })?;
     channel
-        .exec(true, format!("{} serve", shell_quote(&helper_path)))
+        .exec(true, format!("{} node serve", shell_quote(&helper_path)))
         .await
         .map_err(|error| {
             EstablishError::Helper(format!("The helper could not be started: {error}"))
@@ -1775,7 +1777,7 @@ mod tests {
             vec![
                 ("hide".to_owned(), true),
                 ("hide-agent-hooks".to_owned(), true),
-                ("hide-host-helper".to_owned(), true),
+                ("hided".to_owned(), true),
             ]
         );
         assert_ne!(full.version(), bare.version());
@@ -1795,10 +1797,7 @@ mod tests {
             0o755,
         );
         let other = packages.payload(os, other_arch).unwrap();
-        assert_eq!(
-            relative(&other),
-            vec![("hide-host-helper".to_owned(), true),]
-        );
+        assert_eq!(relative(&other), vec![("hided".to_owned(), true),]);
         assert_eq!(other.missing.len(), 2, "{:?}", other.missing);
     }
 

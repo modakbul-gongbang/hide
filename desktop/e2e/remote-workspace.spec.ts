@@ -275,7 +275,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     // the supervisor down, a new one opens, and the pane reaches its
     // Workspace again through the same installed command.
     const firstBridges = liveBridges(bridge);
-    const serving = spawnSync("pgrep", ["-f", `${path.basename(run.root)}/remote-helper/.*/hide-host-helper serve`], { encoding: "utf8" })
+    const serving = spawnSync("pgrep", ["-f", `${path.basename(run.root)}/remote-helper/.*/hided node serve`], { encoding: "utf8" })
       .stdout.trim().split("\n").filter(Boolean);
     expect(serving).toHaveLength(1);
     process.kill(Number(serving[0]), "SIGTERM");

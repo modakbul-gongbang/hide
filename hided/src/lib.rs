@@ -18,6 +18,7 @@ pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;
+pub mod node_cli;
 
 pub mod pane_auth;
 pub mod remote_bridge;

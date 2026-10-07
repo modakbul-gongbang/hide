@@ -404,7 +404,7 @@ impl Fixture {
         let source_cli = std::env::var_os("HIDE_E2E_CLI_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| repository.join("target/debug"));
-        for name in ["hide", "hided", "hide-agent-hooks", "hide-host-helper"] {
+        for name in ["hide", "hided", "hide-agent-hooks"] {
             ensure!(
                 source_cli.join(name).is_file(),
                 "build this worktree's CLI binaries before remote_delivery"
@@ -431,7 +431,7 @@ impl Fixture {
         // Never strip the worktree's build output or another candidate.
         let cli = root.join("cli");
         fs::create_dir(&cli)?;
-        for name in ["hide", "hided", "hide-agent-hooks", "hide-host-helper"] {
+        for name in ["hide", "hided", "hide-agent-hooks"] {
             let staged = cli.join(name);
             fs::copy(source_cli.join(name), &staged)?;
             let mut strip = local_env.command("/usr/bin/strip");

@@ -1,5 +1,5 @@
 // Packages the release app for the system this runs on: the Electron host
-// with the release daemon, the hide CLI, the hook and device helpers, the
+// with the release daemon, the hide CLI, the hook helper, the
 // pinned Herdr in its resources folder, archived beside a SHA-256
 // checksum (the Electron release app PRD, D-03 and D-08).
 //
@@ -9,8 +9,9 @@
 // built on its own system, because the release binaries come from that
 // system's cargo build; nothing is cross-built.
 //
-// The CLI finds `hided` beside its own file and the daemon offers the device
-// helper from its own directory, so all of them ship flat in the resources
+// The CLI finds `hided` beside its own file and the daemon offers its own
+// program to a device, which runs it as `hided node serve`, so all of them
+// ship flat in the resources
 // folder. A binary that is missing or cannot run stops the build here, by
 // name, before any app exists (B12); nothing is substituted.
 
@@ -88,7 +89,6 @@ const system = SYSTEMS[platform];
 if (!system) throw new Error(`hide has no package for ${platform}`);
 const arch = process.arch;
 if (arch !== system.arch) throw new Error(`the pinned Herdr serves ${system.label} ${system.arch} only, and this machine is ${arch}`);
-const helperArch = { arm64: "aarch64", x64: "x86_64" }[arch];
 const exe = platform === "win32" ? ".exe" : "";
 const version = resolveVersion();
 
@@ -116,7 +116,6 @@ const shipped = [
   [`hided${exe}`, path.join(release, `hided${exe}`)],
   [`hide${exe}`, path.join(release, `hide${exe}`)],
   [`hide-agent-hooks${exe}`, path.join(release, `hide-agent-hooks${exe}`)],
-  [`hide-host-helper-${system.label}-${helperArch}${exe}`, path.join(release, `hide-host-helper${exe}`)],
   [`herdr${exe}`, herdr.executable],
 ];
 const missing = shipped.filter(([, source]) => {

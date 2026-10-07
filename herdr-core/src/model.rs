@@ -23,7 +23,7 @@ pub struct CoreOptions {
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
     pub app_state_path: String,
-    /// The folder holding `hide-host-helper` builds for devices. Absent in a
+    /// The folder holding the program builds devices run (`hided node serve`). Absent in a
     /// shell that serves no device files, which
     /// leaves every device's host `unsupported` with that reason.
     #[serde(default)]

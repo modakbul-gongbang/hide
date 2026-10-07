@@ -159,7 +159,9 @@ fn device_runtime(
                     phase: hosts::HostPhase::Ready {
                         host: helper,
                         platform: "macos aarch64".to_owned(),
-                        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hide-host-helper".to_owned(),
+                        helper_path:
+                            "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided"
+                                .to_owned(),
                     },
                     generation: 1,
                 },

@@ -2,7 +2,7 @@
 //! each part is installed, judged and removed.
 //!
 //! The same code runs for this machine, inside `hided`, and for a device, inside
-//! `hide-host-helper`; only the [`KitTarget`] differs, so a device gets
+//! `hided node serve`; only the [`KitTarget`] differs, so a device gets
 //! exactly what this Mac gets (PRD device-parity D-09, D-10). Adding a part is
 //! adding a [`ComponentId`] and its three answers here; nothing else in the
 //! product learns how to install it.

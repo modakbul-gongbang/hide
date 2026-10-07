@@ -6,7 +6,7 @@
 //! symlink that leaves the directory is refused by the handle rather than by a
 //! string check, and a checkout renamed or replaced after it was opened cannot
 //! redirect the work. The daemon and the core call these functions in process
-//! for this machine; `hide-host-helper` serves the same functions over one SSH
+//! for this machine; `hided node serve` serves the same functions over one SSH
 //! exec channel on a registered device, so a local and a remote checkout obey
 //! one contract (PRD S5.5 D-05, D-06).
 

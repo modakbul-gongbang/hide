@@ -3,7 +3,7 @@
 //! come from (PRD overview-request-view D-14, D-16).
 //!
 //! The same function answers for this machine (the core's in-process host)
-//! and for a device (`hide-host-helper`), so the two cannot drift in what
+//! and for a device (`hided node serve`), so the two cannot drift in what
 //! they read, prove or refuse. It holds no state: the caller keeps the
 //! checkpoint and hands it back on the next read. A read locates the session
 //! Herdr's reference names (a Claude Code or Codex file, an OpenCode

@@ -156,7 +156,7 @@ HIDE_VERSION=<version> pnpm --dir desktop package
 `HIDE_VERSION` sets the version the packaged app reports.
 Omit it to build from a checkout that a Git tag matching `v[0-9]*` already describes; the packaging script fails rather than ship a version nothing was released under.
 
-Packaging builds the web shell, builds the release `hided`, `hide`, `hide-agent-hooks` and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
+Packaging builds the web shell, builds the release `hided`, `hide` and `hide-agent-hooks` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
 It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
 The same command on Windows x64 writes `desktop/out/hide-win32-x64/` and `hide-v<version>-windows-x64.zip`, and on Linux x64 `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256` and unsigned; each system builds only its own package.
 

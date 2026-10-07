@@ -298,7 +298,7 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
             phase: hosts::HostPhase::Ready {
                 host: device.clone(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },
@@ -367,7 +367,7 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
             phase: hosts::HostPhase::Ready {
                 host: device.clone(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },
@@ -452,7 +452,7 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
     runtime.device_hosts.get_mut(TARGET).unwrap().phase = hosts::HostPhase::Ready {
         host: device,
         platform: "macos aarch64".to_owned(),
-        helper_path: "/fake/hide-host-helper".to_owned(),
+        helper_path: "/fake/hided".to_owned(),
     };
     runtime.ingest_device_machine_id(TARGET, Ok("machine-device".to_owned()));
 
@@ -505,7 +505,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
             phase: hosts::HostPhase::Ready {
                 host: FakeDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },
@@ -605,7 +605,7 @@ fn a_device_folder_outside_its_home_is_refused_by_its_helper() {
             phase: hosts::HostPhase::Ready {
                 host: FakeDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },
@@ -679,7 +679,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             phase: hosts::HostPhase::Ready {
                 host: FakeDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },

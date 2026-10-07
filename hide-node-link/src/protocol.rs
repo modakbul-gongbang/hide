@@ -1,4 +1,5 @@
-//! The requests `hide-host-helper` answers, one JSON object per line.
+//! The requests a node answers (`hided node serve` on a device), one JSON
+//! object per line.
 //!
 //! A request is `{"id": n, "op": "...", ...}` and its answer is
 //! `{"id": n, "ok": ...}` or `{"id": n, "error": {"code", "message"}}`.
@@ -60,7 +61,11 @@ use crate::error::HostError;
 /// disk, attachments, project creation, clone, worktree cleanup and the Git
 /// watch, each its own call. A helper on 21 would refuse each as unknown, so
 /// it is refused at Hello instead.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// 23: the device runs this program in its node role (`hided node serve`)
+/// instead of `hide-host-helper`, so the payload carries `hided` (PRD
+/// core-host-node D-02); a device still running a helper answers Hello with
+/// 22, is refused, and the next connection installs the new payload.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {

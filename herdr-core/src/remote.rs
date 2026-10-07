@@ -1138,7 +1138,7 @@ impl RemoteReadCommand {
                     ));
                 }
                 Ok(format!(
-                    "{} pane-inspect {} {}",
+                    "{} node pane-inspect {} {}",
                     shell_quote(helper_path),
                     shell_quote(socket),
                     shell_quote(pane_id)
@@ -2849,7 +2849,7 @@ impl RusshRemoteClient {
         let session = self
             .runtime
             .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let command = format!("{} workspace-bridge", shell_quote(helper_path));
+        let command = format!("{} node workspace-bridge", shell_quote(helper_path));
         let operation = self.runtime.block_on(async {
             let channel = session.channel_open_session().await.map_err(|error| {
                 remote_error(
