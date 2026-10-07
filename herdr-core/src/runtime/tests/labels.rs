@@ -357,15 +357,11 @@ fn plan_waiting_overlay(seq: u64) -> LabelOverlay {
     LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
 }
 
-/// PRD codex-plan-approval-hold B1, B2, B5, D-05: a Codex plan waiting for
-/// approval, read for the agent's current state, is an approval in Needs You
-/// that stays there after the row is read; once Herdr's state moves past the
-/// read, the row is what Herdr says again.
-/// B1 with Hide AI off: a Codex session file whose plan turn ended with a
-/// plan, read with no analysis and laid with agent summaries off, puts the
-/// row in Needs You as an approval.
+/// B1: a Codex session file whose plan turn ended with a plan, read as the
+/// label worker reads it and laid on the projection with agent summaries off,
+/// puts the row in Needs You as an approval.
 #[test]
-fn a_plan_read_from_the_session_file_with_summaries_off_is_in_needs_you() {
+fn a_plan_read_from_the_session_file_puts_the_row_in_needs_you() {
     use hide_session::label_transcript::{LabelTranscriptRequest, read};
     let home = tempfile::tempdir().unwrap();
     let folder = home.path().join(".codex/sessions/2026/10/07");
@@ -437,6 +433,10 @@ fn a_plan_read_from_the_session_file_with_summaries_off_is_in_needs_you() {
     assert_eq!(waiting["demand"], "approval");
 }
 
+/// PRD codex-plan-approval-hold B1, B2, B5, D-05: a Codex plan waiting for
+/// approval, read for the agent's current state, is an approval in Needs You
+/// that stays there after the row is read; once Herdr's state moves past the
+/// read, the row is what Herdr says again.
 #[test]
 fn a_codex_plan_waiting_for_approval_is_an_approval_that_stays_in_needs_you() {
     let mut runtime = runtime();
