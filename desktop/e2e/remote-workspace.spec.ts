@@ -56,9 +56,22 @@ function changedCheckout(herdr: HerdrFixture, filename: string): string {
 }
 
 /** Live bridge folders: each holds the socket a device pane bootstraps through. */
+/**
+ * The pane services answering in `bridge`, found as a pane's `hide` finds
+ * them: by a socket that accepts a connection. A node that was killed leaves
+ * its folder until a later start removes it.
+ */
 function liveBridges(bridge: string): string[] {
   if (!fs.existsSync(bridge)) return [];
-  return fs.readdirSync(bridge).filter((name) => fs.existsSync(path.join(bridge, name, "bootstrap.sock")));
+  return fs.readdirSync(bridge).filter((name) => answers(path.join(bridge, name, "bootstrap.sock")));
+}
+
+function answers(socket: string): boolean {
+  if (!fs.existsSync(socket)) return false;
+  const probe = spawnSync(process.execPath, [
+    "-e", "require('node:net').connect(process.argv[1]).on('connect', () => process.exit(0)).on('error', () => process.exit(1))", socket,
+  ], { timeout: 5_000 });
+  return probe.status === 0;
 }
 
 /** The daemon's diagnostic records, which it writes to stderr and its Logs file alike. */
