@@ -30,14 +30,14 @@ fn backend() -> CodexAppServerBackend {
 
 fn request(deadline: Duration) -> AiRequest {
     AiRequest {
-        feature_id: "fixture",
+        feature_id: "fixture".into(),
         request_id: RequestId("req-1".to_owned()),
         subject_id: "pane-1".to_owned(),
         system: "Answer as JSON.".to_owned(),
         input: "hello".to_owned(),
         output_schema: json!({"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}),
         deadline,
-        schema_version: "fixture.v1",
+        schema_version: "fixture.v1".into(),
     }
 }
 

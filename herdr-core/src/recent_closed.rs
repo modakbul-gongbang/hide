@@ -251,10 +251,12 @@ impl ClosedLayoutNode {
         }
     }
 
+    /// `folders` says whether a pane's folder is still a directory on its node.
     pub fn resolve_panes(
         &self,
         panes: &BTreeMap<String, ClosedPane>,
         checkout_root: &str,
+        folders: &dyn Fn(&str) -> bool,
         notices: &mut Vec<String>,
     ) -> Option<Self> {
         match self {
@@ -266,7 +268,7 @@ impl ClosedLayoutNode {
                 env,
             } => {
                 let pane = pane_id.as_ref().and_then(|id| panes.get(id))?;
-                let restored_cwd = if std::path::Path::new(&pane.cwd).is_dir() {
+                let restored_cwd = if folders(&pane.cwd) {
                     pane.cwd.clone()
                 } else {
                     notices.push(format!(
@@ -289,8 +291,8 @@ impl ClosedLayoutNode {
                 first,
                 second,
             } => match (
-                first.resolve_panes(panes, checkout_root, notices),
-                second.resolve_panes(panes, checkout_root, notices),
+                first.resolve_panes(panes, checkout_root, folders, notices),
+                second.resolve_panes(panes, checkout_root, folders, notices),
             ) {
                 (Some(first), Some(second)) => Some(Self::Split {
                     direction: *direction,
@@ -424,7 +426,12 @@ mod tests {
             },
         )]);
         assert!(matches!(
-            layout.resolve_panes(&panes, "/tmp", &mut Vec::new()),
+            layout.resolve_panes(
+                &panes,
+                "/tmp",
+                &|path| std::path::Path::new(path).is_dir(),
+                &mut Vec::new()
+            ),
             Some(ClosedLayoutNode::Pane { pane_id: None, .. })
         ));
     }
@@ -433,7 +440,12 @@ mod tests {
     fn an_unknown_pane_id_resolves_to_nothing() {
         let layout = pane("missing");
         assert_eq!(
-            layout.resolve_panes(&BTreeMap::new(), "/tmp", &mut Vec::new()),
+            layout.resolve_panes(
+                &BTreeMap::new(),
+                "/tmp",
+                &|path| std::path::Path::new(path).is_dir(),
+                &mut Vec::new()
+            ),
             None
         );
     }

@@ -118,14 +118,14 @@ const TRANSCRIPT: &str = "user: please add compact task labels (secret-transcrip
 
 fn request() -> AiRequest {
     AiRequest {
-        feature_id: "fixture",
+        feature_id: "fixture".into(),
         request_id: RequestId("req-1".to_owned()),
         subject_id: "pane-1".to_owned(),
         system: "Summarise the transcript.".to_owned(),
         input: TRANSCRIPT.to_owned(),
         output_schema: schema(),
         deadline: Duration::from_secs(30),
-        schema_version: "fixture.v1",
+        schema_version: "fixture.v1".into(),
     }
 }
 

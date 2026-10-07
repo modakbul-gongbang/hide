@@ -14,8 +14,8 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::host_access::HostChannel;
 use crate::model::{DeviceHostSnapshot, HostConsent};
+use crate::node_access::NodeLink;
 use crate::remote::host::{
     self, EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
     HelperPackages,
@@ -30,14 +30,14 @@ pub struct WorkspaceRemoteRoute {
     pub generation: u64,
     pub helper_path: String,
     pub client: Arc<crate::remote::RusshRemoteClient>,
-    pub channel: Arc<dyn HostChannel>,
+    pub channel: Arc<dyn NodeLink>,
 }
 
 pub(super) enum HostPhase {
     NotAllowed,
     Connecting,
     Ready {
-        host: Arc<dyn HostChannel>,
+        host: Arc<dyn NodeLink>,
         platform: String,
         helper_path: String,
     },
@@ -542,16 +542,19 @@ impl Runtime {
         self.kit_states.remove(device_id);
     }
 
-    /// Where a device's file or Git work runs, or the sentence that says
-    /// why it cannot run now. This machine answers in process; an SSH device
-    /// answers through its helper, and an unavailable helper on a consented
-    /// device is asked for again here, so the next action finds it ready.
-    pub(crate) fn device_channel(
-        &mut self,
-        device_id: &str,
-    ) -> Result<Arc<dyn HostChannel>, String> {
+    /// The link to the machine this core runs on.
+    pub(crate) fn own_node(&self) -> Arc<dyn NodeLink> {
+        Arc::clone(&self.own_node)
+    }
+
+    /// The link to the node `device_id` names, or the sentence that says why
+    /// it cannot take work now. The core's own node answers in process; an SSH
+    /// device answers through its helper, and an unavailable helper on a
+    /// consented device is asked for again here, so the next action finds it
+    /// ready.
+    pub(crate) fn node_link(&mut self, device_id: &str) -> Result<Arc<dyn NodeLink>, String> {
         if device_id == self.node.as_str() {
-            return Ok(Arc::clone(&self.local_host));
+            return Ok(self.own_node());
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
             Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
@@ -570,7 +573,7 @@ impl Runtime {
 
     /// The devices whose helper is connected now, each with its channel;
     /// asking starts no helper (PRD link-graph D-21).
-    pub(crate) fn ready_device_channels(&self) -> Vec<(String, Arc<dyn HostChannel>)> {
+    pub(crate) fn ready_device_channels(&self) -> Vec<(String, Arc<dyn NodeLink>)> {
         let mut ready = self
             .device_hosts
             .iter()

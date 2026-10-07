@@ -1,4 +1,5 @@
 use super::*;
+use hide_host::worktrees::git;
 
 #[test]
 fn locked_worktrees_name_the_reason_and_unlock_action_even_when_the_folder_is_missing() {
@@ -523,54 +524,131 @@ fn next_answer(
     }
 }
 
-/// Writes a ref no read looks at and returns every Git fact the reader's
-/// watch reported before it. The watch queues paths in the order the system
-/// reported them, so a change made before the sentinel is either already
-/// pending in the reader or queued ahead of the sentinel: once the sentinel
-/// arrives, an empty answer means nothing else happened before it. The
-/// sentinel is written straight into `refs`, a folder the watch saw from its
-/// start: on Linux a file made in a folder the watch has not yet heard of can
-/// be reported as that folder alone (`hide_platform::watch`).
+/// Writes a ref in `sentinel`, a second repository the reader watches with
+/// `repo`, and returns every project the watch reported changed before it.
+/// The node reports changed repositories in the order the system reported
+/// their paths, so a change made in `repo` before the sentinel is either
+/// already pending in the reader or reported no later than the sentinel:
+/// once the sentinel arrives, an empty answer means nothing else happened
+/// before it. The sentinel is written straight into `refs`, a folder the
+/// watch saw from its start: on Linux a file made in a folder the watch has
+/// not yet heard of can be reported as that folder alone
+/// (`hide_platform::watch`).
 fn changes_before_sentinel(
-    repo: &Repository,
+    sentinel: &Repository,
     reader: &mut WorktreeReader,
     name: &str,
 ) -> Vec<PathBuf> {
-    let mut before: Vec<PathBuf> = reader.git_watch.pending.keys().cloned().collect();
+    use hide_node_link::worktrees::GitWatchReport;
+    // The node reports a burst as it drains it, so the sentinel's own writes
+    // from an earlier phase can arrive after that phase returned and sit in
+    // `pending`; they are the test's, not a change of the project watched.
+    let mut before: Vec<PathBuf> = reader
+        .git_watch
+        .pending
+        .keys()
+        .filter(|root| **root != sentinel.0)
+        .cloned()
+        .collect();
+    let sentinel_common = reader.git_watch.registered[&sentinel.0].clone();
+    let subscription = reader
+        .git_watch
+        .subscription
+        .as_mut()
+        .expect("the Git watch started");
+    let next = |subscription: &mut crate::worktrees::GitSubscription| match subscription
+        .reports
+        .recv_timeout(Duration::from_secs(15))
+    {
+        Ok(Ok(report)) => report,
+        Ok(Err(reason)) => panic!("the Git watch ended: {reason}"),
+        Err(_) => panic!("the sentinel {name} never reached the watch"),
+    };
+    while !subscription.watching {
+        if let GitWatchReport::Watching { unwatched } = next(subscription) {
+            assert_eq!(unwatched, Vec::new());
+            subscription.watching = true;
+        }
+    }
     git(
-        &repo.0,
+        &sentinel.0,
         &["update-ref", &format!("refs/sentinel-{name}"), "HEAD"],
     )
     .unwrap();
-    let (_, changes) = reader
-        .git_watch
-        .watch
-        .as_ref()
-        .expect("the Git watch started");
-    let sentinel = Path::new("refs").join(format!("sentinel-{name}"));
     loop {
-        match changes.recv_timeout(Duration::from_secs(15)) {
-            Some(Change::Path { path, .. }) => {
-                let relative = reader
-                    .git_watch
-                    .roots
-                    .keys()
-                    .find_map(|common| path.strip_prefix(common).ok())
-                    .unwrap_or(&path)
-                    .to_path_buf();
-                if relative == sentinel {
+        match next(subscription) {
+            GitWatchReport::Changed { common_dirs } => {
+                let mut arrived = false;
+                for common in common_dirs {
+                    if Path::new(&common) == sentinel_common {
+                        arrived = true;
+                    } else {
+                        before.extend(reader.git_watch.roots[Path::new(&common)].iter().cloned());
+                    }
+                }
+                if arrived {
                     return before;
                 }
-                // The sentinel's own writes: the folder it is written in,
-                // and the lock file git writes it through.
-                if !sentinel.starts_with(&relative) && relative != sentinel.with_extension("lock") {
-                    before.push(relative);
-                }
             }
-            Some(Change::Overflow { reason, .. }) => panic!("the watch lost changes: {reason}"),
-            None => panic!("the sentinel {name} never reached the watch"),
+            GitWatchReport::Overflow { reason } => panic!("the watch lost changes: {reason}"),
+            GitWatchReport::Watching { .. } | GitWatchReport::Quiet => {}
         }
     }
+}
+
+/// Settles the repositories' own setup writes before a test measures: they
+/// can reach the watch after it started, and they are real changes of the
+/// projects the test then expects to stay quiet. Reads they started are
+/// joined and answered, and a write still inside its debounce is waited out,
+/// until no read runs and nothing is pending.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn settle_setup_writes(
+    sentinel: &Repository,
+    reader: &mut WorktreeReader,
+    request: &WorktreeRequest,
+) {
+    changes_before_sentinel(sentinel, reader, "settled");
+    reader.git_watch.pending.clear();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        reader.inner.join_pending();
+        let answer = reader.read_if_due(request.clone());
+        if !reader.inner.reading()
+            && reader.git_watch.pending.is_empty()
+            && answer.is_none_or(|answer| answer.observations_current)
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the setup writes never settled within 15 seconds"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The first answer whose read ran `git status` in `path`. The sentinel's own
+/// late writes from settling may answer first, as a read of the sentinel
+/// alone. `before` is taken here, before the next poll, because no read
+/// starts but from a poll.
+fn next_answer_reading(
+    reader: &mut WorktreeReader,
+    request: &WorktreeRequest,
+    path: &Path,
+    what: &str,
+) -> WorktreeAnswer {
+    const ANSWERS: usize = 4;
+    let before = git_call_count(path, "status");
+    for _ in 0..ANSWERS {
+        let answer = next_answer(reader, request, what);
+        if git_call_count(path, "status") != before {
+            return answer;
+        }
+    }
+    panic!(
+        "{what}: {ANSWERS} answers came and none read {}",
+        path.display()
+    );
 }
 
 #[test]
@@ -579,14 +657,16 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     std::fs::write(repo.0.join("tracked"), "original").unwrap();
     git(&repo.0, &["add", "tracked"]).unwrap();
     git(&repo.0, &["commit", "-m", "tracked"]).unwrap();
-    let mut reader = WorktreeReader::new();
+    let sentinel = Repository::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
+    let project = |root: &Path| WorktreeProjectRequest {
+        root_path: root.to_path_buf(),
+        bases: BTreeMap::new(),
+        base_override: None,
+        generation: 0,
+    };
     let mut request = WorktreeRequest {
-        projects: vec![WorktreeProjectRequest {
-            root_path: repo.0.clone(),
-            bases: BTreeMap::new(),
-            base_override: None,
-            generation: 0,
-        }],
+        projects: vec![project(&repo.0), project(&sentinel.0)],
         generation: 0,
         removals: 0,
     };
@@ -596,7 +676,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     // The read's own Git calls must not wake the watch, or an idle project
     // would read itself again on every debounce.
     assert_eq!(
-        changes_before_sentinel(&repo, &mut reader, "idle"),
+        changes_before_sentinel(&sentinel, &mut reader, "idle"),
         Vec::<PathBuf>::new(),
         "the reader's own read changed a Git fact"
     );
@@ -604,7 +684,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     assert_eq!(git_call_count(&listed, "status"), status_before);
     std::fs::write(repo.0.join("tracked"), "changed contents").unwrap();
     assert_eq!(
-        changes_before_sentinel(&repo, &mut reader, "edit"),
+        changes_before_sentinel(&sentinel, &mut reader, "edit"),
         Vec::<PathBuf>::new(),
         "a working tree edit reached the Git watch"
     );
@@ -612,7 +692,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     assert_eq!(git_call_count(&listed, "status"), status_before);
     request.generation += 1;
     assert!(
-        next_answer(&mut reader, &request, "the manual refresh")
+        next_answer_reading(&mut reader, &request, &listed, "the manual refresh")
             .catalog
             .projects[0]
             .worktrees[0]
@@ -714,9 +794,10 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
 fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let changing = Repository::new();
     let quiet = Repository::new();
-    let mut reader = WorktreeReader::new();
+    let sentinel = Repository::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
     let request = WorktreeRequest {
-        projects: [&changing, &quiet]
+        projects: [&changing, &quiet, &sentinel]
             .into_iter()
             .map(|repo| WorktreeProjectRequest {
                 root_path: repo.0.clone(),
@@ -729,7 +810,8 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
         removals: 0,
     };
     let catalog = next_answer(&mut reader, &request, "initial catalog").catalog;
-    assert_eq!(catalog.projects.len(), 2);
+    assert_eq!(catalog.projects.len(), 3);
+    settle_setup_writes(&sentinel, &mut reader, &request);
     // Status runs in the path git lists, which is the canonical one.
     let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
         PathBuf::from(&catalog.projects[index].worktrees[0].path)
@@ -739,13 +821,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let quiet_before = git_call_count(&quiet_path, "status");
     assert!(changing_before > 0 && quiet_before > 0);
     git(&changing.0, &["commit", "--allow-empty", "-m", "moved"]).unwrap();
-    assert_eq!(
-        next_answer(&mut reader, &request, "commit refresh")
-            .catalog
-            .projects
-            .len(),
-        2
-    );
+    next_answer_reading(&mut reader, &request, &changing_path, "commit refresh");
     assert_eq!(
         git_call_count(&changing_path, "status") - changing_before,
         1
@@ -759,6 +835,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
 fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
     let changing = Repository::new();
     let quiet = Repository::new();
+    let sentinel = Repository::new();
     git(
         &changing.0,
         &["remote", "add", "origin", "https://example.invalid/repo"],
@@ -774,9 +851,9 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         &["branch", "--set-upstream-to=origin/main", "main"],
     )
     .unwrap();
-    let mut reader = WorktreeReader::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
     let request = WorktreeRequest {
-        projects: [&changing, &quiet]
+        projects: [&changing, &quiet, &sentinel]
             .into_iter()
             .map(|repo| WorktreeProjectRequest {
                 root_path: repo.0.clone(),
@@ -789,6 +866,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         removals: 0,
     };
     let initial = next_answer(&mut reader, &request, "the first read").catalog;
+    settle_setup_writes(&sentinel, &mut reader, &request);
     let main = PathBuf::from(&initial.projects[0].worktrees[0].path);
     let quiet_path = PathBuf::from(&initial.projects[1].worktrees[0].path);
     let before = git_call_count(&main, "status");
@@ -806,7 +884,8 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         &["update-ref", "refs/remotes/origin/main", "future"],
     )
     .unwrap();
-    let updated = next_answer(&mut reader, &request, "the Git watch refresh").catalog;
+    let updated =
+        next_answer_reading(&mut reader, &request, &main, "the Git watch refresh").catalog;
     assert_eq!(updated.projects[0].worktrees[0].behind_upstream, Some(1));
     assert_eq!(git_call_count(&main, "status") - before, 1);
     assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
@@ -815,7 +894,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
 #[test]
 fn a_watch_change_during_a_read_keeps_the_old_answer_stale() {
     let repo = Repository::new();
-    let mut reader = WorktreeReader::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local::of_process()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     let release_rx = std::sync::Mutex::new(release_rx);

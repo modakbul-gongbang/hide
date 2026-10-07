@@ -1,4 +1,5 @@
 //! Bounded GitHub issue identities. These are references, never orchestration state.
+pub(crate) use hide_node_link::gh::is_repository;
 use serde::{Deserialize, Serialize};
 
 pub const ISSUE_LIMIT: usize = 200;
@@ -7,21 +8,6 @@ pub const ISSUE_LIMIT: usize = 200;
 pub struct IssueReference {
     pub repository: String,
     pub number: u32,
-}
-
-/// Whether `value` reads as `owner/name`: two plain path-safe parts, so it
-/// can be handed to `gh` as a repository.
-pub(crate) fn is_repository(value: &str) -> bool {
-    let mut parts = value.split('/');
-    let valid = |part: &str| {
-        !part.is_empty()
-            && part != "."
-            && part != ".."
-            && part
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
-    };
-    parts.next().is_some_and(valid) && parts.next().is_some_and(valid) && parts.next().is_none()
 }
 
 impl IssueReference {

@@ -46,6 +46,7 @@ fn runtime_on(herdr: &FakeHerdr, checkout_path: &str) -> (Runtime, String) {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
     runtime.ingest_session(Ok(tab_order_payload(

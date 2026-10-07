@@ -75,6 +75,7 @@ fn an_operator_submit_is_recorded_for_the_agent_pane_and_an_approval_enter_is_no
             None,
             std::sync::Weak::new(),
             &crate::node::test_node(),
+            std::sync::Arc::new(hide_node::Local::of_process()),
         )
         .unwrap(),
     );

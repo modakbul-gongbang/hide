@@ -308,10 +308,20 @@ mod tests {
     #[test]
     fn a_report_nobody_answers_is_recorded_with_its_pane_event_and_socket() {
         let root = scratch("failure");
-        let socket = root.join("absent.sock");
+        // Under the short system root, as the request test binds its socket:
+        // a path past SUN_LEN fails to connect for its length, not because
+        // nothing listens there.
+        let short_root = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let socket = short_root
+            .join(format!("hide-agent-hooks-absent-{}", std::process::id()))
+            .join("absent.sock");
         let outcome = report(&socket, "w1:p1", PaneCounters::default());
         assert!(
-            matches!(outcome, Err(ApiError::Transport(_))),
+            matches!(outcome, Err(ApiError::NotRunning(_))),
             "{outcome:?}"
         );
 
@@ -320,11 +330,7 @@ mod tests {
         assert_eq!(failure.pane_id, "w1:p1");
         assert_eq!(failure.event, "SessionStart");
         assert_eq!(failure.socket_path, socket.display().to_string());
-        assert!(
-            failure.error.contains("connect failed"),
-            "{}",
-            failure.error
-        );
+        assert!(failure.error.contains("not running"), "{}", failure.error);
         assert!(failure.message().contains("w1:p1"));
 
         record_outcome(&root, "w1:p1", HookEvent::Stop, &socket, &Ok(())).expect("clear");

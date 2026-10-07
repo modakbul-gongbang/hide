@@ -2,18 +2,10 @@ use std::path::{Path, PathBuf};
 
 use cap_std::fs::Dir;
 use hide_platform::path::{PathError, RelPath};
-use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
 
-/// The directory a root named when it was first opened. A later open of the
-/// same path that finds another directory there is refused, so a checkout
-/// renamed or replaced between two requests cannot redirect the second one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct RootIdentity {
-    pub device: u64,
-    pub inode: u64,
-}
+pub use hide_node_link::RootIdentity;
 
 /// An opened checkout root: the handle every operation is confined to.
 #[derive(Debug)]

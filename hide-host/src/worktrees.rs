@@ -16,7 +16,6 @@ use std::process::Command;
 use std::time::Duration;
 
 use hide_platform::process::OwnedChild;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
 
@@ -25,65 +24,6 @@ use crate::error::{ErrorCode, HostError, HostResult};
 /// project's answer behind it; a status over evicted iCloud files ran for
 /// minutes before this bound existed.
 pub const GIT_DEADLINE: Duration = Duration::from_secs(15);
-
-/// A repository's worktrees, as Git reports them. `None` from [`read`] is a
-/// folder that is not a repository, which is not a failure.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RepositoryWorktrees {
-    pub root_path: String,
-    pub shared_git_path: Option<String>,
-    pub default_branch: Option<String>,
-    pub branches: Vec<String>,
-    pub base_branch: Option<String>,
-    pub base_source: String,
-    pub base_branch_fallback: Option<String>,
-    pub worktrees: Vec<WorktreeFacts>,
-    /// Why this repository has no worktree list. An empty list with no reason
-    /// means the repository genuinely has none.
-    pub unavailable_reason: Option<String>,
-}
-
-/// One worktree's Git facts.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct WorktreeFacts {
-    pub path: String,
-    pub branch: Option<String>,
-    pub head_sha: Option<String>,
-    /// Git lists the worktree but its path is not on disk.
-    pub missing: bool,
-    pub is_main: bool,
-    /// `Some("")` is locked without a reason; `None` is unlocked.
-    pub lock_reason: Option<String>,
-    /// Measured repository boundaries relative to this checkout.
-    pub ignored_repositories: Vec<String>,
-    pub ignored_scan_unavailable: Option<String>,
-    /// Another listed worktree lies inside this one.
-    pub nested: bool,
-    pub dirty: bool,
-    pub changed_file_count: u32,
-    pub base_branch: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
-    pub added_lines: u32,
-    pub removed_lines: u32,
-    pub merged: Option<bool>,
-    pub upstream_state: String,
-    pub unpushed: Option<Unpushed>,
-    pub behind_upstream: Option<u32>,
-    pub created_at_unix_ms: Option<u64>,
-    pub last_commit_unix_seconds: Option<u64>,
-    pub last_commit_subject: Option<String>,
-    pub last_fetch_at_unix_ms: Option<u64>,
-    pub measured_at_unix_ms: Option<u64>,
-    pub unavailable_reason: Option<String>,
-}
-
-/// Commits a branch has that its upstream does not, and the upstream's remote.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Unpushed {
-    pub remote: String,
-    pub count: u32,
-}
 
 /// Reads the repository that holds `path`: its main worktree, default
 /// branch, local branches and every listed worktree. `bases` names a branch's
@@ -876,6 +816,24 @@ pub struct WalkBudget {
 }
 
 impl WalkBudget {
+    /// A budget of what a caller has left: `entries` more entries, for at
+    /// most `time`.
+    pub fn allowing(entries: usize, time: Duration) -> Self {
+        Self {
+            entries,
+            until: std::time::Instant::now() + time,
+        }
+    }
+
+    /// The entries and time still left.
+    pub fn left(&self) -> (usize, Duration) {
+        (
+            self.entries,
+            self.until
+                .saturating_duration_since(std::time::Instant::now()),
+        )
+    }
+
     /// The budget of one worktree removal's look through its ignored folders.
     fn worktree() -> Self {
         Self {
@@ -883,21 +841,7 @@ impl WalkBudget {
             until: std::time::Instant::now() + IGNORED_WALK_TIME,
         }
     }
-
-    /// One budget for everything a cleanup run looks through, so a run over
-    /// many big folders is bounded as a whole and not folder by folder.
-    pub fn for_run() -> Self {
-        Self {
-            entries: RUN_WALK_ENTRIES,
-            until: std::time::Instant::now() + RUN_WALK_TIME,
-        }
-    }
 }
-
-/// The bound on one cleanup run's look for repositories inside the folders it
-/// empties. Crossing it leaves the remaining folders unverified, so kept.
-const RUN_WALK_ENTRIES: usize = 20_000_000;
-const RUN_WALK_TIME: Duration = Duration::from_secs(300);
 
 /// Whether `folder` or any folder below it holds a `.git`. Links are not
 /// followed: removal deletes the link, not what it points to.
@@ -1126,19 +1070,7 @@ pub fn directory(path: &Path) -> Option<String> {
 
 // --- removal ---------------------------------------------------------------
 
-/// One linked worktree as Git registers it, read with NUL porcelain so no
-/// folder name is interpreted.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Registered {
-    pub path: String,
-    pub branch: Option<String>,
-    pub head: Option<String>,
-    pub locked: bool,
-    pub lock_reason: Option<String>,
-    pub bare: bool,
-    /// Prunable or bare: Git lists it but cannot use it.
-    pub unavailable: bool,
-}
+pub use hide_node_link::worktrees::Registered;
 
 /// Every worktree Git registers for `root`, the main worktree first.
 pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
@@ -1180,18 +1112,6 @@ fn lock_reason(field: &str) -> Option<String> {
     } else {
         field.strip_prefix("locked ").map(str::to_owned)
     }
-}
-
-/// Names the locked checkout and the manual action; never executes this text.
-pub fn locked_removal_reason(name: &str, reason: &str) -> String {
-    let detail = if reason.is_empty() {
-        "Git supplied no lock reason"
-    } else {
-        reason
-    };
-    format!(
-        "Worktree {name} is locked: {detail}. Unlock it with git worktree unlock before deleting, then refresh its Git state."
-    )
 }
 
 /// Removes the worktree folder and its registration, keeping the branch.
@@ -1649,56 +1569,9 @@ fn still_registered(admin: &Path) -> bool {
     !named.exists()
 }
 
-/// One operator-confirmed worktree deletion, recorded before the host's
-/// preflight and reused after Herdr confirms every pane is gone.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ConfirmedRemoval {
-    pub repository_root: String,
-    pub checkout_path: String,
-    pub expected_head_sha: Option<String>,
-    pub expected_branch: Option<String>,
-    pub protected_base_branch: Option<String>,
-    /// The branch to delete after the folder is gone; `None` keeps it.
-    pub delete_branch: Option<String>,
-    /// Delete the branch with `git branch -D`: the operator was told it
-    /// holds commits the base does not. Otherwise `-d`, which keeps an
-    /// unmerged branch. Absent from an older sender, which means `-d`.
-    #[serde(default)]
-    pub force_delete_branch: bool,
-    /// The operator accepted losing the folder's changes and the exact
-    /// ignored repositories named below. Git removes with `--force`, while
-    /// a lock or an unavailable scan still refuses it.
-    /// Absent from an older sender, no discard was accepted.
-    #[serde(default)]
-    pub discard_changes: bool,
-    /// The exact measured names shown in the destructive confirmation.
-    #[serde(default)]
-    pub expected_ignored_repositories: Vec<String>,
-}
-
-/// What a confirmed removal did, as the helper answers it: a stopped
-/// removal is an answer too, distinct from a request that got none.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RemovalOutcome {
-    /// Whether the folder is gone; `false` means the worktree remains.
-    pub removed: bool,
-    pub message: String,
-}
-
-impl From<Result<String, String>> for RemovalOutcome {
-    fn from(result: Result<String, String>) -> Self {
-        match result {
-            Ok(message) => Self {
-                removed: true,
-                message,
-            },
-            Err(message) => Self {
-                removed: false,
-                message,
-            },
-        }
-    }
-}
+pub use hide_node_link::worktrees::{
+    ConfirmedRemoval, RemovalOutcome, RepositoryWorktrees, Unpushed, WorktreeFacts,
+};
 
 /// Measures the accepted deletion without changing files or Git registration.
 /// The core asks before closing any pane; removal repeats the same checks.
@@ -1740,7 +1613,9 @@ fn check_confirmed_removal(request: &ConfirmedRemoval, panes_closed: bool) -> Re
             .as_deref()
             .or_else(|| target.file_name().and_then(|name| name.to_str()))
             .unwrap_or("selected checkout");
-        return Err(stopped(locked_removal_reason(name, reason)));
+        return Err(stopped(hide_node_link::worktrees::locked_removal_reason(
+            name, reason,
+        )));
     }
     if current.head != request.expected_head_sha || current.branch != request.expected_branch {
         return Err(stopped(

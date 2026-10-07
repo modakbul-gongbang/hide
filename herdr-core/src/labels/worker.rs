@@ -1191,14 +1191,3 @@ impl Drop for Reader {
         }
     }
 }
-
-/// This machine's conversations, read in place.
-pub(crate) struct LocalTranscripts {
-    pub(crate) home: PathBuf,
-}
-
-impl TranscriptSource for LocalTranscripts {
-    fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
-        hide_session::label_transcript::read(&self.home, request).map_err(ReadFailure::Refused)
-    }
-}

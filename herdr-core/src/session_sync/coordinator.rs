@@ -58,8 +58,10 @@ fn run_coordinator(
     let mut catalog_cache: Option<CatalogCache> = None;
     // The runtime's settled worktree removals the catalog was last rebuilt for.
     let mut published_removals = 0;
-    let mut purpose_mirror = if context.is_local() {
-        match live::PurposeMirror::new(Arc::clone(&context.api_connector)) {
+    let mut purpose_mirror = if context.is_local()
+        && let Some(node) = context.node()
+    {
+        match live::PurposeMirror::new(Arc::clone(&context.api_connector), Arc::clone(node)) {
             Ok(mirror) => Some(mirror),
             Err(message) => {
                 crate::diagnostic!(json!({
@@ -74,33 +76,70 @@ fn run_coordinator(
         None
     };
     // The hook-install state is two small file reads of this machine's own
-    // configuration, so the local coordinator takes it once before the first
-    // connect. It is not a poll: it changes only when the kit installs or the
-    // operator removes, and the kit worker republishes it after each install
-    // (PRD B36). The install itself is the kit's (`crate::kit`).
-    if context.is_local()
-        && let Some(home) = home_path.as_deref()
+    // configuration, which its node makes, so the local coordinator takes it
+    // once before the first connect. It is not a poll: it changes only when
+    // the kit installs or the operator removes, and the kit worker
+    // republishes it after each install (PRD B36). The install itself is the
+    // kit's (`crate::kit`).
+    let hook_node = context
+        .is_local()
+        .then(|| context.node().map(Arc::clone))
+        .flatten();
+    if let Some(node) = hook_node.as_deref()
+        && let Some(diagnosis) = crate::kit::hook_diagnosis(node, context.log_target())
     {
-        publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+        publish_hook_diagnosis(&context, diagnosis);
     }
-    // Kept for the counter sweep below, which runs on a fresh snapshot.
+    // Kept for the AI settings and the counter sweep below, which read this
+    // machine's files themselves.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
-    let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
+    // The rows read the operator's logins, which are the core's own node's.
+    let mut usage_reader = usage_paths
+        .zip(context.node().map(Arc::clone))
+        .map(|(paths, node)| crate::usage::ProviderUsageReader::new(paths, node));
     // A listening port is this machine's, so only the local coordinator looks.
-    let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
+    let mut ports_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::ports::PortsReader::new(Arc::clone(node)))
+        })
+        .flatten();
     // The three project-panel readers describe this machine's repositories:
     // its worktrees, its `gh` login's view of their pull requests, and one
     // checkout's size on this disk. All three run their subprocess on a worker
     // thread, so a slow `gh` or `du` costs no coordinator latency.
     let mut worktree_reader = context
+        .node()
+        .map(|node| crate::worktrees::WorktreeReader::new(Arc::clone(node)));
+    let mut github_reader = context
         .is_local()
-        .then(crate::worktrees::WorktreeReader::new);
-    let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
-    let mut disk_reader = context.is_local().then(crate::disk::DiskReader::new);
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::github::GithubReader::new(Arc::clone(node)))
+        })
+        .flatten();
+    let mut disk_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::disk::DiskReader::new(Arc::clone(node)))
+        })
+        .flatten();
     // The provider probe starts a `codex app-server` child and runs
     // `claude auth status`, so it is a reader like the three above and it
     // reads nothing at all while the Background AI group is off screen.
-    let mut ai_reader = context.is_local().then(crate::ai::AiReader::new);
+    let mut ai_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::ai::AiReader::new(Arc::clone(node)))
+        })
+        .flatten();
     if let Some(home) = hook_home.as_deref() {
         publish_ai_settings(&context, home);
     }
@@ -415,7 +454,7 @@ fn run_coordinator(
                 }
             }
 
-            if let Some(home) = hook_home.as_deref() {
+            if let Some(node) = hook_node.as_deref() {
                 // While the Settings agents tab is on screen the diagnosis is
                 // read back once a second, because the hook helper records a
                 // report it could not deliver from its own process and that
@@ -429,10 +468,9 @@ fn run_coordinator(
                         return;
                     };
                     if observed
-                        && !publish_hook_diagnosis(
-                            &context,
-                            hide_agent_hooks::Diagnosis::read(home),
-                        )
+                        && let Some(diagnosis) =
+                            crate::kit::hook_diagnosis(node, context.log_target())
+                        && !publish_hook_diagnosis(&context, diagnosis)
                     {
                         stop_subscription(&mut subscription);
                         return;
@@ -973,18 +1011,62 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (node, registrations, worktrees, unconfirmed_created_purposes, created_tab_clamps) =
-        match runtime.lock() {
-            Ok(guard) => (
-                guard.node().clone(),
-                guard.snapshot().ui_state.workspace_registrations.clone(),
-                guard.worktree_catalog(),
-                guard.unconfirmed_created_purpose_values(),
-                guard.created_tab_clamps(),
-            ),
-            Err(_) => return false,
-        };
+    let (
+        node,
+        registrations,
+        worktrees,
+        unconfirmed_created_purposes,
+        created_tab_clamps,
+        runtime_paths,
+    ) = match runtime.lock() {
+        Ok(guard) => (
+            guard.node().clone(),
+            guard.snapshot().ui_state.workspace_registrations.clone(),
+            guard.worktree_catalog(),
+            guard.unconfirmed_created_purpose_values(),
+            guard.created_tab_clamps(),
+            guard.catalog_paths(),
+        ),
+        Err(_) => return false,
+    };
     drop(runtime);
+
+    // The node is asked about every path the catalog and the reconcile read,
+    // here and outside the lock; a set it answered recently is not asked
+    // again until the catalog's own refresh interval runs out.
+    let mut wanted = workspace::PathIndex::wanted(&node, &registrations, &[], &worktrees);
+    wanted.extend(Runtime::session_cwds(&payload));
+    wanted.extend(created_tab_clamps.iter().map(|clamp| clamp.path.clone()));
+    let recent = catalog_cache.as_ref().filter(|cache| {
+        cache.asked == wanted && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+    });
+    let recent_at = recent.map(|cache| cache.built_at);
+    let (paths, asked) = match recent {
+        Some(cache) => (Arc::clone(&cache.paths), cache.asked.clone()),
+        None => match context
+            .node()
+            .ok_or_else(|| "this target has no node".to_owned())
+            .and_then(|link| workspace::PathIndex::ask(link.as_ref(), wanted.clone()))
+        {
+            Ok(paths) => (Arc::new(paths), wanted),
+            Err(error) => {
+                crate::diagnostic!(json!({
+                    "component": "session_sync",
+                    "kind": "catalog.path_facts_failed",
+                    "target": context.log_target(),
+                    "message": error,
+                }));
+                // The previous answer stands, the runtime's own before this
+                // coordinator has one, read by names where it is silent, and
+                // the next publish asks again.
+                let previous = catalog_cache
+                    .as_ref()
+                    .map(|cache| Arc::clone(&cache.paths))
+                    .unwrap_or(runtime_paths);
+                (previous, BTreeSet::new())
+            }
+        },
+    };
 
     // The catalog is built here, outside the lock, from the cwd the runtime
     // will read for a created tab, not the one it was born with.
@@ -1004,27 +1086,32 @@ fn publish_replica(
         &payload
     } else {
         let mut copy = payload.clone();
-        Runtime::clamp_created_tab_cwds(&mut copy, &created_tab_clamps);
+        Runtime::clamp_created_tab_cwds(&mut copy, &created_tab_clamps, &paths);
         clamped = copy;
         &clamped
     };
-    let spaces = Runtime::session_spaces(birth_free);
+    let spaces = Runtime::session_spaces(birth_free, &paths);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
-        cache.registrations == registrations
+        Arc::ptr_eq(&cache.paths, &paths)
+            && cache.registrations == registrations
             && cache.spaces == spaces
             && cache.worktrees == worktrees
             && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
-        let workspaces = workspace::build_catalog(&node, &registrations, &spaces, &worktrees);
-        let roots = workspace::root_index(&spaces);
+        let workspaces =
+            workspace::build_catalog(&node, &registrations, &spaces, &worktrees, &paths);
+        // An answer reused from the cache keeps its age, so the node is asked
+        // again once the interval runs out however often the session moves.
+        let built_at = recent_at.unwrap_or_else(Instant::now);
         *catalog_cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
             worktrees,
             workspaces,
-            roots,
-            built_at: Instant::now(),
+            asked,
+            paths,
+            built_at,
         });
     }
     let cache = catalog_cache
@@ -1040,7 +1127,7 @@ fn publish_replica(
     let precomputed = PrecomputedCatalog {
         registrations,
         workspaces: cache.workspaces.clone(),
-        roots: cache.roots.clone(),
+        paths: Arc::clone(&cache.paths),
     };
 
     let Some(runtime) = context.runtime.upgrade() else {
@@ -1157,7 +1244,10 @@ fn start_label_worker(
         let _ = wake_sender.send(CoordinatorMessage::Labels);
     });
     let worker = match &context.target {
-        SessionSyncTarget::Local { socket_path } => services.local_worker(socket_path, wake),
+        SessionSyncTarget::Local { socket_path } => match context.node() {
+            Some(node) => services.local_worker(socket_path, Arc::clone(node), wake),
+            None => Ok(None),
+        },
         SessionSyncTarget::Remote { target_id, .. } => services
             .device_worker(target_id, context.runtime.clone(), wake)
             .map(Some),
@@ -1655,6 +1745,7 @@ mod worktree_observer_tests {
                     home_path: None,
                     codex_home: None,
                 },
+                std::sync::Arc::new(hide_node::Local::of_process()),
             );
             let catalog = WorktreeCatalogSnapshot {
                 projects: vec![ProjectWorktreesSnapshot {
@@ -1684,7 +1775,10 @@ mod worktree_observer_tests {
                 }]
             }))
             .expect("focused project input");
-            let spaces = Runtime::session_spaces(&payload);
+            let spaces = Runtime::session_spaces(
+                &payload,
+                &workspace::paths_here(Runtime::session_cwds(&payload)),
+            );
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
                 workspaces: workspace::build_catalog(
@@ -1692,8 +1786,14 @@ mod worktree_observer_tests {
                     &[],
                     &spaces,
                     &catalog,
+                    &workspace::catalog_paths_here(&[], &spaces, &catalog),
                 ),
-                roots: workspace::root_index(&spaces),
+                paths: std::sync::Arc::new(workspace::paths_here(
+                    spaces
+                        .iter()
+                        .flat_map(|space| space.cwds.clone())
+                        .chain(Runtime::session_cwds(&payload)),
+                )),
             };
             runtime.ingest_session_with_catalog(Ok(payload), Some(precomputed));
             // A populated baseline preserves the existing initial stale-answer policy.
@@ -1701,13 +1801,19 @@ mod worktree_observer_tests {
             let runtime = Arc::new(Mutex::new(runtime));
             let (core, notifier) = Core::for_runtime_fixture(Arc::clone(&runtime));
             let socket_path = root.join("unused.sock");
-            let context = SessionSyncContext::local(&LiveContext {
-                socket_path: socket_path.clone(),
-                herdr_bin: None,
-                runtime: Arc::downgrade(&runtime),
-                notifier,
-                api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
-            });
+            let context = SessionSyncContext::local(
+                &LiveContext {
+                    socket_path: socket_path.clone(),
+                    herdr_bin: None,
+                    runtime: Arc::downgrade(&runtime),
+                    notifier,
+                    api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(
+                        &socket_path,
+                    )),
+                    node: Arc::new(hide_node::Local::of_process()),
+                },
+                std::sync::Arc::new(hide_node::Local::of_process()),
+            );
             let baseline: Value = serde_json::from_slice(&core.snapshot_delta(0, 0))
                 .expect("initial observer snapshot");
             assert_eq!(
@@ -1932,19 +2038,24 @@ mod focus_readback_order_tests {
                 home_path: None,
                 codex_home: None,
             },
+            std::sync::Arc::new(hide_node::Local::of_process()),
         );
         runtime.ingest_session(Ok(first.project()));
         Arc::new(Mutex::new(runtime))
     }
 
     fn context_for(runtime: &Arc<Mutex<Runtime>>, herdr: &FakeHerdr) -> SessionSyncContext {
-        SessionSyncContext::local(&LiveContext {
-            socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
-            runtime: Arc::downgrade(runtime),
-            notifier: ChangeNotifier::noop(),
-            api_connector: Arc::new(herdr.connector()),
-        })
+        SessionSyncContext::local(
+            &LiveContext {
+                socket_path: herdr.socket_path().to_path_buf(),
+                herdr_bin: None,
+                runtime: Arc::downgrade(runtime),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(herdr.connector()),
+                node: Arc::new(hide_node::Local::of_process()),
+            },
+            std::sync::Arc::new(hide_node::Local::of_process()),
+        )
     }
 
     /// Herdr's answer to the focus readback: `pane.layout` waits for the test
@@ -2126,13 +2237,17 @@ mod pane_cwd_confirmation_tests {
     }
 
     fn context_for(herdr: &FakeHerdr) -> SessionSyncContext {
-        SessionSyncContext::local(&LiveContext {
-            socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
-            runtime: Weak::new(),
-            notifier: ChangeNotifier::noop(),
-            api_connector: Arc::new(herdr.connector()),
-        })
+        SessionSyncContext::local(
+            &LiveContext {
+                socket_path: herdr.socket_path().to_path_buf(),
+                herdr_bin: None,
+                runtime: Weak::new(),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(herdr.connector()),
+                node: Arc::new(hide_node::Local::of_process()),
+            },
+            std::sync::Arc::new(hide_node::Local::of_process()),
+        )
     }
 
     /// A Herdr whose `pane.get` answers `cwd` for the pane it is asked about.

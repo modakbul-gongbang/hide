@@ -15,8 +15,50 @@ pub mod query;
 pub mod store;
 pub mod worker;
 
+use crate::node_access::{LinkError, NodeLink, call_as};
+use hide_node_link::protocol::Call;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
+
+/// How long the own node may take to say which session files it holds.
+const FILES_PRESENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Which of `asked` the own node still holds; one it cannot read is kept.
+pub fn files_present(own: &dyn NodeLink, asked: &[String]) -> Result<BTreeSet<String>, String> {
+    use hide_node_link::cleanup::PathState;
+    let states = call_as::<Vec<PathState>>(
+        own,
+        Call::RealPaths {
+            paths: asked.to_vec(),
+        },
+        FILES_PRESENT_TIMEOUT,
+    )
+    .map_err(|error| link_code(&error, "node"))?;
+    if states.len() != asked.len() {
+        return Err("node_answer_mismatched".to_owned());
+    }
+    Ok(asked
+        .iter()
+        .zip(states)
+        .filter(|(_, state)| !matches!(state, PathState::Missing))
+        .map(|(path, _)| path.clone())
+        .collect())
+}
+
+/// A failed link call as a diagnostic code, prefixed by who was asked.
+pub(crate) fn link_code(error: &LinkError, who: &str) -> String {
+    match error {
+        LinkError::NotConnected(_) => format!("{who}_not_connected"),
+        LinkError::Busy => format!("{who}_busy"),
+        LinkError::Unknown(_) => format!("{who}_unknown"),
+        // A helper older than protocol 18 does not know the call.
+        LinkError::Refused(error) if error.code == hide_node_link::ErrorCode::InvalidRequest => {
+            format!("{who}_unsupported")
+        }
+        LinkError::Refused(error) => error.message.clone(),
+    }
+}
 
 /// The most sessions one panel read returns (D-40).
 pub const PANEL_SESSION_LIMIT: usize = 200;

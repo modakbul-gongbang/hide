@@ -67,7 +67,7 @@ impl Sink for RuntimeSink {
         self.apply(move |runtime| runtime.ingest_link_filling(filling));
     }
 
-    fn devices(&self) -> Vec<(String, Arc<dyn crate::host_access::HostChannel>)> {
+    fn devices(&self) -> Vec<(String, Arc<dyn crate::node_access::NodeLink>)> {
         self.runtime
             .upgrade()
             .and_then(|runtime| {
@@ -84,11 +84,14 @@ impl Sink for RuntimeSink {
 pub(crate) fn spawn_worker(
     runtime: &Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
-    home: Option<PathBuf>,
 ) -> Result<LinkWorker, String> {
-    let (state_path, node) = {
+    let (state_path, node, own) = {
         let runtime = runtime.lock().map_err(|_| "runtime lock poisoned")?;
-        (runtime.state_path.clone(), runtime.node.to_string())
+        (
+            runtime.state_path.clone(),
+            runtime.node.to_string(),
+            runtime.own_node(),
+        )
     };
     let directory = state_path
         .parent()
@@ -97,11 +100,11 @@ pub(crate) fn spawn_worker(
     let paths = Paths {
         store: hide_kit::layout::links_store(directory),
         search: state_path.with_file_name("session-search.sqlite3"),
-        home,
         local_device: node,
     };
     let worker = LinkWorker::spawn(
         paths,
+        own,
         RuntimeSink {
             runtime: Arc::downgrade(runtime),
             notifier,

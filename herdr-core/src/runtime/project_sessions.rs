@@ -12,7 +12,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::{fs, io};
 
 use serde_json::json;
 
@@ -186,15 +185,20 @@ impl Runtime {
             .and_then(|sessions| self.project_sessions_work.known.get(&sessions.workspace_id))
             .cloned()
             .unwrap_or_default();
-        let started = match (self.worker_context.clone(), self.home_path.clone()) {
-            (Some(context), Some(home)) => {
+        let started = match self.worker_context.clone() {
+            Some(context) => {
                 let database = self.memory_database_path();
                 let node = self.node.clone();
+                let sessions_node = self.own_node();
                 thread::Builder::new()
                     .name("hide-project-sessions-read".to_owned())
                     .spawn(move || {
-                        let result = load_sessions(&node, &home, &database, &path)
-                            .map(|load| settle_history(load, &previous));
+                        let result = load_sessions(&node, sessions_node.as_ref(), &database, &path)
+                            .map(|load| {
+                                settle_history(load, &previous, &mut |locators| {
+                                    missing_files(sessions_node.as_ref(), locators)
+                                })
+                            });
                         let Some(runtime) = context.runtime.upgrade() else {
                             return;
                         };
@@ -209,10 +213,7 @@ impl Runtime {
                     })
                     .map_err(|error| format!("The session reader could not start: {error}"))
             }
-            (None, _) => Err("The session reader is unavailable.".to_owned()),
-            (_, None) => Err(
-                "The home directory is unavailable, so no session folder can be read.".to_owned(),
-            ),
+            None => Err("The session reader is unavailable.".to_owned()),
         };
         match started {
             Ok(_) => {
@@ -394,16 +395,20 @@ impl Runtime {
         let started = match (self.worker_context.clone(), project_id) {
             (Some(context), Some(project_id)) => {
                 let database = self.memory_database_path();
+                let sessions_node = self.own_node();
                 thread::Builder::new()
                     .name("hide-project-session-read".to_owned())
                     .spawn(move || {
-                        let result =
-                            load_session_detail(&database, &project_id, row).map(|archive| {
-                                match shown {
-                                    Some(shown) if *shown == archive => shown,
-                                    _ => Arc::new(archive),
-                                }
-                            });
+                        let result = load_session_detail(
+                            sessions_node.as_ref(),
+                            &database,
+                            &project_id,
+                            row,
+                        )
+                        .map(|archive| match shown {
+                            Some(shown) if *shown == archive => shown,
+                            _ => Arc::new(archive),
+                        });
                         let Some(runtime) = context.runtime.upgrade() else {
                             return;
                         };
@@ -504,9 +509,35 @@ pub(super) struct ProjectHistory {
 /// gone. One whose file is still there no longer belongs to the Project -
 /// its checkout was removed, say - and leaves the list as the catalog
 /// decided.
+/// Of `locators`, the files their node says are not there; a read that
+/// fails names none, so no row is marked gone on a guess.
+fn missing_files(node: &dyn crate::node_access::NodeLink, locators: &[String]) -> HashSet<String> {
+    use hide_node_link::cleanup::PathState;
+    let states = crate::node_access::call_as::<Vec<PathState>>(
+        node,
+        hide_node_link::protocol::Call::RealPaths {
+            paths: locators.to_vec(),
+        },
+        std::time::Duration::from_secs(10),
+    );
+    match states {
+        Ok(states) if states.len() == locators.len() => locators
+            .iter()
+            .zip(states)
+            .filter(|(_, state)| matches!(state, PathState::Missing))
+            .map(|(locator, _)| locator.clone())
+            .collect(),
+        _ => HashSet::new(),
+    }
+}
+
+/// Settles a read's rows against the Project's last ones: a last row this
+/// read no longer lists stays, marked gone, when `missing` says its file is
+/// not there.
 pub(super) fn settle_history(
     load: memory::SessionsLoad,
     previous: &[SessionRowSnapshot],
+    missing: &mut dyn FnMut(&[String]) -> HashSet<String>,
 ) -> ProjectHistory {
     let memory::SessionsLoad {
         project_id, rows, ..
@@ -522,14 +553,24 @@ pub(super) fn settle_history(
         .iter()
         .map(|row| (row.provider.as_str(), row.id.as_str()))
         .collect::<HashSet<_>>();
-    let gone = previous
+    let unlisted = previous
         .iter()
         .filter(|row| !listed.contains(&(row.provider.as_str(), row.id.as_str())))
-        .filter(|row| {
-            !row.locator.is_empty()
-                && fs::metadata(&row.locator)
-                    .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
-        })
+        .filter(|row| !row.locator.is_empty())
+        .collect::<Vec<_>>();
+    let missing = if unlisted.is_empty() {
+        HashSet::new()
+    } else {
+        missing(
+            &unlisted
+                .iter()
+                .map(|row| row.locator.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let gone = unlisted
+        .into_iter()
+        .filter(|row| missing.contains(&row.locator))
         .map(|row| SessionRowSnapshot {
             unavailable_reason: Some(SESSION_GONE.to_owned()),
             ..row.clone()

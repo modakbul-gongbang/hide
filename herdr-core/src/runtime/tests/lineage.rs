@@ -379,7 +379,6 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     let restarted = Runtime::new(
         options,
@@ -388,6 +387,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local::of_process()),
     );
     assert_eq!(
         restarted.snapshot.ui_state.expanded_agent_pane_ids,
