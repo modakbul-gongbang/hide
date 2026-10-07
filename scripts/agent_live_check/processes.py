@@ -123,7 +123,8 @@ class OwnedProcesses:
                        "--guard", str(reader), diagnostic, self.family, "--", *map(str, argv)]
         try:
             # The only raw spawn. Only the guardian uses the unguarded branch.
-            child = subprocess.Popen(command, env=env, cwd=cwd, stdin=stdin,
+            launch_env = {key: value for key, value in env.items() if key != "HIDE_LIVE_CHECK_OWNER"} if _guarded else env
+            child = subprocess.Popen(command, env=launch_env, cwd=cwd, stdin=stdin,
                                      stdout=stdout, stderr=stderr,
                                      start_new_session=True,
                                      pass_fds=(() if reader is None else (reader,)))
@@ -197,7 +198,8 @@ class OwnedProcesses:
         receipt = self.receipts.pop(child, None)
         if receipt is not None:
             try:
-                data = receipt.read_bytes()
+                with receipt.open("rb") as stream:
+                    data = stream.read(MAX_OUTPUT + 1)
                 if len(data) > MAX_OUTPUT or json.loads(data).get("confirmed") is not True:
                     raise ProcessError("guardian_cleanup_receipt_unconfirmed")
             except (OSError, ValueError) as error:
@@ -303,6 +305,15 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
     confirmed = False
     initial = snapshot()
     identity = initial[os.getpid()]
+    # Neither the controller nor its ancestors were started by this guardian.
+    # An inherited prior token must never enlist the control plane itself.
+    excluded = {}
+    ancestor = identity
+    while ancestor is not None and ancestor.pid not in excluded:
+        excluded[ancestor.pid] = ancestor.birth
+        if len(excluded) > MAX_DESCENDANTS:
+            raise ProcessError("control_plane_ancestry_over_budget")
+        ancestor = initial.get(ancestor.parent)
     if not issued_family(family):
         raise ProcessError("owner_family_not_issued")
     marker = f"{family}:{identity.pid}:{identity.birth}:{secrets.token_hex(32)}"
@@ -352,7 +363,9 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                     return True
                 return False
 
-            extras = marked_descendants(all_processes, matches, known=observed,
+            candidates = {pid: process for pid, process in all_processes.items()
+                          if excluded.get(pid) != process.birth}
+            extras = marked_descendants(candidates, matches, known=observed,
                                         unknown=unknown)
             table.update(extras)
             # Retain an earlier token proof while that exact birth remains.

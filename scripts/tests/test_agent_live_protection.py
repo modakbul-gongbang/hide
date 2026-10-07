@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -155,6 +156,9 @@ class ProcessProtection(unittest.TestCase):
                 fixture = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
                                            env={**os.environ, "HIDE_LIVE_CHECK_OWNER": value},
                                            start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                reaper = threading.Thread(target=fixture.wait) if owned else None
+                if reaper:
+                    reaper.start()
                 try:
                     with OwnedProcesses() as owner:
                         owner.run([sys.executable, "-c", "pass"], env=dict(os.environ))
@@ -166,6 +170,9 @@ class ProcessProtection(unittest.TestCase):
                     if fixture.poll() is None:
                         fixture.kill()
                     fixture.wait(timeout=2)
+                    if reaper:
+                        reaper.join(timeout=2)
+                        self.assertFalse(reaper.is_alive())
 
     def test_unreadable_foreign_orphan_is_diagnostic_and_not_owned(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), name="fixture")
