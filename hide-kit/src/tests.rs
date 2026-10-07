@@ -1346,8 +1346,9 @@ fn the_report_says_whether_a_daemon_still_answers() {
 }
 
 /// A daemon Hide cannot ask while its control socket is still there is
-/// unknown, never down: the read says nothing about it and logs why, and the
-/// turn-off answers stop_failed with autostart off and nothing stopped.
+/// unknown, never down: the read says nothing about it and logs why, and a
+/// turn-off whose stop does not settle it answers stop_failed with autostart
+/// off, never done.
 #[test]
 fn a_daemon_that_cannot_be_asked_while_its_socket_is_there_is_never_read_as_down() {
     let mut fixture = Fixture::new();
@@ -1375,7 +1376,7 @@ fn a_daemon_that_cannot_be_asked_while_its_socket_is_there_is_never_read_as_down
     assert_eq!(reason, CodexDaemonOffFailure::StopFailed);
     assert!(detail.contains("exited with code 1"), "{detail}");
     assert_eq!(fixture.daemon_setting(), "false");
-    assert_eq!(fixture.daemon_stops(), 0);
+    assert_eq!(fixture.daemon_stops(), 1);
 }
 
 #[test]
