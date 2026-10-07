@@ -1108,6 +1108,7 @@ mod tests {
             worktrees: vec![WorktreeFact {
                 path: "/work/app".into(),
                 branch: Some("main".into()),
+                created_at_unix_ms: None,
             }],
             prs: vec![PrFact {
                 repository: "acme/app".into(),

@@ -116,6 +116,7 @@ fn project(prs: Vec<PrFact>) -> ProjectFacts {
         worktrees: vec![WorktreeFact {
             path: ROOT.into(),
             branch: Some("main".into()),
+            created_at_unix_ms: None,
         }],
         prs,
         prs_read: true,
@@ -597,9 +598,9 @@ fn the_issue_panel_joins_its_pull_requests_and_names_which_one_a_session_made() 
 /// worked on include a merged one and no open one; a session belongs to the
 /// deepest checkout holding its folder, and a checkout on no branch (one
 /// left on a main commit after its branches merged) still has its sessions.
-/// A pull request a session only printed is not work, and a checkout on a
-/// branch weighs only that branch's, so an earlier checkout at a path that
-/// was used again says nothing of the new one.
+/// A pull request a session only printed is not work, and a session counts
+/// only from when its checkout was added, so a worktree made again at a used
+/// path and branch inherits nothing, and one whose age is unread has none.
 #[test]
 fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
     let home = tempfile::tempdir().unwrap();
@@ -628,11 +629,18 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
         ("/work/app-detached", None),
         ("/work/app-untouched", Some("gen-prd/spec")),
         ("/work/app-looked", None),
-        ("/work/app-reused", Some("feat/next")),
+        ("/work/app-reused", Some("feat/old")),
+        ("/work/app-unread", Some("feat/done")),
     ]
     .map(|(path, branch)| WorktreeFact {
         path: path.into(),
         branch: branch.map(Into::into),
+        created_at_unix_ms: match path {
+            ROOT | "/work/app-unread" => None,
+            // Added again after its earlier sessions' pull request merged.
+            "/work/app-reused" => Some(T0 + 100 * MIN),
+            _ => Some(T0 - DAY_MS),
+        },
     })
     .into();
     store.apply_project(&facts, T0).unwrap();
@@ -714,7 +722,7 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
             &[turn("gen-prd/looked")],
             Some((10, T0 + 40 * MIN)),
         ),
-        // Made a pull request at this path before it held its branch now.
+        // Made a pull request at this path before the worktree there now.
         claude_file(
             home.path(),
             "s-reused",
@@ -722,6 +730,14 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
             "cli",
             &[turn("feat/old")],
             Some((19, T0 + 1_000)),
+        ),
+        claude_file(
+            home.path(),
+            "s-unread",
+            "/work/app-unread",
+            "cli",
+            &[turn("feat/done")],
+            Some((10, T0 + 1_000)),
         ),
     ];
     for file in &files {

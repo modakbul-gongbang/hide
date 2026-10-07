@@ -65,6 +65,9 @@ pub struct ProjectFacts {
 pub struct WorktreeFact {
     pub path: String,
     pub branch: Option<String>,
+    /// When a linked worktree was added (its `.git/worktrees/<name>`
+    /// entry); none for the main worktree or before Git has been read.
+    pub created_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,9 +211,9 @@ pub struct ProjectLinkSummary {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
     /// The checkouts, by path, whose work landed: the sessions that worked
-    /// in each made, or worked on the branch of, a merged pull request and
-    /// none still open, of the checkout's own branch when it is on one. A
-    /// session belongs to the deepest checkout holding its folder.
+    /// in each since it was added made, or worked on the branch of, a merged
+    /// pull request and none still open. A session belongs to the deepest
+    /// checkout holding its folder.
     /// Core only: the runtime carries it onto each checkout's `landed`.
     #[serde(skip)]
     pub landed: BTreeSet<String>,

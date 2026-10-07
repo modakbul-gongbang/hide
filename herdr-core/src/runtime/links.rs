@@ -150,7 +150,16 @@ impl Runtime {
         for workspace in &self.snapshot.navigator.workspaces {
             (&workspace.id, &workspace.path, &workspace.device_id).hash(&mut hasher);
             for checkout in &workspace.checkouts {
-                (&checkout.path, &checkout.branch, &checkout.task_key).hash(&mut hasher);
+                (
+                    &checkout.path,
+                    &checkout.branch,
+                    &checkout.task_key,
+                    checkout
+                        .worktree
+                        .as_ref()
+                        .and_then(|w| w.created_at_unix_ms),
+                )
+                    .hash(&mut hasher);
             }
             if let Some(project) = self.github.project(&workspace.path) {
                 (
@@ -198,6 +207,10 @@ impl Runtime {
                         .map(|checkout| WorktreeFact {
                             path: checkout.path.clone(),
                             branch: checkout.branch.clone(),
+                            created_at_unix_ms: checkout
+                                .worktree
+                                .as_ref()
+                                .and_then(|worktree| worktree.created_at_unix_ms),
                         })
                         .collect(),
                     prs,
