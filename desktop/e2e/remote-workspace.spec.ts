@@ -486,6 +486,8 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     expect((await commandFromPane(remote, run, bridge, ["view", "close", tlsView.view_id], "remote-tls-close")).status).toBe(0);
     await expect.poll(async () => Promise.all(["127.0.0.1", "::1"].map((host) =>
       canBindLoopback(Number(new URL(tlsRoute.url).port), host))), { timeout: 10_000 }).toEqual([true, true]);
+    await app.evaluate(({ session }, partition) => session.fromPartition(partition).setCertificateVerifyProc(null), tlsPartition);
+    tlsPartition = undefined;
     expect((await commandFromPane(remote, run, bridge, ["view", "select", (openedDev.answer.result as { view_id: string }).view_id], "remote-dev-select")).status).toBe(0);
     const native = async () => app!.evaluate(async ({ BrowserWindow }, sourcePort) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
