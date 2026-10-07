@@ -483,7 +483,8 @@ impl Core {
         lock_recover(&self.runtime).prepare_delivery_human()
     }
 
-    /// Where each device's file work runs, handed over once by the daemon.
+    /// The checkout roots the daemon verified, by the identity each was
+    /// opened with, which the core's own file work is checked against.
     pub fn set_file_roots(&self, roots: crate::files::FileRoots) {
         if check_owner_thread(self, "set_file_roots")
             && lock_recover(&self.runtime).set_file_roots(roots)
@@ -492,9 +493,10 @@ impl Core {
         }
     }
 
-    /// Where a device's file work runs, for the daemon's own
-    /// requests that answer outside the snapshot (the Explorer's listing).
-    /// Asking may start the device's helper, which the snapshot announces.
+    /// The link to the node `device_id` names, for the daemon's own
+    /// requests that answer outside the snapshot (the Explorer's listing and
+    /// watch, the links query). Asking may start a device's helper, which
+    /// the snapshot announces.
     pub fn node_link(
         &self,
         device_id: &str,

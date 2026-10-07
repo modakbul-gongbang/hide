@@ -542,16 +542,16 @@ impl Runtime {
         self.kit_states.remove(device_id);
     }
 
-    /// The link to the node `device_id` names, or the sentence that says why
-    /// it cannot take work now. The core's own node answers in process; an SSH
-    /// device answers through its helper, and an unavailable helper on a
-    /// consented device is asked for again here, so the next action finds it
-    /// ready.
     /// The link to the machine this core runs on.
     pub(crate) fn own_node(&self) -> Arc<dyn NodeLink> {
         Arc::clone(&self.own_node)
     }
 
+    /// The link to the node `device_id` names, or the sentence that says why
+    /// it cannot take work now. The core's own node answers in process; an SSH
+    /// device answers through its helper, and an unavailable helper on a
+    /// consented device is asked for again here, so the next action finds it
+    /// ready.
     pub(crate) fn node_link(&mut self, device_id: &str) -> Result<Arc<dyn NodeLink>, String> {
         if device_id == self.node.as_str() {
             return Ok(self.own_node());

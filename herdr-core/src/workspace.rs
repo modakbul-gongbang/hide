@@ -747,15 +747,6 @@ pub(crate) fn checkout_row_label(branch: Option<&str>, path: &Path) -> String {
     })
 }
 
-/// A base directory for tests that assert what the catalog says about a
-/// directory which is not a checkout.
-///
-/// `std::env::temp_dir()` is not always outside a repository. The verification
-/// sandbox points `TMPDIR` inside this repository, and git discovery walks up
-/// from a directory created there and finds it, so a test that means "a folder
-/// with no repository" gets the enclosing repository instead. Picking the base
-/// by asking git, rather than assuming, keeps those tests measuring the product
-/// instead of the environment they happen to run in.
 /// What the node in this process says of `paths`, for a test that builds a
 /// catalog by hand.
 #[cfg(test)]
@@ -819,6 +810,15 @@ impl NodeLink for CountingNode {
     }
 }
 
+/// A base directory for tests that assert what the catalog says about a
+/// directory which is not a checkout.
+///
+/// `std::env::temp_dir()` is not always outside a repository. The verification
+/// sandbox points `TMPDIR` inside this repository, and git discovery walks up
+/// from a directory created there and finds it, so a test that means "a folder
+/// with no repository" gets the enclosing repository instead. Picking the base
+/// by asking git, rather than assuming, keeps those tests measuring the product
+/// instead of the environment they happen to run in.
 #[cfg(test)]
 pub(crate) fn temp_base_outside_any_repository() -> &'static Path {
     use std::sync::OnceLock;

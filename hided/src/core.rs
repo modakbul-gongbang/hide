@@ -210,7 +210,7 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped dispatch reply".to_owned())?
     }
 
-    /// Where a device's file work runs; see `Core::node_link`.
+    /// The link to the node `device_id` names; see `Core::node_link`.
     pub fn node_link(&self, device_id: &str) -> Result<Arc<dyn NodeLink>, String> {
         let (reply, rx) = mpsc::channel();
         self.commands
