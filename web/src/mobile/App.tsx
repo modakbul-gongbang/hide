@@ -13,7 +13,6 @@ import { Detail } from "./Detail";
 import { AgentHead, Place } from "./parts";
 import { StartSheet } from "./StartSheet";
 import {
-  GROUP_ORDER,
   GROUP_TITLE,
   REFUSAL_NOTICE,
   UNREACHABLE_NOTICE,
@@ -148,9 +147,9 @@ function ListScreen() {
             {t("mobile.noAgents")}
           </p>
         ) : null}
-        {GROUP_ORDER.map((id) => {
-          const group = groups?.find((candidate) => candidate.group === id);
-          if (!group || group.agents.length === 0) return null;
+        {groups?.map((group) => {
+          const id = group.group;
+          if (group.agents.length === 0) return null;
           return (
             <section key={id} className="px-lg pt-lg" data-phone-group={id}>
               <h2 className="flex gap-sm pb-xs text-subhead text-muted-foreground">

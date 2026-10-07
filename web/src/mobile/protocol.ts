@@ -144,7 +144,6 @@ export const GROUP_TITLE: Record<GroupId, MessageKey> = {
   seen: "mobile.group.seen",
 };
 
-export const GROUP_ORDER: readonly GroupId[] = ["needs_you", "done", "working", "seen"];
 
 /** The five quick keys (B26, B38): what hided sends Herdr, the keycap, and the accessible name. */
 export type QuickKey = "enter" | "escape" | "up" | "down" | "ctrl_c";
