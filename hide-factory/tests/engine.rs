@@ -3055,6 +3055,26 @@ fn a_refused_worker_start_stops_the_task_once_and_a_retry_starts_it() {
     );
 }
 
+#[test]
+fn a_failing_check_with_nothing_to_ask_or_an_unreadable_diff_holds_the_merge() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Fails quietly", &[]);
+    h.world().drift.insert(
+        t.clone(),
+        json!({"pass": false, "questions": [], "flags": []}),
+    );
+    h.done(&f, &t);
+    tick_until(&mut h, &f, &t, TaskState::MergeWaiting);
+    assert_eq!(h.task(&f, &t).gates, vec![Gate::CheckFailed]);
+
+    let u = h.ready("No diff", &[]);
+    h.world().diff_failure = true;
+    h.done(&f, &u);
+    tick_until(&mut h, &f, &u, TaskState::MergeWaiting);
+    assert_eq!(h.task(&f, &u).gates, vec![Gate::CheckFailed]);
+}
+
 // ------------------------------------------------------------------ watch
 
 #[test]

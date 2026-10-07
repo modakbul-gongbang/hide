@@ -90,6 +90,8 @@ pub struct World {
     /// Scripted watch answers, oldest first; no warnings when empty.
     pub watch: VecDeque<Value>,
     pub judge_down: bool,
+    /// The Task's diff cannot be read.
+    pub diff_failure: bool,
     /// Every judgment answers as failed with this reason.
     pub judgment_failure: Option<String>,
     /// The environment diagnosis's answer; an unknown cause when absent.
@@ -263,6 +265,9 @@ impl MergeTarget for Shared {
         Ok(vec!["src/lib.rs".into()])
     }
     fn diff_text(&mut self, _factory: &Factory, task: &Task) -> Result<String, Failure> {
+        if self.world().diff_failure {
+            return Err(Failure::task("git.diff", "unreadable"));
+        }
         Ok(format!("diff for {}", task.id))
     }
     fn premerge(&mut self, _factory: &Factory, task: &Task) -> Result<PreMerge, Failure> {

@@ -2886,7 +2886,11 @@ impl Engine {
         let Some(f) = self.factories.get(factory).cloned() else {
             return;
         };
-        let diff = self.ports.merge.diff_text(&f, &task).unwrap_or_default();
+        // A diff that cannot be read gives the checks nothing to judge; that
+        // is a check that cannot run, never a pass (B68).
+        let Ok(diff) = self.ports.merge.diff_text(&f, &task) else {
+            return self.check_failed(factory, id);
+        };
         let mut count = 0;
         let decisions = task.decisions.iter().map(|d| d.text.clone()).collect();
         let attempt = task.attempts.len();
@@ -2959,6 +2963,11 @@ impl Engine {
             Ok(finding) => finding,
             Err(_) => return self.check_failed(factory, id),
         };
+        // A failing answer with nothing to ask or flag still holds the merge
+        // for a person.
+        if !finding.pass && finding.questions.is_empty() && finding.flags.is_empty() {
+            return self.check_failed(factory, id);
+        }
         let now = self.now();
         let deadline = self
             .factories
