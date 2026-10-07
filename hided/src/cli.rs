@@ -16,6 +16,12 @@ pub enum CommandKind {
     /// `hide factory ...`
     Factory(crate::factory_cli::FactoryRequest),
     Help,
+    /// `hide version [--json]`: this build's version, commit and contract.
+    Version {
+        json: bool,
+    },
+    /// `hide contract --json`: the contract of the commands tools call.
+    Contract,
     Open,
     /// `hide connect`: `open` without the browser, answered as one JSON line
     /// for a host that loads the shell itself (the desktop app).
@@ -59,10 +65,30 @@ const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | bran
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
+/// The version this build reports: `HIDE_VERSION` when it was built (a
+/// package passes the version it ships), else the crate's own.
+pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
+
+/// The commit this build was made from, when it was built from a checkout.
+pub const COMMIT: Option<&str> = match env!("HIDE_BUILD_COMMIT").as_bytes() {
+    [] => None,
+    _ => Some(env!("HIDE_BUILD_COMMIT")),
+};
+
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
     match iter.next().map(String::as_str) {
         Some("help" | "--help" | "-h") if iter.next().is_none() => Ok(CommandKind::Help),
+        Some("--version") if iter.next().is_none() => Ok(CommandKind::Version { json: false }),
+        Some("version") => match (iter.next().map(String::as_str), iter.next()) {
+            (None, _) => Ok(CommandKind::Version { json: false }),
+            (Some("--json"), None) => Ok(CommandKind::Version { json: true }),
+            _ => Err("usage: hide version [--json]".to_owned()),
+        },
+        Some("contract") => match (iter.next().map(String::as_str), iter.next()) {
+            (Some("--json"), None) => Ok(CommandKind::Contract),
+            _ => Err("usage: hide contract --json".to_owned()),
+        },
         None | Some("open") => Ok(CommandKind::Open),
         Some("connect") => Ok(CommandKind::Connect),
         Some("status") => {
@@ -75,8 +101,14 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Serve { keep_alive })
         }
         Some("dev") => Ok(CommandKind::Dev),
-        Some("agent") => crate::agent_cli::parse(iter).map(CommandKind::Delivery),
+        Some("agent") => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", crate::agent_cli::USAGE))?;
+            crate::agent_cli::parse(iter).map(CommandKind::Delivery)
+        }
         Some(topic @ ("request" | "inbox" | "watch")) => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", crate::delivery_cli::USAGE))?;
             crate::delivery_cli::parse(topic, iter).map(CommandKind::Delivery)
         }
         Some("factory") => crate::factory_cli::parse(iter).map(CommandKind::Factory),
@@ -317,7 +349,28 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 }
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
+    // Neither reads the environment nor needs a daemon.
+    if let CommandKind::Version { json } = kind {
+        let digest = crate::cli_contract::digest();
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"version": VERSION, "commit": COMMIT, "contract": digest})
+            );
+        } else {
+            match COMMIT {
+                Some(commit) => println!("hide {VERSION} {commit}"),
+                None => println!("hide {VERSION}"),
+            }
+        }
+        return Ok(());
+    }
+    if kind == CommandKind::Contract {
+        println!("{}", crate::cli_contract::document());
+        return Ok(());
+    }
     if kind == CommandKind::Help {
+        println!("hide version [--json]\nhide contract --json");
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
@@ -371,7 +424,10 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             }
         }
         CommandKind::Factory(request) => crate::factory_cli::run(&env, request),
-        CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
+        CommandKind::Help
+        | CommandKind::BrowserHelp
+        | CommandKind::Version { .. }
+        | CommandKind::Contract => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
         CommandKind::Status { json: true } => status_json(&env.state_dir),

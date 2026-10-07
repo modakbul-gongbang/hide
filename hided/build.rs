@@ -1,4 +1,5 @@
-//! Embeds `web/dist` into a release `hided` (PRD D-03).
+//! Embeds `web/dist` into a release `hided` (PRD D-03), and the version and
+//! commit `hide version` reports into every build.
 //!
 //! A release binary carries the web shell so `hide` runs from one file; it
 //! fails to build without `web/dist`, because a release that silently served
@@ -9,9 +10,11 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    build_identity(&manifest);
     let dist = manifest.join("../web/dist");
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("ui_embed.rs");
     println!("cargo:rerun-if-changed=build.rs");
@@ -62,4 +65,71 @@ fn collect(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) {
             files.push((relative, path));
         }
     }
+}
+
+/// `HIDE_VERSION` is the version a package ships (`desktop/scripts/package.mjs`
+/// passes it to its release build); without it the crate's version stands.
+/// The commit is `HIDE_COMMIT`, which the package also passes; a release
+/// build without it reads the checkout's `HEAD`. A debug build reports no
+/// commit unless it is given one, because following `HEAD` would rebuild
+/// `hided` after every commit an agent makes, and a build from a tree with
+/// no Git has no commit to report.
+fn build_identity(manifest: &Path) {
+    println!("cargo:rerun-if-env-changed=HIDE_VERSION");
+    println!("cargo:rerun-if-env-changed=HIDE_COMMIT");
+    let version = env::var("HIDE_VERSION")
+        .ok()
+        .filter(|version| !version.is_empty())
+        .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION"));
+    println!("cargo:rustc-env=HIDE_BUILD_VERSION={version}");
+    let release = env::var("PROFILE").as_deref() == Ok("release");
+    let commit = match env::var("HIDE_COMMIT")
+        .ok()
+        .filter(|commit| !commit.is_empty())
+    {
+        Some(commit) => commit,
+        None if release => head_commit(manifest).unwrap_or_default(),
+        None => String::new(),
+    };
+    println!("cargo:rustc-env=HIDE_BUILD_COMMIT={commit}");
+}
+
+fn git(manifest: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(manifest)
+        .args(args)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+/// The checkout's `HEAD`, re-read when `HEAD` or the branch it names moves.
+/// Only paths that exist are watched: Cargo reruns a script on every build
+/// while a watched path is missing.
+fn head_commit(manifest: &Path) -> Option<String> {
+    let commit = git(manifest, &["rev-parse", "HEAD"])?;
+    let watch = |name: &str| {
+        if let Some(path) = git(
+            manifest,
+            &["rev-parse", "--path-format=absolute", "--git-path", name],
+        ) {
+            // A branch's commit lives in its loose ref until Git packs it,
+            // and a new loose ref changes the folder it is written to.
+            let path = PathBuf::from(path);
+            if let Some(existing) = path.ancestors().find(|path| path.exists()) {
+                println!("cargo:rerun-if-changed={}", existing.display());
+            }
+        }
+    };
+    watch("HEAD");
+    if let Some(branch) = git(manifest, &["symbolic-ref", "-q", "HEAD"]) {
+        watch(&branch);
+        watch("packed-refs");
+    }
+    Some(commit)
 }

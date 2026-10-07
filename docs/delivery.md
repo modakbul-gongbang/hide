@@ -38,6 +38,22 @@ The envelope identifies the sender and letter kind; it is not a session-level au
 The current first-line format is `Hide letter <id> from <name> (<agent>) [<kind>]`, with independent writer and transcript-reader examples in [delivery-envelope.json](../contracts/delivery-envelope.json).
 A batch keeps the first letter's sender attribution in the request view; neither later headers nor older delivery formats select a sender.
 
+### The contract a calling tool checks
+
+A tool that runs these commands from a program (sasu, a Factory engine) checks the installed `hide` before it calls one.
+`hide version --json` answers `{"version", "commit", "contract"}`: the version the build reports, the commit it was built from (`null` for a debug build given none, or a build from a tree with no Git), and the `sha256:` digest of the command contract; neither it nor `hide contract --json` needs a daemon or a pane.
+`hide contract --json` answers that contract:
+
+- `format`: the document's own format, now 1.
+- `commands`: each command's words, its positional `arguments` with their value types, `repeats_at_most` for a last argument that repeats, its `options` (each with `name`, `value` type or `null` for a switch, `required`, and the options it `requires`), what `rest` passes through after `--`, and the names of the `answers` it can return.
+- `value_types`: what each value type admits (`text`, `key`, `body`, `approval`, `unsigned`, `one_of` with its `values`).
+- `envelopes`: for each topic, where the printed line carries `ok`, the `answer` and the failure `code`; a failure also exits non-zero.
+- `answers`: the JSON Schema of each answer, and `digest`, the `sha256:` of the document without it, its keys sorted and written compactly.
+
+A caller compares the digest it was written against, or the commands and options it uses, and refuses a mismatch before running anything.
+The CLI admits only the commands and flags the contract names (`hided/src/cli_contract.rs`), its tests hold each parser to the table, and the answer schemas come from the core's answer types (`herdr-core/src/delivery/answer.rs`), so a changed command name, option or answer field changes the exported contract.
+`contracts/hide-cli.json` is the committed copy, and a test fails until it is regenerated with `target/debug/hide contract --json | python3 -m json.tool > contracts/hide-cli.json`.
+
 ## Safe intake and manual fallback
 
 A doorbell carries only a short instruction to read `hide inbox`.

@@ -167,9 +167,13 @@ pub(crate) fn run(
     match command {
         Command::List => {
             let ledger = state(&client)?;
-            Ok(
-                json!({"items":ledger.agents.iter().map(|record|view(record,&ledger)).collect::<Vec<_>>()}),
-            )
+            Ok(json!(crate::delivery::answer::AgentList {
+                items: ledger
+                    .agents
+                    .iter()
+                    .map(|record| super::agent_view(record, &ledger))
+                    .collect(),
+            }))
         }
         Command::Show { id } => {
             let ledger = state(&client)?;

@@ -28,8 +28,10 @@
 # 2026-09-28 one run held all five for 26 minutes, so a second pull request
 # waited up to 70 minutes before its lanes started. A pull request therefore
 # asks for a macOS runner only for what a macOS runner alone proves: `desktop
-# e2e` for a change to the desktop app or the web code it drives, and `os
-# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`.
+# e2e` for a change to the desktop app or the web code it drives, `os
+# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`, and
+# `package`'s macOS job for a change to what goes into a package, the one job
+# that starts the packaged app such a change builds.
 # Core and daemon changes run on Linux and Windows and leave the macOS
 # `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
 # `nightly.yml`.
@@ -484,8 +486,9 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hide and hided for the desktop app
-        # hide-agent-hooks and hide-host-helper too: the home-layout spec
-        # stages every binary the packaged app carries.
+        # hide-agent-hooks too, which the fixture's app bundle links beside
+        # them, and hide-host-helper: the home-layout spec stages every binary
+        # the packaged app carries.
         run: bash scripts/verify-cargo.sh cli
       - name: Install dependencies
         run: bash scripts/verify-web.sh install
@@ -536,9 +539,21 @@ jobs:
             desktop/test-results
           if-no-files-found: ignore
 
+  package:
+    name: package
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'package')
+    uses: ./.github/workflows/package.yml
+    permissions:
+      contents: read
+    with:
+      # A pull request's package reports a version no release uses.
+      version: 0.0.0-ci.${{ github.run_number }}
+      include-macos: true
+
   verify:
     name: verify
-    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, web-e2e, remote-mailbox, desktop-e2e]
+    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, web-e2e, remote-mailbox, desktop-e2e, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
