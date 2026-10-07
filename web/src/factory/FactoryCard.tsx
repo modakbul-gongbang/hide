@@ -1,7 +1,6 @@
 import { useMemo, useRef } from "react";
 import { CircleIcon, CircleDotIcon, CircleCheckIcon, CircleHelpIcon, CirclePauseIcon, CircleDashedIcon, GitMergeIcon, GitPullRequestIcon, LoaderCircleIcon, LockIcon, TriangleAlertIcon, SparklesIcon } from "lucide-react";
 import type { Actions } from "../actions";
-import { directChildren } from "../agentRow";
 import { statusText } from "../agentStatus";
 import { AgentLogo } from "../components/agent-logo";
 import { DescendantBadge } from "../components/agent-row";
@@ -54,7 +53,10 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
   const summaries = useShellStore((state) => state.rest?.ui_state?.agent_summary !== false);
   const byPane = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, agent])), [agents]);
   const worker = card.worker_pane ? byPane.get(card.worker_pane) : undefined;
-  const children = worker ? directChildren(worker, (pane) => byPane.get(pane)) : [];
+  const children = (worker?.lineage_child_pane_ids ?? []).flatMap((pane) => {
+    const child = byPane.get(pane);
+    return child ? [child] : [];
+  });
   const descendants = worker?.close_descendant_pane_ids?.length ?? children.length;
   const line = summaries ? worker?.request?.line : undefined;
   const person = card.waiting_group === "person" || card.needs_person;
