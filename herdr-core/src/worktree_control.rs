@@ -2871,10 +2871,12 @@ mod tests {
         // The shell is also the foreground process, and is listed once.
         let server = server(vec![process_info("w1:p1", me)]);
         let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
-        assert_eq!(
-            held.iter().map(|process| process.pid).collect::<Vec<_>>(),
-            [me]
-        );
+        // Parallel tests may start children of this test process. They are
+        // valid descendants, so assert deduplication without assuming none.
+        let pids: Vec<_> = held.iter().map(|process| process.pid).collect();
+        assert_eq!(pids.iter().filter(|pid| **pid == me).count(), 1);
+        assert!(pids.iter().all(|pid| *pid > 1));
+        assert!(pids.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
