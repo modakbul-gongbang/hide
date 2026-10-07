@@ -1,3 +1,4 @@
+import { scopeOccurrences, scopeRows, type AgentScope } from "./agentScope";
 // All projects and Project Overview (PRD S6 D-02, B1-B3, B21): every registered
 // Project on every device, and one Project's Workspaces and agents, read from
 // the snapshot the core already publishes - the navigator for this machine,
@@ -6,11 +7,10 @@
 // carry, and a device that cannot answer says so instead of showing zeros.
 
 import type { TFunction } from "i18next";
-import { sectionCount, sectionTree, directChildren, type TreeRow } from "./agentRow";
+import type { TreeRow } from "./agentRow";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
-import { folderCheckout } from "./projects";
 import { projectsOf } from "./remote";
 import { entryBox } from "./agentGraph";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
@@ -63,32 +63,12 @@ export type DeviceSection = {
   projects: ProjectEntry[];
 };
 
-function emptyCounts(): GroupCounts {
-  return { needs_you: 0, done: 0, working: 0, seen: 0 };
-}
-
-/** The pane ids a Project's checkouts hold. */
-export function projectPaneIds(workspace: Workspace): Set<string> {
-  const ids = new Set<string>();
-  for (const checkout of workspace.checkouts) {
-    for (const tab of checkout.tabs) for (const pane of tab.panes) ids.add(pane.id);
-  }
-  return ids;
-}
-
 /** The agents running in a Project, in the core's order. */
 export function projectAgents(workspace: Workspace, agents: AgentRow[]): AgentRow[] {
-  const panes = projectPaneIds(workspace);
-  return agents.filter((agent) => panes.has(agent.pane_id));
+  return scopeOccurrences(workspace.agent_scope.rows, agents);
 }
 
-export function groupCounts(agents: AgentRow[]): GroupCounts {
-  const counts = emptyCounts();
-  for (const agent of agents) {
-    if (agent.group in counts) counts[agent.group as AgentGroup] += 1;
-  }
-  return counts;
-}
+export function groupCounts(scope: AgentScope): GroupCounts { return scope.groups; }
 
 export type AgentSection = { group: string; agents: AgentRow[] };
 
@@ -98,19 +78,8 @@ export type AgentSection = { group: string; agents: AgentRow[] };
  * empty group left out. A group the core names that this list does not know
  * is still shown, under its own name, rather than dropping its rows.
  */
-export function agentSections(agents: AgentRow[]): AgentSection[] {
-  const known = new Set<string>(AGENT_GROUPS.map((row) => row.group));
-  const sections: AgentSection[] = AGENT_GROUPS.map(({ group }) => ({ group, agents: agents.filter((agent) => agent.group === group) }));
-  for (const agent of agents) {
-    if (known.has(agent.group)) continue;
-    let section = sections.find((row) => row.group === agent.group);
-    if (!section) {
-      section = { group: agent.group, agents: [] };
-      sections.push(section);
-    }
-    section.agents.push(agent);
-  }
-  return sections.filter((section) => section.agents.length > 0);
+export function agentSections(scope: AgentScope, agents: AgentRow[]): AgentSection[] {
+  return scope.group_rows.map((group) => ({ group: group.group, agents: scopeOccurrences(group.rows, agents) }));
 }
 
 /** An agent row and, for a row on an SSH device, the device's name. */
@@ -122,30 +91,18 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
  * gave them. A device that is not connected lists nothing, since what it
  * last reported is not current.
  */
-export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[]): ListedAgent[] {
-  const local = devices?.find((row) => row.kind !== "remote");
-  const listed: ListedAgent[] = localAgents.map((agent) => ({
-    agent: { ...agent, device_id: local?.id ?? "", device_label: local?.label ?? translate("common.thisMac") },
-    device: null,
-  }));
-  for (const status of remote ?? []) {
-    if (status.state !== "connected") continue;
-    const device = deviceLabel(devices, status.target_id);
-    for (const agent of status.session?.agents ?? []) {
-      listed.push({ agent: { ...agent, device_id: status.target_id, device_label: device }, device });
-    }
-  }
-  return listed;
+export function allAgents(remote: RemoteStatus[] | undefined, localAgents: AgentRow[], scope: AgentScope | null | undefined): ListedAgent[] {
+  return (scope?.listed ?? []).map((entry) => {
+    const agent = entry.remote ? remote?.find((r) => r.target_id === entry.device_id)?.session?.agents[entry.index] : localAgents[entry.index];
+    if (!agent || agent.pane_id !== entry.pane_id) throw new Error(`Missing listed agent: ${entry.pane_id}`);
+    const label = entry.device_label ?? translate("common.thisMac");
+    return { agent: { ...agent, device_id: entry.device_id, device_label: label }, device: entry.remote ? label : null };
+  });
 }
 
-/** One device's current agents, listed as the sidebar's Agents tab draws them: a device that is not connected lists nothing. */
+/** One device's core-projected current rows, in their published order. */
 export function deviceListedAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[], deviceId: string): ListedAgent[] {
-  return allAgents(remote, devices, localAgents).filter((row) => row.agent.device_id === deviceId);
-}
-
-/** Every connected workspace, local and remote, with its device id intact. */
-export function allLineageWorkspaces(local: Workspace[] | undefined, remote: RemoteStatus[] | undefined): Workspace[] {
-  return [...(local ?? []), ...(remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? [])];
+  return allAgents(remote, localAgents, devices?.find((d) => d.id === deviceId)?.agent_scope);
 }
 
 function deviceLabel(devices: Device[] | undefined, targetId: string): string {
@@ -167,8 +124,7 @@ export function agentPlaces(
 ): (device: string | null, paneId: string) => string | null {
   const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [])]]);
   for (const status of remote ?? []) {
-    if (status.state !== "connected") continue;
-    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces(status.session?.workspaces ?? []));
+    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces((status.session?.workspaces ?? []).filter((p) => p.agent_scope.places_live)));
   }
   return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
 }
@@ -177,10 +133,10 @@ export function agentPlaces(
 export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
   const places = new Map<string, string>();
   for (const workspace of workspaces) {
-    const folder = folderCheckout(workspace) !== null;
-    for (const checkout of workspace.checkouts) {
-      const place = workspace.is_home ? translate("common.home") : folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
-      for (const tab of checkout.tabs) for (const pane of tab.panes) if (!places.has(pane.id)) places.set(pane.id, place);
+    for (const [pane, value] of Object.entries(workspace.agent_scope.places)) {
+      const checkout = workspace.checkouts.find((c) => c.id === value.checkout_id);
+      if (!checkout) throw new Error(`Missing place checkout: ${value.checkout_id}`);
+      places.set(pane, value.kind === "home" ? translate("common.home") : value.kind === "folder" ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`);
     }
   }
   return places;
@@ -190,23 +146,8 @@ export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
  * How many live descendants each agent has among the rows the core lists
  * (B13), keyed by pane, from one index of the rows rather than one per row.
  */
-export function liveDescendantCounts(agents: AgentRow[]): Map<string, number> {
-  const byPane = new Map(agents.map((row) => [row.pane_id, row]));
-  return new Map(agents.map((agent) => [agent.pane_id, descendantsIn(agent, byPane)]));
-}
-
-function descendantsIn(agent: AgentRow, byPane: Map<string, AgentRow>): number {
-  const seen = new Set<string>();
-  const queue = [...(agent.lineage_child_pane_ids ?? [])];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id) || id === agent.pane_id) continue;
-    const row = byPane.get(id);
-    if (!row) continue;
-    seen.add(id);
-    queue.push(...(row.lineage_child_pane_ids ?? []));
-  }
-  return seen.size;
+export function liveDescendantCounts(scope: AgentScope): Map<string, number> {
+  return new Map(Object.entries(scope.descendants));
 }
 
 /**
@@ -238,7 +179,7 @@ function deviceAvailability(device: Device, status: RemoteStatus | undefined): D
   return { state: "ready" };
 }
 
-function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean, checkoutsTrusted = trusted): ProjectEntry {
+function entryOf(workspace: Workspace, _agents: AgentRow[], trusted: boolean, checkoutsTrusted = trusted): ProjectEntry {
   return {
     id: workspace.id,
     label: workspace.label,
@@ -247,7 +188,7 @@ function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean, che
     pinned: workspace.pinned,
     workspace,
     workspaceCount: checkoutsTrusted ? workspace.checkouts.length : null,
-    counts: trusted ? groupCounts(projectAgents(workspace, agents)) : null,
+    counts: trusted ? workspace.agent_scope.groups : null,
   };
 }
 
@@ -454,28 +395,17 @@ export type AgentTree = {
   children: (device: string | null, agent: AgentRow) => AgentRow[];
 };
 
-export function agentTree(listed: ListedAgent[]): AgentTree {
-  const byDevice = new Map<string | null, AgentRow[]>();
-  for (const { agent, device } of listed) {
-    const rows = byDevice.get(device) ?? [];
-    rows.push(agent);
-    byDevice.set(device, rows);
-  }
-  const index = new Map([...byDevice].map(([device, rows]) => [device, new Map(rows.map((row) => [row.pane_id, row]))]));
-  const counts = new Map([...byDevice].map(([device, rows]) => [device, liveDescendantCounts(rows)]));
-  const deviceOf = new Map(listed.map((row) => [row.agent, row.device]));
-  const lookup = (device: string | null, paneId: string) => index.get(device)?.get(paneId);
-  const descendantsOf = (device: string | null, paneId: string) => counts.get(device)?.get(paneId) ?? 0;
-  const sections = agentSections(listed.map((row) => row.agent))
-    .map((section) => {
-      const roots = section.agents.filter((agent) => !agent.delegated);
-      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
-      return { group: section.group, rows, count: sectionCount(rows) };
-    })
-    .filter((section) => section.rows.length > 0);
+export function agentTree(listed: ListedAgent[], scope: AgentScope | null): AgentTree {
+  const index = new Map(listed.map((row) => [row.agent, row]));
+  const agents = listed.map((row) => row.agent);
   return {
-    sections,
-    children: (device: string | null, agent: AgentRow) => directChildren(agent, (paneId) => lookup(device, paneId)),
+    sections: scope?.sections.map((section) => ({ ...section, rows: scopeOccurrences(section.rows, agents).map((agent, i) => {
+      const row = section.rows[i]!;
+      const listed = index.get(agent);
+      if (!listed) throw new Error(`Agent section references a missing row: ${row.pane_id}`);
+      return { ...listed, depth: row.depth, descendants: row.descendants };
+    }) })) ?? [],
+    children: (_device, agent) => scopeRows(scope?.children[agent.pane_id] ?? [], listed.map((r) => r.agent)),
   };
 }
 

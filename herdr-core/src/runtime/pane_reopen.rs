@@ -74,12 +74,7 @@ impl Runtime {
                 "Herdr has not reported this agent's conversation",
             );
         };
-        if agent.activity == "working"
-            || agent.group == "working"
-            || agent.demand != "none"
-            || agent.blocked
-            || agent.activity != "stopped"
-        {
+        if crate::agent_state::rest_refusal(agent).is_some() {
             return self.settle_pane_reopen(
                 pane_id,
                 PaneReopenFailure::AgentBusy,

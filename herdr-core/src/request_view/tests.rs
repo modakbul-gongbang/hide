@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::labels::facts::{Reply, Request, Requester};
-use crate::model::GithubProjectSnapshot;
+use crate::model::{GithubProjectSnapshot, PullRequestSnapshot};
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 
 const ROOT: &str = "/work/app";

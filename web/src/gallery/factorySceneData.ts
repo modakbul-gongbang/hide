@@ -6,6 +6,7 @@
 // in web source read as a hex color to the design contract.
 
 import type { AgentRow } from "../snapshot";
+import { galleryAgentState } from "./agentStates";
 import type { FactoryConfig } from "../factory/FactorySettings";
 import type { CardView, Column, FactorySummary, FactoryView, InboxItem, TaskDetail, TaskState } from "../factory/model";
 import type { SceneContent } from "./sceneData";
@@ -409,12 +410,12 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
     const pane = value.worker_pane;
     const delegated = value.task === taskId(415);
     const blocked = value.state === "blocked" || value.state === "stopped";
-    const row: AgentRow = { id: pane, pane_id: pane, identity_label: pane, agent_kind: value.worker_runtime ?? "codex", emphasized: false, unread: false, demand: "none", activity: blocked ? "idle" : "working", group: "seen", symbol: blocked ? "○" : "●", status_code: blocked ? "idle" : "working", changed_at_unix_ms: value.since,
+    const row: AgentRow = { state: galleryAgentState(pane, null, value.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: value.worker_runtime ?? "codex", emphasized: false, unread: false, demand: "none", activity: blocked ? "idle" : "working", group: "seen", symbol: blocked ? "○" : "●", status_code: blocked ? "idle" : "working", changed_at_unix_ms: value.since,
       request: { verb: "working", verb_since_unix_ms: value.since, request: null, later_by: null, reply: null, pull_requests: [], line: value.state === "stopped" ? "web-e2e 세 번째 실패 뒤 멈춤" : value.state === "blocked" ? "Task 상세 API 선택을 기다리는 중" : "변경을 구현하고 검증하는 중" },
       lineage_child_pane_ids: delegated ? [`${pane}:child-1`, `${pane}:child-2`] : [],
       close_descendant_pane_ids: delegated ? [`${pane}:child-1`, `${pane}:child-2`] : [],
     };
-    const children: AgentRow[] = delegated ? [1, 2].map((index) => ({ ...row, id: `${pane}:child-${index}`, pane_id: `${pane}:child-${index}`, identity_label: `하위 작업 ${index}`, lineage_child_pane_ids: [], close_descendant_pane_ids: [], request: undefined })) : [];
+    const children: AgentRow[] = delegated ? [1, 2].map((index) => ({ ...row, state: galleryAgentState(`${pane}:child-${index}`, null, value.since), id: `${pane}:child-${index}`, pane_id: `${pane}:child-${index}`, identity_label: `하위 작업 ${index}`, lineage_child_pane_ids: [], close_descendant_pane_ids: [], request: undefined })) : [];
     return [row, ...children];
   });
   return { summary, workers, detail, config: { config, machine: { max_workers: 4 } } };

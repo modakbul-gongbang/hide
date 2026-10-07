@@ -543,16 +543,20 @@ impl Runtime {
         let Some(row) = self.agent_row(pane_id) else {
             return;
         };
-        let at_prompt = match self.delivery_observations.get(pane_id) {
-            Some(observation) => observation.status == "blocked",
-            None => row.blocked && row.activity != "stopped",
-        };
+        let at_prompt = crate::agent_state::submit_answers_prompt(
+            row,
+            self.delivery_observations
+                .get(pane_id)
+                .map(|observation| observation.status.as_str()),
+        );
         if at_prompt {
             return;
         }
-        services
-            .input
-            .record(pane_id, unix_milliseconds(), row.activity == "working");
+        services.input.record(
+            pane_id,
+            unix_milliseconds(),
+            crate::agent_state::is_running(row),
+        );
     }
     /// The agent row for a pane on this machine or on a device.
     fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {

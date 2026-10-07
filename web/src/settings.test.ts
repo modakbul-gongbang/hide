@@ -1,3 +1,4 @@
+import { emptyScope } from "../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -47,7 +48,7 @@ const kitPartLine = (part: KitComponent) => kitPartLineIn(part, t);
 const kitPartText = (part: Pick<KitComponent, "state" | "reason">) => kitPartTextIn(part, t);
 const socketProblem = (path: string) => socketProblemIn(path, t);
 
-const device = (patch: Partial<Device>): Device => ({
+const device = (patch: Partial<Device>): Device => ({ agent_scope: emptyScope(),
   id: "studio",
   label: "Studio",
   kind: "remote",

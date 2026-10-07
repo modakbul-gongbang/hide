@@ -1,5 +1,7 @@
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, tileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
+import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, tileCounts as drawTileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, SnapshotRest } from "./snapshot";
 
@@ -10,7 +12,7 @@ const tileHint = (label: string, connected: boolean, counts: Parameters<typeof t
 const frontTitle = (devices: Parameters<typeof frontTitleIn>[0], frontId: string) => frontTitleIn(devices, frontId, t);
 
 function agent(paneId: string, group: string): AgentRow {
-  return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" } as AgentRow;
+  return legacyAgentRow({ id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" }) as AgentRow;
 }
 
 const LOCAL_AGENTS = [agent("l1", "needs_you"), agent("l2", "needs_you"), agent("l3", "working")];
@@ -23,7 +25,7 @@ function rest(devices: string[] = ["mini", "build-box"]): SnapshotRest {
     { id: "build-box", label: "build-box", kind: "remote", state: "unavailable", message: null },
   ].filter((device) => device.kind === "local" || devices.includes(device.id));
   return {
-    navigator: { focused_device_id: "local", devices: all, workspaces: [{ id: "home", label: "hide", is_home: true, device_id: "local", checkouts: [] }] },
+    navigator: { focused_device_id: "local", devices: all, workspaces: [{ agent_scope: emptyScope(), id: "home", label: "hide", is_home: true, device_id: "local", checkouts: [] }] },
     ui_state: {
       workspace_registrations: [
         { id: "a", label: "a", path: "/a", device_id: "local", pinned: false },
@@ -106,3 +108,5 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
     expect(frontTitle(devices, "mini")).toEqual({ name: "mini", note: "Remote" });
   });
 });
+
+function tileCounts(rest: SnapshotRest | null, agents: AgentRow[], id: string) { return drawTileCounts(rest ? legacyRest(rest, agents) : null, agents, id); }

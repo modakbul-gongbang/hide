@@ -544,7 +544,7 @@ mod tests {
         state.request_verbs.insert(
             "w1:p1".to_owned(),
             crate::request_view::VerbRecord {
-                verb: crate::request_view::RequestVerb::Answer,
+                verb: crate::agent_state::RequestVerb::Answer,
                 since_unix_ms: 1_790_000_000_000,
                 result_opened_unix_ms: Some(1_790_000_100_000),
             },

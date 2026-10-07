@@ -41,6 +41,8 @@ impl Runtime {
             }
         }
         self.judge_device_pane_children(target, &mut session);
+        self.agent_scope_cache
+            .restore_projects(&mut session.workspaces);
         session
     }
 

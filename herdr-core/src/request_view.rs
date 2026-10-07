@@ -4,8 +4,8 @@
 //! Everything here is derived from facts the core already holds, with no AI:
 //! the session's own words the label worker read (`labels::facts`), Herdr's
 //! state and Hide's read and demand axes on the row, the lineage, and the
-//! pull requests GitHub reported. The verb is computed here and nowhere else
-//! (D-07), so the web only sorts and draws.
+//! pull requests GitHub reported. The verb is computed in `agent_state::turn`;
+//! association and duty belong to `agent_state::work`. This module assembles the block.
 //!
 //! A row's pull requests are those of its checkout's branch and those its
 //! session made (D-31, D-46). A pull request on several rows gives its duty
@@ -16,35 +16,13 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent_state::turn::{RequestVerb, verb_of};
+use crate::agent_state::work::{Linked, assign_duty, linked_pull_requests, shown_pull_requests};
 use crate::display_text;
 use crate::issues::IssueReference;
 use crate::labels::analysis::LabelEnd;
 use crate::labels::facts::{Reply, Request, Requester};
-use crate::model::{
-    GithubSnapshot, PullRequestBadge, PullRequestChecks, PullRequestSnapshot, SidebarAgentSnapshot,
-};
-
-/// What a row asks of the operator now, in the order the view draws its
-/// groups (D-06).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RequestVerb {
-    /// A question or an approval waits on the operator.
-    Answer,
-    /// A pull request's checks failed.
-    Fix,
-    /// A pull request is ready to review or merge.
-    Review,
-    /// The agent stopped before its work was done (AI `unfinished`).
-    Stopped,
-    /// A finished turn, or a pull request settled since the last request,
-    /// the operator has not looked at.
-    Result,
-    Working,
-    /// Its pull request's checks, its descendants, or something it named.
-    Waiting,
-    Idle,
-}
+use crate::model::{GithubSnapshot, PullRequestBadge, PullRequestChecks, SidebarAgentSnapshot};
 
 /// What the label worker's facts give a row, laid on by the overlay only
 /// while the pane's reference proves the session they were read from.
@@ -254,6 +232,7 @@ pub(crate) fn apply<'a>(
             }),
             pull_requests,
         });
+        row.state = crate::agent_state::row_state(row);
     }
     verbs_changed
 }
@@ -322,225 +301,6 @@ fn named(name: &str) -> RequestSender {
         }
         _ => RequestSender::Agent,
     }
-}
-
-struct Linked<'a> {
-    pull_request: &'a PullRequestSnapshot,
-    on_branch: bool,
-    /// When the session's tool printed it, for a pull request it made.
-    sighted_at: Option<u64>,
-    duty: bool,
-}
-
-fn linked_pull_requests<'a>(
-    row: &SidebarAgentSnapshot,
-    place: Option<RowPlace<'_>>,
-    github: &'a GithubSnapshot,
-) -> Vec<Linked<'a>> {
-    let Some(place) = place else {
-        return Vec::new();
-    };
-    let mut linked: Vec<Linked<'a>> = Vec::new();
-    if let Some(project) = github.project(place.root_path) {
-        linked.extend(
-            crate::github::pull_request_for_checkout(
-                &project.pull_requests,
-                place.branch,
-                place.head_sha,
-            )
-            .map(|pull_request| Linked {
-                pull_request,
-                on_branch: true,
-                sighted_at: None,
-                duty: false,
-            }),
-        );
-    }
-    let created = row
-        .row_facts
-        .as_ref()
-        .map(|facts| facts.created_prs.as_slice())
-        .unwrap_or_default();
-    for (repository, number, sighted_at) in created {
-        let found = github
-            .projects
-            .iter()
-            .flat_map(|project| project.pull_requests.iter())
-            .find(|pull_request| {
-                u64::from(pull_request.number) == *number
-                    && hide_session::pull_request_addresses(&pull_request.url)
-                        .first()
-                        .is_some_and(|(repo, _)| repo.eq_ignore_ascii_case(repository))
-            });
-        let Some(pull_request) = found else {
-            continue;
-        };
-        match linked
-            .iter_mut()
-            .find(|known| known.pull_request.url == pull_request.url)
-        {
-            Some(known) => known.sighted_at = Some(*sighted_at),
-            None => linked.push(Linked {
-                pull_request,
-                on_branch: false,
-                sighted_at: Some(*sighted_at),
-                duty: false,
-            }),
-        }
-    }
-    linked
-}
-
-/// Gives each pull request's duty to one row: the first on its branch's
-/// checkout, else the one whose session printed it first.
-fn assign_duty(rows: &mut [Vec<Linked<'_>>]) {
-    let mut holder: HashMap<&str, (usize, usize, bool, u64)> = HashMap::new();
-    for (row, linked) in rows.iter().enumerate() {
-        for (index, link) in linked.iter().enumerate() {
-            let rank = (link.on_branch, link.sighted_at.unwrap_or(u64::MAX));
-            let better = |held: &(usize, usize, bool, u64)| {
-                (rank.0 && !held.2) || (rank.0 == held.2 && !rank.0 && rank.1 < held.3)
-            };
-            match holder.get(link.pull_request.url.as_str()) {
-                Some(held) if !better(held) => {}
-                _ => {
-                    holder.insert(&link.pull_request.url, (row, index, rank.0, rank.1));
-                }
-            }
-        }
-    }
-    let chosen: Vec<(usize, usize)> = holder
-        .values()
-        .map(|(row, index, _, _)| (*row, *index))
-        .collect();
-    for (row, index) in chosen {
-        rows[row][index].duty = true;
-    }
-}
-
-fn settled_at(pull_request: &PullRequestSnapshot) -> Option<u64> {
-    pull_request
-        .merged_at_unix_ms
-        .or(pull_request.closed_at_unix_ms)
-}
-
-fn is_open(pull_request: &PullRequestSnapshot) -> bool {
-    !pull_request.badge.is_settled()
-}
-
-/// The order a row's live pull requests are looked at in (D-46).
-fn urgency(pull_request: &AgentPullRequestSnapshot) -> u8 {
-    match (pull_request.badge.is_settled(), pull_request.checks) {
-        (false, PullRequestChecks::Failed) => 0,
-        (false, PullRequestChecks::Passing | PullRequestChecks::None) => 1,
-        (false, PullRequestChecks::Pending) => 2,
-        _ => 3,
-    }
-}
-
-fn shown_pull_requests(
-    linked: Vec<Linked<'_>>,
-    operator_at: Option<u64>,
-) -> Vec<AgentPullRequestSnapshot> {
-    let mut shown: Vec<(AgentPullRequestSnapshot, u64)> = linked
-        .into_iter()
-        .map(|link| {
-            let pull_request = link.pull_request;
-            let settled = settled_at(pull_request);
-            let live = is_open(pull_request)
-                || matches!((settled, operator_at), (Some(settled), Some(asked)) if settled > asked);
-            let recency = pull_request
-                .created_at_unix_ms
-                .or(pull_request.updated_at_unix_ms)
-                .unwrap_or(0);
-            (
-                AgentPullRequestSnapshot {
-                    number: pull_request.number,
-                    title: pull_request.title.clone(),
-                    url: pull_request.url.clone(),
-                    badge: pull_request.badge,
-                    checks: pull_request.checks,
-                    head_branch: pull_request.head_branch.clone(),
-                    closing_issues: pull_request.closing_issues.clone(),
-                    live,
-                    duty: link.duty,
-                    created: link.sighted_at.is_some(),
-                    settled_at_unix_ms: settled,
-                },
-                recency,
-            )
-        })
-        .collect();
-    shown.sort_by(|(left, left_recency), (right, right_recency)| {
-        right
-            .live
-            .cmp(&left.live)
-            .then_with(|| urgency(left).cmp(&urgency(right)))
-            .then_with(|| right_recency.cmp(left_recency))
-            .then_with(|| right.number.cmp(&left.number))
-    });
-    shown
-        .into_iter()
-        .map(|(pull_request, _)| pull_request)
-        .collect()
-}
-
-fn verb_of(
-    row: &SidebarAgentSnapshot,
-    pull_requests: &[AgentPullRequestSnapshot],
-    result_opened: Option<u64>,
-) -> RequestVerb {
-    if row.demand != "none" {
-        return RequestVerb::Answer;
-    }
-    if row.activity == "working" {
-        return RequestVerb::Working;
-    }
-    let duty = || {
-        pull_requests
-            .iter()
-            .filter(|pull_request| pull_request.live && pull_request.duty)
-    };
-    let open = |checks: &[PullRequestChecks]| {
-        duty().any(|pull_request| {
-            !pull_request.badge.is_settled() && checks.contains(&pull_request.checks)
-        })
-    };
-    if open(&[PullRequestChecks::Failed]) {
-        return RequestVerb::Fix;
-    }
-    if open(&[
-        PullRequestChecks::Passing,
-        PullRequestChecks::None,
-        PullRequestChecks::Unknown,
-    ]) {
-        return RequestVerb::Review;
-    }
-    // Only the label analysis reads a turn as unfinished (D-33); a row
-    // without one never stops here.
-    let end = row.row_facts.as_ref().and_then(|facts| facts.end);
-    if end == Some(LabelEnd::Unfinished) && !row.waiting_on_descendants {
-        return RequestVerb::Stopped;
-    }
-    if open(&[PullRequestChecks::Pending]) {
-        return RequestVerb::Waiting;
-    }
-    // A settled pull request is a result until the operator opens it.
-    let unseen = |pull_request: &AgentPullRequestSnapshot| match result_opened {
-        None => true,
-        Some(opened) => pull_request
-            .settled_at_unix_ms
-            .is_some_and(|settled| settled > opened),
-    };
-    if (row.completed && row.unread)
-        || duty().any(|pull_request| pull_request.badge.is_settled() && unseen(pull_request))
-    {
-        return RequestVerb::Result;
-    }
-    if row.waiting_on_descendants || end == Some(LabelEnd::Waiting) {
-        return RequestVerb::Waiting;
-    }
-    RequestVerb::Idle
 }
 
 #[cfg(test)]

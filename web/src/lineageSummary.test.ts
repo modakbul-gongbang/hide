@@ -1,9 +1,12 @@
+import { foldedLineage } from "../test/legacyAgentScope";
+import { emptyScope } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { foldedLineage } from "./lineageSummary";
+
 import type { AgentRow, Workspace } from "./snapshot";
 
 function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
-  return {
+  return legacyAgentRow({
     id: pane,
     pane_id: pane,
     identity_label: pane,
@@ -20,11 +23,11 @@ function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
     device_id: "local",
     device_label: "This Mac",
     ...patch,
-  };
+  });
 }
 
 function workspace(device: string, rows: { id: string; branch: string; panes: string[]; pr?: number }[]): Workspace {
-  return {
+  return { agent_scope: emptyScope(),
     id: `${device}-project`,
     label: "hide",
     path: `/${device}/hide`,
@@ -33,7 +36,7 @@ function workspace(device: string, rows: { id: string; branch: string; panes: st
     temporary: false,
     pinned: false,
     inactive_checkouts: { expanded: false, checkout_ids: [] },
-    checkouts: rows.map((row) => ({
+    checkouts: rows.map((row) => ({ agent_scope: emptyScope(),
       id: row.id,
       workspace_id: `${device}-workspace`,
       label: row.branch,

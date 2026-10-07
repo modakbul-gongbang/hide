@@ -1,7 +1,9 @@
+import { emptyScope, legacyRest } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries, type SearchEntry } from "./search";
+import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries as drawSearchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
 
 const { t } = initializeInterfaceI18n("en");
@@ -22,11 +24,11 @@ describe("fuzzy score", () => {
 const REST = {
   navigator: {
     agents: [
-      { id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false },
-      { id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", symbol: "○", group: "seen", status_code: "idle", detail: "Waiting for review", changed_at_unix_ms: null, emphasized: false, unread: false },
+      legacyAgentRow({ id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false }),
+      legacyAgentRow({ id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", symbol: "○", group: "seen", status_code: "idle", detail: "Waiting for review", changed_at_unix_ms: null, emphasized: false, unread: false }),
     ],
     workspaces: [
-      {
+      { agent_scope: emptyScope(),
         id: "w1",
         label: "fixture",
         path: "/tmp/fixture",
@@ -34,7 +36,7 @@ const REST = {
         registered: true,
         temporary: false,
         pinned: false,
-        checkouts: [{ id: "c1", workspace_id: "w1", label: "main", path: "/tmp/fixture", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [{ id: "t1", workspace_id: "w1", checkout_id: "c1", label: "Tab 1", empty: false, delegated: false, panes: [{ id: "p1" }] }], active_tab_id: null, strip: [], next_tab_label: "Tab 2" }],
+        checkouts: [{ agent_scope: emptyScope(), id: "c1", workspace_id: "w1", label: "main", path: "/tmp/fixture", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [{ id: "t1", workspace_id: "w1", checkout_id: "c1", label: "Tab 1", empty: false, delegated: false, panes: [{ id: "p1" }] }], active_tab_id: null, strip: [], next_tab_label: "Tab 2" }],
         inactive_checkouts: { expanded: false, checkout_ids: [] },
       },
     ],
@@ -104,21 +106,21 @@ const TWO_DEVICES = {
         target_id: "mini",
         state: "connected",
         session: {
-          agents: [{ id: "m1", pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false }],
+          agents: [legacyAgentRow({ id: "m1", pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false })],
           workspaces: [
-            {
+            { agent_scope: emptyScope(),
               id: "remote:mini:workspace:web",
               label: "web",
               path: "/srv/web",
               device_id: "mini",
               inactive_checkouts: { expanded: false, checkout_ids: [] },
-              checkouts: [{ id: "remote:mini:checkout:web", workspace_id: "remote:mini:workspace:web", label: "main", path: "/srv/web", tabs: [{ id: "remote:mini:tab:1", panes: [{ id: "remote:mini:pane:1" }] }] }],
+              checkouts: [{ agent_scope: emptyScope(), id: "remote:mini:checkout:web", workspace_id: "remote:mini:workspace:web", label: "main", path: "/srv/web", tabs: [{ id: "remote:mini:tab:1", panes: [{ id: "remote:mini:pane:1" }] }] }],
             },
-            { id: "remote:mini:workspace:home", label: "hide", path: "/Users/example/hide", device_id: "mini", is_home: true, inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [] },
+            { agent_scope: emptyScope(), id: "remote:mini:workspace:home", label: "hide", path: "/Users/example/hide", device_id: "mini", is_home: true, inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [] },
           ],
         },
       },
-      { target_id: "build-box", state: "not_connected", session: { agents: [{ id: "old", pane_id: "remote:build-box:pane:1", identity_label: "stale", group: "seen" }], workspaces: [] } },
+      { target_id: "build-box", state: "not_connected", session: { agents: [legacyAgentRow({ id: "old", pane_id: "remote:build-box:pane:1", identity_label: "stale", group: "seen" })], workspaces: [] } },
     ],
   },
 } as unknown as SnapshotRest;
@@ -152,7 +154,7 @@ describe("an agent by its pane's Herdr id", () => {
   // Ids as `herdr pane list` prints them; mini's pane is that device's own, scoped by the core.
   const withIds = (local: string[], mini: string) => {
     const rest = structuredClone(TWO_DEVICES);
-    rest.navigator!.agents = local.map((pane, index) => ({ ...REST.navigator!.agents![0]!, id: `a${index}`, pane_id: pane, identity_label: `Agent ${index}` }));
+    rest.navigator!.agents = local.map((pane, index) => (legacyAgentRow({ ...REST.navigator!.agents![0]!, id: `a${index}`, pane_id: pane, identity_label: `Agent ${index}` })));
     rest.status!.remote![0]!.session!.agents![0]!.pane_id = `remote:mini:pane:${mini}`;
     return searchEntries(rest, t);
   };
@@ -333,7 +335,7 @@ describe("recent entries (PRD cmdk-recent)", () => {
   it("is the live row again once the device is connected, and drops a checkout its connected catalog no longer lists (B9, B10)", () => {
     const connected = withRecent([record("build-box", "remote:build-box:checkout:api")], {
       ...TWO_DEVICES,
-      status: { remote: [{ target_id: "build-box", state: "connected", session: { agents: [], workspaces: [{ id: "remote:build-box:workspace:api", label: "api", path: "/srv/api", device_id: "build-box", inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [{ id: "remote:build-box:checkout:api", workspace_id: "remote:build-box:workspace:api", label: "main", branch: "main", path: "/srv/api", tabs: [] }] }] } }] },
+      status: { remote: [{ target_id: "build-box", state: "connected", session: { agents: [], workspaces: [{ agent_scope: emptyScope(), id: "remote:build-box:workspace:api", label: "api", path: "/srv/api", device_id: "build-box", inactive_checkouts: { expanded: false, checkout_ids: [] }, checkouts: [{ agent_scope: emptyScope(), id: "remote:build-box:checkout:api", workspace_id: "remote:build-box:workspace:api", label: "main", branch: "main", path: "/srv/api", tabs: [] }] }] } }] },
     } as unknown as SnapshotRest);
     const live = recentEntries(connected, new Set());
     expect(live).toEqual([expect.objectContaining({ title: "main", subtitle: "api", workspaceId: "remote:build-box:workspace:api" })]);
@@ -367,3 +369,7 @@ describe("Open URL in Browser", () => {
     expect(openUrlEntry("localhost:5173", null, t)).toMatchObject({ dimmed: false, subtitle: "http://localhost:5173" });
   });
 });
+
+function searchEntries(rest: SnapshotRest | null, ...args: Parameters<typeof drawSearchEntries> extends [unknown, ...infer R] ? R : never) {
+  return drawSearchEntries(rest ? legacyRest(rest, rest.navigator?.agents ?? []) : rest, ...args);
+}

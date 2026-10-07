@@ -113,15 +113,6 @@ export function taskChain(factory: FactoryView, task: string): { before: CardVie
   };
 }
 
-/** The panes that are Factory workers, which the Overview leaves out of its requests and count (B13). */
-export function workerPanes(summary: FactorySummary | null | undefined): ReadonlySet<string> {
-  const panes = new Set<string>();
-  for (const factory of summary?.factories ?? []) {
-    for (const column of factory.columns) for (const card of column.cards) if (card.worker_pane) panes.add(card.worker_pane);
-  }
-  return panes;
-}
-
 /**
  * The marks the engine leaves where it shortened a text (`[cut N bytes]`),
  * at its end or, where a shortened question is joined to its answer, in its

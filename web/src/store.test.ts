@@ -1,3 +1,5 @@
+import { emptyScope } from "../test/legacyAgentScope";
+import { legacyAgentRow } from "../test/legacyAgentRow";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { EditorDocumentSnapshot } from "./snapshot";
 import { DIAGNOSTIC_CAP, LISTING_CAP, useShellStore } from "./store";
@@ -71,7 +73,7 @@ describe("snapshot merge", () => {
         rest: {
           navigator: {
             agents: [
-              {
+              legacyAgentRow({
                 id: "a",
                 pane_id: "p1",
                 identity_label: "codex",
@@ -82,7 +84,7 @@ describe("snapshot merge", () => {
                 changed_at_unix_ms: null,
                 emphasized: true,
                 unread: true,
-              },
+              }),
             ],
           },
           focused: { pane_id: "p1" },
@@ -103,7 +105,7 @@ describe("snapshot merge", () => {
         rest: {
           navigator: {
             agents: [
-              {
+              legacyAgentRow({
                 id: "a",
                 pane_id: "p1",
                 identity_label: "x",
@@ -114,7 +116,7 @@ describe("snapshot merge", () => {
                 changed_at_unix_ms: null,
                 emphasized: false,
                 unread: false,
-              },
+              }),
             ],
           },
         },
@@ -138,7 +140,7 @@ describe("snapshot merge", () => {
   });
 
   it("keeps untouched workspace rows by reference across a delta", () => {
-    const workspace = {
+    const workspace = { agent_scope: emptyScope(),
       id: "w1",
       label: "hide",
       path: "/h/hide",
@@ -163,7 +165,7 @@ describe("snapshot merge", () => {
           navigator: {
             workspaces: [{ ...workspace }],
             agents: [
-              {
+              legacyAgentRow({
                 id: "a",
                 pane_id: "p1",
                 identity_label: "codex",
@@ -174,7 +176,7 @@ describe("snapshot merge", () => {
                 changed_at_unix_ms: null,
                 emphasized: false,
                 unread: false,
-              },
+              }),
             ],
           },
         },
