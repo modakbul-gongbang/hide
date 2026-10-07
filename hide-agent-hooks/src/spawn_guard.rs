@@ -669,7 +669,7 @@ fn aims_away(words: &[String], env: &dyn Fn(&str) -> Option<String>) -> bool {
 
 fn launch_of(words: &[String], env: &dyn Fn(&str) -> Option<String>, away: bool) -> Option<Launch> {
     let (words, foreign) = command_words(words, env, true);
-    let (first, mut rest) = words.split_first()?;
+    let (first, rest) = words.split_first()?;
     if foreign || away || !is_herdr(first) {
         return None;
     }
