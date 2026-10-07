@@ -335,14 +335,14 @@ fn codex_projection(status: &str, seq: u64) -> SessionSnapshotPayload {
 /// The overlay a label worker publishes once it has read, under Herdr state
 /// `seq`, a Codex session whose plan turn finished with a plan.
 fn plan_waiting_overlay(seq: u64) -> LabelOverlay {
-    use hide_session::turns::{TurnMark, TurnTracker};
+    use hide_session::turns::{TurnMark, TurnMode, TurnTracker};
     let mut turns = TurnTracker::default();
     let turn = Some("turn-1".to_owned());
     turns.fold(
         0,
         &TurnMark::Started {
             turn: turn.clone(),
-            plan: true,
+            mode: TurnMode::Plan,
         },
     );
     turns.fold(10, &TurnMark::Plan { turn: turn.clone() });

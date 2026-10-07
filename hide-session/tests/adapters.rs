@@ -886,6 +886,30 @@ fn a_plan_turn_still_running_is_not_known_and_a_default_turn_is_not_waiting() {
     assert_eq!(read_whole(claude.path(), Agent::Claude).turns, None);
 }
 
+/// D-07: records this reader does not recognise never read as "nothing
+/// waits": a plan turn whose mode value changed, and a session whose turn
+/// records were renamed, are not known.
+#[test]
+fn a_changed_codex_record_format_is_not_known_rather_than_not_waiting() {
+    let (home, rollout) = plan_home();
+    let original = std::fs::read_to_string(&rollout).unwrap();
+    let mode_changed = original.replace(
+        r#""collaboration_mode_kind":"plan""#,
+        r#""collaboration_mode_kind":"Plan""#,
+    );
+    assert_ne!(mode_changed, original);
+    std::fs::write(&rollout, &mode_changed).unwrap();
+    assert_eq!(waiting(&read(home.path(), &plan_request()).unwrap()), None);
+
+    let renamed = original
+        .replace(r#""type":"task_started""#, r#""type":"turn_started""#)
+        .replace(r#""type":"item_completed""#, r#""type":"item_done""#)
+        .replace(r#""type":"task_complete""#, r#""type":"turn_complete""#)
+        .replace("<proposed_plan>", "<plan>");
+    std::fs::write(&rollout, renamed).unwrap();
+    assert_eq!(waiting(&read(home.path(), &plan_request()).unwrap()), None);
+}
+
 #[test]
 fn a_read_split_inside_the_plan_turn_and_resumed_at_its_anchor_answers_the_same() {
     let (home, rollout) = plan_home();

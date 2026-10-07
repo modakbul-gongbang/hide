@@ -1025,7 +1025,7 @@ pub(crate) mod tests {
             &[
                 TurnMark::Started {
                     turn: turn.clone(),
-                    plan: true,
+                    mode: hide_session::turns::TurnMode::Plan,
                 },
                 TurnMark::Plan { turn: turn.clone() },
                 TurnMark::Completed { turn },
@@ -1107,14 +1107,14 @@ pub(crate) mod tests {
     #[test]
     fn a_turn_not_yet_ended_in_the_file_rings_unless_it_runs_in_plan_mode() {
         use crate::delivery::doorbell::Hold;
-        use hide_session::turns::TurnMark;
+        use hide_session::turns::{TurnMark, TurnMode};
         let root = tempfile::tempdir().unwrap();
         let (runtime, _, target, _) = fixture(root.path());
         let mut guard = runtime.lock().unwrap();
-        let verdict = |guard: &mut Runtime, plan: bool| {
+        let verdict = |guard: &mut Runtime, mode: TurnMode| {
             let started = TurnMark::Started {
                 turn: Some("turn-1".to_owned()),
-                plan,
+                mode,
             };
             let overlay = read_overlay("recipient", "recipient-native", 2, &[started]);
             let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
@@ -1134,11 +1134,18 @@ pub(crate) mod tests {
                 .err()
         };
         assert_eq!(
-            verdict(&mut guard, false),
+            verdict(&mut guard, TurnMode::Other),
             None,
             "a default-mode turn rings"
         );
-        assert_eq!(verdict(&mut guard, true), Some(Hold::SessionUnread));
+        assert_eq!(
+            verdict(&mut guard, TurnMode::Plan),
+            Some(Hold::SessionUnread)
+        );
+        assert_eq!(
+            verdict(&mut guard, TurnMode::Unknown),
+            Some(Hold::SessionUnread)
+        );
     }
 
     #[test]

@@ -21,11 +21,25 @@ pub enum Waiting {
     PlanApproval,
 }
 
+/// The mode a turn's start record names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnMode {
+    Plan,
+    /// A mode the parser knows runs no plan.
+    Other,
+    /// No mode, or one the parser does not know: a plan this turn proposes
+    /// is not known to wait or not.
+    Unknown,
+}
+
 /// One structured record about a turn, as an agent's parser reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TurnMark {
-    /// A turn started; `plan` is whether it runs in plan mode.
-    Started { turn: Option<String>, plan: bool },
+    /// A turn started in `mode`.
+    Started {
+        turn: Option<String>,
+        mode: TurnMode,
+    },
     /// The turn proposed a plan.
     Plan { turn: Option<String> },
     /// The turn finished.
@@ -75,6 +89,11 @@ pub struct TurnTracker {
     through: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last: Option<Turn>,
+    /// A person wrote while no turn record had been read, so the records
+    /// read are not the ones this tracker knows (a format it does not
+    /// read): what the session waits for is not known.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unstructured: bool,
 }
 
 impl TurnTracker {
@@ -86,10 +105,14 @@ impl TurnTracker {
         }
         self.through = offset + 1;
         match mark {
-            TurnMark::Started { turn, plan } => {
+            TurnMark::Started { turn, mode } => {
                 self.last = Some(Turn {
                     id: turn.clone(),
-                    mode: if *plan { Mode::Plan } else { Mode::Other },
+                    mode: match mode {
+                        TurnMode::Plan => Mode::Plan,
+                        TurnMode::Other => Mode::Other,
+                        TurnMode::Unknown => Mode::Unseen,
+                    },
                     plan: false,
                     end: None,
                     answered: false,
@@ -102,29 +125,37 @@ impl TurnTracker {
                 current.answered = false;
             }
             TurnMark::Aborted { turn } => self.current(turn).end = Some(End::Aborted),
-            TurnMark::Human => {
-                if let Some(turn) = self.last.as_mut().filter(|turn| turn.end.is_some()) {
-                    turn.answered = true;
-                }
-            }
+            TurnMark::Human => match self.last.as_mut() {
+                Some(turn) if turn.end.is_some() => turn.answered = true,
+                Some(_) => {}
+                None => self.unstructured = true,
+            },
         }
     }
 
     /// What the last turn leaves the operator to do; `None` when the records
-    /// read do not settle it (a running turn whose mode was not plain, or a
-    /// finished plan whose turn's mode was not read).
+    /// read do not settle it (a running turn whose mode was not plain, a
+    /// finished plan whose turn's mode was not read or not known, or a
+    /// person's messages with no turn record at all).
     pub fn waiting(&self) -> Option<Waiting> {
         let Some(turn) = &self.last else {
-            return Some(Waiting::Nothing);
+            return (!self.unstructured).then_some(Waiting::Nothing);
         };
+        // A turn that proposed no plan cannot end on the plan menu. One that
+        // did waits when it ran in plan mode; in any other mode the records
+        // are not the ones this rule was written for, so it is not known.
         match (turn.end, turn.mode) {
-            (None, Mode::Other) => Some(Waiting::Nothing),
-            (None, Mode::Plan | Mode::Unseen) => None,
             (Some(End::Aborted), _) => Some(Waiting::Nothing),
-            (Some(End::Completed), _) if turn.answered || !turn.plan => Some(Waiting::Nothing),
-            (Some(End::Completed), Mode::Plan) => Some(Waiting::PlanApproval),
-            (Some(End::Completed), Mode::Other) => Some(Waiting::Nothing),
-            (Some(End::Completed), Mode::Unseen) => None,
+            (Some(End::Completed), _) if turn.answered => Some(Waiting::Nothing),
+            (_, Mode::Other) | (Some(End::Completed), Mode::Unseen) if !turn.plan => {
+                Some(Waiting::Nothing)
+            }
+            (Some(End::Completed), Mode::Plan) => Some(if turn.plan {
+                Waiting::PlanApproval
+            } else {
+                Waiting::Nothing
+            }),
+            _ => None,
         }
     }
 
@@ -170,7 +201,7 @@ mod tests {
         let plan = [
             TurnMark::Started {
                 turn: id("t1"),
-                plan: true,
+                mode: TurnMode::Plan,
             },
             TurnMark::Human,
             TurnMark::Plan { turn: id("t1") },
@@ -185,7 +216,7 @@ mod tests {
         let mut next = plan.to_vec();
         next.push(TurnMark::Started {
             turn: id("t2"),
-            plan: false,
+            mode: TurnMode::Other,
         });
         assert_eq!(folded(&next).waiting(), Some(Waiting::Nothing));
     }
@@ -203,7 +234,7 @@ mod tests {
         let mut tracker = folded(&[
             TurnMark::Started {
                 turn: id("t1"),
-                plan: true,
+                mode: TurnMode::Plan,
             },
             TurnMark::Plan { turn: id("t1") },
             TurnMark::Completed { turn: id("t1") },
@@ -212,5 +243,34 @@ mod tests {
         // that opened the turn again; it does not answer the plan.
         tracker.fold(5, &TurnMark::Human);
         assert_eq!(tracker.waiting(), Some(Waiting::PlanApproval));
+    }
+
+    #[test]
+    fn records_the_tracker_does_not_know_never_read_as_nothing_waiting() {
+        // A start whose mode is missing or unknown, then a proposed plan.
+        let unknown_mode = folded(&[
+            TurnMark::Started {
+                turn: id("t1"),
+                mode: TurnMode::Unknown,
+            },
+            TurnMark::Plan { turn: id("t1") },
+            TurnMark::Completed { turn: id("t1") },
+        ]);
+        assert_eq!(unknown_mode.waiting(), None);
+        // A plan proposed in a turn whose mode says it runs none.
+        let plan_in_other = folded(&[
+            TurnMark::Started {
+                turn: id("t1"),
+                mode: TurnMode::Other,
+            },
+            TurnMark::Plan { turn: id("t1") },
+        ]);
+        assert_eq!(plan_in_other.waiting(), None);
+        let mut ended = plan_in_other.clone();
+        ended.fold(100, &TurnMark::Completed { turn: id("t1") });
+        assert_eq!(ended.waiting(), None);
+        // A person's messages with no turn record read at all.
+        assert_eq!(folded(&[TurnMark::Human]).waiting(), None);
+        assert_eq!(folded(&[]).waiting(), Some(Waiting::Nothing));
     }
 }

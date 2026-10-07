@@ -1377,8 +1377,11 @@ fn parse_codex_line(item: &Value) -> LineResult {
 /// proposed plan is also the assistant's final message, wrapped in a
 /// `<proposed_plan>` block. Codex then shows "Implement this plan?" and
 /// writes nothing until the operator answers, which starts the next turn.
-/// That menu reads `done` to Herdr, and a bell's Enter picks "Yes, implement
-/// this plan", so these records are the only place the wait is visible.
+/// Herdr reads that menu as an ordinary stop (`idle` under its 2026.10.01.1
+/// Codex manifest), and a bell's Enter picks "Yes, implement this plan", so
+/// these records are the only place the wait is visible. A mode this parser
+/// does not know is reported as unknown, so a renamed field holds the bell
+/// rather than reading as a turn that proposes nothing.
 fn codex_turn_mark(item: &Value) -> Option<turns::TurnMark> {
     let payload = item.get("payload")?;
     let turn = || {
@@ -1392,10 +1395,14 @@ fn codex_turn_mark(item: &Value) -> Option<turns::TurnMark> {
         "event_msg" => match kind? {
             "task_started" => Some(turns::TurnMark::Started {
                 turn: turn(),
-                plan: payload
+                mode: match payload
                     .get("collaboration_mode_kind")
                     .and_then(Value::as_str)
-                    == Some("plan"),
+                {
+                    Some("plan") => turns::TurnMode::Plan,
+                    Some("default") => turns::TurnMode::Other,
+                    _ => turns::TurnMode::Unknown,
+                },
             }),
             "item_completed" => (payload.pointer("/item/type").and_then(Value::as_str)
                 == Some("Plan"))
