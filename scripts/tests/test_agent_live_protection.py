@@ -124,6 +124,49 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_missing_or_unconfirmed_receipt_cannot_confirm_cleanup(self):
+        for missing in (True, False):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory(prefix="agent-receipt-") as name:
+                with OwnedProcesses(diagnostics=Path(name) / "diagnostics") as owner:
+                    child = owner.spawn([sys.executable, "-c", "pass"], env=dict(os.environ),
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.assertEqual(child.wait(timeout=5), 0)
+                    receipt = Path(name) / "diagnostics/1.json"
+                    if missing:
+                        receipt.unlink()
+                    else:
+                        receipt.write_text('{"confirmed":false}')
+                    with self.assertRaisesRegex(ProcessError, "guardian_cleanup_receipt"):
+                        owner.end(child)
+
+    def test_diagnostic_write_error_is_guardian_failure(self):
+        with tempfile.TemporaryDirectory(prefix="agent-diagnostic-") as name:
+            with OwnedProcesses(diagnostics=Path(name) / "diagnostics") as owner:
+                (Path(name) / "diagnostics/1.json").write_text("occupied")
+                with self.assertRaisesRegex(ProcessError, "guardian_cleanup_or_resource_failure"):
+                    owner.run([sys.executable, "-c", "pass"], env=dict(os.environ), check=False)
+
+    def test_prior_issued_marker_is_owned_under_a_live_parent_but_fabricated_marker_is_not(self):
+        with OwnedProcesses() as previous:
+            _, marker, _ = previous.run([sys.executable, "-c", "import os; print(os.environ['HIDE_LIVE_CHECK_OWNER'])"],
+                                        env=dict(os.environ))
+        for value, owned in (("0" * 64 + ":1:0:" + "0" * 64, False), (marker.strip(), True)):
+            with self.subTest(owned=owned):
+                fixture = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                           env={**os.environ, "HIDE_LIVE_CHECK_OWNER": value},
+                                           start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try:
+                    with OwnedProcesses() as owner:
+                        owner.run([sys.executable, "-c", "pass"], env=dict(os.environ))
+                    if owned:
+                        fixture.wait(timeout=2)
+                    else:
+                        self.assertIsNone(fixture.poll(), "fabricated marker claimed a foreign process")
+                finally:
+                    if fixture.poll() is None:
+                        fixture.kill()
+                    fixture.wait(timeout=2)
+
     def test_unreadable_foreign_orphan_is_diagnostic_and_not_owned(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), name="fixture")
         library = Mock()

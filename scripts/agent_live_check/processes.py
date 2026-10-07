@@ -101,7 +101,10 @@ class OwnedProcesses:
             if self.family is None:
                 directory = owner_registry()
                 with open(directory / ".lock", "a", opener=lambda path, flags: os.open(path, flags, 0o600)) as lock:
-                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError as error:
+                        raise ProcessError("owner_registry_busy") from error
                     if sum(1 for path in directory.iterdir() if path.name != ".lock") >= MAX_OWNER_FAMILIES:
                         raise ProcessError("owner_family_count_over_budget")
                     self.family = secrets.token_hex(32)
