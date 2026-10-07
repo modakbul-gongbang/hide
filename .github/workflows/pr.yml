@@ -116,8 +116,6 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Test the repository scripts, the lane plan included
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - name: Test nightly failure reporting
-        run: node --test scripts/tests/nightly-report.test.cjs
       - name: Structural checks
         run: |
           bash scripts/check-harness-ignore-anchor.sh
@@ -178,7 +176,7 @@ jobs:
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
             bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
           fi
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
@@ -360,7 +358,7 @@ jobs:
         if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
         timeout-minutes: 10
         run: bash scripts/verify-web.sh desktop test
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
@@ -516,7 +514,7 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           bash scripts/verify-web.sh desktop e2e
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         # A failed test is retried once; see web-e2e.yml.
         id: flaky
         if: ${{ !cancelled() }}

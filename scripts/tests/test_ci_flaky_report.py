@@ -185,7 +185,291 @@ class Workflows(unittest.TestCase):
                     uploads += 1
                     self.assertIn("if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}", step, workflow.name)
                     self.assertEqual(len(reports), 1, f"{workflow.name}: the job's report step has id flaky")
-        self.assertEqual(uploads, 3)
+        self.assertEqual(uploads, 4)
+
+    def test_a_report_step_runs_the_script_once_so_its_annotations_fit_one_step(self):
+        # GitHub keeps 10 error annotations per step; two reports in one step
+        # would share them and lose failed tests past the tenth.
+        steps = 0
+        for workflow in sorted((SCRIPT.parents[1] / ".github" / "workflows").glob("*.yml")):
+            for step in re.split(r"\n      - ", workflow.read_text()):
+                if "ci-flaky-report.py --suite" in step:
+                    steps += 1
+                    self.assertEqual(step.count("ci-flaky-report.py"), 1, f"{workflow.name}: {step.splitlines()[0]}")
+        self.assertEqual(steps, 8)
+
+
+class Annotating(unittest.TestCase):
+    def test_a_test_that_failed_its_retry_is_annotated_with_its_file_line_and_name(self):
+        report = {"suites": [{"title": "s.spec.ts", "specs": [
+            {"title": "picks 50%", "file": "s.spec.ts", "line": 29, "tests": [{"status": "unexpected", "results": [
+                {"error": {"message": "first attempt"}}, {"error": {"message": "\x1b[31mlast attempt\x1b[0m"}}]}]},
+            spec("wobbles", "flaky"), spec("steady", "expected"),
+        ]}]}
+        failed = r.playwright_failed(report, "desktop")
+        self.assertEqual([(t["file"], t["line"], t["name"], t["error"]) for t in failed],
+                         [("desktop/e2e/s.spec.ts", 29, "picks 50%", "\x1b[31mlast attempt\x1b[0m")])
+        lines = []
+        r.annotate(failed, lines.append)
+        self.assertEqual(lines, ["::error file=desktop/e2e/s.spec.ts,line=29,title=Failed test::picks 50%25%0Alast attempt"])
+
+    def test_a_nextest_failure_is_annotated_on_its_crate(self):
+        root = ET.fromstring(
+            '<testsuites><testsuite name="hided::real_herdr">'
+            '<testcase name="echoes" classname="hided::real_herdr"><failure type="test failure"/>'
+            "<system-err>thread panicked at hided/tests/real_herdr.rs:467:5</system-err></testcase>"
+            '<testcase name="wobbles" classname="hided::real_herdr"><flakyFailure message="m">x</flakyFailure></testcase>'
+            "</testsuite></testsuites>"
+        )
+        failed = r.nextest_failed(root)
+        self.assertEqual([(t["file"], t["name"]) for t in failed], [("hided", "hided::real_herdr echoes")])
+        self.assertIn("panicked at", failed[0]["error"])
+
+    def test_more_failed_tests_than_a_step_has_room_for_end_with_their_count(self):
+        # GitHub keeps 10 error annotations per step; one is left for the runner's own.
+        failed = [{"file": None, "line": None, "name": f"t{n}", "error": ""} for n in range(r.ANNOTATED_TESTS + 3)]
+        lines = []
+        r.annotate(failed, lines.append)
+        self.assertEqual(len(lines), r.ANNOTATED_TESTS + 1)
+        self.assertLessEqual(len(lines), 9)
+        self.assertEqual(lines[-1], "::error title=Failed tests not annotated::3")
+
+    def test_an_excerpt_names_no_home_folder_and_no_token(self):
+        text = r.clean("at /Users/alice/x, /home/alice/z and C:\\Users\\alice\\y with ghp_" + "a" * 30)
+        self.assertNotIn("alice", text)
+        self.assertNotIn("ghp_", text)
+
+
+RUN = 100
+HEAD = "c" * 40
+GREEN = "a" * 40
+
+
+def job(id, name, conclusion, steps=(), labels=("macos-15",)):
+    return {
+        "id": id, "name": name, "status": "completed", "conclusion": conclusion, "labels": list(labels),
+        "html_url": f"https://github.com/o/r/actions/runs/{RUN}/job/{id}",
+        "check_run_url": f"https://api.github.com/repos/o/r/check-runs/{id}",
+        "steps": [{"name": step, "conclusion": result} for step, result in steps],
+    }
+
+
+def failed_test(path, line, name, error="boom"):
+    return {"title": "Failed test", "path": path, "start_line": line, "message": f"{name}\n{error}"}
+
+
+class FakeGitHub:
+    """GitHub's REST answers for one nightly run; every write is recorded, none is sent."""
+
+    def __init__(self, jobs, annotations=None, logs=None, issues=(), comments=None, event="schedule", branch="main",
+                 earlier=None, commits=(), pulls=(), files=None):
+        self.run = {"id": RUN, "run_attempt": 1, "event": event, "head_branch": branch, "head_sha": HEAD,
+                    "html_url": f"https://github.com/o/r/actions/runs/{RUN}", "created_at": "2026-10-07T00:00:00Z", "workflow_id": 9}
+        self.jobs = {RUN: jobs}
+        self.earlier = earlier or []
+        for run, run_jobs in (earlier or {}).items() if isinstance(earlier, dict) else []:
+            self.jobs[run] = run_jobs
+        self.annotations = annotations or {}
+        self.logs = logs or {}
+        self.issues = list(issues)
+        self.comments = comments or {}
+        self.commits, self.pulls, self.files = list(commits), list(pulls), files or {}
+        self.total_commits = None
+        self.writes = []
+
+    def add_earlier(self, run_id, sha, created_at, jobs, event="schedule"):
+        self.earlier.append({"id": run_id, "run_attempt": 1, "event": event, "head_sha": sha, "created_at": created_at,
+                             "html_url": f"https://github.com/o/r/actions/runs/{run_id}"})
+        self.jobs[run_id] = jobs
+
+    def __call__(self, args, body=None, raw=False):
+        path = args[0]
+        if body is not None:
+            self.writes.append((path, args[1:], body))
+            if path == "repos/o/r/issues":
+                return {"number": 900 + len(self.writes), "html_url": f"https://example/{900 + len(self.writes)}"}
+            return {}
+        first_page = not re.search(r"[?&]page=(?!1(&|$))", path)
+        if raw:
+            return self.logs[int(re.search(r"jobs/(\d+)/logs", path).group(1))]
+        if path == f"repos/o/r/actions/runs/{RUN}":
+            return self.run
+        if match := re.match(r"repos/o/r/actions/runs/(\d+)/attempts/\d+/jobs", path):
+            return {"jobs": self.jobs[int(match.group(1))] if first_page else []}
+        if match := re.match(r"repos/o/r/check-runs/(\d+)/annotations", path):
+            return self.annotations.get(int(match.group(1)), []) if first_page else []
+        if path.startswith("repos/o/r/issues?labels=nightly-failure"):
+            return self.issues if first_page else []
+        if match := re.match(r"repos/o/r/issues/(\d+)/comments", path):
+            return self.comments.get(int(match.group(1)), []) if first_page else []
+        if path.startswith("repos/o/r/actions/workflows/9/runs"):
+            return {"workflow_runs": sorted(self.earlier, key=lambda run: run["created_at"], reverse=True)}
+        if path.startswith(f"repos/o/r/compare/{GREEN}...{HEAD}"):
+            # A long range comes a page of 100 at a time.
+            page = int(re.search(r"[?&]page=(\d+)", path).group(1))
+            return {"total_commits": self.total_commits or len(self.commits),
+                    "commits": [{"sha": sha} for sha in self.commits[(page - 1) * 100:page * 100]]}
+        if path.startswith("repos/o/r/pulls?"):
+            return self.pulls if first_page else []
+        if match := re.match(r"repos/o/r/pulls/(\d+)/files", path):
+            return [{"filename": name} for name in self.files.get(int(match.group(1)), [])] if first_page else []
+        raise AssertionError(f"unexpected call {args}")
+
+    def opened(self):
+        return [body for path, _, body in self.writes if path == "repos/o/r/issues"]
+
+    def commented(self):
+        return [int(re.search(r"issues/(\d+)/comments", path).group(1)) for path, _, _ in self.writes if path.endswith("/comments")]
+
+    def closed(self):
+        return [int(re.search(r"issues/(\d+)$", path).group(1)) for path, _, body in self.writes if body.get("state") == "closed"]
+
+
+PACKAGE = "package / package (macos)"
+
+
+def nightly(github, lane_input=""):
+    report_run = r.Nightly("o/r", RUN, None, lane_input, github, SCRIPT.parents[1], TODAY)
+    report_run.apply(report_run.plan())
+    return github
+
+
+class NightlyFailures(unittest.TestCase):
+    def package_failed(self, **extra):
+        github = FakeGitHub(
+            [job(1, PACKAGE, "failure", [("Packaged app launch", "failure")]), job(2, "desktop e2e (macos full)", "success")],
+            annotations={1: [failed_test("desktop/e2e/s.spec.ts", 29, "server picker", "/Users/alice/x boom")]},
+            commits=["m1", "m2", "m3"],
+            pulls=[{"number": 668, "merge_commit_sha": "m1", "updated_at": "2026-10-06T10:00:00Z"},
+                   {"number": 670, "merge_commit_sha": "m2", "updated_at": "2026-10-06T11:00:00Z"},
+                   {"number": 600, "merge_commit_sha": "old", "updated_at": "2026-10-06T12:00:00Z"}],
+            files={668: ["desktop/e2e/s.spec.ts"], 670: ["hide-kit/src/lib.rs"], 600: ["desktop/e2e/s.spec.ts"]},
+            **extra,
+        )
+        github.add_earlier(90, GREEN, "2026-10-05T18:00:00Z", [job(11, PACKAGE, "success")])
+        return github
+
+    def test_a_first_failure_opens_one_issue_with_its_candidates_and_a_two_day_expiry(self):
+        github = nightly(self.package_failed())
+        (issue,) = github.opened()
+        self.assertEqual(issue["labels"], ["nightly-failure"])
+        self.assertEqual(issue["title"], "Nightly failure: server picker")
+        body = issue["body"]
+        for text in ("<!-- nightly-failure:package / package (macos):desktop/e2e/s.spec.ts > server picker -->",
+                     "`desktop/e2e/s.spec.ts:29` \"server picker\"", "actions/runs/100", HEAD[:12], GREEN[:12],
+                     "#668", "Expires: 2026-10-07", "revert the candidate"):
+            self.assertIn(text, body)
+        self.assertNotIn("#670", body, "it touched another file")
+        self.assertNotIn("#600", body, "it merged outside the range")
+        self.assertNotIn("alice", body)
+
+    def test_the_same_failure_again_is_one_comment_per_attempt(self):
+        marker = "<!-- nightly-failure:package / package (macos):desktop/e2e/s.spec.ts > server picker -->"
+        github = nightly(self.package_failed(issues=[{"number": 5, "body": marker}]))
+        self.assertEqual((github.opened(), github.commented()), ([], [5]))
+        again = nightly(self.package_failed(issues=[{"number": 5, "body": marker}], comments={5: [{"body": "<!-- nightly-run:100:1 -->"}]}))
+        self.assertEqual(again.writes, [])
+
+    def test_a_lane_that_passes_closes_its_issues_and_a_skipped_or_cancelled_one_does_not(self):
+        issues = [{"number": n, "body": f"<!-- nightly-failure:{lane}:step x -->"}
+                  for n, lane in ((1, "desktop e2e (macos full)"), (2, "desktop e2e (linux @platform)"), (3, "verify / os contract"))]
+        github = nightly(FakeGitHub(
+            [job(1, "desktop e2e (macos full)", "success"), job(2, "desktop e2e (linux @platform)", "skipped"),
+             job(3, "verify / os contract", "cancelled")], issues=issues))
+        self.assertEqual(github.closed(), [1])
+        self.assertIn("Passed at cccccccccccc", github.writes[0][2]["body"])
+
+    def test_only_a_hand_run_of_every_lane_closes(self):
+        issues = [{"number": 1, "body": "<!-- nightly-failure:desktop e2e (macos full):step x -->"}]
+        jobs = [job(1, "desktop e2e (macos full)", "success")]
+        self.assertEqual(nightly(FakeGitHub(jobs, issues=issues, event="workflow_dispatch"), "macos").closed(), [])
+        self.assertEqual(nightly(FakeGitHub(jobs, issues=issues, event="workflow_dispatch"), "all").closed(), [1])
+
+    def test_a_failed_job_with_no_failed_test_annotation_is_a_step_failure(self):
+        github = FakeGitHub(
+            [job(1, "desktop e2e (linux @platform)", "failure", [("Set up job", "success"), ("Desktop suite", "failure")]),
+             job(2, "verify / verify", "failure", [("Every planned lane succeeded", "failure")])],
+            logs={1: "2026-10-07T01:02:03.4Z line a\n2026-10-07T01:02:04.5Z ##[error]Process completed with exit code 1.\nlater"},
+        )
+        nightly(github)
+        (issue,) = github.opened()
+        self.assertIn("<!-- nightly-failure:desktop e2e (linux @platform):step Desktop suite -->", issue["body"])
+        self.assertIn("line a\n##[error]Process completed", issue["body"])
+        self.assertNotIn("later", issue["body"])
+        self.assertEqual(issue["labels"], ["nightly-failure"])
+
+    def test_a_failure_while_preparing_the_runner_is_infra(self):
+        cases = (("Fetch the pinned Herdr runtime", True), ("Run actions/checkout@v7", True), ("Install dependencies", True),
+                 ("Build the desktop app's daemon and kit binaries", False), ("Desktop suite", False))
+        for step, infra in cases:
+            with self.subTest(step=step):
+                github = nightly(FakeGitHub([job(1, "desktop e2e (macos full)", "failure", [(step, "failure")])], logs={1: "x"}))
+                self.assertEqual("infra" in github.opened()[0]["labels"], infra)
+        lost = nightly(FakeGitHub([job(1, "desktop e2e (macos full)", "failure", [("Desktop suite", "success")])], logs={1: "x"}))
+        self.assertIn("step (runner)", lost.opened()[0]["body"])
+        self.assertIn("infra", lost.opened()[0]["labels"])
+
+    def test_a_run_opens_at_most_ten_and_lists_the_rest_with_what_no_lane_annotated(self):
+        tests = [failed_test("web/e2e/a.spec.ts", n, f"t{n}") for n in range(13)]
+        tests.append({"title": "Failed tests not annotated", "path": ".github", "start_line": 1, "message": "4"})
+        github = nightly(FakeGitHub([job(1, "verify / web e2e / web e2e linux 2/4", "failure")], annotations={1: tests}))
+        opened = github.opened()
+        self.assertEqual(len(opened), r.NEW_ISSUES_PER_RUN + 1)
+        self.assertEqual(opened[-1]["title"], "nightly: 7 more failures in run 100")
+        self.assertIn("4 failed test(s) a lane had no annotation room for", opened[-1]["body"])
+
+    def test_a_run_off_main_writes_nothing(self):
+        github = FakeGitHub([job(1, PACKAGE, "failure")], branch="topic")
+        self.assertEqual(r.Nightly("o/r", RUN, None, "", github, SCRIPT.parents[1], TODAY).plan(), [])
+        args = r.argparse.Namespace(repo="o/r", run=None, attempt=None, lane_input="", dry_run=False)
+        calls = []
+        self.assertEqual(r.nightly(args, {**ENV, "GITHUB_REF": "refs/heads/topic"}, lambda *a, **k: calls.append(a)), 0)
+        self.assertEqual(calls, [])
+
+    def test_a_dry_run_reads_and_writes_nothing(self):
+        github = self.package_failed()
+        args = r.argparse.Namespace(repo="o/r", run=str(RUN), attempt=None, lane_input="", dry_run=True)
+        saved, r.date = r.date, type("D", (), {"today": staticmethod(lambda: TODAY), "fromisoformat": date.fromisoformat})
+        self.addCleanup(setattr, r, "date", saved)
+        self.assertEqual(r.nightly(args, {}, github), 0)
+        self.assertEqual(github.writes, [])
+
+    def test_candidates_come_from_every_page_of_a_long_range(self):
+        github = self.package_failed()
+        github.commits = [f"x{n}" for n in range(250)] + ["m1"]
+        self.assertIn("): #668", nightly(github).opened()[0]["body"])
+
+    def test_a_range_longer_than_is_read_says_the_candidates_are_unknown(self):
+        github = self.package_failed()
+        github.total_commits = r.PAGES * 100 + 1
+        github.commits = [f"x{n}" for n in range(r.PAGES * 100)]
+        self.assertIn("unknown, more than 1000 commits since then", nightly(github).opened()[0]["body"])
+
+    def test_no_green_nightly_in_reach_leaves_the_candidates_unknown(self):
+        github = FakeGitHub([job(1, PACKAGE, "failure")], annotations={1: [failed_test("desktop/e2e/s.spec.ts", 29, "server picker")]})
+        github.add_earlier(90, GREEN, "2026-10-05T18:00:00Z", [job(11, PACKAGE, "failure")])
+        self.assertIn("unknown without a green nightly", nightly(github).opened()[0]["body"])
+
+
+class Lanes(unittest.TestCase):
+    def test_a_shard_is_not_part_of_the_lane(self):
+        self.assertEqual(r.lane_of("web e2e (Windows @platform) / web e2e nightly-windows 2/4"),
+                         "web e2e (Windows @platform) / web e2e nightly-windows")
+
+    def test_a_step_failure_names_the_workflows_its_lane_ran_through_and_their_scripts(self):
+        paths = r.lane_paths("verify / web e2e / web e2e linux", SCRIPT.parents[1])
+        self.assertEqual(paths[:3], [".github/workflows/nightly.yml", ".github/workflows/pr.yml", ".github/workflows/web-e2e.yml"])
+        self.assertIn("scripts/verify-web.sh", paths)
+        self.assertEqual(r.lane_paths("desktop e2e (macos full)", SCRIPT.parents[1])[0], ".github/workflows/nightly.yml")
+
+    def test_the_jobs_that_only_report_are_the_ones_the_workflows_name(self):
+        nightly_yml = (SCRIPT.parents[1] / ".github" / "workflows" / "nightly.yml").read_text()
+        pr_yml = (SCRIPT.parents[1] / ".github" / "workflows" / "pr.yml").read_text()
+        report_job, gate = r.REPORT_JOBS
+        self.assertIn(f"    name: {report_job}\n", nightly_yml)
+        caller, callee = gate.split(" / ")
+        self.assertRegex(nightly_yml, rf"\n  verify:\n    name: {caller}\n    if: .*\n    uses: ./.github/workflows/pr.yml")
+        self.assertIn(f"\n  verify:\n    name: {callee}\n", pr_yml)
 
 
 class Gh(unittest.TestCase):

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Turn the flaky tests of one CI run into GitHub issues.
+"""Turn one CI run's test outcomes into GitHub issues.
 
-Playwright and cargo-nextest retry a failed test once in CI and classify a test
-that passes the retry as flaky; the run passes. Both write that classification
-into a report (Playwright's JSON, nextest's JUnit), and this script is the only
-thing built on top: it reads the report and files each flaky test as an issue
-labelled `quarantine` with a seven-day deadline, or adds the run to the open
-issue that already tracks the test. docs/TESTING.md, "Flaky tests", owns the
-policy.
+Playwright and cargo-nextest retry a failed test once in CI. Each lane's report
+step reads its tool's own report (Playwright's JSON, nextest's JUnit):
+
+- a test that passes the retry is flaky, and the run passes. The step files it
+  as an issue labelled `quarantine` with a seven-day deadline, or adds the run
+  to the open issue that already tracks it;
+- a test that fails the retry too failed the lane. The step writes it on the
+  job as an error annotation titled `Failed test`, with the test's file and
+  line and its name on the first line of the message, and files nothing: the
+  annotations are the record the nightly report reads, and the run's summary
+  page shows the names.
 
     ci-flaky-report.py --suite web --playwright web/e2e-report.json
     ci-flaky-report.py --suite rust --junit target/nextest/ci/junit.xml
@@ -17,10 +21,24 @@ keeps the same logs it keeps for a failure: the first attempt's daemon, Herdr
 and input logs are the evidence its issue needs, and a passing job uploads
 nothing otherwise.
 
+The nightly's report job (`--nightly`) is the one writer of `nightly-failure`
+issues, so the run's cap, the recurrence comments and the closing never race:
+one issue per test a lane annotated, or, for a failed job with no such
+annotation, per lane and failed step; a comment per run attempt on the issue
+already open for the same failure; and a lane that passes a scheduled run on
+main closes its issues. docs/TESTING.md, "Flaky tests" and "Nightly failures",
+owns the policy.
+
+    ci-flaky-report.py --nightly --lane-input all
+    ci-flaky-report.py --nightly --repo OWNER/REPO --run RUN_ID --dry-run
+
 It talks to GitHub through `gh` (GH_TOKEN, GITHUB_REPOSITORY and the run's
-GITHUB_* variables come from Actions) and needs `issues: write`. A step that
-runs it must not fail the lane: the flaky run already passed, and the report is
-a notice, so a GitHub error costs one missed issue the next flaky run files.
+GITHUB_* variables come from Actions). A lane's step needs `issues: write` and
+must not fail the lane: the flaky run already passed, and the report is a
+notice, so a GitHub error costs one missed issue the next flaky run files. The
+report job needs `actions: read`, `checks: read`, `pull-requests: read` and
+`issues: write`, and fails when GitHub does, so a failure it could not file is
+a red job rather than a silence.
 """
 import argparse
 from datetime import date, timedelta
@@ -40,21 +58,61 @@ MAX_PER_RUN = 20
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Hand-written issues quote a title cut short ("Agent tabs shrink in stages...").
 MATCH_PREFIX = 20
+# A home folder in a quoted path names the account that ran it; an excerpt
+# goes to a public page. (The literals are split so the workstation-identity
+# check does not read this line as one.)
+HOME = re.compile(r"(/Users" r"/|/home" r"/|[A-Za-z]:\\Users" r"\\)[^/\\\s]+")
+TOKEN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})")
+
+# The annotation a lane writes for a test that failed its retry too, and the
+# one that counts those it had no room for. GitHub keeps 10 error annotations
+# per step (REST check runs, "Update a check run"); one report step runs this
+# script once, so 8 tests and the count leave one for the runner's own.
+FAILED_TITLE = "Failed test"
+UNANNOTATED_TITLE = "Failed tests not annotated"
+ANNOTATED_TESTS = 8
+
+NIGHTLY_LABEL = "nightly-failure"
+INFRA_LABEL = "infra"
+NIGHTLY_EXPIRY_DAYS = 2
+# A broken environment fails everything at once; past this many new issues a
+# run files one issue listing the rest (design principle 15).
+NEW_ISSUES_PER_RUN = 10
+# How far back the last green nightly of a lane is looked for.
+GREEN_LOOKBACK_RUNS = 14
+# Every listing reads at most this many pages of 100.
+PAGES = 10
+# Jobs that only report on the others: this job, and `verify`'s gate, which
+# fails whenever a lane it waits for did and so names no failure of its own.
+REPORT_JOBS = ("nightly report", "verify / verify")
+SHARD = re.compile(r" \d+/\d+$")
+# Steps that prepare the runner rather than check the code: a failure there is
+# the runner's or a download's. Anything else, a build included, is not.
+INFRA_STEP = re.compile(
+    r"Set up job|Keep line endings as committed|Install .+|Fetch the pinned Herdr runtime|\(runner\)"
+    r"|Run (actions/checkout|actions/setup-node|actions/download-artifact|pnpm/action-setup|Swatinem/rust-cache)@.+"
+)
+# A failed job with no failed step lost its runner.
+RUNNER_STEP = "(runner)"
 
 
-def playwright_flaky(report, suite):
+def playwright_tests(report, suite, status):
     found = []
 
     def walk(node, trail):
         for spec in node.get("specs", []):
             for test in spec.get("tests", []):
-                if test.get("status") != "flaky":
+                if test.get("status") != status:
                     continue
-                first = (test.get("results") or [{}])[0]
+                results = test.get("results") or [{}]
+                # A flaky test's evidence is its first attempt; a failed
+                # test's is the last one, the failure that stands.
+                result = results[0] if status == "flaky" else results[-1]
                 found.append({
                     "file": f"{suite}/e2e/{spec['file']}",
+                    "line": spec.get("line"),
                     "name": " > ".join(trail + [spec["title"]]),
-                    "error": (first.get("error") or {}).get("message", ""),
+                    "error": (result.get("error") or {}).get("message", ""),
                 })
         for child in node.get("suites", []):
             walk(child, trail + [child["title"]])
@@ -64,6 +122,20 @@ def playwright_flaky(report, suite):
     return found
 
 
+def playwright_flaky(report, suite):
+    return playwright_tests(report, suite, "flaky")
+
+
+def playwright_failed(report, suite):
+    return playwright_tests(report, suite, "unexpected")
+
+
+def nextest_error(node):
+    # A hang ended by the profile's slow-timeout has no text or message, only
+    # its type ("test timeout").
+    return (node.text or "").strip() or node.get("message") or node.get("type") or ""
+
+
 def nextest_flaky(root):
     found = []
     for case in root.iter("testcase"):
@@ -71,18 +143,56 @@ def nextest_flaky(root):
         if flake is None:
             flake = case.find("flakyError")
         if flake is not None:
-            found.append({
-                "file": None,
-                "name": f"{case.get('classname')} {case.get('name')}",
-                # A hang ended by the profile's slow-timeout has no text or
-                # message, only its type ("test timeout").
-                "error": (flake.text or "").strip() or flake.get("message") or flake.get("type") or "",
-            })
+            found.append({"file": None, "name": f"{case.get('classname')} {case.get('name')}", "error": nextest_error(flake)})
+    return found
+
+
+def nextest_failed(root):
+    found = []
+    for case in root.iter("testcase"):
+        failure = case.find("failure")
+        if failure is None:
+            failure = case.find("error")
+        if failure is None:
+            continue
+        classname = case.get("classname") or ""
+        error = nextest_error(failure)
+        if error == failure.get("type"):
+            error = (case.findtext("system-err") or "").strip() or error
+        found.append({
+            # The crate's folder: nextest names a test by crate and binary, not file.
+            "file": classname.split("::")[0] or None,
+            "line": None,
+            "name": f"{classname} {case.get('name')}",
+            "error": error,
+        })
     return found
 
 
 def clean(text):
-    return ANSI.sub("", text).strip()[:600] or "(no message)"
+    text = HOME.sub(r"\1~", ANSI.sub("", text))
+    return TOKEN.sub("***", text).strip()[:600] or "(no message)"
+
+
+def escape_data(text):
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def escape_property(text):
+    return escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def annotate(failed, write=print):
+    """Writes each test that failed its retry as a `Failed test` annotation on the job."""
+    for test in failed[:ANNOTATED_TESTS]:
+        properties = [f"file={escape_property(test['file'])}"] if test.get("file") else []
+        if test.get("line"):
+            properties.append(f"line={int(test['line'])}")
+        properties.append(f"title={escape_property(FAILED_TITLE)}")
+        name = " ".join(test["name"].splitlines())
+        write(f"::error {','.join(properties)}::{escape_data(name + chr(10) + clean(test['error']))}")
+    if len(failed) > ANNOTATED_TESTS:
+        write(f"::error title={escape_property(UNANNOTATED_TITLE)}::{len(failed) - ANNOTATED_TESTS}")
 
 
 def tracks(issue, test):
@@ -134,7 +244,7 @@ def comment(test, system, facts, expired):
     )
 
 
-def gh(args, body=None):
+def gh(args, body=None, raw=False):
     try:
         done = subprocess.run(
             # gh speaks UTF-8; without a named encoding a Windows runner reads it as cp1252.
@@ -144,6 +254,8 @@ def gh(args, body=None):
         raise RuntimeError(f"gh could not run: {error}") from error
     if done.returncode:
         raise RuntimeError(f"gh api {' '.join(args)}: {done.stderr.strip()}")
+    if raw:
+        return done.stdout
     return json.loads(done.stdout) if done.stdout.strip() else None
 
 
@@ -187,23 +299,397 @@ def summary(lines):
             output.write("\n".join(lines) + "\n")
 
 
+# The nightly report job.
+
+
+def listing(call, path, key=None):
+    """Every entry of a paged listing, up to PAGES pages; more is an error, not a cut."""
+    items = []
+    for page in range(1, PAGES + 1):
+        data = call([f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}"])
+        batch = data[key] if key else data
+        items.extend(batch)
+        if len(batch) < 100:
+            return items
+    raise RuntimeError(f"{path} lists more than {PAGES * 100} entries")
+
+
+def lane_of(job_name):
+    """A job's lane: its name without the shard, so a test is the same failure in whichever shard it ran."""
+    return SHARD.sub("", job_name).replace(":", "-")
+
+
+def marker_text(text):
+    return " ".join(text.split()).replace("--", "-")
+
+
+def failure_marker(key):
+    return f"<!-- {NIGHTLY_LABEL}:{key} -->"
+
+
+def key_of(issue):
+    match = re.search(rf"<!-- {NIGHTLY_LABEL}:(.+?) -->", issue.get("body") or "")
+    return match.group(1) if match else None
+
+
+def overflow_run(issue):
+    match = re.search(r"<!-- nightly-overflow:(\d+) -->", issue.get("body") or "")
+    return match.group(1) if match else None
+
+
+def annotation_path(job):
+    # The job's check run, named by the job rather than assumed from its id.
+    return job["check_run_url"].split("api.github.com/", 1)[1] + "/annotations"
+
+
+def unannotated_count(annotation):
+    first = (annotation.get("message") or "").partition("\n")[0].strip()
+    return int(first) if first.isdigit() else 1
+
+
+def test_failure(job, lane, annotation):
+    name, _, error = (annotation.get("message") or "").partition("\n")
+    path = annotation.get("path")
+    # A test with no file is annotated on GitHub's default path.
+    file = None if path in (None, "", ".github") else path
+    subject = f"{file} > {name}" if file else name
+    return {
+        "kind": "test", "lane": lane, "key": marker_text(f"{lane}:{subject}"), "job": job,
+        "file": file, "line": annotation.get("start_line"), "name": name, "error": error,
+        "paths": [file] if file else [], "infra": False,
+    }
+
+
+def log_excerpt(log):
+    lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ?", "", line) for line in log.splitlines()]
+    end = next((index for index, line in enumerate(lines) if "##[error]" in line), len(lines) - 1)
+    return "\n".join(lines[max(0, end - 12):end + 1])
+
+
+def step_failure(job, lane, log, root):
+    steps = job.get("steps") or []
+    # A job that ran out of time cancels the step it was in.
+    step = next((s for s in steps if s.get("conclusion") == "failure"), None) \
+        or next((s for s in steps if s.get("conclusion") == "cancelled"), None)
+    name = step["name"] if step else RUNNER_STEP
+    return {
+        "kind": "step", "lane": lane, "key": marker_text(f"{lane}:step {name}"), "job": job,
+        "step": name, "error": log_excerpt(log), "paths": lane_paths(lane, root),
+        "infra": bool(INFRA_STEP.fullmatch(name)),
+    }
+
+
+def called_workflow(text, job_name):
+    """The workflow a job of `text` named `job_name` calls, if it calls one."""
+    for block in re.split(r"\n  (?=[\w-]+:\n)", text):
+        name = re.search(r"^    name: (.+)$", block, re.M)
+        uses = re.search(r"^    uses: \./(\.github/workflows/[\w.-]+)$", block, re.M)
+        if not (name and uses):
+            continue
+        pattern = ".*".join(re.escape(part) for part in re.split(r"\$\{\{.*?\}\}", name.group(1).strip()))
+        if re.fullmatch(pattern, job_name):
+            return uses.group(1)
+    return None
+
+
+def lane_paths(lane, root):
+    """The workflows a lane runs through and the scripts they call: what a step failure's candidate touched."""
+    files = [".github/workflows/nightly.yml"]
+    for segment in lane.split(" / ")[:-1]:
+        called = called_workflow((root / files[-1]).read_text(encoding="utf-8"), segment)
+        if called is None:
+            break
+        files.append(called)
+    scripts = {
+        script for file in files
+        for script in re.findall(r"scripts/[\w./-]+\.(?:sh|py|mjs|cjs|ps1)", (root / file).read_text(encoding="utf-8"))
+    }
+    return files + sorted(scripts)
+
+
+def touches(filenames, paths):
+    return any(name == path or name.startswith(path.rstrip("/") + "/") for name in filenames for path in paths)
+
+
+class Nightly:
+    """One nightly run's report: what it opens, comments and closes."""
+
+    def __init__(self, repo, run_id, attempt, lane_input, call, root, today):
+        self.repo, self.call, self.root, self.today = repo, call, root, today
+        self.run = call([f"repos/{repo}/actions/runs/{run_id}"])
+        self.run_id = str(run_id)
+        self.attempt = int(attempt or self.run["run_attempt"])
+        self.lane_input = lane_input or ""
+        self.marker = f"<!-- nightly-run:{self.run_id}:{self.attempt} -->"
+        self.jobs_of = {}
+        self.pr_files = {}
+
+    def jobs(self, run_id, attempt):
+        if (run_id, attempt) not in self.jobs_of:
+            jobs = listing(self.call, f"repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+            self.jobs_of[(run_id, attempt)] = [
+                job for job in jobs if job.get("status") == "completed" and job["name"] not in REPORT_JOBS
+            ]
+        return self.jobs_of[(run_id, attempt)]
+
+    @staticmethod
+    def green_lanes(jobs):
+        lanes = {}
+        for job in jobs:
+            lanes.setdefault(lane_of(job["name"]), []).append(job["conclusion"])
+        return {lane for lane, conclusions in lanes.items() if all(c == "success" for c in conclusions)}
+
+    def failures(self):
+        """Each failure of this run once, in job order, and the count of failed tests no lane annotated."""
+        found, unannotated = {}, 0
+        for job in self.jobs(self.run_id, self.attempt):
+            if job["conclusion"] not in ("failure", "timed_out"):
+                continue
+            lane = lane_of(job["name"])
+            annotations = listing(self.call, annotation_path(job))
+            tests = [a for a in annotations if a.get("title") == FAILED_TITLE]
+            left = sum(unannotated_count(a) for a in annotations if a.get("title") == UNANNOTATED_TITLE)
+            unannotated += left
+            if tests or left:
+                items = [test_failure(job, lane, annotation) for annotation in tests]
+            else:
+                # The report step died or wrote nothing: the failure is still one.
+                log = self.call([f"repos/{self.repo}/actions/jobs/{job['id']}/logs"], raw=True)
+                items = [step_failure(job, lane, log, self.root)]
+            for item in items:
+                found.setdefault(item["key"], item)
+        return list(found.values()), unannotated
+
+    def last_green(self, lane):
+        runs = self.call([
+            f"repos/{self.repo}/actions/workflows/{self.run['workflow_id']}/runs"
+            f"?branch=main&status=completed&per_page={GREEN_LOOKBACK_RUNS + 5}"
+        ])["workflow_runs"]
+        earlier = [
+            run for run in runs
+            if run["created_at"] < self.run["created_at"] and run["event"] in ("schedule", "workflow_dispatch")
+        ][:GREEN_LOOKBACK_RUNS]
+        for run in earlier:
+            if lane in self.green_lanes(self.jobs(str(run["id"]), run["run_attempt"])):
+                return run
+        return None
+
+    def candidates(self, green, paths):
+        """Pull requests merged into main since `green` that touched `paths`, or None when the range is too long to read."""
+        base, head = green["head_sha"], self.run["head_sha"]
+        shas, total = set(), None
+        for page in range(1, PAGES + 1):
+            compare = self.call([f"repos/{self.repo}/compare/{base}...{head}?per_page=100&page={page}"])
+            total = compare.get("total_commits", total)
+            shas.update(commit["sha"] for commit in compare["commits"])
+            if len(compare["commits"]) < 100:
+                break
+        if total is not None and len(shas) < total:
+            return None
+        merged = []
+        for page in range(1, PAGES + 1):
+            pulls = self.call([f"repos/{self.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100&page={page}"])
+            merged += [pull for pull in pulls if pull.get("merge_commit_sha") in shas]
+            # A pull request merged in the range was updated at its merge, after the green run.
+            if len(pulls) < 100 or pulls[-1]["updated_at"] < green["created_at"]:
+                break
+        found = []
+        for pull in sorted(merged, key=lambda pull: pull["number"]):
+            number = pull["number"]
+            if number not in self.pr_files:
+                files = listing(self.call, f"repos/{self.repo}/pulls/{number}/files")
+                self.pr_files[number] = [f["filename"] for f in files] + [f["previous_filename"] for f in files if f.get("previous_filename")]
+            if touches(self.pr_files[number], paths):
+                found.append(number)
+        return found
+
+    def subject(self, failure):
+        if failure["kind"] == "test":
+            where = f"{failure['file']}:{failure['line']}" if failure["file"] and failure["line"] else failure["file"]
+            return f"`{where}` \"{failure['name']}\"" if where else f"`{failure['name']}`"
+        return f"step \"{failure['step']}\""
+
+    def new_issue(self, failure):
+        run_url, sha = self.run["html_url"], self.run["head_sha"][:12]
+        green = self.last_green(failure["lane"])
+        if green is None:
+            since = f"- Last green nightly of this lane: none in the last {GREEN_LOOKBACK_RUNS} nightly runs\n"
+            candidates = "- Candidate pull requests: unknown without a green nightly to start from\n"
+        else:
+            since = f"- Last green nightly of this lane: {green['head_sha'][:12]} ({green['html_url']})\n"
+            numbers = self.candidates(green, failure["paths"]) if failure["paths"] else []
+            touched = ", ".join(f"`{path}`" for path in failure["paths"][:6]) + (", ..." if len(failure["paths"]) > 6 else "")
+            if numbers is None:
+                listed = f"unknown, more than {PAGES * 100} commits since then"
+            else:
+                listed = ", ".join(f"#{number}" for number in numbers) or "none"
+            candidates = f"- Candidate pull requests (merged since then, touching {touched or 'nothing named'}): {listed}\n"
+        what = f"- Test: {self.subject(failure)}\n" if failure["kind"] == "test" else f"- Step: \"{failure['step']}\"\n"
+        title = failure["name"] if failure["kind"] == "test" else f"{failure['lane']}: {failure['step']}"
+        labels = [NIGHTLY_LABEL] + ([INFRA_LABEL] if failure["infra"] else [])
+        return {
+            "title": f"Nightly failure: {title}"[:200],
+            "labels": labels,
+            "body": (
+                f"{failure_marker(failure['key'])}\n{self.marker}\n"
+                f"Nightly CI failed in the `{failure['lane']}` lane.\n\n"
+                f"{what}- Lane: `{failure['lane']}` on {', '.join(failure['job'].get('labels') or ['an unnamed runner'])}\n"
+                f"- Run: {run_url} (attempt {self.attempt}), job {failure['job']['html_url']}\n"
+                f"- Commit: {sha}\n{since}{candidates}"
+                f"- Expires: {(self.today + timedelta(days=NIGHTLY_EXPIRY_DAYS)).isoformat()}\n\n"
+                f"```\n{clean(failure['error'])}\n```\n\n"
+                "Fix the cause or revert the candidate pull request; a longer timeout, more retries or a skip does not end this issue. "
+                "Each nightly that fails here again adds a comment, and the first scheduled nightly on main that passes this lane closes it.\n"
+            ),
+        }
+
+    def recurrence(self, failure):
+        return {"body": (
+            f"{self.marker}\nFailed again at {self.run['head_sha'][:12]}: {self.run['html_url']} (attempt {self.attempt}).\n\n"
+            f"```\n{clean(failure['error'])}\n```"
+        )}
+
+    def overflow_issue(self, failures, unannotated):
+        lines = [f"- `{failure['lane']}`: {self.subject(failure)}" for failure in failures]
+        if unannotated:
+            lines.append(f"- {unannotated} failed test(s) a lane had no annotation room for; read the failed jobs")
+        count = len(failures) + unannotated
+        return {
+            "title": f"nightly: {count} more failures in run {self.run_id}",
+            "labels": [NIGHTLY_LABEL],
+            "body": (
+                f"<!-- nightly-overflow:{self.run_id} -->\n{self.marker}\n"
+                f"Nightly run {self.run['html_url']} (commit {self.run['head_sha'][:12]}) failed more than "
+                f"{NEW_ISSUES_PER_RUN} ways at once, which is usually one broken environment. These were not filed one by one:\n\n"
+                + "\n".join(lines)
+                + "\n\nThe next scheduled nightly files whichever still fail and closes this issue.\n"
+            ),
+        }
+
+    def commented(self, issue):
+        if self.marker in (issue.get("body") or ""):
+            return True
+        comments = listing(self.call, f"repos/{self.repo}/issues/{issue['number']}/comments")
+        return any(self.marker in (item.get("body") or "") for item in comments)
+
+    def plan(self):
+        """What this run writes, as (action, issue number or None, payload), without writing it."""
+        if self.run.get("head_branch") != "main":
+            return []
+        issues = [
+            issue for issue in listing(self.call, f"repos/{self.repo}/issues?labels={NIGHTLY_LABEL}&state=open")
+            if "pull_request" not in issue
+        ]
+        open_by_key = {key_of(issue): issue for issue in issues if key_of(issue)}
+        failures, unannotated = self.failures()
+        actions, opened, over = [], 0, []
+        for failure in failures:
+            issue = open_by_key.get(failure["key"])
+            if issue is not None:
+                if not self.commented(issue):
+                    actions.append(("comment", issue["number"], self.recurrence(failure)))
+            elif opened < NEW_ISSUES_PER_RUN:
+                actions.append(("open", None, self.new_issue(failure)))
+                opened += 1
+            else:
+                over.append(failure)
+        if over or unannotated:
+            mine = next((issue for issue in issues if overflow_run(issue) == self.run_id), None)
+            if mine is None:
+                actions.append(("open", None, self.overflow_issue(over, unannotated)))
+        scheduled = self.run["event"] == "schedule"
+        by_hand = self.run["event"] == "workflow_dispatch" and self.lane_input in ("", "all")
+        if scheduled or by_hand:
+            green = self.green_lanes(self.jobs(self.run_id, self.attempt))
+            passed = {"body": f"Passed at {self.run['head_sha'][:12]}: {self.run['html_url']}"}
+            for issue in issues:
+                key, earlier = key_of(issue), overflow_run(issue)
+                if key and key.split(":", 1)[0] in green:
+                    actions.append(("close", issue["number"], passed))
+                elif earlier and earlier != self.run_id:
+                    actions.append(("close", issue["number"], {"body": f"Run {self.run['html_url']} files its own failures."}))
+        return actions
+
+    def apply(self, actions):
+        lines = ["### Nightly failures", ""]
+        for action, number, payload in actions:
+            if action == "open":
+                created = self.call([f"repos/{self.repo}/issues", "--input", "-"], payload)
+                lines.append(f"- opened {created['html_url']}: {payload['title']}")
+            elif action == "comment":
+                self.call([f"repos/{self.repo}/issues/{number}/comments", "--input", "-"], payload)
+                lines.append(f"- commented on #{number}")
+            else:
+                self.call([f"repos/{self.repo}/issues/{number}/comments", "--input", "-"], payload)
+                self.call([f"repos/{self.repo}/issues/{number}", "-X", "PATCH", "--input", "-"], {"state": "closed", "state_reason": "completed"})
+                lines.append(f"- closed #{number}")
+        for line in lines[2:]:
+            print(line[2:])
+        summary(lines if actions else lines + ["Nothing to write."])
+
+
+def describe(actions):
+    """The plan as text, for a dry run."""
+    if not actions:
+        return "nothing to write"
+    out = []
+    for action, number, payload in actions:
+        if action == "open":
+            out.append(f"would open [{', '.join(payload['labels'])}] {payload['title']}")
+            out.extend("    " + line for line in payload["body"].splitlines())
+        else:
+            out.append(f"would {action} #{number}")
+            out.extend("    " + line for line in payload["body"].splitlines())
+    return "\n".join(out)
+
+
+def nightly(args, env, call=gh):
+    repo = args.repo or env["GITHUB_REPOSITORY"]
+    run = args.run or env["GITHUB_RUN_ID"]
+    attempt = args.attempt or (None if args.run else env.get("GITHUB_RUN_ATTEMPT"))
+    if not args.dry_run and env.get("GITHUB_REF") != "refs/heads/main":
+        print("not a run of main; the nightly report writes nothing")
+        return 0
+    report_run = Nightly(repo, run, attempt, args.lane_input, call, Path(__file__).resolve().parents[1], date.today())
+    actions = report_run.plan()
+    if args.dry_run:
+        print(describe(actions))
+        return 0
+    report_run.apply(actions)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", required=True, choices=("web", "desktop", "rust"))
-    source = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument("--suite", choices=("web", "desktop", "rust"))
+    source = parser.add_mutually_exclusive_group()
     source.add_argument("--playwright", type=Path, help="a Playwright JSON report")
     source.add_argument("--junit", type=Path, nargs="+", help="cargo-nextest JUnit reports (a lane writes one per nextest run)")
     parser.add_argument("--system", default=os.environ.get("RUNNER_OS", "unknown"))
+    parser.add_argument("--nightly", action="store_true", help="the nightly report job: file, comment on and close nightly-failure issues")
+    parser.add_argument("--repo", help="OWNER/REPO (default: GITHUB_REPOSITORY)")
+    parser.add_argument("--run", help="the nightly run to report (default: this run)")
+    parser.add_argument("--attempt", help="its attempt (default: this attempt, or the run's latest)")
+    parser.add_argument("--lane-input", default="", help="the hand run's lane input; empty for the schedule")
+    parser.add_argument("--dry-run", action="store_true", help="print what the nightly report would write, and write nothing")
     args = parser.parse_args(argv)
+    if args.nightly:
+        return nightly(args, os.environ)
+    if not args.suite or not (args.playwright or args.junit):
+        parser.error("a lane's report needs --suite and --playwright or --junit")
     paths = [args.playwright] if args.playwright else args.junit
     paths = [path for path in paths if path.is_file()]
     if not paths:
         print("no report; nothing to file")
         return 0
     if args.playwright:
-        tests = playwright_flaky(json.loads(paths[0].read_text(encoding="utf-8")), args.suite)
+        report_data = json.loads(paths[0].read_text(encoding="utf-8"))
+        tests, failed = playwright_flaky(report_data, args.suite), playwright_failed(report_data, args.suite)
     else:
-        tests = [test for path in paths for test in nextest_flaky(ET.parse(path).getroot())]
+        roots = [ET.parse(path).getroot() for path in paths]
+        tests = [test for root in roots for test in nextest_flaky(root)]
+        failed = [test for root in roots for test in nextest_failed(root)]
+    annotate(failed)
     if not tests:
         print("no flaky test in this run")
         return 0

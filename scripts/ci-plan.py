@@ -121,7 +121,6 @@ POLICY_ONLY = (
     ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
     "scripts/tests/*",
     # Scripts only `policy`, another workflow or nobody runs.
-    "scripts/nightly-report.cjs",
     "scripts/check-agent-asset-committed.sh", "scripts/check-capability-readers-off-lock.sh",
     "scripts/check-harness-ignore-anchor.sh", "scripts/check-herdr-pin-single-source.sh",
     "scripts/check-no-workstation-identity.*", "scripts/check-worktree-removal-boundary.sh",
