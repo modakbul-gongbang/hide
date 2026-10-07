@@ -547,6 +547,13 @@ A band stands where its most urgent row does, the boxes delegated below it inclu
 Bands, boxes within a column and rows within a box go by attention and not by any control: the operator's turn, then working, then waiting on children, then resting, the most recently active first within each.
 A line runs only through the gaps between boxes, turns with rounded corners, has a port dot at each end, and the lines of one parent gather into a single trunk in the gap and branch from it; a line that crosses more than one column keeps to a corridor no box covers.
 A line takes its colour from the child it leads to: warning when the child asks, blue with dashes flowing from parent to child while it works, pale blue while it waits on its own children, grey otherwise.
+A delegation into another project draws no line, since each project's graph is its own; it is a chip at each end instead, `→ sasu` on the parent's row and `← herdr-ide` on the child's, which stands as a first-column row of its own project (issue 718).
+A parent with several children in one project carries one chip for that project with their count (`→ sasu 2`), and one chip per project it delegated into.
+A chip follows the row chip pattern of the Sessions view's `#317 만듦`: a hairline border, the arrow, the project's name cut to the chip's width, and the count; when the other end runs on another device than the row the chip adds that device's name, `이 Mac` for this Mac.
+Its tooltip and accessible name say the direction, the project and the agents at the other end, the most urgent first (`sasu에 맡김: 러너 재시도, 명세 정리`).
+Clicking a chip goes to the box holding the other end, the most urgent agent's when there are several: on the Overview of every project, when that project's section is on the page, it scrolls to that section and selects the box, unfolding the fold line that holds it and turning the filter off when the filter hides it; otherwise, and on one project's Overview, it opens that project's Overview (on its device) on the Agents graph with that box selected and unfolded.
+The chips are read from every agent the snapshot carries on every device; the core names a device's pane `remote:<device>:pane:<id>` and resolves a parent on another machine to that name, so a pane id pairs the two ends across devices without colliding with this Mac's own ids.
+Resting on the child's row names the parent in the popover even though the parent is drawn in another project.
 
 A worktree box's head reads the kind glyph in its pull request's colour and the branch in mono, the purpose (else the pull request's title, else nothing), and a third line of the issue chip, the PR chip (the state colour, then CI as ✓, ✗ or ●, and `변경 요청` in warning on an open pull request that asked for changes), `↑N ↓N` and the changed files in warning when dirty; the primary checkout's head reads the house, main, its purpose and `에이전트 N`.
 A worktree whose Git state has not been read shows `?` where the files go, never a false zero; before GitHub answers there is no PR chip and no PR colour, and the head stands on Git facts alone.
@@ -585,7 +592,7 @@ When the device cannot answer, Overview's project scope shows the reason above t
 
 On the Overview of every project the graph is drawn once per project, under a header line with the project's name and its device when it is not this Mac, the projects ordered by attention (the one with an agent whose turn it is first, then the most recently active), and the filter applies to all of them.
 A project whose boxes all rest is its header line and its fold lines.
-No box is selected there, and a device that cannot answer is a notice above the graph for that device alone.
+No box is selected there until a cross-project chip selects one, and a device that cannot answer is a notice above the graph for that device alone.
 
 The graph moves only when what it draws changes.
 Boxes, rows, trays and lines glide to their new places over 320 ms (`--graph-motion-ms`), a new box fades in and a new delegation's line draws itself from the parent to the child; a snapshot that leaves every position as it was starts no glide, no timer and no animation frame.
@@ -596,7 +603,7 @@ Heads, rows, chips, `정리` and fold lines take focus; the arrow keys move betw
 On a narrow window only the graph scrolls, sideways, inside its own area, and the page does not; a long branch or a Korean title is cut to one line with its whole text in the tooltip or the popover.
 Every icon button and chip has an accessible name, the same words as its tooltip.
 Hover, focus, the popover and every filter change are local: they publish no snapshot, dispatch no core event, and start no Git or disk work.
-The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge` and `data-graph-fold`, each canvas `data-graph-canvas` with a `data-graph-revision` that counts the pictures applied and a `data-graph-flowing` that is present only while its dashes are stepping, and the filter `data-graph-chip`, `data-graph-search` and `data-graph-device`, which is what the browser tests read.
+The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge`, `data-graph-fold` and `data-graph-cross` (`out` or `in`, with `data-graph-cross-project`), each canvas `data-graph-canvas` with a `data-graph-revision` that counts the pictures applied and a `data-graph-flowing` that is present only while its dashes are stepping, and the filter `data-graph-chip`, `data-graph-search` and `data-graph-device`, which is what the browser tests read.
 
 ### Issues
 

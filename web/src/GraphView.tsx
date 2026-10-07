@@ -1,10 +1,11 @@
 import { useEscapeLayer } from "./components/ui/layer";
-import { CornerDownRightIcon, GitMergeIcon, SearchIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, CornerDownRightIcon, GitMergeIcon, SearchIcon, XIcon } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   backPath,
   buildGraph,
   chainOf,
+  foldHolding,
   forwardPath,
   graphDevices,
   graphFilterActive,
@@ -13,6 +14,7 @@ import {
   routeFrom,
   STATUS_CHIPS,
   THIS_DEVICE,
+  type CrossChip,
   type EdgeKind,
   type FoldKind,
   type GraphBox,
@@ -176,23 +178,41 @@ export type AgentGraphProps = {
   onFilter: (filter: GraphFilter) => void;
   /** The folds the operator opened, by `foldId`. */
   folds: readonly string[];
+  /** Every agent of every project on every device, where a chip finds the other end of a delegation into another project. */
+  everyone: readonly LensAgent[];
   handlers: LensHandlers;
   now: number;
 };
 
-export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFilter, folds, handlers, now }: AgentGraphProps) {
+export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFilter, folds, everyone, handlers, now }: AgentGraphProps) {
   const { t } = useInterfaceTranslation();
   // The sizes are tokens, read once: the layout is numbers (D-31).
   const [geometry] = useState(() => readGraphGeometry());
   const [motionMs] = useState(() => readMotionMs());
   const [flowTiming] = useState(() => readFlowTiming());
-  const board = useMemo(() => buildGraph(projects, agents, { scope, geometry, openFolds: folds, selectedBox, filter }), [projects, agents, scope, geometry, folds, selectedBox, filter]);
+  const board = useMemo(() => buildGraph(projects, agents, { scope, geometry, openFolds: folds, selectedBox, filter, everyone }), [projects, agents, scope, geometry, folds, selectedBox, filter, everyone]);
   const root = useRef<HTMLDivElement>(null);
-  const selected = board.sections[0]?.selected ?? null;
+  const selected = board.sections.find((section) => section.selected !== null)?.selected ?? null;
   useLayoutEffect(() => {
     if (!selected) return;
     root.current?.querySelector(`[data-graph-box="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected]);
+  // A chip's click on this page, counted so a second click on the same chip brings its box back into view.
+  const [jump, setJump] = useState<{ box: string; count: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!jump) return;
+    const box = root.current?.querySelector(`[data-graph-box="${CSS.escape(jump.box)}"]`);
+    box?.closest("[data-graph-section]")?.scrollIntoView({ block: "start" });
+    box?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [jump]);
+  // A chip goes to the other end's box: here when this page draws its project, else on that project's Overview (issue 718).
+  const onCross = (chip: CrossChip) => {
+    if (scope === "all" && projects.some(({ workspace }) => workspace.id === chip.project.id)) {
+      const drawn = board.sections.some((section) => section.rows.has(chip.paneIds[0]!));
+      handlers.selectBox(chip.box, { fold: drawn ? null : foldHolding(chip.project, everyone, chip.box, "all"), clearFilter: !drawn && graphFilterActive(filter) });
+      setJump((last) => ({ box: chip.box, count: (last?.count ?? 0) + 1 }));
+    } else handlers.openProjectBox(chip.project, chip.box, foldHolding(chip.project, everyone, chip.box, "project"));
+  };
   if (board.empty) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-graph-empty="true">
@@ -213,13 +233,13 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   return (
     <div ref={root} className="flex min-w-0 flex-col gap-lg pb-xl" data-graph={scope} onKeyDown={moveFocus}>
       {board.sections.map((section) => (
-        <GraphSection key={section.project.id} section={section} scope={scope} geometry={geometry} motionMs={motionMs} flowTiming={flowTiming} handlers={handlers} now={now} />
+        <GraphSection key={section.project.id} section={section} scope={scope} geometry={geometry} motionMs={motionMs} flowTiming={flowTiming} handlers={handlers} onCross={onCross} now={now} />
       ))}
     </div>
   );
 }
 
-function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; flowTiming: FlowTiming; handlers: LensHandlers; now: number }) {
+function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers, onCross, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; flowTiming: FlowTiming; handlers: LensHandlers; onCross: (chip: CrossChip) => void; now: number }) {
   const { t } = useInterfaceTranslation();
   const canvas = useRef<HTMLDivElement>(null);
   const tween = useRef<Tween | null>(null);
@@ -323,7 +343,7 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers
                 })}
             </svg>
             {section.boxes.map((box) => (
-              <BoxView key={box.id} box={box} selected={box.id === section.selected} chain={chain} hover={hover} names={names} lines={lines} onHover={setHover} handlers={handlers} now={now} />
+              <BoxView key={box.id} box={box} selected={box.id === section.selected} chain={chain} hover={hover} names={names} lines={lines} onHover={setHover} handlers={handlers} onCross={onCross} now={now} />
             ))}
           </div>
         </div>
@@ -341,7 +361,7 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers
 
 // --- a box ---------------------------------------------------------------------
 
-function BoxView({ box, selected, chain, hover, names, lines, onHover, handlers, now }: { box: GraphBox; selected: boolean; chain: Set<string> | null; hover: string | null; names: ReadonlyMap<string, string>; lines: ReadonlyMap<string, string>; onHover: (paneId: string | null) => void; handlers: LensHandlers; now: number }) {
+function BoxView({ box, selected, chain, hover, names, lines, onHover, handlers, onCross, now }: { box: GraphBox; selected: boolean; chain: Set<string> | null; hover: string | null; names: ReadonlyMap<string, string>; lines: ReadonlyMap<string, string>; onHover: (paneId: string | null) => void; handlers: LensHandlers; onCross: (chip: CrossChip) => void; now: number }) {
   const peers = useMemo(() => new Map(box.rows.map((row) => [row.paneId, row.tray ? box.rows.filter((other) => other.tray === row.tray && other.paneId !== row.paneId).map((other) => other.value.agent.identity_label) : []])), [box]);
   return (
     <div
@@ -367,7 +387,7 @@ function BoxView({ box, selected, chain, hover, names, lines, onHover, handlers,
           />
         ))}
         {box.rows.map((row) => (
-          <RowView key={row.paneId} row={row} faded={chain !== null && !chain.has(row.paneId)} peers={peers.get(row.paneId) ?? []} parent={row.parent ? (names.get(row.parent) ?? null) : null} line={lines.get(row.paneId) ?? null} onHover={onHover} handlers={handlers} />
+          <RowView key={row.paneId} row={row} faded={chain !== null && !chain.has(row.paneId)} peers={peers.get(row.paneId) ?? []} parent={parentName(row, names)} line={lines.get(row.paneId) ?? null} onHover={onHover} handlers={handlers} onCross={onCross} />
         ))}
       </div>
     </div>
@@ -467,6 +487,12 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
 
 // --- a row ---------------------------------------------------------------------
 
+/** The agent that delegated a row, drawn in this project or named by the chip of a parent in another one. */
+function parentName(row: GraphRow, names: ReadonlyMap<string, string>): string | null {
+  if (!row.parent) return null;
+  return names.get(row.parent) ?? row.cross.find((chip) => chip.direction === "in")?.names[0] ?? null;
+}
+
 /**
  * One agent (B17-B19): its mark, provider, title and age on one line, and
  * only while it asks, its question in the warning colour on a second. The row
@@ -474,7 +500,7 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
  * delegation chain bright and shows `↵ Panel` where the age was, and resting on
  * it opens everything the agent last said with where it stands.
  */
-function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: GraphRow; faded: boolean; peers: readonly string[]; parent: string | null; line: string | null; onHover: (paneId: string | null) => void; handlers: LensHandlers }) {
+function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }: { row: GraphRow; faded: boolean; peers: readonly string[]; parent: string | null; line: string | null; onHover: (paneId: string | null) => void; handlers: LensHandlers; onCross: (chip: CrossChip) => void }) {
   const { t } = useInterfaceTranslation();
   const { agent, project, checkout, task, device } = row.value;
   const asking = row.line !== null;
@@ -519,6 +545,9 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
         <AgentMark kind={agent.agent_kind} />
         <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", asking && "font-semibold")}>{agent.identity_label}</span>
+        {row.cross.map((chip) => (
+          <CrossProjectChip key={`${chip.direction}:${chip.project.id}`} chip={chip} onClick={() => onCross(chip)} />
+        ))}
         {parts.length > 0 ? (
           <Hint label={t("graph.tuckedDescendants", { states: badgeWords(row.tucked ?? undefined, t) })}>
             <span className="pointer-events-auto relative z-10 inline-flex shrink-0 items-center gap-xs font-mono text-caption" data-graph-tucked={parts.map((part) => `${part.state}:${part.count}`).join(" ")}>
@@ -537,6 +566,41 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
         </span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A delegation into or from another project (issue 718): `→ sasu 2` on the
+ * parent's row, `← herdr-ide` on the child's, with the other end's device when
+ * it is not this row's. The tooltip and the accessible name name the agents
+ * at the other end, and the click goes to the box that holds them.
+ */
+function CrossProjectChip({ chip, onClick }: { chip: CrossChip; onClick: () => void }) {
+  const { t } = useInterfaceTranslation();
+  const device = chip.device === null ? null : chip.device === THIS_DEVICE ? t("common.thisMac") : chip.device;
+  const place = device ? `${chip.project.label} · ${device}` : chip.project.label;
+  const label = t(chip.direction === "out" ? "graph.cross.out" : "graph.cross.in", { project: place, agents: chip.names.join(", ") });
+  const Arrow = chip.direction === "out" ? ArrowRightIcon : ArrowLeftIcon;
+  return (
+    <Hint label={label}>
+      <button
+        type="button"
+        aria-label={label}
+        data-graph-focus="chip"
+        data-graph-cross={chip.direction}
+        data-graph-cross-project={chip.project.id}
+        className="pointer-events-auto relative z-10 inline-flex h-(--graph-row-line) max-w-(--size-pane-child-chip-max) shrink-0 items-center gap-xxs rounded-xs border border-border px-xs font-mono text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClick();
+        }}
+      >
+        <Arrow aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+        <span className="min-w-0 truncate font-sans">{chip.project.label}</span>
+        {device ? <span className="shrink-0 font-sans text-subtle-foreground">{device}</span> : null}
+        {chip.paneIds.length > 1 ? <span className="shrink-0">{chip.paneIds.length}</span> : null}
+      </button>
+    </Hint>
   );
 }
 

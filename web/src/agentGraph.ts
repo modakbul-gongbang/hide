@@ -154,6 +154,25 @@ function latest(values: readonly LensAgent[]): string {
 
 // --- the model ----------------------------------------------------------------
 
+/**
+ * A delegation into another project, drawn as a chip on each end's row (issue
+ * 718): `out` on the parent's row, one per project it delegated into, and `in`
+ * on the child's. A project's graph is its own (D-11), so no line crosses
+ * projects; the chip is how the two ends find each other.
+ */
+export type CrossChip = {
+  direction: "out" | "in";
+  /** The project at the other end. */
+  project: Workspace;
+  /** The other end's device when it is not this row's, `THIS_DEVICE` for this machine; null on one device. */
+  device: string | null;
+  /** The agents at the other end, the most urgent first. */
+  paneIds: string[];
+  names: string[];
+  /** The box holding the first of them, the one a click selects. */
+  box: string;
+};
+
 /** One agent's row in a box. */
 export type GraphRow = {
   value: LensAgent;
@@ -178,6 +197,8 @@ export type GraphRow = {
   tucked: BadgeCounts | null;
   /** Kept only to link a matching row to its parent chain, so drawn faded (B27). */
   dim: boolean;
+  /** The delegations into or from other projects, out before in (issue 718). */
+  cross: CrossChip[];
 };
 
 export type GraphTray = { key: string; top: number; bottom: number; paneIds: string[] };
@@ -254,6 +275,8 @@ export type GraphOptions = {
   /** The box a way in selected; a box that is not drawn leaves the project's primary box selected (B1). */
   selectedBox: string | null;
   filter: GraphFilter;
+  /** Every agent of every project on every device, where a delegation into another project finds its other end. */
+  everyone: readonly LensAgent[];
 };
 
 export function foldId(kind: FoldKind, projectId: string): string {
@@ -275,14 +298,15 @@ export function buildGraph(projects: readonly BoardProject[], agents: readonly L
   const filtering = graphFilterActive(options.filter);
   const ofProject = new Map<Workspace, LensAgent[]>();
   for (const value of agents) push(ofProject, value.project, value);
+  const lineage = lineageOf(options.everyone);
   const sections = projects
-    .map((project) => projectGraph(project, ofProject.get(project.workspace) ?? [], options, filtering))
+    .map((project) => projectGraph(project, ofProject.get(project.workspace) ?? [], options, filtering, lineage))
     .filter((section): section is ProjectGraph => section !== null);
   if (options.scope === "all") sections.sort((a, b) => a.attention - b.attention || b.recency.localeCompare(a.recency));
   return { sections, empty: sections.length === 0 && !filtering, filterEmpty: sections.length === 0 && filtering };
 }
 
-function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean): ProjectGraph | null {
+function projectGraph({ workspace, device }: BoardProject, members: LensAgent[], options: GraphOptions, filtering: boolean, lineage: Lineage): ProjectGraph | null {
   const { geometry: g } = options;
   const primaryId = primaryCheckout(workspace)?.id ?? null;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
@@ -318,9 +342,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
       if (candidate.members.length > 0) drawn.push(candidate);
       continue;
     }
-    const resting = own.every((value) => attentionOf(value) === 3);
-    const alwaysDrawn = primary && options.scope === "project";
-    const kind: FoldKind | null = alwaysDrawn ? null : cleanup && resting ? "cleanup" : own.length === 0 ? "empty" : resting ? "resting" : null;
+    const kind = foldKindOf(own, primary, cleanup, options.scope);
     if (kind === null) drawn.push(candidate);
     else {
       folded[kind].push(candidate);
@@ -341,7 +363,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
   // Rows, trays and each box's own height.
   const rowOf = new Map<string, GraphRow>();
   const infos: Info[] = drawn.map((entry) => {
-    const { rows, trays, inner } = rowsOf(entry, matched, g);
+    const { rows, trays, inner } = rowsOf(entry, matched, g, lineage);
     for (const row of rows) rowOf.set(row.paneId, row);
     const box: GraphBox = {
       id: entry.checkout.id,
@@ -398,7 +420,8 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     boxes,
     edges,
     folds: filtering ? [] : foldList,
-    selected: options.selectedBox === null ? null : shownIds.has(options.selectedBox) ? options.selectedBox : (drawn.find((entry) => entry.primary)?.checkout.id ?? null),
+    // On All projects only the section that draws the selected box selects it; one project falls back to its primary box (B1).
+    selected: options.selectedBox === null ? null : shownIds.has(options.selectedBox) ? options.selectedBox : options.scope === "all" ? null : (drawn.find((entry) => entry.primary)?.checkout.id ?? null),
     rows: rowOf,
     width: boxes.length === 0 ? 0 : width + g.pad,
     height: boxes.length === 0 ? 0 : height + g.pad,
@@ -407,8 +430,64 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
   };
 }
 
+/** The fold a checkout's box goes into when no filter is set, or null when it is drawn (B21, B23, D-30). */
+function foldKindOf(own: readonly LensAgent[], primary: boolean, cleanup: Cleanup | null, scope: GraphOptions["scope"]): FoldKind | null {
+  if (primary && scope === "project") return null;
+  const resting = own.every((value) => attentionOf(value) === 3);
+  return cleanup && resting ? "cleanup" : own.length === 0 ? "empty" : resting ? "resting" : null;
+}
+
+/** The fold line that holds a checkout's box in a scope with no filter, by `foldId`, or null when the box is drawn. */
+export function foldHolding(workspace: Workspace, everyone: readonly LensAgent[], checkoutId: string, scope: GraphOptions["scope"]): string | null {
+  const checkout = workspace.checkouts.find((candidate) => candidate.id === checkoutId);
+  if (!checkout) return null;
+  const own = everyone.filter((value) => value.project.id === workspace.id && value.checkout.id === checkoutId);
+  const kind = foldKindOf(own, checkout.id === primaryCheckout(workspace)?.id, cleanupOf(workspace, checkout), scope);
+  return kind === null ? null : foldId(kind, workspace.id);
+}
+
+// --- across projects ----------------------------------------------------------
+
+/**
+ * Every agent by pane id, and every parent's children. The core names a
+ * device's pane `remote:<device>:pane:<id>` and resolves a parent on another
+ * machine to that name, so one pane id names one agent across devices.
+ */
+type Lineage = { byPane: Map<string, LensAgent>; children: Map<string, LensAgent[]> };
+
+function lineageOf(everyone: readonly LensAgent[]): Lineage {
+  const byPane = new Map<string, LensAgent>();
+  const children = new Map<string, LensAgent[]>();
+  for (const value of everyone) {
+    if (byPane.has(value.agent.pane_id)) continue;
+    byPane.set(value.agent.pane_id, value);
+    const parent = value.agent.lineage_parent_pane_id;
+    if (parent && parent !== value.agent.pane_id) push(children, parent, value);
+  }
+  return { byPane, children };
+}
+
+/** The chips of one row: one per project its children work in, then one for a parent in another project (issue 718). */
+function crossChipsOf(value: LensAgent, lineage: Lineage): CrossChip[] {
+  const chip = (direction: CrossChip["direction"], others: LensAgent[]): CrossChip => {
+    const ordered = others.slice().sort(byAttentionThenActivity);
+    const first = ordered[0]!;
+    const own = value.device ?? THIS_DEVICE;
+    const theirs = first.device ?? THIS_DEVICE;
+    return { direction, project: first.project, device: own === theirs ? null : theirs, paneIds: ordered.map((other) => other.agent.pane_id), names: ordered.map((other) => other.agent.identity_label), box: first.checkout.id };
+  };
+  const chips: CrossChip[] = [];
+  const byProject = new Map<string, LensAgent[]>();
+  for (const other of lineage.children.get(value.agent.pane_id) ?? []) if (other.project.id !== value.project.id) push(byProject, other.project.id, other);
+  for (const others of byProject.values()) chips.push(chip("out", others));
+  const parentId = value.agent.lineage_parent_pane_id;
+  const parent = parentId ? lineage.byPane.get(parentId) : undefined;
+  if (parent && parent.project.id !== value.project.id) chips.push(chip("in", [parent]));
+  return chips;
+}
+
 /** One box's rows: agents sharing a tab stand together on one tray and a delegation inside the box is indented under its parent (B6, B7). */
-function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphGeometry): { rows: GraphRow[]; trays: GraphTray[]; inner: number } {
+function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphGeometry, lineage: Lineage): { rows: GraphRow[]; trays: GraphTray[]; inner: number } {
   const { checkout, members } = entry;
   const inBox = new Set(members.map((value) => value.agent.pane_id));
   const tabOf = new Map<string, Tab>();
@@ -464,6 +543,7 @@ function rowsOf(entry: Candidate, matched: ReadonlySet<string> | null, g: GraphG
       parent: parentId,
       tucked: null,
       dim: matched ? !matched.has(value.agent.pane_id) : false,
+      cross: crossChipsOf(value, lineage),
     };
     rows.push(row);
     top += height;
