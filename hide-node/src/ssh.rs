@@ -376,7 +376,7 @@ fn resolve_identity_agent(alias: &str, value: &str) -> RemoteResult<AgentSocket>
     if !socket.is_absolute() {
         return Err(alias_error(
             alias,
-            "IdentityAgent must resolve to an absolute Unix-domain socket path",
+            "IdentityAgent must resolve to an absolute path to the agent's socket or pipe",
         ));
     }
     Ok(AgentSocket::Path(socket))
@@ -617,7 +617,7 @@ pub fn parse_herdr_server_status(
                 true,
             )
         })?;
-    if !Path::new(&status.socket).is_absolute()
+    if !hide_platform::path::is_wire_absolute(&status.socket)
         || status.socket.bytes().any(|byte| byte.is_ascii_control())
     {
         return Err(remote_error(
@@ -2009,7 +2009,7 @@ fn remote_terminal_command(
     rows: u16,
     cols: u16,
 ) -> RemoteResult<String> {
-    if !Path::new(socket_path).is_absolute()
+    if !hide_platform::path::is_wire_absolute(socket_path)
         || socket_path.bytes().any(|byte| byte.is_ascii_control())
     {
         return Err(remote_error(
@@ -2818,32 +2818,41 @@ mod tests {
         assert!(!encoded.contains("PRIVATE KEY"));
     }
 
+    /// An agent socket is a path on this machine, so the fixtures spell it
+    /// the way this machine does (a drive path on Windows).
+    fn local_agent(name: &str) -> PathBuf {
+        std::env::temp_dir().join("hide-remote-home").join(name)
+    }
+
     #[test]
     fn wildcard_identity_agent_reaches_the_alias_it_covers() {
+        let agent = local_agent("agent.sock");
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host *\n  IdentityAgent /private/tmp/hide-remote-home/agent.sock\n\nHost mini\n  HostName mini.example.test\n  User example\n",
+            &format!(
+                "Host *\n  IdentityAgent {}\n\nHost mini\n  HostName mini.example.test\n  User example\n",
+                agent.display()
+            ),
             "/tmp/known_hosts",
         )
         .unwrap();
-        assert_eq!(
-            alias.agent_socket,
-            AgentSocket::Path(PathBuf::from("/private/tmp/hide-remote-home/agent.sock"))
-        );
+        assert_eq!(alias.agent_socket, AgentSocket::Path(agent));
     }
 
     #[test]
     fn the_first_matching_identity_agent_wins() {
+        let first = local_agent("first.sock");
         let alias = SshAlias::from_config_contents(
             "mini",
-            "Host mini\n  HostName mini.example.test\n  User example\n  IdentityAgent /private/tmp/hide-remote-home/first.sock\n\nHost *\n  IdentityAgent /private/tmp/hide-remote-home/second.sock\n",
+            &format!(
+                "Host mini\n  HostName mini.example.test\n  User example\n  IdentityAgent {}\n\nHost *\n  IdentityAgent {}\n",
+                first.display(),
+                local_agent("second.sock").display()
+            ),
             "/tmp/known_hosts",
         )
         .unwrap();
-        assert_eq!(
-            alias.agent_socket,
-            AgentSocket::Path(PathBuf::from("/private/tmp/hide-remote-home/first.sock"))
-        );
+        assert_eq!(alias.agent_socket, AgentSocket::Path(first));
     }
 
     #[test]

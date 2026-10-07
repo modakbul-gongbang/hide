@@ -1358,13 +1358,11 @@ async fn ensure_private_dirs(
     owner: u32,
 ) -> Result<String, EstablishError> {
     // Components below home are created private; home itself is not touched.
-    // The prefix is compared by path component, so `/home/al` is not a
-    // prefix of `/home/alice`.
-    let (mut current, relative) = match Path::new(root).strip_prefix(home) {
-        Ok(below) => (
-            home.trim_end_matches('/').to_owned(),
-            below.to_string_lossy().into_owned(),
-        ),
+    // Both are the device's paths, so they are compared as `/`-spelled names
+    // whatever system the core runs on, and `/home/al` is not a prefix of
+    // `/home/alice`.
+    let (mut current, relative) = match hide_platform::path::wire_relative(home, root) {
+        Ok(below) => (home.trim_end_matches('/').to_owned(), below.to_string()),
         Err(_) => (String::new(), root.to_owned()),
     };
     for part in relative.split('/').filter(|part| !part.is_empty()) {
@@ -2096,7 +2094,7 @@ mod tests {
         assert!(ancestors("/a/../b").is_err());
         assert!(owned_by(&folder(0, 0o755), me) && !owned_by(&folder(502, 0o755), me));
         // Component-wise: `/home/al` is not a prefix of `/home/alice`.
-        assert!(Path::new("/home/alice/x").strip_prefix("/home/al").is_err());
+        assert!(hide_platform::path::wire_relative("/home/al", "/home/alice/x").is_err());
     }
 
     #[test]

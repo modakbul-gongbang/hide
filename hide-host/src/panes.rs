@@ -665,15 +665,14 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(test)]
+// A folder's age is set through its handle, which only Unix opens.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     /// A starting service removes what a killed node or an older Hide's
     /// bridge left, and never a folder whose socket answers or one another
     /// service may still be binding.
-    // A folder's age is set through its handle, which only Unix opens.
-    #[cfg(unix)]
     #[test]
     fn a_start_removes_only_dead_folders() {
         let root = tempfile::Builder::new()

@@ -67,7 +67,9 @@ impl RusshRemoteClient {
                         .first()
                         .map(|entry| entry.filename.clone())
                         .ok_or("Missing remote home")?;
-                    if !Path::new(&home).is_absolute() || home.chars().any(char::is_control) {
+                    if !hide_platform::path::is_wire_absolute(&home)
+                        || home.chars().any(char::is_control)
+                    {
                         return Err("Unsafe remote home".to_owned());
                     }
                     let owner = raw
@@ -159,7 +161,7 @@ impl RusshRemoteClient {
             raw.init().await.map_err(transport_failure)?;
             let home = raw.realpath(".").await.map_err(transport_failure)?
                 .files.first().map(|entry| entry.filename.clone()).ok_or("SFTP did not identify the remote home directory.")?;
-            if !Path::new(&home).is_absolute() || home.chars().any(char::is_control) {
+            if !hide_platform::path::is_wire_absolute(&home) || home.chars().any(char::is_control) {
                 return Err("SFTP returned an unsafe home directory.".to_owned());
             }
             let owner = raw.lstat(&home).await.map_err(transport_failure)?.attrs.uid.ok_or("SFTP did not report the directory owner.")?;
