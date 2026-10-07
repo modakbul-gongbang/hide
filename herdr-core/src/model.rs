@@ -2570,7 +2570,7 @@ pub struct EditorSaveSnapshot {
     pub message: Option<String>,
 }
 
-/// The right panel's four persisted sections.
+/// The right panel's persisted sections. AgentSessions never opens Memory.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
@@ -2579,6 +2579,7 @@ pub enum RightPanelSection {
     Overview,
     Explorer,
     Changes,
+    AgentSessions,
     Sessions,
 }
 
@@ -2588,6 +2589,7 @@ impl RightPanelSection {
             "overview" | "git" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
+            "agent_sessions" => Some(Self::AgentSessions),
             "sessions" => Some(Self::Sessions),
             _ => None,
         }
@@ -5056,6 +5058,7 @@ mod wire_enum_tests {
             RightPanelSection::Overview,
             RightPanelSection::Explorer,
             RightPanelSection::Changes,
+            RightPanelSection::AgentSessions,
             RightPanelSection::Sessions,
         ];
         for variant in sections {
@@ -5063,11 +5066,30 @@ mod wire_enum_tests {
                 RightPanelSection::Overview
                 | RightPanelSection::Explorer
                 | RightPanelSection::Changes
+                | RightPanelSection::AgentSessions
                 | RightPanelSection::Sessions => {}
             }
         }
         assert_wire(&contract, "right_panel_section", &sections);
         checked.insert("right_panel_section");
+
+        use crate::agent_state::sessions::{Group, Tag};
+        let session_groups = crate::agent_state::sessions::GROUPS;
+        for group in session_groups {
+            match group {
+                Group::MyTurn | Group::ReviewMerge | Group::InProgress | Group::Resting | Group::ResolvedToday => {}
+            }
+        }
+        assert_wire(&contract, "session_group", &session_groups);
+        checked.insert("session_group");
+        let session_tags = [Tag::Answer, Tag::Approval, Tag::Fix, Tag::Review, Tag::Merge, Tag::Stopped, Tag::Result, Tag::Working, Tag::CiWait, Tag::Waiting, Tag::Idle];
+        for tag in session_tags {
+            match tag {
+                Tag::Answer | Tag::Approval | Tag::Fix | Tag::Review | Tag::Merge | Tag::Stopped | Tag::Result | Tag::Working | Tag::CiWait | Tag::Waiting | Tag::Idle => {}
+            }
+        }
+        assert_wire(&contract, "session_tag", &session_tags);
+        checked.insert("session_tag");
 
         let strip_kinds = [
             StripTabKind::Herdr,

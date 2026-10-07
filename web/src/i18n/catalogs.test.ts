@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { catalogs, english } from "./catalogs";
 import { commandsEnglish } from "./resources/commands";
+import { agentSessionsEnglish } from "./resources/agentSessions";
 import { boardEnglish } from "./resources/board";
 import { cleanupEnglish } from "./resources/cleanup";
 import { commonEnglish } from "./resources/common";
@@ -36,6 +37,7 @@ describe("interface resources", () => {
 
   it("keeps domain keys separate so composition cannot overwrite a message", () => {
     const keys = [
+      agentSessionsEnglish,
     shellEnglish,
     editorSearchEnglish,
       documentsEnglish,

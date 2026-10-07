@@ -14,6 +14,7 @@ export type StatusTone = { kind: "error" | "warning" | "working" | "success" | "
 
 /** Agent decisions are projected by herdr-core::agent_state, never reconstructed by the shell. */
 export type AgentState = {
+  session: { group: SessionGroup; tag: SessionTag | null };
   attention: boolean; needs_you: boolean; root: boolean;
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
@@ -91,6 +92,9 @@ export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished
 /** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
 export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
 
+export type SessionGroup = "my_turn" | "review_merge" | "in_progress" | "resting" | "resolved_today";
+export type SessionTag = "answer" | "approval" | "fix" | "review" | "merge" | "stopped" | "result" | "working" | "ci_wait" | "waiting" | "idle";
+
 /** Who sent the request a row shows (`RequestSender`). */
 export type RequestSender = { kind: "operator" } | { kind: "named"; name: string } | { kind: "agent" };
 
@@ -120,6 +124,7 @@ export type AgentPullRequest = {
   url: string;
   badge: PullRequest["badge"];
   checks: NonNullable<PullRequest["checks"]>;
+  review?: PullRequest["review"];
   head_branch: string;
   closing_issues: IssueReference[];
   /** Drawn as the row's chip or counted in its `+N` (D-43). */

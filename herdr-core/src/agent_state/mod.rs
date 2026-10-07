@@ -2,6 +2,7 @@
 //! Axes and facts enter here; shells draw the resulting values.
 
 pub(crate) mod axes;
+pub mod sessions;
 pub(crate) mod tally;
 pub(crate) mod turn;
 pub(crate) mod work;

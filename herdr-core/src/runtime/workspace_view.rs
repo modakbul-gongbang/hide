@@ -792,6 +792,7 @@ impl Runtime {
             self.snapshot.ui_state.right_panel_section = match view.tool {
                 Tool::Explorer => RightPanelSection::Explorer,
                 Tool::Changes => RightPanelSection::Changes,
+                Tool::AgentSessions => RightPanelSection::AgentSessions,
             };
         }
     }

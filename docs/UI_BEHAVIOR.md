@@ -27,10 +27,17 @@ The area is empty only when the checkout has no tab: a checkout whose only tab h
 
 ### The three columns
 
-The Workspace body, under the toolbar, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (the Explorer or History).
+The Workspace body, under the toolbar, is three docked columns from left to right: Agent Views (the Agent area), File Views (the View areas), and Tools (Sessions, Explorer or History).
 No column floats over another, carries a shadow or covers the agents; a column that is off takes no room, and Agent Views takes whatever File Views and Tools leave.
 File Views and Tools are each on or off, stored per Workspace with the tool and both widths, and survive a restart; a Workspace seen for the first time shows Agent Views alone, File Views and Tools off, with the Explorer as its tool.
-Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
+Each column's first row is its tab row, level with the others: the Agent tab strip, each top View area's tab strip with its own New tab (a new browser display in that area, see Browser displays), and the named Sessions, Explorer and History tabs, in that order with the shown one marked.
+The tool tabs have one keyboard stop; Left, Right, Home and End choose another tool, and the Workspace remembers that choice.
+Sessions follows the project of the checkout in front, with All checkouts and a chip for that checkout alone; its front-checkout rows have a bar at the left.
+At Home it shows the selected device's projects together and names the project on each row.
+Its core-selected groups are My turn, Review · Merge, In progress, Resting and Resolved today, with empty groups absent and the last two folded initially.
+The four counts above them are the corresponding core group counts, and a two-line row carries its mark, provider, title, issue and PR/CI chips, children and elapsed time, then its task tag, label line and checkout.
+Selecting a row opens its Workspace, tab and pane; a child chip opens the same direct-child list as the sidebar.
+Sessions is a separate tool from Memory and does not start Memory's reader.
 No column has a title row, a close button or panel actions; the toolbar's icons and their chords are the only column controls.
 The second row of File Views is level with the agents' first pane header: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays.
 With stacked View areas each area keeps its own tab strip.

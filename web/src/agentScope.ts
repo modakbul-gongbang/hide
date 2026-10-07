@@ -1,4 +1,4 @@
-import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest } from "./snapshot";
+import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SessionGroup, SnapshotRest } from "./snapshot";
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentRef = { pane_id: string; occurrence: number };
@@ -6,6 +6,10 @@ export type AgentRef = { pane_id: string; occurrence: number };
 export type RowWork = { pull: number | null; more: number; issues: string[]; issue_chips: string[] };
 
 export type AgentScope = {
+  sessions: {
+    counts: Record<SessionGroup, number>;
+    groups: { group: SessionGroup; members: number[] }[];
+  };
   overview_needs_you: number;
   work: Record<string, RowWork>;
   has_working: boolean;

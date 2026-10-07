@@ -642,6 +642,13 @@ fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
         RightPanelSection::Explorer
     );
 
+    layout(&mut runtime, serde_json::json!({"tool": "agent_sessions"}));
+    assert_eq!(
+        runtime.snapshot.ui_state.right_panel_section,
+        RightPanelSection::AgentSessions
+    );
+    assert_eq!(tools(&runtime), (Tool::AgentSessions, true));
+
     layout(&mut runtime, serde_json::json!({"tools": false}));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 

@@ -163,6 +163,85 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
 }
 
 #[test]
+fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder() {
+    use crate::agent_state::sessions::{Group, Tag};
+    let mut rows = rows(&[
+        ("approval", "blocked"),
+        ("question", "idle"),
+        ("read-question", "idle"),
+        ("read-with-ci", "idle"),
+        ("working-with-ci", "working"),
+    ]);
+    for row in &mut rows {
+        row.row_facts.as_mut().unwrap().line = Some("Current task".into());
+        if row.pane_id != "approval" && row.pane_id != "working-with-ci" {
+            row.demand = "question".into();
+        }
+        row.unread = row.pane_id == "question";
+    }
+    run(
+        &mut rows,
+        &[("question", "ci"), ("read-with-ci", "ci"), ("working-with-ci", "working")],
+        &github(vec![
+            pull_request(1, "ci", PullRequestBadge::Open, PullRequestChecks::Failed),
+            pull_request(2, "working", PullRequestBadge::Open, PullRequestChecks::Failed),
+        ]),
+    );
+    let states: Vec<_> = rows.iter().map(|row| (row.pane_id.as_str(), row.state.session.group, row.state.session.tag)).collect();
+    assert_eq!(states, [
+        ("approval", Group::MyTurn, Some(Tag::Approval)),
+        ("question", Group::MyTurn, Some(Tag::Answer)),
+        ("read-question", Group::Resting, Some(Tag::Idle)),
+        // The question holder already owns PR 1, so another row cannot also fix it.
+        ("read-with-ci", Group::Resting, Some(Tag::Idle)),
+        ("working-with-ci", Group::InProgress, Some(Tag::Working)),
+    ]);
+    rows[1].unread = false;
+    run(&mut rows, &[("question", "ci")], &github(vec![
+        pull_request(1, "ci", PullRequestBadge::Open, PullRequestChecks::Failed),
+    ]));
+    assert_eq!(rows[1].state.session, crate::agent_state::sessions::Row {
+        group: Group::MyTurn, tag: Some(Tag::Fix),
+    }, "reading an AI question skips only the demand rung, not its PR duty");
+}
+
+#[test]
+fn sessions_only_offer_merge_after_passing_checks_and_an_acceptable_review() {
+    use crate::agent_state::sessions::{Group, Tag};
+    for (checks, review, expected) in [
+        (PullRequestChecks::Passing, None, Tag::Merge),
+        (PullRequestChecks::Passing, Some(ReviewDecision::Approved), Tag::Merge),
+        (PullRequestChecks::Passing, Some(ReviewDecision::ReviewRequired), Tag::Review),
+        (PullRequestChecks::Passing, Some(ReviewDecision::ChangesRequested), Tag::Review),
+        (PullRequestChecks::Unknown, Some(ReviewDecision::Approved), Tag::Review),
+        (PullRequestChecks::None, Some(ReviewDecision::Approved), Tag::Review),
+    ] {
+        let mut rows = rows(&[("agent", "idle")]);
+        rows[0].row_facts.as_mut().unwrap().line = Some("Review changes".into());
+        let mut pull = pull_request(1, "feature", PullRequestBadge::Open, checks);
+        pull.review = review;
+        run(&mut rows, &[("agent", "feature")], &github(vec![pull]));
+        assert_eq!(rows[0].state.session.group, Group::ReviewMerge);
+        assert_eq!(rows[0].state.session.tag, Some(expected));
+    }
+}
+
+#[test]
+fn sessions_counts_match_their_groups_and_keep_unraised_children_out() {
+    use crate::agent_state::sessions::{Group, scope};
+    let mut rows = rows(&[("approval", "blocked"), ("working", "working"), ("idle", "idle"), ("child", "blocked")]);
+    rows[3].delegated = true;
+    run(&mut rows, &[], &github(vec![]));
+    let scope = scope(rows.iter().enumerate());
+    assert_eq!(scope.counts[&Group::MyTurn], 1);
+    assert_eq!(scope.counts[&Group::InProgress], 1);
+    assert_eq!(scope.counts[&Group::Resting], 1);
+    assert_eq!(scope.counts[&Group::ReviewMerge], 0);
+    assert_eq!(scope.groups.iter().map(|section| section.members.clone()).collect::<Vec<_>>(), [vec![0], vec![1], vec![2]]);
+    assert!(rows[0].state.session.tag.is_none(), "an unlabelled row does not invent a task tag");
+}
+
+#[test]
 fn a_session_that_made_pull_requests_on_main_shows_the_one_to_look_at_first() {
     let mut rows = rows(&[("main-agent", "idle")]);
     rows[0].row_facts.as_mut().unwrap().created_prs = vec![

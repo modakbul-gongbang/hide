@@ -54,6 +54,7 @@ pub struct RowLine {
 /// but its chip still follows its own axes, and every demand remains visible.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct RowState {
+    pub session: super::sessions::Row,
     pub attention: bool,
     pub needs_you: bool,
     pub root: bool,
@@ -168,6 +169,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             | RequestVerb::Result
     );
     RowState {
+        session: super::sessions::row(agent, verb),
         attention,
         needs_you,
         root: !agent.delegated,
@@ -585,7 +587,7 @@ pub(crate) fn verb_of(
     pull_requests: &[AgentPullRequestSnapshot],
     result_opened: Option<u64>,
 ) -> RequestVerb {
-    if row.demand != "none" {
+    if row.blocked || (row.demand == "question" && row.unread) || row.demand == "error" {
         return RequestVerb::Answer;
     }
     if row.activity == "working" {

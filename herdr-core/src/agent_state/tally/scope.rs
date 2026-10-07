@@ -142,6 +142,7 @@ pub struct Scope {
     pub buckets: Buckets,
     pub turns: TurnCounts,
     pub requests: Requests,
+    pub sessions: crate::agent_state::sessions::Scope,
     pub folded: BTreeMap<String, super::lineage::Folded>,
     pub tree: super::lineage::Tree,
     pub global_tree: super::lineage::Tree,
@@ -478,6 +479,12 @@ pub(super) fn scope(
             });
         }
     }
+    value.sessions = crate::agent_state::sessions::scope(
+        members.iter().enumerate().filter_map(|(member, place)| {
+            (!factory_workers.contains(&place.pane_id))
+                .then_some((member, first_by_pane[place.pane_id.as_str()]))
+        }),
+    );
     value.total = physical.len();
     value.overview_total = members.len();
     value.members = members;

@@ -35,6 +35,8 @@
   "label_end": ["working", "question", "done", "waiting", "unfinished"],
   "request_verb": ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"],
   "review_decision": ["review_required", "changes_requested", "approved"],
-  "right_panel_section": ["overview", "explorer", "changes", "sessions"],
+  "session_group": ["my_turn", "review_merge", "in_progress", "resting", "resolved_today"],
+  "session_tag": ["answer", "approval", "fix", "review", "merge", "stopped", "result", "working", "ci_wait", "waiting", "idle"],
+  "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions"],
   "strip_tab_kind": ["herdr", "file", "diff", "session", "memory"]
 }

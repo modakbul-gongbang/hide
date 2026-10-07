@@ -507,7 +507,8 @@ Projection adds bounded-by-metadata strings per agent to the existing snapshot b
 `request_view.rs` assembles the block and keeps verb timestamps through the existing ledger.
 Each agent row also carries a `request` block (`herdr-core/src/request_view.rs`, PRD overview-request-view): the operator's last request with who sent it, the last reply, the row's pull requests, and one verb the request view groups by.
 The verb is computed in the core from the axes above and the row's pull requests, never by the shell, and the first rule that holds wins:
-a demand (a question or an approval) is `answer`; a running agent is `working`; then, over the open pull requests whose duty the row holds, failed checks are `fix` and passing, absent or unknown checks are `review`; a turn the label read as `unfinished`, on a row with no working descendants, is `stopped`; running checks are `waiting`; an unread completion, or a pull request settled since the operator's last request and since the operator last opened the row's result (`result_opened_unix_ms` in the verb record), is `result`; a quiet root with working descendants, or a turn the label read as `waiting` (on something other than a pull request), is `waiting`; anything else is `idle`.
+an active menu or plan approval, an unread AI question, or an error is `answer`; a running agent is `working`; then, over the open pull requests whose duty the row holds, failed checks are `fix` and passing, absent or unknown checks are `review`; a turn the label read as `unfinished`, on a row with no working descendants, is `stopped`; running checks are `waiting`; an unread completion, or a pull request settled since the operator's last request and since the operator last opened the row's result (`result_opened_unix_ms` in the verb record), is `result`; a quiet root with working descendants, or a turn the label read as `waiting` (on something other than a pull request), is `waiting`; anything else is `idle`.
+Reading an AI question skips only the demand step; another applicable duty, such as failed CI, still wins at its later step.
 Only the label gives `stopped` and that `waiting` (D-33): with summaries off, without a provider or after a failed analysis no row stops.
 The block also carries the label's `line` and `end` when there is one: the request view shows the line in place of the reply (B18) and both as the expanded row's verdict (B6); `end` is pinned as `label_end` in `contracts/snapshot-wire-enums.json`.
 A row's pull requests are its checkout branch's and those its session made: a tool in the session printed the address within thirty seconds of GitHub's `createdAt` (D-31), judged once by the label worker and kept with the session's facts.
@@ -519,6 +520,16 @@ Opening a finished row in the request view (`overview_open_result`) reads the pa
 Who sent a request is the label worker's verdict (ARCHITECTURE.md, Agent labels in the core); a delegated child's first request is its parent's, by the parent row's title.
 Text another program wrote, a title, a label line, a sender's name, a request or a reply, reaches the row without control characters or bidirectional controls, and a title, line or name also without the other Unicode default-ignorable code points (zero-width characters, Hangul fillers; `herdr-core/src/display_text.rs`) and on one line and a sender's name at most 64 characters; a sender whose name reads as the row's word for the operator or an unnamed agent (`나`, `에이전트`, `operator`, compared by its letters and digits after NFKC and case folding) is shown as an unnamed agent.
 Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull request links, duty and senders, and `runtime::tests::labels` for the title ladder, the stopped and waiting verbs with the switch on and off, the open-result read and the running-checks re-read.
+
+### The Sessions tool
+
+`agent_state/sessions.rs` maps the verb to one group and one task tag in `row.state.session`.
+Answer, Fix, Stopped and Result belong to My turn; Review to Review · Merge; Working and Waiting to In progress; Idle to Resting.
+A blocked menu takes the Approval tag before an AI question's Answer tag.
+Merge requires every open duty PR on the row to have passing checks and an approved or absent review decision; absent or unknown checks never imply a pass.
+Without a label line the row keeps its outline but carries no invented task tag or result sentence.
+`agent_scope.sessions` publishes ordered member indices, nonempty groups and their counts for each scope; shells resolve those indices and draw them without regrouping.
+Ordinary delegated children remain behind their parent's child chip, and Factory workers retain their existing dedicated surface.
 
 ### The second line
 

@@ -8,8 +8,8 @@
 
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
-/** The Tools column's one tool: the Explorer, or History (`changes`). */
-export type Tool = "explorer" | "changes";
+/** The Tools column's one tool, separate from Memory's `sessions` reader. */
+export type Tool = "agent_sessions" | "explorer" | "changes";
 
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
