@@ -21,10 +21,17 @@ def beneath(path: Path, root: Path) -> bool:
 
 
 def private_directory(path: Path) -> None:
-    """Create an owned leaf without accepting a link or widening access."""
-    if path.is_symlink():
+    """Create every missing component privately; never widen existing access."""
+    pending, parent = [], path
+    while not parent.exists():
+        if parent.is_symlink():
+            raise ProtectionError("private_directory_is_link")
+        pending.append(parent)
+        parent = parent.parent
+    if parent.is_symlink() or path.is_symlink():
         raise ProtectionError("private_directory_is_link")
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for folder in reversed(pending):
+        folder.mkdir(mode=0o700)
     mode = path.stat().st_mode
     if path.stat().st_uid != os.getuid() or mode & 0o077:
         raise ProtectionError("private_directory_not_private")

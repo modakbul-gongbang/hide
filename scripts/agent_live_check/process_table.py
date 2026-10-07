@@ -5,6 +5,7 @@ Darwin layouts follow sys/proc_info.h in the installed SDK. Linux uses proc(5).
 
 import ctypes
 import errno
+import json
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -122,6 +123,11 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
             if remember:
                 remember(pid, process)
             continue
+        # Darwin reparents a dead parent's children to init (PID 1). A live
+        # ordinary child is covered by the ancestry walk if ours, and cannot
+        # yet be a detached orphan. Do not inspect unrelated exec/exit stacks.
+        if process.parent != 1:
+            continue
         mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2, pid (installed SDK).
         size = ctypes.c_size_t(1024 * 1024)
         buffer = ctypes.create_string_buffer(size.value)
@@ -132,7 +138,9 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
             current = snapshot().get(pid)
             if current is None or current.birth != process.birth or current.zombie:
                 continue
-            raise RuntimeError("owned_process_arguments_unavailable_" + str(error))
+            raise RuntimeError("owned_process_arguments_unavailable_" + str(error) + ":" + json.dumps(
+                {"pid": pid, "birth": process.birth, "parent": process.parent,
+                 "guardian": os.getpid()}, sort_keys=True, separators=(",", ":")))
         if expected in buffer.raw[:size.value].split(b"\0"):
             result[pid] = process
             if remember:

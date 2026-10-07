@@ -185,7 +185,7 @@ def main(argv=None):
                                 # return nonzero even though it started the
                                 # requested named agent in our owned pane.
                                 actual = runtime.agent(pane)
-                                if not startup_blocker(scene, recipe, pane, output, actual):
+                                if not startup_blocker(scene, recipe, pane, (code, output, err), actual):
                                     raise ProcessError("agent_start_refused_" + str(code))
                             startup_screen = runtime.screen(pane)
                             require_no_login(startup_screen)

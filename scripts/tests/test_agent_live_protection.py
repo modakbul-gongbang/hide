@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import Process, marked_descendants, snapshot
-from agent_live_check.processes import OwnedProcesses, ProcessError
+from agent_live_check.processes import OwnedProcesses, ProcessError, guard
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 
@@ -115,6 +115,51 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_live_non_orphan_needs_no_token_read_but_unknown_orphan_still_fails(self):
+        import ctypes
+        import errno
+        ordinary = Process(111, 999, 111, 10, 0, False, os.getuid())
+        orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
+        library = Mock()
+        def unavailable(*unused):
+            ctypes.set_errno(errno.EIO)
+            return -1
+        library.sysctl.side_effect = unavailable
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
+                patch("agent_live_check.process_table.snapshot", return_value={111: ordinary}):
+            self.assertEqual(marked_descendants({111: ordinary}, "fixture-run", 1), {})
+            library.sysctl.assert_not_called()
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
+                patch("agent_live_check.process_table.snapshot", return_value={111: orphan}):
+            with self.assertRaisesRegex(RuntimeError, "owned_process_arguments_unavailable_5"):
+                marked_descendants({111: orphan}, "fixture-run", 1)
+        library.sysctl.assert_called_once()
+
+    def test_shutdown_helper_discovered_after_term_is_killed_before_cleanup_succeeds(self):
+        guardian = Process(os.getpid(), 1, os.getpid(), 1, 0, False, os.getuid())
+        child = Process(111, guardian.pid, 111, 2, 0, False, os.getuid())
+        helper = Process(222, guardian.pid, 222, 3, 0, False, os.getuid())
+        before = {guardian.pid: guardian, child.pid: child}
+        after_term = {**before, helper.pid: helper}
+        ended = {guardian.pid: guardian}
+        native = Mock(returncode=0)
+        native.poll.return_value = 0
+        library = Mock()
+        library.prctl.return_value = 0
+        for initial_reads in (5, 6):
+            with self.subTest(helper_before_kill=initial_reads == 5), \
+                    patch("agent_live_check.processes.sys.platform", "linux"), \
+                    patch("agent_live_check.processes.ctypes.CDLL", return_value=library), \
+                    patch("agent_live_check.processes.threading.Thread"), \
+                    patch("agent_live_check.processes.signal.signal"), \
+                    patch("agent_live_check.processes.time.sleep"), \
+                    patch("agent_live_check.processes.OwnedProcesses.spawn", return_value=native), \
+                    patch("agent_live_check.processes.snapshot", side_effect=[before] * initial_reads + [after_term, ended]), \
+                    patch("agent_live_check.processes.os.kill") as kill:
+                self.assertEqual(guard(-1, ["fixture"]), 0)
+            self.assertIn(unittest.mock.call(helper.pid, signal.SIGKILL), kill.call_args_list,
+                          "cleanup declared success without ending the newly adopted helper")
+
     def test_proven_birth_identity_needs_no_argument_read_but_reused_pid_does(self):
         import ctypes
         import errno

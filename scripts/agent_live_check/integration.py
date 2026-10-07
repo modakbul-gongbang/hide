@@ -19,7 +19,9 @@ def prepare(runtime, recipe, overlay):
     private_directory(root)
     # Only the install command has this disposable HOME. The authenticated
     # provider still uses operator HOME and its supported per-command roots.
-    env = {**runtime.env, "HOME": str(home), "XDG_STATE_HOME": str(home / "state")}
+    env = {**runtime.env, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
+           "XDG_DATA_HOME": str(home / "data"), "XDG_STATE_HOME": str(home / "state"),
+           "XDG_CACHE_HOME": str(home / "cache")}
     runtime.owner.run([str(runtime.herdr_bin), "integration", "install", kind], env=env, cwd=home)
     artifacts, total, pending, visited = [], 0, [root], 0
     while pending:
@@ -39,9 +41,10 @@ def prepare(runtime, recipe, overlay):
         if total > MAX_BACKUP_BYTES:
             raise ProtectionError("generated_integration_bytes_over_budget")
         content = file.read_bytes()
-        version = re.search(rb"HERDR_INTEGRATION_ID=" + kind.encode() + rb"\r?\n[^\n]*HERDR_INTEGRATION_VERSION=([0-9]+)", content)
+        version = re.search(rb"HERDR_INTEGRATION_ID=(" + kind.encode() + rb"(?:-[a-z0-9-]+)?)\r?\n[^\n]*HERDR_INTEGRATION_VERSION=([0-9]+)", content)
         artifacts.append({"file": file, "content": content, "stamp": original,
-                          "version": int(version[1]) if version else None})
+                          "integration_id": version[1].decode() if version else None,
+                          "version": int(version[2]) if version else None})
     if not artifacts or not any(item["version"] is not None for item in artifacts):
         raise ProtectionError("generated_integration_version_missing")
     args, destination = [], None
@@ -68,8 +71,12 @@ def prepare(runtime, recipe, overlay):
             copies.append({**item, "file": target, "stamp": stamp(target)})
         artifacts.extend(copies)
     overlay["settings"].extend(item["file"] for item in artifacts)
+    copied_config = kind == "opencode" and any(
+        item["source"].endswith(("/opencode.json", "/opencode.jsonc")) for item in overlay["copies"])
     return {"args": args, "artifacts": artifacts, "root": root,
-            "sole_route": kind != "cursor", "synthetic": False}
+            "sole_route": kind != "cursor" and not copied_config, "synthetic": False,
+            "route_reason": "copied_configuration_may_load_external_plugins" if copied_config
+                            else "global_hooks_not_excluded" if kind == "cursor" else "isolated_configuration"}
 
 
 def project_args(plan, recipe, cwd):
@@ -88,13 +95,16 @@ def observe(runtime, pane, recipe, plan):
             raise ProtectionError("prepared_integration_changed_during_probe")
         if item["version"] is not None:
             rows.append({"name": str(item["file"].relative_to(runtime.probe)),
+                         "integration_id": item["integration_id"],
                          "version": item["version"], "sha256": hashlib.sha256(item["content"]).hexdigest()})
     current = runtime.agent(pane)
     session = current.get("agent_session") if current else None
     native = bool(session and session.get("source") == "herdr:" + recipe["kind"])
-    loaded = native and plan["sole_route"] and bool(rows)
+    versions = {row["version"] for row in rows}
+    loaded = native and plan["sole_route"] and len(versions) == 1
     return {"status": "loaded_version_observed" if loaded else "native_session_observed" if native else "not_observed",
-            "loaded_version": sorted({row["version"] for row in rows}) if loaded else None,
+            "loaded_version": sorted(versions) if loaded else None,
             "prepared_artifacts": rows, "native_source": session.get("source") if native else None,
-            "evidence": "isolated_configuration_and_native_session_report" if loaded else "loaded_version_unproven",
+            "evidence": "isolated_configuration_and_common_native_emitter_version" if loaded else "loaded_version_unproven",
+            "route_reason": plan.get("route_reason", "synthetic"),
             "synthetic": plan["synthetic"]}

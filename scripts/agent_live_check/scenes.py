@@ -22,12 +22,13 @@ def arrived(data: dict, screen: str, bell: str) -> bool:
         not data.get("controls") or matches(data["controls"], screen, bell))
 
 
-def startup_blocker(scene, recipe, pane, output, actual):
+def startup_blocker(scene, recipe, pane, result, actual):
+    code, _, error = result
     try:
-        refusal = json.loads(output).get("error", {}).get("code")
+        refusal = json.loads(error).get("error", {}).get("code")
     except (ValueError, AttributeError):
         return False
-    return bool(scene == "startup" and refusal == "agent_not_ready" and actual
+    return bool(code and scene == "startup" and refusal == "agent_not_ready" and actual
                 and actual.get("pane_id") == pane and actual.get("agent") == recipe["kind"]
                 and actual.get("name") == "live-" + recipe["id"] + "-" + scene
                 and actual.get("agent_status") == "blocked")

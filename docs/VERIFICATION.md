@@ -170,8 +170,9 @@ These direct input experiments measure the CLI and Herdr detection boundary; the
 Each new private `agents/runs/live-check-<timestamp>-<id>/` contains `report.md`, `report.json`, screen reads and private configuration backups.
 Reports record the actual binary digests, Herdr version, active server manifest versions and sources, CLI versions, selected models and positively observed native integration provenance.
 The verified pinned binary generates its own integration assets in a disposable HOME, then the tool routes them through documented provider settings while preserving the authenticated provider's operator HOME.
-The loaded-version claim requires an isolated configuration route, unchanged prepared artifact hashes and a native session report, sampled again after the first turn.
-A prepared file alone never proves load; Cursor's project hooks cannot exclude global-hook ambiguity, so their loaded version remains unproven.
+The loaded-version claim requires an isolated configuration route, unchanged prepared artifact hashes, one common version across its possible native emitters and a native session report, sampled again after the first turn.
+Prepared files are inventoried separately; the claim does not say every prepared frontend asset loaded.
+A prepared file alone never proves load; Cursor's project hooks and copied OpenCode configuration cannot exclude external-hook or plugin ambiguity, so their loaded versions remain unproven.
 Known configuration/trust files are backed up byte for byte with private permissions.
 Full configuration trees are inventoried; large files and history files use bounded metadata rather than reading their private contents.
 The native sandbox denies operator configuration writes and modification of preexisting histories.

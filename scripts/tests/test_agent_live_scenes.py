@@ -22,12 +22,15 @@ class ScenePreparation(unittest.TestCase):
     def test_blocked_startup_is_observed_only_for_the_owned_matching_native_agent(self):
         recipe = {"id": "pi", "kind": "pi"}
         actual = {"pane_id": "owned", "agent": "pi", "name": "live-pi-startup", "agent_status": "blocked"}
-        output = json.dumps({"error": {"code": "agent_not_ready"}})
-        self.assertTrue(startup_blocker("startup", recipe, "owned", output, actual))
-        self.assertFalse(startup_blocker("rest", recipe, "owned", output, actual))
-        self.assertFalse(startup_blocker("startup", recipe, "other", output, actual))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", output, {**actual, "agent": "codex"}))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", '{"error":{"code":"agent_pane_busy"}}', actual))
+        error = json.dumps({"error": {"code": "agent_not_ready"}})
+        result = (1, "", error)  # Pinned CLI puts structured failures on stderr.
+        self.assertTrue(startup_blocker("startup", recipe, "owned", result, actual))
+        self.assertFalse(startup_blocker("rest", recipe, "owned", result, actual))
+        self.assertFalse(startup_blocker("startup", recipe, "other", result, actual))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", result, {**actual, "agent": "codex"}))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", (0, error, ""), actual))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, error, "not JSON"), actual))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, "", '{"error":{"code":"agent_pane_busy"}}'), actual))
 
     def test_non_jsonl_providers_seed_real_completed_native_prompts_for_resume(self):
         checkout = Path(__file__).resolve().parents[2]

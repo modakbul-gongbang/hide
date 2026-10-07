@@ -222,6 +222,7 @@ def guard(reader: int, argv: list[str]) -> int:
             observed.update(current)
             for signum in (signal.SIGCONT, signal.SIGTERM, signal.SIGKILL):
                 table = snapshot()
+                observed.update(descendants(table, os.getpid()))
                 if sys.platform == "darwin":
                     try:
                         marked_descendants(table, marker, earliest,
@@ -251,6 +252,16 @@ def guard(reader: int, argv: list[str]) -> int:
             end = time.monotonic() + 2
             while True:
                 table = snapshot()
+                observed.update(descendants(table, os.getpid()))
+                if sys.platform == "darwin":
+                    try:
+                        marked_descendants(table, marker, earliest,
+                                           known={**observed, os.getpid(): table[os.getpid()]},
+                                           remember=observed.__setitem__)
+                    except BaseException as error:
+                        sys.stderr.write("guardian_orphan_scan_failure:" + type(error).__name__ + ":" + str(error) + "\n")
+                        failed = True
+                observed.pop(os.getpid(), None)
                 survivors = [pid for pid, item in observed.items()
                              if pid in table and table[pid].birth == item.birth
                              and not table[pid].zombie]
@@ -259,6 +270,16 @@ def guard(reader: int, argv: list[str]) -> int:
                 if time.monotonic() >= end:
                     failed = True
                     break
+                # A shutdown helper may appear after the last signal-table
+                # read. End only identities this fresh snapshot proves ours.
+                for pid in survivors:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except OSError as error:
+                        sys.stderr.write("guardian_signal_failure:" + type(error).__name__ + ":" + str(error.errno) + "\n")
+                        failed = True
                 time.sleep(POLL_SECONDS)
         except BaseException as error:
             sys.stderr.write("guardian_cleanup_failure:" + type(error).__name__ + ":" + str(error) + "\n")
