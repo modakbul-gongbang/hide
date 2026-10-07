@@ -21,6 +21,10 @@
 # The schedule runs everything. A lane left out is skipped, and the failure
 # report ignores a skipped job.
 #
+# The schedule is at 17 past the hour: GitHub delays runs scheduled on the
+# hour, when every repository's are due, and the 18:00 UTC run started
+# between 22:30 and 23:50 UTC.
+#
 # This repository is public, so GitHub disables a scheduled workflow after 60
 # days with no repository activity. If this run stops appearing, re-enable it in
 # the Actions tab rather than looking for a bug here.
@@ -28,7 +32,7 @@ name: nightly
 
 on:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "17 17 * * *"
   workflow_dispatch:
     inputs:
       lane:
