@@ -112,6 +112,8 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
         legacy_retirement: Default::default(),
         codex_daemon: None,
         codex_daemon_on: None,
+        codex_daemon_running: None,
+        codex_daemon_unreadable: None,
         codex_daemon_off: None,
     }
 }
@@ -1469,4 +1471,168 @@ fn a_refused_or_unanswered_request_ends_as_a_code_and_a_later_read_does_not_eras
             reason: hide_kit::CodexDaemonOffFailure::Unreachable
         })
     );
+}
+
+/// Waits until the device helper has received `count` kit calls.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_for_calls(helper: &KitDevice, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while helper.calls().len() < count {
+        assert!(Instant::now() < deadline, "the helper never got the call");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A device's kit read with its Codex shared server on and, when given, the
+/// answer to a turn-off.
+fn shared_server(running: bool, off: Option<hide_kit::CodexDaemonOff>) -> KitReport {
+    KitReport {
+        codex_daemon: Some(true),
+        codex_daemon_on: Some(!matches!(off, Some(hide_kit::CodexDaemonOff::Done))),
+        codex_daemon_running: Some(running),
+        codex_daemon_off: off,
+        ..KitReport::default()
+    }
+}
+
+/// How many of the helper's calls carried the shared-server turn-off.
+fn turn_offs(helper: &KitDevice) -> usize {
+    helper
+        .calls()
+        .iter()
+        .filter(|call| {
+            matches!(
+                call.0,
+                KitAction::Reinstall {
+                    codex_daemon_off: true,
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
+fn records_of(records: &[serde_json::Value], kind: &str) -> usize {
+    records.iter().filter(|record| record["kind"] == kind).count()
+}
+
+/// PRD codex-daemon-apply B11: the confirmation named what disconnects now,
+/// so a device takes the turn-off, which stops its running daemon, only over
+/// the helper connection it was confirmed on; a request while the helper is
+/// away is refused into the log and changes nothing.
+#[test]
+fn a_turn_off_for_a_device_whose_helper_is_away_is_refused_into_the_log() {
+    let shared = with_consent(None);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &shared_server(true, None));
+    assert!(kit(&shared).shares_codex_server());
+
+    let ((), records) = crate::diagnostics::capture(|| {
+        assert!(!dispatch(
+            &shared,
+            "codex_daemon_disable",
+            serde_json::json!({ "device_id": DEVICE }),
+        ));
+    });
+    assert_eq!(records_of(&records, "codex_daemon_off.refused"), 1, "{records:?}");
+    assert_eq!(kit(&shared).codex_daemon_off, None);
+    assert!(shared.lock().unwrap().snapshot().status.last_error.is_none());
+    assert!(!shared.lock().unwrap().device_kit_pending.contains_key(DEVICE));
+}
+
+/// B11: a connection that ends before the worker takes the turn-off drops
+/// it: the request ends as unreachable, the log says so, and the next
+/// connection never runs a stop nobody confirmed against it.
+#[test]
+fn a_turn_off_confirmed_on_one_connection_never_runs_on_the_next() {
+    use crate::model::CodexDaemonOffSnapshot as Off;
+    let (helper, release) = KitDevice::held(Ok(shared_server(true, None)));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &shared_server(true, None));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    // The turn-off waits in the queue behind the call the helper holds.
+    wait_for_calls(&helper, 1);
+    let ((), records) = crate::diagnostics::capture(|| {
+        assert!(dispatch(
+            &shared,
+            "codex_daemon_disable",
+            serde_json::json!({ "device_id": DEVICE }),
+        ));
+    });
+    assert_eq!(records_of(&records, "codex_daemon_off.requested"), 1);
+    assert_eq!(kit(&shared).codex_daemon_off, Some(Off::Pending));
+
+    let ((), records) = crate::diagnostics::capture(|| {
+        let mut runtime = shared.lock().unwrap();
+        let generation = runtime.device_host_generation(DEVICE);
+        runtime.ingest_host_closed(DEVICE, generation, "connection lost".to_owned());
+    });
+    assert_eq!(records_of(&records, "codex_daemon_off.dropped"), 1, "{records:?}");
+    assert_eq!(
+        kit(&shared).codex_daemon_off,
+        Some(Off::Failed {
+            reason: hide_kit::CodexDaemonOffFailure::Unreachable
+        })
+    );
+    assert!(!matches!(
+        shared.lock().unwrap().device_kit_pending.get(DEVICE),
+        Some(KitJob::Apply(scope)) if scope.codex_daemon_off
+    ));
+    release.send(()).unwrap();
+    settle(&shared);
+    assert_eq!(turn_offs(&helper), 0, "the stop never reached the helper");
+}
+
+/// B11: a device's turn-off is its own helper call, carrying the request;
+/// only the answer for the run still current settles it, so a late answer
+/// from a run that already settled changes nothing.
+#[test]
+fn a_late_answer_for_a_turn_off_run_that_settled_changes_nothing() {
+    use crate::model::CodexDaemonOffSnapshot as Off;
+    let helper = KitDevice::answering(Ok(shared_server(
+        false,
+        Some(hide_kit::CodexDaemonOff::Done),
+    )));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &shared_server(true, None));
+    assert!(dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    ));
+    settle(&shared);
+    assert_eq!(turn_offs(&helper), 1);
+    assert_eq!(kit(&shared).codex_daemon_off, Some(Off::Done));
+    let run = shared.lock().unwrap().codex_daemon_off_runs;
+    assert!(shared.lock().unwrap().codex_daemon_off_running.is_empty());
+
+    // The same run answering again, late, as a failure or a report.
+    shared.lock().unwrap().ingest_device_kit_answer(
+        DEVICE,
+        crate::runtime::DeviceKitAnswer::Report(Err("connection lost".to_owned())),
+        Some(run),
+    );
+    shared.lock().unwrap().ingest_device_kit_answer(
+        DEVICE,
+        crate::runtime::DeviceKitAnswer::Report(Ok(shared_server(
+            true,
+            Some(hide_kit::CodexDaemonOff::Failed {
+                reason: hide_kit::CodexDaemonOffFailure::StopFailed,
+                detail: "late".to_owned(),
+            }),
+        ))),
+        Some(run),
+    );
+    assert_eq!(kit(&shared).codex_daemon_off, Some(Off::Done));
 }

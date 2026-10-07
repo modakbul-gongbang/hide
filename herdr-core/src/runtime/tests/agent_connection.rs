@@ -533,6 +533,8 @@ fn report_with(on: bool, off: Option<hide_kit::CodexDaemonOff>) -> hide_kit::Kit
     hide_kit::KitReport {
         codex_daemon: Some(true),
         codex_daemon_on: Some(on),
+        codex_daemon_running: None,
+        codex_daemon_unreadable: None,
         codex_daemon_off: off,
         ..hide_kit::KitReport::default()
     }
@@ -605,6 +607,81 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
         !disable(&mut runtime, "local"),
         "already off: nothing to turn off"
     );
+}
+
+/// PRD codex-daemon-apply D-07, B7, B9: with autostart already off, a daemon
+/// that still answers keeps a Codex pane on the shared server and keeps the
+/// turn-off on offer; a stop that did not take effect is its own code and
+/// can be asked again; once no daemon answers the pane reads as a session
+/// started before the hook.
+#[test]
+fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_turn_off() {
+    use crate::model::CodexDaemonOffSnapshot as Off;
+    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let read = |running: Option<bool>, off: Option<hide_kit::CodexDaemonOff>| hide_kit::KitReport {
+        codex_daemon_running: running,
+        ..report_with(false, off)
+    };
+    let mut runtime = runtime();
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    kit_rows(&mut runtime, Some(false));
+    feed(&mut runtime, &[("w1:p1", "codex", false)]);
+    let reason = |runtime: &Runtime| connection_of(runtime, "w1:p1").and_then(|connection| connection.reason);
+    assert_eq!(reason(&runtime), Some(PaneConnectionReason::StartedBeforeHide));
+    assert!(!disable(&mut runtime, "local"), "nothing answers: nothing to turn off");
+
+    runtime.ingest_kit_report(local, &read(Some(true), None));
+    assert_eq!(reason(&runtime), Some(PaneConnectionReason::CodexSharedServer));
+    assert!(disable(&mut runtime, "local"));
+    assert_eq!(off_of(&runtime), Some(Off::Pending));
+
+    runtime.ingest_kit_report(
+        local,
+        &read(
+            Some(true),
+            Some(hide_kit::CodexDaemonOff::Failed {
+                reason: hide_kit::CodexDaemonOffFailure::StopFailed,
+                detail: "the shared Codex daemon still answers".to_owned(),
+            }),
+        ),
+    );
+    assert_eq!(
+        off_of(&runtime),
+        Some(Off::Failed {
+            reason: hide_kit::CodexDaemonOffFailure::StopFailed
+        })
+    );
+    assert_eq!(reason(&runtime), Some(PaneConnectionReason::CodexSharedServer));
+    assert!(disable(&mut runtime, "local"), "a failed stop can be asked again");
+
+    runtime.ingest_kit_report(local, &read(Some(false), Some(hide_kit::CodexDaemonOff::Done)));
+    assert_eq!(off_of(&runtime), Some(Off::Done));
+    assert_eq!(reason(&runtime), Some(PaneConnectionReason::StartedBeforeHide));
+    assert!(!disable(&mut runtime, "local"));
+}
+
+/// An answer about the daemon the kit could not read reads as no answer and
+/// goes to the log once, not on every read (B13).
+#[test]
+fn an_unreadable_daemon_answer_is_no_answer_and_is_logged_once() {
+    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let mut runtime = runtime();
+    let unreadable = hide_kit::KitReport {
+        codex_daemon_unreadable: Some("codex answered `daemon: ok?`".to_owned()),
+        ..report_with(false, None)
+    };
+    let ((), records) = crate::diagnostics::capture(|| {
+        for _ in 0..3 {
+            runtime.ingest_kit_report(local, &unreadable);
+        }
+    });
+    let logged: Vec<_> = records
+        .iter()
+        .filter(|record| record["kind"] == "codex_daemon.unreadable")
+        .collect();
+    assert_eq!(logged.len(), 1, "{records:?}");
+    assert_eq!(logged[0]["device_id"], local);
+    assert!(!runtime.kit_state(local).shares_codex_server());
 }
 
 #[test]

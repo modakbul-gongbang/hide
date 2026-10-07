@@ -1131,7 +1131,7 @@ impl Runtime {
         let codex_daemon_on = self
             .kit_states
             .get(crate::workspace::LOCAL_DEVICE_ID)
-            .is_some_and(|kit| kit.codex_daemon_on == Some(true));
+            .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;

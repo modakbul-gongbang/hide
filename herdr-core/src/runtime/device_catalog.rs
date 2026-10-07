@@ -71,7 +71,7 @@ impl Runtime {
                 &pane.id,
                 tokens.get(&pane.id).copied().unwrap_or_default(),
                 &status_of,
-                kit.codex_daemon_on == Some(true),
+                kit.shares_codex_server(),
             );
         }
     }

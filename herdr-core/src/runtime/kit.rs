@@ -69,6 +69,8 @@ pub(crate) struct DeviceKitCall {
     pub(crate) cli_dir: String,
     pub(crate) herdr_socket: Option<String>,
     pub(crate) retirement_projects: Vec<String>,
+    /// The run of the shared-server turn-off this call carries, if any.
+    pub(crate) daemon_off_run: Option<u64>,
 }
 
 /// What a device's kit call answered.
@@ -258,6 +260,22 @@ impl Runtime {
         let mut changed = self.decide_agent_onboarding(device_id, report);
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
+        // A daemon answer the kit could not read reads as no answer; the log
+        // keeps it when it appears or changes, not on every read (B13).
+        let unreadable_before = self
+            .kit_states
+            .get(device_id)
+            .and_then(|state| state.codex_daemon_unreadable.as_deref());
+        if let Some(reason) = report.codex_daemon_unreadable.as_deref()
+            && unreadable_before != Some(reason)
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "kit",
+                "kind": "codex_daemon.unreadable",
+                "device_id": device_id,
+                "reason": reason,
+            }));
+        }
         // Only the pass that carried the operator's request answers it; a
         // read that lands before or after keeps what the last one said.
         match &report.codex_daemon_off {
@@ -569,12 +587,14 @@ impl Runtime {
         }
     }
 
-    /// The operator asked for Codex's shared server to be turned off on a
-    /// machine, from a not connected pane's popover (PRD settings-cleanup
-    /// B27). The same request while one is running is the same intent, and a
-    /// machine whose setting is already off, or whose Codex has none, has
-    /// nothing to turn off (engineering rule 11). The answer comes back in
-    /// the report of the pass that carried it, as `codex_daemon_off`.
+    /// The operator confirmed turning Codex's shared server off on a machine,
+    /// from a not connected pane's popover (PRD settings-cleanup B27;
+    /// codex-daemon-apply D-11, B1-B3): the pass turns autostart off and
+    /// stops the daemon that is running. The same request while one is
+    /// running is the same intent, and a machine whose Codex starts no shared
+    /// server and has none answering has nothing to turn off (engineering
+    /// rule 11). The answer comes back in the report of the pass that carried
+    /// it, as `codex_daemon_off`.
     pub(super) fn request_codex_daemon_disable(&mut self, device_id: &str) -> bool {
         if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
             self.set_error(
@@ -592,15 +612,39 @@ impl Runtime {
         if state.codex_daemon_off == Some(CodexDaemonOffSnapshot::Pending) {
             return false;
         }
-        if state.codex_daemon_on != Some(true) {
+        if !state.shares_codex_server() {
             crate::diagnostic!(serde_json::json!({
                 "component": "kit",
                 "kind": "codex_daemon_off.ignored",
                 "device_id": device_id,
                 "codex_daemon_on": state.codex_daemon_on,
+                "codex_daemon_running": state.codex_daemon_running,
             }));
             return false;
         }
+        // The confirmation named what disconnects now. A stop held for a
+        // later helper connection would end sessions it never named, so a
+        // device takes it only over the connection it was confirmed on
+        // (design principle 13: the refusal goes to the log).
+        if device_id != LOCAL_DEVICE_ID
+            && !matches!(
+                self.device_hosts.get(device_id).map(|host| &host.phase),
+                Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none()
+            )
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "kit",
+                "kind": "codex_daemon_off.refused",
+                "device_id": device_id,
+                "reason": "helper_not_connected",
+            }));
+            return false;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "kit",
+            "kind": "codex_daemon_off.requested",
+            "device_id": device_id,
+        }));
         self.queue_kit_scope(device_id, Scope::codex_daemon_off());
         let mut state = self.kit_state(device_id);
         state.codex_daemon_off = Some(CodexDaemonOffSnapshot::Pending);
@@ -758,6 +802,7 @@ impl Runtime {
                     .unwrap_or_else(|| self.host_cli_dir.clone()),
                 herdr_socket: registration.herdr_socket_path.clone(),
                 retirement_projects: Vec::new(),
+                daemon_off_run: None,
             },
         );
         self.device_kit_removing.insert(device_id.to_owned());
@@ -812,12 +857,19 @@ impl Runtime {
             .host_consent
             .and_then(|consent| consent.cli_dir)
             .unwrap_or_else(|| self.host_cli_dir.clone());
+        let daemon_off_run = matches!(&job, KitJob::Apply(scope) if scope.codex_daemon_off).then(|| {
+            self.codex_daemon_off_runs += 1;
+            self.codex_daemon_off_running
+                .insert(device_id.to_owned(), self.codex_daemon_off_runs);
+            self.codex_daemon_off_runs
+        });
         Some(DeviceKitCall {
             work: DeviceKitWork::Job(job),
             channel,
             cli_dir,
             herdr_socket: registration.herdr_socket_path,
             retirement_projects: self.retirement_projects(device_id),
+            daemon_off_run,
         })
     }
 
@@ -828,7 +880,23 @@ impl Runtime {
         &mut self,
         device_id: &str,
         answer: DeviceKitAnswer,
+        daemon_off_run: Option<u64>,
     ) -> bool {
+        // Only the turn-off that still runs is settled by its answer; one the
+        // device was forgotten under, or that a newer run replaced, settled
+        // already, and its answer changes nothing now.
+        let current = daemon_off_run.is_some()
+            && self.codex_daemon_off_running.get(device_id) == daemon_off_run.as_ref();
+        if current {
+            self.codex_daemon_off_running.remove(device_id);
+        }
+        let answer = match answer {
+            DeviceKitAnswer::Report(Ok(mut report)) if daemon_off_run.is_some() && !current => {
+                report.codex_daemon_off = None;
+                DeviceKitAnswer::Report(Ok(report))
+            }
+            answer => answer,
+        };
         if let DeviceKitAnswer::Report(_) = &answer
             && (!self.device_registration_exists(device_id) || self.device_kit_removing(device_id))
         {
@@ -859,11 +927,8 @@ impl Runtime {
                         "Hide could not read its kit on this device: {reason}"
                     ));
                 }
-                // The request rode the call that failed unless a newer one
-                // is still queued.
-                if state.codex_daemon_off == Some(CodexDaemonOffSnapshot::Pending)
-                    && !self.codex_daemon_off_queued(device_id)
-                {
+                // Only the call that carried the current request ends it.
+                if current && state.codex_daemon_off == Some(CodexDaemonOffSnapshot::Pending) {
                     state.codex_daemon_off = Some(CodexDaemonOffSnapshot::Failed {
                         reason: crate::model::CodexDaemonOffFailure::Unreachable,
                     });
@@ -906,11 +971,38 @@ impl Runtime {
         self.device_registration_exists(device_id) && self.start_device_host(device_id)
     }
 
-    fn codex_daemon_off_queued(&self, device_id: &str) -> bool {
-        match self.device_kit_pending.get(device_id) {
-            Some(KitJob::Apply(scope)) => scope.codex_daemon_off,
-            _ => false,
+    /// The helper connection a device's turn-off was confirmed on ended
+    /// before its worker took it: the request leaves the queue, never sent
+    /// on a later connection, and ends as unreachable so the popover can try
+    /// again (PRD codex-daemon-apply B11). Other queued work stays for the
+    /// next connection.
+    pub(super) fn drop_queued_codex_daemon_off(&mut self, device_id: &str) {
+        let Some(KitJob::Apply(scope)) = self.device_kit_pending.get(device_id) else {
+            return;
+        };
+        if !scope.codex_daemon_off {
+            return;
         }
+        let rest = Scope {
+            codex_daemon_off: false,
+            ..scope.clone()
+        };
+        // A turn-off alone leaves nothing to run; the next connection queues
+        // its own pass.
+        if rest.is_automatic() {
+            self.device_kit_pending.remove(device_id);
+            self.clear_kit_busy(device_id);
+        } else {
+            self.device_kit_pending
+                .insert(device_id.to_owned(), KitJob::Apply(rest));
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "kit",
+            "kind": "codex_daemon_off.dropped",
+            "device_id": device_id,
+            "reason": "the helper connection ended before the request ran",
+        }));
+        self.end_codex_daemon_off_unanswered(device_id);
     }
 
     /// Queued work cannot run now: the row stops saying it is working.
@@ -927,6 +1019,7 @@ impl Runtime {
     /// nothing queued for it runs.
     pub(super) fn forget_device_kit_work(&mut self, device_id: &str) {
         self.device_kit_pending.remove(device_id);
+        self.codex_daemon_off_running.remove(device_id);
         self.end_codex_daemon_off_unanswered(device_id);
         self.reopen_first_run_choice(device_id);
         self.clear_kit_busy(device_id);
@@ -1172,19 +1265,20 @@ impl Runtime {
         if self.kit_states.get(device_id) == Some(&snapshot) {
             return false;
         }
-        let daemon_on_before = self
+        let shared_before = self
             .kit_states
             .get(device_id)
-            .and_then(|state| state.codex_daemon_on);
-        let daemon_on_now = snapshot.codex_daemon_on;
+            .is_some_and(KitSnapshot::shares_codex_server);
+        let shared_now = snapshot.shares_codex_server();
         self.kit_states.insert(device_id.to_owned(), snapshot);
         self.refresh_device_snapshots();
         // A device's agent panes are judged against its kit.
         if device_id != LOCAL_DEVICE_ID {
             self.refresh_device_catalog(device_id);
-        } else if daemon_on_before != daemon_on_now {
+        } else if shared_before != shared_now {
             // A Codex pane's reason for not being connected follows the
-            // shared server's setting, so it is judged again at once.
+            // shared server (its setting, or a daemon that still answers), so
+            // it is judged again at once.
             self.sync_pane_lineage();
         }
         true

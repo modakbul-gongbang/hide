@@ -1050,8 +1050,15 @@ fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
             "  'features disable') echo false > \"$CODEX_HOME/daemon\" ;;\n",
             "  'features enable') echo true > \"$CODEX_HOME/daemon\" ;;\n",
             "  'app-server daemon')\n",
-            "    [ -e \"$HOME/daemon-running\" ] || { echo 'Error: failed to connect' >&2; exit 1; }\n",
-            "    echo '{\"status\":\"running\"}' ;;\n",
+            "    case \"$3\" in\n",
+            "      version)\n",
+            "        [ -e \"$HOME/daemon-running\" ] || { echo 'Error: failed to connect' >&2; exit 1; }\n",
+            "        cat \"$HOME/daemon-answer\" 2>/dev/null || echo '{\"status\":\"running\"}' ;;\n",
+            "      stop)\n",
+            "        if [ -e \"$HOME/daemon-stop-fails\" ]; then echo 'Error: permission denied' >&2; exit 1; fi\n",
+            "        [ -e \"$HOME/daemon-comes-back\" ] || rm -f \"$HOME/daemon-running\" ;;\n",
+            "      *) exit 2 ;;\n",
+            "    esac ;;\n",
             "  *) exit 2 ;;\n",
             "esac\n",
         ),
@@ -1064,6 +1071,19 @@ fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
 }
 
 impl Fixture {
+    /// How many times the kit asked Codex to stop its shared daemon.
+    fn daemon_stops(&self) -> usize {
+        std::fs::read_to_string(self.home().join("codex.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == "app-server daemon stop")
+            .count()
+    }
+
+    fn daemon_running(&self) -> bool {
+        self.home().join("daemon-running").exists()
+    }
+
     fn daemon_setting(&self) -> String {
         std::fs::read_to_string(self.home().join(".codex/daemon"))
             .unwrap()
@@ -1089,6 +1109,8 @@ fn no_pass_changes_codexs_shared_daemon_setting() {
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
 
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+
     for scope in [
         Scope::automatic(),
         Scope::agents(["codex"], []),
@@ -1100,6 +1122,9 @@ fn no_pass_changes_codexs_shared_daemon_setting() {
 
     assert_eq!(fixture.daemon_setting(), "true");
     assert!(fixture.codex_writes().is_empty());
+    // No pass stops the daemon either (PRD codex-daemon-apply D-04).
+    assert!(fixture.daemon_running());
+    assert_eq!(fixture.daemon_stops(), 0);
 }
 
 #[test]
@@ -1155,6 +1180,131 @@ fn the_operators_request_turns_the_shared_daemon_off_once_and_says_so() {
         "a pass that was not asked answers nothing about it"
     );
     assert_eq!(fixture.codex_writes().len(), 1);
+}
+
+/// PRD codex-daemon-apply B3, B5: the same request also stops the daemon
+/// that is running, once; with none running it stops nothing, and a second
+/// request finds nothing to stop.
+#[test]
+fn the_operators_request_also_stops_the_running_daemon_once() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+    assert_eq!(status(&fixture.target).codex_daemon_running, Some(true));
+
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+
+    assert_eq!(report.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert_eq!(fixture.daemon_setting(), "false");
+    assert!(!fixture.daemon_running());
+    assert_eq!(fixture.daemon_stops(), 1);
+    assert_eq!(report.codex_daemon_running, Some(false));
+
+    let again = apply(&fixture.target, &Scope::codex_daemon_off());
+    assert_eq!(again.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert_eq!(fixture.daemon_stops(), 1, "a daemon that is down is not stopped again");
+
+    // No daemon running: autostart goes off and nothing is stopped.
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+    assert_eq!(report.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert_eq!(fixture.daemon_stops(), 0);
+}
+
+/// B7, B8: a stop that fails, or a daemon that answers again afterwards, is
+/// `stop_failed` with autostart already off; the same request again finds
+/// the setting off and only stops.
+#[test]
+fn a_stop_that_does_not_take_effect_is_stop_failed_and_a_retry_only_stops() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+    std::fs::write(fixture.home().join("daemon-stop-fails"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+    let Some(CodexDaemonOff::Failed { reason, detail }) = report.codex_daemon_off else {
+        panic!("the stop failed: {:?}", report.codex_daemon_off);
+    };
+    assert_eq!(reason, CodexDaemonOffFailure::StopFailed);
+    assert!(detail.contains("permission denied"), "{detail}");
+    assert_eq!(fixture.daemon_setting(), "false", "autostart is off already");
+    assert!(fixture.daemon_running());
+    assert_eq!(report.codex_daemon_running, Some(true));
+
+    std::fs::remove_file(fixture.home().join("daemon-stop-fails")).unwrap();
+    let retry = apply(&fixture.target, &Scope::codex_daemon_off());
+    assert_eq!(retry.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert!(!fixture.daemon_running());
+    assert_eq!(fixture.daemon_setting(), "false");
+
+    // A daemon that answers again after the stop is not a stop.
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+    std::fs::write(fixture.home().join("daemon-comes-back"), "").unwrap();
+    assert!(matches!(
+        apply(&fixture.target, &Scope::codex_daemon_off()).codex_daemon_off,
+        Some(CodexDaemonOff::Failed {
+            reason: CodexDaemonOffFailure::StopFailed,
+            ..
+        })
+    ));
+}
+
+/// B6: a turn-off Codex refuses stops nothing.
+#[test]
+fn a_refused_turn_off_stops_nothing() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+    std::fs::write(fixture.home().join("codex-fails"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+
+    assert!(matches!(
+        report.codex_daemon_off,
+        Some(CodexDaemonOff::Failed {
+            reason: CodexDaemonOffFailure::CodexRefused,
+            ..
+        })
+    ));
+    assert!(fixture.daemon_running());
+    assert_eq!(fixture.daemon_stops(), 0);
+}
+
+/// D-07, B9: with the setting already off, a daemon that still answers is
+/// read as such, and an answer Hide cannot read is no answer, kept for the
+/// log.
+#[test]
+fn the_report_says_whether_a_daemon_still_answers() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "false");
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+    let report = status(&fixture.target);
+    assert_eq!(report.codex_daemon_on, Some(false));
+    assert_eq!(report.codex_daemon_running, Some(true));
+    assert_eq!(report.codex_daemon_unreadable, None);
+
+    std::fs::write(fixture.home().join("daemon-answer"), "daemon v2 ready\n").unwrap();
+    let report = status(&fixture.target);
+    assert_eq!(report.codex_daemon_running, None);
+    assert!(
+        report
+            .codex_daemon_unreadable
+            .as_deref()
+            .is_some_and(|reason| reason.contains("cannot read")),
+        "{report:?}"
+    );
+    // Asking stops nothing: a read is never a stop.
+    assert_eq!(fixture.daemon_stops(), 0);
+
+    // A Codex older than the setting is not asked about a daemon.
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("codex-old"), "").unwrap();
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+    assert_eq!(status(&fixture.target).codex_daemon_running, None);
 }
 
 #[test]

@@ -1,6 +1,16 @@
 import { TriangleAlertIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog";
 import { badgeVariants } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
@@ -16,6 +26,9 @@ import { useShellStore } from "./store";
 // the popover only shows the snapshot: the pending and failed states, and the
 // result of turning off Codex's shared server, are read back, never assumed.
 // A pane that is connected, or that has nothing to judge, draws nothing.
+// Turning the shared server off also stops the one running, which disconnects
+// every Codex attached to it, so the link asks first in the device-removal
+// pattern with no button focused (PRD codex-daemon-apply B1-B3, D-06).
 
 export function PaneConnectionChip({ pane, actions, local }: { pane: PaneRow; actions: Actions; local: boolean }) {
   const connection = notConnected(pane.children?.connection);
@@ -37,6 +50,7 @@ function ConnectionPopover({
   const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState(false);
   const [askedOff, setAskedOff] = useState(false);
+  const [confirmingOff, setConfirmingOff] = useState(false);
   // One press is one event: a second press before the next snapshot would
   // otherwise send again, because the core's pending state has not arrived.
   const sentAgainst = useRef<unknown>(null);
@@ -47,6 +61,13 @@ function ConnectionPopover({
   const pending = reopenPending(connection);
   const failure = reopenFailureKey(connection);
   const outcome = sharedServerOutcome(device?.kit?.codex_daemon_off, askedOff);
+  const offersOff = offersSharedServerOff(connection) && machineId !== null && outcome?.phase !== "pending";
+  // A confirmation whose link went away (the server is off, the pane
+  // reconnected, a turn-off already runs) closes rather than send a request
+  // that no longer matches what it named.
+  useEffect(() => {
+    if (confirmingOff && !offersOff) setConfirmingOff(false);
+  }, [confirmingOff, offersOff]);
   const once = (send: () => void) => {
     if (sentAgainst.current === rest) return;
     sentAgainst.current = rest;
@@ -56,6 +77,8 @@ function ConnectionPopover({
     <Popover
       open={open}
       onOpenChange={(next) => {
+        // The confirmation takes the focus; the popover stays to show the answer.
+        if (!next && confirmingOff) return;
         setOpen(next);
         if (!next) setAskedOff(false);
       }}
@@ -103,12 +126,7 @@ function ConnectionPopover({
               className="h-auto justify-start p-none text-caption"
               disabled={outcome?.phase === "pending"}
               data-codex-shared-server-off={machineId}
-              onClick={() =>
-                once(() => {
-                  setAskedOff(true);
-                  actions.turnOffCodexSharedServer(machineId);
-                })
-              }
+              onClick={() => setConfirmingOff(true)}
             >
               {t("panes.connection.sharedServer.link")}
             </Button>
@@ -128,6 +146,38 @@ function ConnectionPopover({
           </span>
         ) : null}
       </PopoverContent>
+      {confirmingOff && offersOff && machineId ? (
+        <AlertDialog open onOpenChange={(next) => { if (!next) setConfirmingOff(false); }}>
+          <AlertDialogContent data-codex-shared-server-confirm={machineId}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {local ? t("panes.connection.sharedServer.confirmTitleLocal") : t("panes.connection.sharedServer.confirmTitleDevice", { device: device?.label ?? "" })}
+              </AlertDialogTitle>
+              <AlertDialogDescription>{t("panes.connection.sharedServer.confirmEffect")}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <p className="text-body text-subtle-foreground" data-codex-shared-server-effect="disconnect">
+              {t("panes.connection.sharedServer.confirmDisconnect")}
+            </p>
+            <p className="text-body text-subtle-foreground" data-codex-shared-server-effect="keeps">
+              {t("panes.connection.sharedServer.confirmKeeps")}
+            </p>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-codex-shared-server-keep={machineId}>{t("panes.connection.sharedServer.confirmCancel")}</AlertDialogCancel>
+              <AlertDialogAction
+                data-codex-shared-server-go={machineId}
+                onClick={() =>
+                  once(() => {
+                    setAskedOff(true);
+                    actions.turnOffCodexSharedServer(machineId);
+                  })
+                }
+              >
+                {t("panes.connection.sharedServer.confirmGo")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </Popover>
   );
 }

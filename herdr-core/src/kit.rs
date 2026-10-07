@@ -195,7 +195,9 @@ pub(crate) fn spawn_device_worker(
                 };
                 let Ok(changed) = core
                     .lock()
-                    .map(|mut locked| locked.ingest_device_kit_answer(&device_id, answer))
+                    .map(|mut locked| {
+                        locked.ingest_device_kit_answer(&device_id, answer, call.daemon_off_run)
+                    })
                 else {
                     return;
                 };

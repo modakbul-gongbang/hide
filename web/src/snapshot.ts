@@ -1023,7 +1023,7 @@ export type KitAgentSessions = {
 export type CodexDaemonOff =
   | { state: "pending" }
   | { state: "done" }
-  | { state: "failed"; reason: "codex_missing" | "codex_refused" | "timed_out" | "unreachable" };
+  | { state: "failed"; reason: "codex_missing" | "codex_refused" | "timed_out" | "unreachable" | "stop_failed" };
 
 export type KitComponent = {
   id: KitComponentId;
