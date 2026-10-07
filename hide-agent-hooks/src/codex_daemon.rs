@@ -208,7 +208,10 @@ pub enum Stopped {
 /// A daemon that cannot be asked while its socket is still there is stopped
 /// anyway: `daemon stop` knows the daemon by its process and answers
 /// `"status":"notRunning"` for one that is gone, such as a crashed daemon
-/// whose stale socket would otherwise keep every retry failing.
+/// whose stale socket would otherwise keep every retry failing. That answer
+/// is trusted only here, after the version check could not tell, and only
+/// as Codex 0.160's observed behaviour (measured for a SIGKILLed daemon); a
+/// daemon that answered running is always asked again after the stop.
 pub fn stop(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Stopped, String> {
     let unsure = match daemon_answer(codex, home, stop)? {
         Answer::Down(answer) => return Ok(Stopped::AlreadyStopped { answer }),
@@ -518,7 +521,7 @@ mod tests {
                 "    printf 'Error: failed to connect\\n\\nCaused by:\\n    No such file or directory\\n' >&2; exit 1 ;;\n",
                 "  'app-server daemon stop')\n",
                 "    if [ -e \"$HOME/stop-fails\" ]; then echo 'Error: permission denied' >&2; exit 1; fi\n",
-                "    if [ ! -e \"$HOME/running\" ]; then echo '{\"status\":\"notRunning\"}'; exit 0; fi\n",
+                "    if [ ! -e \"$HOME/running\" ] || [ -e \"$HOME/stop-says-not-running\" ]; then echo '{\"status\":\"notRunning\"}'; exit 0; fi\n",
                 "    [ -e \"$HOME/comes-back\" ] || rm -f \"$HOME/running\"\n",
                 "    [ -e \"$HOME/keeps-socket\" ] || rm -f \"$HOME/.codex/app-server-control/app-server-control.sock\"\n",
                 "    echo '{\"status\":\"stopped\"}'; exit 0 ;;\n",
@@ -643,6 +646,23 @@ mod tests {
         std::fs::write(home.path().join("keeps-socket"), "").unwrap();
         let failure = stop(&codex, home.path(), &quitting).unwrap_err();
         assert!(failure.contains("control socket"), "{failure}");
+
+        // A stop that fails while Hide cannot tell is a failure.
+        let (home, codex) = fake_daemon();
+        link(home.path());
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("version-fails"), "").unwrap();
+        std::fs::write(home.path().join("stop-fails"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("permission denied"), "{failure}");
+
+        // notRunning is not trusted over a daemon that answered running: it
+        // is asked again, and one that still answers is a failure.
+        let (home, codex) = fake_daemon();
+        std::fs::write(home.path().join("running"), "").unwrap();
+        std::fs::write(home.path().join("stop-says-not-running"), "").unwrap();
+        let failure = stop(&codex, home.path(), &quitting).unwrap_err();
+        assert!(failure.contains("still answers"), "{failure}");
     }
 
     #[cfg(unix)]
