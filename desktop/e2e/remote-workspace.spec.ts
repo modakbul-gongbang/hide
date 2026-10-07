@@ -150,6 +150,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
   let app: Awaited<ReturnType<typeof launch>>["app"] | undefined;
   let devServer: http.Server | undefined;
   let tlsServer: https.Server | undefined;
+  let tlsPartition: string | undefined;
   let collisionServer: http.Server | undefined;
   let decoyServer: http.Server | undefined;
   let egressServer: http.Server | undefined;
@@ -392,12 +393,12 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await new Promise<void>((resolve) => tlsServer!.listen(0, "127.0.0.1", resolve));
     const tlsPort = (tlsServer.address() as AddressInfo).port;
     const remoteWorkspace = `ssh-e2e\u0000${fs.realpathSync(path.join(remote.root, "fixture"))}`;
-    const tlsPartition = browserPartition(remoteWorkspace, `https://localhost:${tlsPort}/secure`, nodeOf(run.env));
-    await app.evaluate(({ session }, partition) => {
+    tlsPartition = browserPartition(remoteWorkspace, `https://localhost:${tlsPort}/secure`, nodeOf(run.env));
+    await app.evaluate(({ session }, { partition, certificate }) => {
       session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
-        callback(request.hostname === "localhost" ? 0 : -3);
+        callback(request.hostname === "localhost" && request.certificate.data.trim() === certificate.trim() ? 0 : -3);
       });
-    }, tlsPartition);
+    }, { partition: tlsPartition, certificate: fs.readFileSync(tlsCert, "utf8") });
     const openedTls = await commandFromPane(remote, run, bridge, ["browser", "open", `HTTPS://localhost:${tlsPort}/secure`], "remote-tls");
     expect(openedTls.status, JSON.stringify(openedTls.answer)).toBe(0);
     const tlsView = openedTls.answer.result as { view_id: string; load: number };
@@ -473,6 +474,15 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
         (entry as { webContents?: Electron.WebContents }).webContents?.getURL() === routeUrl);
       return child ? (child as unknown as { webContents: Electron.WebContents }).webContents.executeJavaScript("document.body.textContent") as Promise<string> : null;
     }, tlsRoute.url), { timeout: 30_000 }).toContain("remote-secure");
+    // This certificate names localhost, not the numeric host; the same device partition must reject it.
+    const beforeInvalidCertificate = hostLog(run.env).length;
+    const invalidTls = await commandFromPane(remote, run, bridge, ["browser", "open", `https://127.0.0.1:${tlsPort}/invalid`], "remote-tls-invalid");
+    expect(invalidTls.status, JSON.stringify(invalidTls.answer)).toBe(0);
+    const invalidTlsView = (invalidTls.answer.result as { view_id: string }).view_id;
+    await expect(page.locator(`[data-browser-display="${invalidTlsView}"] [data-area-empty="browser-failed"]`)).toBeVisible();
+    await expect.poll(() => hostLog(run.env).slice(beforeInvalidCertificate).some((line) =>
+      line.event === "browser.load_failed" && String(line.description).startsWith("ERR_CERT_"))).toBe(true);
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", invalidTlsView], "remote-tls-invalid-close")).status).toBe(0);
     expect((await commandFromPane(remote, run, bridge, ["view", "close", tlsView.view_id], "remote-tls-close")).status).toBe(0);
     await expect.poll(async () => Promise.all(["127.0.0.1", "::1"].map((host) =>
       canBindLoopback(Number(new URL(tlsRoute.url).port), host))), { timeout: 10_000 }).toEqual([true, true]);
@@ -814,6 +824,8 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     console.log(fs.readFileSync(daemonLog, "utf8"));
     throw error;
   } finally {
+    if (tlsPartition) await app?.evaluate(({ session }, partition) => session.fromPartition(partition).setCertificateVerifyProc(null), tlsPartition)
+      .catch((error: unknown) => console.error("Private TLS verifier cleanup failed", error));
     await app?.close().catch(() => undefined);
     for (const socket of upgraded) socket.destroy();
     await new Promise<void>((resolve) => devServer?.close(() => resolve()) ?? resolve());
