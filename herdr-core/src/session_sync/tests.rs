@@ -1724,6 +1724,7 @@ fn fresh_catalog() -> CatalogCache {
         asked: BTreeSet::new(),
         paths: Default::default(),
         built_at: Instant::now(),
+        purposes_synced: None,
     }
 }
 

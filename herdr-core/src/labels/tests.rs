@@ -527,10 +527,12 @@ fn a_restart_restores_the_label_with_no_read_and_no_request() {
     harness.backend.answer("재시작 전에 붙은 작업", "done", "");
     let idle = agent(&path, "idle", 5);
     {
-        let (mut worker, woken, _) = harness.worker(harness.store());
+        let store = harness.store();
+        let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
         observe(&mut worker, &idle);
         settle(&mut worker, &woken);
         assert!(shown(&worker, &idle).is_some());
+        store.flush();
     }
     let (mut worker, woken, source) = harness.worker(harness.store());
     observe(&mut worker, &idle);
@@ -595,10 +597,13 @@ fn a_second_daemon_on_the_same_server_stands_by_and_shows_no_labels() {
     let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "끝")]);
     harness.backend.answer("첫 데몬이 붙인 작업", "done", "");
     let idle = agent(&path, "idle", 1);
-    let (mut first, woken, _) = harness.worker(harness.store());
+    let first_store = harness.store();
+    let (mut first, woken, _) = harness.worker(Arc::clone(&first_store));
     observe(&mut first, &idle);
     settle(&mut first, &woken);
     assert!(shown(&first, &idle).is_some());
+    // The second daemon starts after the first has written its labels.
+    first_store.flush();
 
     let (mut second, second_woken, source) = harness.worker(harness.store());
     observe(&mut second, &idle);
@@ -893,6 +898,7 @@ fn concurrent_workers_keep_local_records_on_disk_and_device_records_in_memory() 
     for thread in threads {
         thread.join().unwrap();
     }
+    store.flush();
     let reopened = LabelStore::open(Some(harness.state.path()), None, LOCAL_TARGET);
     assert_eq!(reopened.target(super::store::LOCAL_TARGET).len(), 1);
     assert_eq!(
@@ -1003,10 +1009,13 @@ fn a_request_the_operator_submitted_is_theirs_and_survives_a_restart_without_a_r
     // A restarted daemon has no submits and reads nothing for an unchanged
     // pane; what it shows is what was stored.
     drop(worker);
+    store.flush();
     let reads = source.reads.load(Ordering::SeqCst);
-    let (mut restarted, woken, source) = harness.worker(harness.store());
+    let restarted_store = harness.store();
+    let (mut restarted, woken, source) = harness.worker(Arc::clone(&restarted_store));
     observe(&mut restarted, &idle);
     settle(&mut restarted, &woken);
+    restarted_store.flush();
     assert_eq!(
         source.reads.load(Ordering::SeqCst),
         0,

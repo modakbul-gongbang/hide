@@ -10,7 +10,6 @@ use hide_kit::Feature;
 fn herdr_kind(adapter: &hide_kit::AgentAdapter) -> &'static str {
     match adapter.id {
         "claude-code" => "claude",
-        "gemini-cli" => "gemini",
         id => id,
     }
 }
@@ -58,13 +57,13 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
             conversation_agent_kind(kind),
             "{kind}: conversation titles"
         );
-        // Herdr's own integration is the pinned target list the kit installs
-        // from, and a status judged from the screen has none (B15).
-        assert_eq!(
+        // Every supported agent has Herdr's own integration, and its target
+        // is the kind Herdr reports the agent's panes as.
+        assert!(
             adapter.supports(Feature::HerdrIntegration),
-            adapter.herdr.is_some(),
             "{kind}: herdr integration"
         );
+        assert_eq!(adapter.herdr.name, kind, "{kind}: herdr integration target");
     }
 }
 
@@ -87,7 +86,7 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
         doc_url: String::new(),
     };
     let report = hide_kit::KitReport {
-        agents: vec![row("claude-code"), row("gemini-cli")],
+        agents: vec![row("claude-code"), row("omp")],
         ..Default::default()
     };
     let kit = crate::model::KitSnapshot::from_report(&report);
@@ -95,24 +94,19 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
     let claude = &kit.agents[0];
     assert!(!claude.partial);
     assert!(claude.features.iter().all(|feature| feature.supported));
-    let gemini = &kit.agents[1];
-    assert!(
-        gemini.partial,
-        "the chip shows whether or not the agent is on"
-    );
+    let omp = &kit.agents[1];
+    assert!(omp.partial, "the chip shows whether or not the agent is on");
     assert_eq!(
-        gemini
-            .features
+        omp.features
             .iter()
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
-        [Feature::Skill, Feature::Guidance],
-        "Gemini CLI has no Herdr integration, so its status is judged from the screen (B15)"
+        [Feature::Skill, Feature::HerdrIntegration],
+        "omp gets the skill and Herdr's integration, like Pi"
     );
     assert_eq!(
-        gemini
-            .features
+        omp.features
             .iter()
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
@@ -146,7 +140,7 @@ fn a_recorded_on_agent_without_its_program_is_published_enabled_and_chosen() {
         agents: vec![
             row("codex", Some(true)),
             row("claude-code", Some(false)),
-            row("gemini-cli", None),
+            row("grok", None),
         ],
         ..Default::default()
     };

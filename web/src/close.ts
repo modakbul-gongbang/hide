@@ -183,7 +183,7 @@ export function subtreeTitle(kind: CloseKind, count: number, t: TFunction<"trans
 }
 
 /** The phases in which a close the core runs still names its pane. */
-const CLOSING_PHASES = new Set(["waiting", "closing", "transmitting", "awaiting_topology", "unknown"]);
+const CLOSING_PHASES = new Set(["queued", "waiting", "closing", "transmitting", "awaiting_topology", "unknown"]);
 
 /**
  * Whether an agent's pane is being closed, on its own or as a node of a

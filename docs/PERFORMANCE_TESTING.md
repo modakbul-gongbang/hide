@@ -265,13 +265,20 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   `snapshot_delta_payload` (`herdr-core/src/runtime/snapshot_delta.rs`) takes owned data under the lock; `serialize_snapshot_delta` serializes without a runtime to lock.
   Extend `PrecomputedCatalog`, `CatalogCache`, and `PathIndex` (`herdr-core/src/session_sync.rs`, `herdr-core/src/workspace.rs`) rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
   The coordinator asks the core's own node about every path a rebuild reads in one `Call::PathFacts` (at most `PATH_FACTS_LIMIT` paths per call) before it takes the lock, and reuses the answer for the same paths until the 30-second catalog refresh, so a burst of session updates over the same panes asks the node once.
+- Keep the session-sync thread that applies Herdr's events free of blocking work (PRD instant-pane-topology D-13).
+  A socket read that opens its own connection goes to the sync-read worker (`session_sync/sync_reads.rs`, one read of each kind in flight), a subprocess, a node read that runs one or an HTTP request to a `BackgroundRead` reader (`herdr-core/src/reader.rs`), and a file write that ends in an fsync to its store's own thread (the label store); the work's output and interval stay what they were.
+  An event that arrives while one of them runs is applied at once, which the topology scenario's churning agents exercise.
+- Keep a publish's cost independent of the agent, tab and checkout counts when the catalog's inputs did not move (D-18).
+  The catalog is rebuilt only on changed registrations, spaces or worktrees or its refresh window, the purpose mirror syncs only when that catalog or the unconfirmed created purposes changed, and a path is resolved by the node only when the set of paths asked changes (above), never by the core per publish; an agent status change repeats none of them.
+  Measure a change to this at both scales of the topology scenario, idle and with its agent churn, against a baseline: idle CPU and RSS must not grow, and a status-change publish must not double when the agents do.
+- A drawn-ahead change adds one publish, a bounded line (`GEOMETRY_QUEUE_LIMIT`, `INPUT_HOLD_LIMIT_BYTES`) and one `pane_op.timing` record per operation, and nothing per frame or per tick.
 - Announce once per burst and clear the `ChangeNotifier` (`herdr-core/src/handle.rs`) latch before taking the snapshot lock.
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
 - Keep the keyboard path to the byte bridge.
   The one thing added per key is the operator-submit check (`labels::input::key_submits`, PRD overview-request-view D-19): a chunk over 64 bytes is skipped, a shorter one is decoded into a stack buffer and scanned; only a found submit looks up the agent row and pushes one entry behind the submit record's own lock, and nothing is published.
-- Keep async operation records bounded by active intent and conflict scope.
+- Keep async operation records bounded by active intent and conflict scope; a tab's geometry operations wait in its line, one with Herdr and at most `GEOMETRY_QUEUE_LIMIT` behind it.
   A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
   Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.
 
@@ -341,6 +348,17 @@ The harness resolves that directory to an absolute path before starting child pa
 `memory.py` samples resident memory twice, after the shape settled and after the driven window (`memory-settled.json`, `memory-after-frames.json`): the Chrome process tree's RSS sum, hided's RSS, the page's JS heap and its live instance count; the two samples say whether the parked instances grow the tab under load, which is the D-05 revisit trigger.
 The driver and the marker still go to the one measured pane, so the other panes are idle shells with mounted xterm instances, and the gate is the same as the single-pane run.
 A Chrome window opens on the desktop for the run; the loop throttles in an occluded or minimized window, so leave it visible and report the load recorded beside each trial.
+
+### Pane topology latency
+
+`MEASURE_SCENARIO=topology` measures how long a split, a zoom and unzoom, a pane close, a new tab and a tab switch take to reach the screen (PRD instant-pane-topology D-15, B23).
+It adds a second tab to the measured workspace, and with `MEASURE_SCALE=operator` or `double` `scale.sh` first fills the private server to that scale (D-18): 43 workspaces, 62 tabs, 66 panes and 30 agents of which 5 print a line every 50 ms, or twice each (86, 124, 132, 60, 10); every other workspace is its own Git checkout, agents are reported with `herdr pane report-agent`, and while the run lasts one idle agent changes state every two seconds, the agent-status-only publish D-18 prices.
+The run records `resources-idle.json` before anything moves, one echo trial under the agent churn (`echo-summary.json`, the typing half of B24), and `topology.mjs`'s rounds (`MEASURE_TOPOLOGY_ROUNDS`, 20 by default), then skips the frame window.
+Keys are CDP `Input.dispatchKeyEvent` events, which Chrome delivers to the focused terminal as an ordinary renderer keydown, so each chord takes the web shell's own keydown path and its browser chord; a tab switch is a click on the tab.
+Every time is on the page's clock from the chord's first keydown (or the click): `screen_ms` is the first animation frame whose DOM shows the change (the canvas's pane count, its zoom flag or the shown tab), and `frame_ms` the first frame after it in which the terminal the change is about shows it (text in a new pane, a new grid in a resized one).
+`topology-summary.json` gives each operation's p50, p95 and max to screen and to frame.
+`MEASURE_HIDED_BIN` points the run at another hided, such as a baseline built from the merge base, so baseline and candidate share the fixture; run both headless (`--isolated-headless`) under the same scale and report the load beside each.
+Herdr's share and Hide's are read from the candidate's `pane_op.timing` lines in the run's `hide-state` diagnostic log (Drawn ahead of Herdr in [ARCHITECTURE.md](ARCHITECTURE.md#drawn-ahead-of-herdr)), which the baseline does not write.
 
 ## Scoped browser gateway discovery
 

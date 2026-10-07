@@ -72,8 +72,10 @@ export function stopDaemon(child: ChildProcess, binary: string, env: NodeJS.Proc
  * the fixture's private HOME and nowhere else.
  * `seedHideAi: false` leaves Hide AI unchosen, as a Mac that has never been asked is, for a spec
  * about the first-run rule.
+ * `bundledHerdr` runs a bundled daemon from the bundle that also carries the fixture's pinned Herdr, so the
+ * kit installs and removes agents' Herdr integrations with it, as a packaged app does.
  */
-export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false, options: { seedHideAi?: boolean } = {}): Promise<Daemon> {
+export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false, options: { seedHideAi?: boolean; bundledHerdr?: boolean } = {}): Promise<Daemon> {
   // The daemon places pane-bootstrap.sock below this directory. Keep the
   // fixture root short enough for macOS's Unix socket path limit.
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hde-")));
@@ -90,8 +92,9 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
     fs.mkdirSync(path.dirname(aiFile), { recursive: true });
     fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
   }
-  if (bundled) linkBundle();
-  return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledExecutable("hided") : undefined);
+  const bundle = options.bundledHerdr ? "herdr" : "plain";
+  if (bundled) linkBundle(bundle, options.bundledHerdr ? herdr.bin : undefined);
+  return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledExecutable("hided", bundle) : undefined);
 }
 
 /** Where the daemon keeps Hide AI's choice under a home: the platform's state folder, `hide/ai.json`. */

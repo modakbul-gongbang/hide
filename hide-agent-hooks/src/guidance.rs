@@ -1,6 +1,6 @@
 //! The SessionStart guidance hook of the agents beyond Claude Code and Codex
-//! (issue #517): Gemini CLI and Cursor, the two of Hide's supported agents
-//! that have a documented command hook the guidance fits.
+//! (issue #517): Cursor, the one of Hide's supported agents that has a
+//! documented command hook the guidance fits.
 //!
 //! Claude Code and Codex are instrumented: their hooks count subagents,
 //! read Project Memory and pull letters (`install`, `runtime`). Every other
@@ -18,15 +18,15 @@
 //! and installing twice converges. Each agent's file and entry shape is
 //! pinned to its documentation's own example by a test.
 //!
-//! The other six agents of the retired adapters (Qwen Code, Factory Droid,
-//! Copilot CLI, Kiro, Augment, Junie) are no longer written. Their layouts
+//! The other seven agents of the retired adapters (Gemini CLI, Qwen Code,
+//! Factory Droid, Copilot CLI, Kiro, Augment, Junie) are no longer written. Their layouts
 //! stay so the kit's one-time retirement can take Hide's marked entries out of
 //! the files an earlier build wrote them into ([`remove`]); [`install`]
 //! refuses them. The layouts go once that retirement has shipped.
 //!
 //! | Agent | File | Shape |
 //! | --- | --- | --- |
-//! | Gemini CLI | `~/.gemini/settings.json` | `hooks.SessionStart[{matcher, hooks[{name, type, command, timeout ms}]}]` |
+//! | Gemini CLI (retired) | `~/.gemini/settings.json` | `hooks.SessionStart[{matcher, hooks[{name, type, command, timeout ms}]}]` |
 //! | Qwen Code (retired) | `~/.qwen/settings.json` | `hooks.SessionStart[{hooks[{name, type, command, timeout s}]}]` |
 //! | Factory Droid (retired) | `~/.factory/hooks.json`, else the `hooks` key of `settings.json` | `SessionStart[{hooks[{type, command, timeout s}]}]` |
 //! | Cursor | `~/.cursor/hooks.json` | `{version 1, hooks.sessionStart[{command, timeout s}]}` |
@@ -104,7 +104,7 @@ impl GuidanceAgent {
     }
 
     /// The agents Hide still writes a guidance hook for, in Settings order.
-    pub const LIVE: [GuidanceAgent; 2] = [Self::Gemini, Self::Cursor];
+    pub const LIVE: [GuidanceAgent; 1] = [Self::Cursor];
 
     /// The agents whose hook an earlier build wrote and this one only removes.
     pub fn is_retired(self) -> bool {

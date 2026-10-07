@@ -18,15 +18,17 @@ test.describe.configure({ timeout: 120_000 });
 const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
 
 /**
- * A private HOME with four agents installed (a program in `~/.local/bin`, which the kit searches; Pi,
- * OpenCode and Cursor have none) and a kit record, so Claude Code and Codex are on and the rest wait.
+ * A private HOME with five agents installed (a program in `~/.local/bin`, which the kit searches; Grok and Pi
+ * have none) and a kit record, so Claude Code and Codex are on and the rest wait. The kit also searches the
+ * usual install folders such as `/opt/homebrew/bin`, so the agents left out are ones a developer Mac is least
+ * likely to have there.
  */
 async function start(label: string) {
   const herdr = await startHerdr();
   const home = path.join(fs.mkdtempSync(path.join(herdr.root, "ag-")), "home");
-  for (const folder of [".claude", ".codex", ".gemini", ".grok"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
+  for (const folder of [".claude", ".codex", ".cursor"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
   fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
-  for (const program of ["claude", "codex", "gemini", "grok"]) fs.writeFileSync(path.join(home, ".local", "bin", program), "#!/bin/sh\n", { mode: 0o755 });
+  for (const program of ["claude", "codex", "opencode", "omp", "cursor-agent"]) fs.writeFileSync(path.join(home, ".local", "bin", program), "#!/bin/sh\n", { mode: 0o755 });
   fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
   fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [] }));
   const daemon = await startHided(herdr, label, home, {}, true);
@@ -49,17 +51,17 @@ test("lists the installed agents with a status and a switch, and folds the other
     const list = await openAgents(page, daemon);
     // B8, B9: the programs the home holds are Installed, in the fixed order; the rest are folded.
     await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
-    await expect(list).toContainText("Installed 4");
-    await expect(list).toContainText("Not installed 3");
+    await expect(list).toContainText("Installed 5");
+    await expect(list).toContainText("Not installed 2");
     const rows = await list.locator("[data-agent-row]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-agent-row")));
-    expect(rows).toEqual([`${daemon.node}:claude-code:on`, `${daemon.node}:codex:on`, `${daemon.node}:gemini-cli:off`, `${daemon.node}:grok:off`, "opencode:not-installed", "pi:not-installed", "cursor:not-installed"]);
+    expect(rows).toEqual([`${daemon.node}:claude-code:on`, `${daemon.node}:codex:on`, `${daemon.node}:opencode:off`, `${daemon.node}:omp:off`, `${daemon.node}:cursor:off`, "grok:not-installed", "pi:not-installed"]);
     // One machine: no switch at the top, and no 'Skill and session hook' line on any row (B11, B12).
     await expect(page.locator("[data-agents-machines]")).toHaveCount(0);
     await expect(list).not.toContainText("Skill and session hook");
 
     // B16: an agent that is on and has no session is Ready; one that is off has no status.
     await expect(list.locator(`[data-agent-status="${daemon.node}:codex:ready"]`)).toHaveText(/Ready/);
-    await expect(list.locator(`[data-agent-row="${daemon.node}:gemini-cli:off"] [data-agent-status]`)).toHaveCount(0);
+    await expect(list.locator(`[data-agent-row="${daemon.node}:cursor:off"] [data-agent-status]`)).toHaveCount(0);
 
     // B16: the fixture's two Claude Code panes are running sessions, and the row says how many and nothing more.
     await expect(list.locator(`[data-agent-status="${daemon.node}:claude-code:sessions"]`)).toHaveText(/2 sessions/);
@@ -69,8 +71,8 @@ test("lists the installed agents with a status and a switch, and folds the other
     const fold = list.locator("[data-agents-not-installed]");
     await expect(fold).not.toHaveAttribute("open", "");
     await fold.locator("summary").click();
-    await expect(fold.locator("[data-agent-install]")).toHaveCount(3);
-    await expect(fold.locator('[data-agent-install="cursor"]')).toHaveAttribute("href", "https://cursor.com/docs/cli/installation");
+    await expect(fold.locator("[data-agent-install]")).toHaveCount(2);
+    await expect(fold.locator('[data-agent-install="pi"]')).toHaveAttribute("href", "https://pi.dev/");
     await screenshot(page, "agents-list");
 
     // B10: Check again asks the kit to read the machine again (one `kit_check` frame on top of the one the open
@@ -91,21 +93,22 @@ test("the Partial chip opens by keyboard with a mark and a word per feature, and
   const { herdr, daemon } = await start("agents-partial");
   try {
     const list = await openAgents(page, daemon);
-    const chip = list.locator('[data-agent-partial="gemini-cli"]');
+    const chip = list.locator('[data-agent-partial="cursor"]');
     await expect(chip).toBeVisible({ timeout: 60_000 });
     // B18: Partial is on every agent Hide does only some things for, on or off; a Full agent has none.
-    await expect(list.locator('[data-agent-partial="grok"]')).toBeVisible();
+    await expect(list.locator('[data-agent-partial="omp"]')).toBeVisible();
     await expect(list.locator('[data-agent-partial="claude-code"]')).toHaveCount(0);
     await chip.focus();
     await page.keyboard.press("Enter");
-    const popover = page.locator('[data-agent-partial-popover="gemini-cli"]');
+    const popover = page.locator('[data-agent-partial-popover="cursor"]');
     await expect(popover).toBeVisible();
     await expect(popover.locator("[data-agent-feature]").first()).toBeVisible();
     // A mark and a word for each feature; the table is the kit's, so a '–' is something Hide does not do.
     await expect(popover.locator("[data-agent-feature$=':no']").first()).toContainText("–");
     await expect(popover.locator("[data-agent-feature$=':yes']").first()).toContainText("✓");
-    // B15: Gemini CLI has no Herdr integration, and the popover says its status is judged from the screen.
-    await expect(popover).toContainText("Hide judges its status from the screen");
+    // Every supported agent has Herdr's integration: the popover lists it and says nothing of a screen-only status.
+    await expect(popover.locator('[data-agent-feature="herdr_integration:yes"]')).toBeVisible();
+    await expect(popover).not.toContainText("from the screen");
     await screenshot(page, "agents-partial-popover");
     await page.keyboard.press("Escape");
     await expect(popover).toHaveCount(0);
@@ -120,17 +123,17 @@ test("a switch installs and takes out Hide's own entries, and a hook the operato
   const { herdr, daemon, home } = await start("agents-switch");
   try {
     const list = await openAgents(page, daemon);
-    const gemini = path.join(home, ".gemini", "settings.json");
+    const cursor = path.join(home, ".cursor", "hooks.json");
     const claude = path.join(home, ".claude", "settings.json");
-    await expect(list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:off"]`)).toBeVisible({ timeout: 60_000 });
+    await expect(list.locator(`[data-agent-switch="${daemon.node}:cursor:off"]`)).toBeVisible({ timeout: 60_000 });
     // B13: turning an agent on writes its hook on this machine.
-    await list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:off"]`).click();
-    await expect(list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:on"]`)).toBeVisible();
-    await expect.poll(() => read(gemini), { timeout: 60_000 }).toContain("hide-guidance@");
+    await list.locator(`[data-agent-switch="${daemon.node}:cursor:off"]`).click();
+    await expect(list.locator(`[data-agent-switch="${daemon.node}:cursor:on"]`)).toBeVisible();
+    await expect.poll(() => read(cursor), { timeout: 60_000 }).toContain("hide-guidance@");
     // B14: turning it off takes out what Hide wrote.
-    await list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:on"]`).click();
-    await expect(list.locator(`[data-agent-switch="${daemon.node}:gemini-cli:off"]`)).toBeVisible();
-    await expect.poll(() => read(gemini), { timeout: 60_000 }).not.toContain("hide-guidance@");
+    await list.locator(`[data-agent-switch="${daemon.node}:cursor:on"]`).click();
+    await expect(list.locator(`[data-agent-switch="${daemon.node}:cursor:off"]`)).toBeVisible();
+    await expect.poll(() => read(cursor), { timeout: 60_000 }).not.toContain("hide-guidance@");
 
     // B20: a hook the operator took out is not put back; its row says so with Reinstall, on that row only.
     await expect.poll(() => read(claude), { timeout: 60_000 }).toContain("hide-subagents@");
