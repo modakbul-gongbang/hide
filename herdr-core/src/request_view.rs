@@ -61,6 +61,10 @@ pub struct RowFacts {
     /// yet).
     pub(crate) end: Option<LabelEnd>,
     pub(crate) line: Option<String>,
+    /// The session's last turn proposed a plan and waits for the operator to
+    /// approve it, as read for the agent's current Herdr state (PRD
+    /// codex-plan-approval-hold D-05).
+    pub(crate) awaiting_operator: bool,
 }
 
 /// Who sent the request a row shows.

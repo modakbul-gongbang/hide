@@ -12,12 +12,13 @@
 use std::collections::HashMap;
 
 use hide_session::label_reference_token;
+use hide_session::turns::Waiting;
 
 use super::analysis::LabelEnd;
 use super::facts::SessionFacts;
 use super::store::{self, PaneRecord};
 use crate::request_view::RowFacts;
-use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
+use crate::sidebar::{AgentLabel, SessionAgentPayload, SessionSnapshotPayload};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct LabelOverlay {
@@ -41,6 +42,9 @@ struct ProvenLabel {
     /// row stands on its facts alone.
     summary: Option<Summary>,
     facts: RowFacts,
+    /// What the session's last complete read says the agent waits for, with
+    /// the Herdr state it was read under.
+    turn: Option<(u64, Option<Waiting>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,6 +72,7 @@ impl LabelOverlay {
                         end: record.end,
                     }),
                     facts: row_facts(&record.facts),
+                    turn: record.turn_read(),
                 });
                 (
                     pane_id.clone(),
@@ -81,8 +86,33 @@ impl LabelOverlay {
         Self { panes }
     }
 
+    /// What the agent waits for in its current Herdr state, as its session
+    /// read says (PRD codex-plan-approval-hold D-06, D-07): `None` when no
+    /// read of the session it runs now was made for that state, or the
+    /// records read do not settle it. The caller decides what not knowing
+    /// means for an agent whose read reports no turns.
+    pub(crate) fn waiting(&self, agent: &SessionAgentPayload) -> Option<Waiting> {
+        let pane_id = agent.pane_id.as_deref().or(agent.id.as_deref())?;
+        let label = self.panes.get(pane_id)?.label.as_ref()?;
+        let reference = agent.agent_session.as_ref().and_then(|session| {
+            label_reference_token(
+                agent.agent.as_deref().unwrap_or_default(),
+                &session.kind,
+                &session.value,
+            )
+        });
+        if !label.proves(reference.as_deref()) {
+            return None;
+        }
+        let (seq, waiting) = label.turn?;
+        (agent.state_change_seq == Some(seq))
+            .then_some(waiting)
+            .flatten()
+    }
+
     pub(crate) fn apply(&self, payload: &mut SessionSnapshotPayload) {
         for agent in &mut payload.agents {
+            let awaiting_operator = self.waiting(agent) == Some(Waiting::PlanApproval);
             let Some(pane_id) = agent.pane_id.as_deref().or(agent.id.as_deref()) else {
                 continue;
             };
@@ -104,6 +134,7 @@ impl LabelOverlay {
                 continue;
             }
             let mut facts = label.facts.clone();
+            facts.awaiting_operator = awaiting_operator;
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
@@ -139,6 +170,7 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
             .collect(),
         end: None,
         line: None,
+        awaiting_operator: false,
     }
 }
 
