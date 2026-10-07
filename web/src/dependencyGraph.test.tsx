@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("CSS", { escape: (value: string) => value });
   // jsdom does not inherit custom properties; the graph reads only its two gap tokens.
-  const tokens: Record<string, string> = { "--home-dependency-gap": "96px", "--spacing-xl": "24px" };
+  const tokens: Record<string, string> = { "--home-dependency-gap": "96", "--spacing-xl": "24" };
   vi.spyOn(window, "getComputedStyle").mockReturnValue({ getPropertyValue: (name: string) => tokens[name] ?? "" } as CSSStyleDeclaration);
   container = document.createElement("div");
   document.body.append(container);
