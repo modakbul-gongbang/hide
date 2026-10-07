@@ -666,6 +666,24 @@ fn run_coordinator(
                             }
                         }
                     }
+                    Ok(SubscriptionLine::EventsLost { message }) => {
+                        // Herdr answers and has closed only this stream, so
+                        // the projection stays on screen until the fresh
+                        // subscription and snapshot of the reconnect replace
+                        // it; a reconnect that fails is what reaches the
+                        // screen. The reconnect delay still bounds a stream
+                        // that keeps falling behind.
+                        crate::diagnostic!(json!({
+                            "component": "session_sync",
+                            "kind": "subscription.events_lost",
+                            "target": context.log_target(),
+                            "applied_events": replica.as_ref().map(|current| current.applied_events),
+                            "message": message,
+                        }));
+                        stop_subscription(&mut subscription);
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    }
                     Ok(SubscriptionLine::Error { code, message }) => {
                         crate::diagnostic!(json!({
                             "component": "session_sync",
@@ -2112,7 +2130,7 @@ mod pane_cwd_confirmation_tests {
         let line = json!({"event": kind, "data": data}).to_string();
         match parse_subscription_line(&line).expect("event parses") {
             SubscriptionLine::Event(event) => event,
-            SubscriptionLine::Error { .. } => unreachable!(),
+            SubscriptionLine::EventsLost { .. } | SubscriptionLine::Error { .. } => unreachable!(),
         }
     }
 
