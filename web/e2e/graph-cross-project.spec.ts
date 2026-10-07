@@ -111,9 +111,12 @@ test("All projects: a delegation into another project is a chip at each end, and
     await expect(selected.locator(`[data-graph-row="${build}"]`)).toBeVisible();
     await expect(selected).toBeInViewport();
     // Hovered and focused, the row shows its hint where the age was; the title gives way, never a chip's project name.
+    const chipAt = await out.first().boundingBox();
     await row(lead).locator("[data-graph-open]").hover({ position: { x: 4, y: 4 } });
     await expect(row(lead).locator("[data-graph-row-hint]")).toBeVisible();
     await expectNamesWhole(row(lead));
+    // The hint takes a slot kept for it, so the chip under the pointer does not move.
+    expect(await out.first().boundingBox()).toEqual(chipAt);
     await screenshot(page, "graph-cross-project-selected-light");
   } finally {
     stack.daemon.stop();

@@ -563,10 +563,22 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
             </span>
           </Hint>
         ) : null}
-        <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground group-focus-within/row:hidden group-hover/row:hidden" />
-        <span className="hidden shrink-0 text-caption text-foreground group-focus-within/row:inline group-hover/row:inline" data-graph-row-hint="true">
-          {t(asking ? "graph.answerHint" : "graph.panelHint")}
-        </span>
+        {row.cross.length > 0 ? (
+          // A row with chips keeps one slot as wide as the hint for the age and the hint, so a hover moves no chip from under the pointer.
+          <span className="grid shrink-0 justify-items-end">
+            <Elapsed since={agent.changed_at_unix_ms} className="col-start-1 row-start-1 font-mono text-caption text-muted-foreground group-focus-within/row:invisible group-hover/row:invisible" />
+            <span className="invisible col-start-1 row-start-1 text-caption text-foreground group-focus-within/row:visible group-hover/row:visible" data-graph-row-hint="true">
+              {t(asking ? "graph.answerHint" : "graph.panelHint")}
+            </span>
+          </span>
+        ) : (
+          <>
+            <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground group-focus-within/row:hidden group-hover/row:hidden" />
+            <span className="hidden shrink-0 text-caption text-foreground group-focus-within/row:inline group-hover/row:inline" data-graph-row-hint="true">
+              {t(asking ? "graph.answerHint" : "graph.panelHint")}
+            </span>
+          </>
+        )}
       </span>
       {asking ? (
         <span className={cn("pointer-events-none relative block truncate pr-sm text-caption", said ? lineTone(said, agent) : "text-warning")} style={{ paddingLeft: `calc(var(--spacing-sm) + ${row.depth} * var(--size-lineage-indent) + var(--size-agent-mark))` }} data-graph-row-line={agent.pane_id}>
