@@ -1590,3 +1590,36 @@ fn a_device_codex_plan_wait_comes_through_its_helper_and_an_older_helper_is_not_
     // The read landed and proved the session; only the wait is not known.
     assert_eq!(waits(&worker, &done), (None, Some(false)));
 }
+
+/// B6: a Codex session whose file is not there yet is not known to wait for
+/// nothing; once the file is written, the next state reads it.
+#[test]
+fn a_codex_session_not_found_is_not_known_until_a_later_state_reads_it() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let by_id = |seq: u64| ObservedAgent {
+        pane_id: "w1:p1".to_owned(),
+        agent: Some("codex".to_owned()),
+        status: Some("idle".to_owned()),
+        reference: Some((
+            "id".to_owned(),
+            "0199a000-0000-7000-8000-0000000000b2".to_owned(),
+        )),
+        cwd: None,
+        state_change_seq: seq,
+    };
+    observe(&mut worker, &by_id(2));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    assert_eq!(waits(&worker, &by_id(2)), (None, None));
+
+    codex_plan_session(&harness, "idle", 3);
+    observe(&mut worker, &by_id(3));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        waits(&worker, &by_id(3)),
+        (Some(Waiting::PlanApproval), Some(true))
+    );
+}
