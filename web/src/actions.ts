@@ -61,6 +61,7 @@ import { useShellStore } from "./store";
 import { useUiStore, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
+import { zoomViewer } from "./viewers/viewerZoom";
 import {
   activeDisplay,
   adjacentInOrder,
@@ -1748,13 +1749,19 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
     },
 
-    /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: the document when an
-     * editor tab owns the canvas, else the focused terminal pane. */
+    /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: an image or PDF
+     * zooms when its display holds the keyboard, the document's text when an
+     * editor tab owns the canvas, else the focused terminal pane's. */
     textScale(direction: "in" | "out" | "reset") {
+      // A viewer's zoom is its display's own, page-local and never sent.
+      const owner = keyboardOwner();
+      const frame = frameNow();
+      const area = owner.kind === "view" && frame ? findArea(frame.layout.root, owner.areaId) : null;
+      if (area?.active && zoomViewer(area.active, direction)) return;
       // A pane's text size is this page's drawing, stored in the core's ui
       // state by pane id; a remote pane is sized the same way and nothing is
       // sent to its host.
-      if (editorFor(useShellStore.getState().editor) && keyboardOwner().kind === "view") {
+      if (editorFor(useShellStore.getState().editor) && owner.kind === "view") {
         dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
         return;
       }

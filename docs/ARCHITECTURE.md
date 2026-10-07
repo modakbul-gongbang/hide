@@ -1404,6 +1404,9 @@ Each display is its own CodeMirror view over its document and keeps its own scro
 Displays of one document are kept in step in the page through a per-document channel (`web/src/editor/sync.ts`), which applies the minimal change outside the undo history and marks it as a pending echo, so the other view shows a keystroke before the core's echo arrives and that echo neither moves a caret nor replaces newer input.
 Drafts, autosave and close-with-save stay keyed per document (S5.5), so two views of a file write one draft and queue one save.
 Image, PDF and video viewers read hided's bytes; the web decides video from the extension because the core has no Video kind (D-09).
+An image or PDF viewer's zoom is page-local state of the display that draws it (`web/src/viewers/{viewerZoom.ts,useViewerZoom.ts}`), never a core value: it decides no accepted transition, is a view of the moment that restarts at the fit for each opened file, and a pinch moves it at the input's frame rate, so publishing it would add a frame per wheel event for nothing another client or a restart needs (see State placement and publication).
+`actions.textScale` asks the viewer of the keyboard's View area first, through a registry the mounted viewers join (`registerViewerZoom`), and only when none can zoom sends `editor_text_scale` or `pane_text_scale` as before.
+A PDF draws only the pages in view and one view either side, at most ten (`MAX_DRAWN_PAGES`, pdf.js's own page buffer), one page at a time, each canvas held to pdf.js's `maxCanvasPixels`, and draws again 200 ms after a zoom or resize rests (`web/src/viewers/pdfPages.ts`).
 Unsaved drafts live in IndexedDB (`web/src/buffers.ts`, store `drafts_v4`), keyed by the daemon host, the device, the checkout root and the real path (PRD S5.5 B9-B12).
 The host is hided's persistent `host_id` (`hided/src/state_file.rs`, the `host-id` file in its state directory, sent in the `daemon` frame), so a draft written against one Hide host is never opened by another that serves the same browser origin.
 A draft for an open document is restored on reconnect, and one whose contents the core already holds is removed only once the core reports the document clean: a dirty core holding the same text is a refused or pending save, and the stored copy is the only one a daemon restart keeps (B13-B15).
@@ -1690,7 +1693,7 @@ The table below is written in macOS chords; Windows and Linux press each one thr
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |
-| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | same chords; while a browser display's page holds the keyboard they zoom that page in Chrome's steps and it keeps the keyboard, and ⌘+ (⌘⇧=) zooms it in too (`docs/BROWSER_DISPLAYS.md`) |
+| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords; while an image or PDF display holds the keyboard they zoom it in Chrome's steps and ⌘0 returns it to its fit | same chords, and the same for an image or PDF; while a browser display's page holds the keyboard they zoom that page in Chrome's steps and it keeps the keyboard, and ⌘+ (⌘⇧=) zooms it in too (`docs/BROWSER_DISPLAYS.md`) |
 | Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | same as the browser |
 | Settings | ⌘, | ⌥, (moved: Chrome keeps ⌘,) | ⌘, (in the app menu) |
 | Keyboard shortcuts | - | ⌘/ | ⌘/ |
