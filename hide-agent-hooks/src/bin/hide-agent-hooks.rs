@@ -45,11 +45,17 @@ fn main() -> ExitCode {
     let started = Instant::now();
     // Guarded launches acknowledge ownership before parsing, filesystem work
     // or runtime stdin. Keep this guard until all output and intake finish.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
     let owner_watch = match OwnerWatch::from_launch() {
         Ok(watch) => watch,
+        // Exit 2 from a `PreToolUse` hook refuses the tool call. The outer hook
+        // is what an agent runs, and it must never end that way; the inner one
+        // is only ever started by it.
+        Err(_) if arguments.first().map(String::as_str) == Some("hook") => {
+            return ExitCode::SUCCESS;
+        }
         Err(_) => return ExitCode::from(2),
     };
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("hook") => {
             // An agent beyond Claude Code and Codex has no counters, Memory
@@ -184,7 +190,7 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     let Some(call) = guard::read_call(&payload, truncated) else {
         return;
     };
-    let Some(launch) = guard::find_launch(&call.command) else {
+    let Some(launch) = guard::find_launch(&call.command, &|name| std::env::var(name).ok()) else {
         return;
     };
     let Some(home) = home_directory() else { return };

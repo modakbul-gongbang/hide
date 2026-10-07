@@ -100,11 +100,14 @@ pub struct Launch {
     pub args: Vec<String>,
 }
 
-/// The first launch in `command`, if any.
-pub fn find_launch(command: &str) -> Option<Launch> {
+/// The first launch in `command`, if any. `env` reads the hook's own
+/// environment, which says what the pane's Herdr is: a call that names another
+/// Herdr server, session or machine is not aimed at it, and the `hide agent
+/// spawn` it would be sent to starts a child in this pane's Herdr instead.
+pub fn find_launch(command: &str, env: &dyn Fn(&str) -> Option<String>) -> Option<Launch> {
     simple_commands(command)
         .iter()
-        .find_map(|words| launch_of(words))
+        .find_map(|words| launch_of(words, env))
 }
 
 /// The shell tool's call, as a runtime's `PreToolUse` payload carries it.
@@ -177,6 +180,9 @@ struct Lexer {
     /// The word after `<<` names the heredoc's end; `true` strips leading tabs.
     heredoc_next: Option<bool>,
     heredocs: Vec<(String, bool)>,
+    /// A quote, backtick or `$(` that the text ended inside. A shell reads such
+    /// a line as a syntax error and runs none of it, so nothing in it is a launch.
+    unclosed: bool,
 }
 
 impl Lexer {
@@ -191,6 +197,7 @@ impl Lexer {
             drop_next: false,
             heredoc_next: None,
             heredocs: Vec::new(),
+            unclosed: false,
         }
     }
 
@@ -239,6 +246,9 @@ impl Lexer {
             }
         }
         self.end_command();
+        if self.unclosed {
+            return Vec::new();
+        }
         self.commands
     }
 
@@ -290,6 +300,7 @@ impl Lexer {
             }
             self.word.push(c);
         }
+        self.unclosed = true;
     }
 
     fn double_quoted(&mut self) {
@@ -324,6 +335,7 @@ impl Lexer {
                 }
             }
         }
+        self.unclosed = true;
     }
 
     /// `` `...` ``, copied into the word as written.
@@ -345,6 +357,7 @@ impl Lexer {
                 _ => {}
             }
         }
+        self.unclosed = true;
     }
 
     /// `(...)` after a `$`, copied into the word as written, to its matching
@@ -369,10 +382,12 @@ impl Lexer {
                     }
                 }
                 '\'' | '"' => {
+                    let mut closed = false;
                     while let Some(inner) = self.peek(0) {
                         self.at += 1;
                         self.word.push(inner);
                         if inner == c {
+                            closed = true;
                             break;
                         }
                         if inner == '\\'
@@ -383,10 +398,14 @@ impl Lexer {
                             self.at += 1;
                         }
                     }
+                    if !closed {
+                        self.unclosed = true;
+                    }
                 }
                 _ => {}
             }
         }
+        self.unclosed = true;
     }
 
     fn comment(&mut self) {
@@ -483,11 +502,54 @@ fn is_assignment(word: &str) -> bool {
     })
 }
 
+/// Words a shell puts before a command without changing which command runs:
+/// the keywords that open a compound command's body, and the wrappers that
+/// run the next word as it is.
+fn is_prefix(word: &str) -> bool {
+    matches!(
+        word,
+        "if" | "then"
+            | "elif"
+            | "else"
+            | "while"
+            | "until"
+            | "do"
+            | "{"
+            | "!"
+            | "time"
+            | "exec"
+            | "command"
+            | "nohup"
+            | "env"
+    )
+}
+
+/// The environment variables that choose which Herdr a `herdr` call talks to.
+const TARGET_VARIABLES: [&str; 2] = ["HERDR_SOCKET_PATH", "HERDR_SESSION"];
+
 /// A command's words without the `NAME=value` words a shell takes as the
-/// environment of the command that follows.
-fn after_assignments(words: &[String]) -> &[String] {
-    let skipped = words.iter().take_while(|word| is_assignment(word)).count();
-    &words[skipped..]
+/// environment of the command that follows and without the prefix words above,
+/// and whether those assignments pointed `herdr` at another server than the
+/// one `env` says the pane has.
+fn command_words<'a>(
+    words: &'a [String],
+    env: &dyn Fn(&str) -> Option<String>,
+) -> (&'a [String], bool) {
+    let mut foreign = false;
+    let mut at = 0;
+    while let Some(word) = words.get(at) {
+        if let Some((name, value)) = word.split_once('=')
+            && is_assignment(word)
+        {
+            if TARGET_VARIABLES.contains(&name) && env(name).as_deref() != Some(value) {
+                foreign = true;
+            }
+        } else if !is_prefix(word) {
+            break;
+        }
+        at += 1;
+    }
+    (&words[at..], foreign)
 }
 
 fn is_herdr(word: &str) -> bool {
@@ -506,23 +568,22 @@ fn kind_of(word: &str) -> Option<&'static str> {
     AGENT_KINDS.into_iter().find(|kind| *kind == name)
 }
 
-fn launch_of(words: &[String]) -> Option<Launch> {
-    let words = after_assignments(words);
+fn launch_of(words: &[String], env: &dyn Fn(&str) -> Option<String>) -> Option<Launch> {
+    let (words, foreign) = command_words(words, env);
     let (first, mut rest) = words.split_first()?;
-    if !is_herdr(first) {
+    if foreign || !is_herdr(first) {
         return None;
     }
-    // Herdr's own options before the subcommand.
-    loop {
-        match rest.first().map(String::as_str) {
-            Some("--session" | "--machine") => rest = rest.get(2..)?,
-            Some(option)
-                if option.starts_with("--session=") || option.starts_with("--machine=") =>
-            {
-                rest = &rest[1..];
-            }
-            _ => break,
-        }
+    // Herdr's own options before the subcommand; naming a session or a machine
+    // aims the call away from this pane's Herdr.
+    if matches!(
+        rest.first().map(String::as_str),
+        Some("--session" | "--machine")
+    ) || rest
+        .first()
+        .is_some_and(|option| option.starts_with("--session=") || option.starts_with("--machine="))
+    {
+        return None;
     }
     let (group, verb) = (rest.first()?.as_str(), rest.get(1)?.as_str());
     let rest = &rest[2..];
@@ -589,7 +650,7 @@ fn pane_text(shape: Shape, words: &[String]) -> Option<Launch> {
         [line] => simple_commands(line).into_iter().next()?,
         several => several.to_vec(),
     };
-    let command = after_assignments(&command);
+    let (command, _) = command_words(&command, &|_| None);
     let (first, args) = command.split_first()?;
     Some(Launch {
         shape,
@@ -719,21 +780,23 @@ pub fn registration(program: &OsStr, deadline: Instant) -> Registration {
             _ => Registration::Unreachable("format"),
         };
     }
+    // Only the daemon's own "this caller is not in a Hide checkout" answers
+    // mean the call is not Hide's to guide. Every other word, an empty one and
+    // a reason a later build adds included, is a daemon that could not be
+    // asked, which lets the call run and leaves a diagnostic.
     let reason = String::from_utf8_lossy(&output.stderr);
-    let reason = reason.trim();
-    if reason.is_empty()
-        || matches!(
-            reason,
-            "hide_unavailable"
-                | "invalid_bootstrap_socket_record"
-                | "reference_unavailable"
-                | "remote_unavailable"
-                | "request_timeout"
-        )
-    {
-        Registration::Unreachable("daemon")
-    } else {
+    if matches!(
+        reason.trim(),
+        "checkout_not_registered"
+            | "caller_unavailable"
+            | "pane_not_connected"
+            | "pane_unavailable"
+            | "pane_changed"
+            | "caller_not_in_pane"
+    ) {
         Registration::NotRegistered
+    } else {
+        Registration::Unreachable("daemon")
     }
 }
 
@@ -793,19 +856,19 @@ fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
 }
 
 /// The daemon could not be asked, so the call ran. One diagnostic per cause
-/// per ten minutes, to the log only (PRD B6; principle 10: nothing here is
+/// per ten minutes, to the log file only (PRD B6; principle 10: nothing here is
 /// something the operator or the agent can act on).
 pub fn unreachable(home: &Path, runtime: &str, cause: &'static str) {
     if crate::delivery::claim(home, "guard") {
-        eprintln!(
-            "{}",
-            serde_json::json!({
-                "component": "spawn_guard",
-                "kind": "daemon.unreachable",
-                "runtime": runtime,
-                "cause": cause,
-            })
-        );
+        let line = serde_json::json!({
+            "component": "spawn_guard",
+            "kind": "daemon.unreachable",
+            "runtime": runtime,
+            "cause": cause,
+            "at_unix_ms": now_ms(),
+        })
+        .to_string();
+        let _ = append_line(&log_path(home), &line);
     }
 }
 
@@ -824,12 +887,24 @@ fn read_log(home: &Path) -> String {
 mod tests {
     use super::*;
 
+    /// The pane's own Herdr, as the hook's environment names it.
+    fn pane_env(name: &str) -> Option<String> {
+        match name {
+            "HERDR_SOCKET_PATH" => Some("/run/own.sock".to_owned()),
+            _ => None,
+        }
+    }
+
     fn found(command: &str) -> Launch {
-        find_launch(command).unwrap_or_else(|| panic!("a launch in: {command}"))
+        find_launch(command, &pane_env).unwrap_or_else(|| panic!("a launch in: {command}"))
     }
 
     fn none(command: &str) {
-        assert_eq!(find_launch(command), None, "no launch in: {command}");
+        assert_eq!(
+            find_launch(command, &pane_env),
+            None,
+            "no launch in: {command}"
+        );
     }
 
     #[test]
@@ -860,9 +935,8 @@ mod tests {
             ("codex", Some("helper"))
         );
         assert!(launch.args.is_empty());
-        let launch = found(
-            "/opt/herdr/bin/herdr --session work agent start x --timeout 5000 --kind grok --pane p",
-        );
+        let launch =
+            found("/opt/herdr/bin/herdr agent start x --timeout 5000 --kind grok --pane p");
         assert_eq!(launch.kind, "grok");
     }
 
@@ -902,6 +976,17 @@ mod tests {
             "${HERDR_BIN_PATH} agent start a --kind claude --pane p",
             "herdr agent start a --kind claude --pane p > /tmp/out 2>&1",
             "herdr agent start a --kind claude --pane p &> /tmp/out",
+            "for n in a b; do herdr agent start \"$n\" --kind claude --pane p; done",
+            "if true; then herdr agent start a --kind claude --pane p; fi",
+            "while read n; do herdr agent start a --kind claude --pane p; done < list",
+            "{ herdr agent start a --kind claude --pane p; }",
+            "! herdr agent start a --kind claude --pane p",
+            "time herdr agent start a --kind claude --pane p",
+            "exec herdr agent start a --kind claude --pane p",
+            "command herdr agent start a --kind claude --pane p",
+            "nohup herdr agent start a --kind claude --pane p",
+            "env FOO=1 herdr agent start a --kind claude --pane p",
+            "HERDR_SOCKET_PATH=/run/own.sock herdr agent start a --kind claude --pane p",
         ] {
             assert_eq!(found(command).kind, "claude", "{command}");
         }
@@ -940,6 +1025,7 @@ mod tests {
             "# herdr agent start a --kind claude --pane p",
             "xherdr agent start a --kind claude --pane p",
             "herdrctl agent start a --kind claude --pane p",
+            "echo do herdr agent start a --kind claude --pane p",
         ] {
             none(command);
         }
@@ -948,6 +1034,50 @@ mod tests {
             found("cat <<EOF\nbody\nEOF\nherdr agent start a --kind codex --pane p").kind,
             "codex"
         );
+    }
+
+    #[test]
+    fn a_call_aimed_at_another_herdr_is_left_alone() {
+        // The `hide agent spawn` this guard would offer starts the child in the
+        // pane's own Herdr, so a call that names a different one is not refused.
+        for command in [
+            "herdr --session qa agent start a --kind claude --pane p",
+            "herdr --session=qa agent start a --kind claude --pane p",
+            "herdr --machine mini agent start a --kind claude --pane p",
+            "HERDR_SOCKET_PATH=/tmp/qa/herdr.sock HERDR_BIN_PATH=/x/herdr herdr agent start qa --kind claude --pane w1:p1",
+            "env HERDR_SOCKET_PATH=/tmp/qa.sock herdr agent start a --kind claude --pane p",
+            "HERDR_SESSION=qa herdr pane run p claude",
+        ] {
+            none(command);
+        }
+        // The pane's own server named explicitly is still the pane's Herdr.
+        assert_eq!(
+            find_launch(
+                "HERDR_BIN_PATH=/x/herdr herdr agent start a --kind claude --pane p",
+                &pane_env
+            )
+            .map(|launch| launch.kind),
+            Some("claude")
+        );
+    }
+
+    #[test]
+    fn text_a_shell_would_not_run_holds_no_launch() {
+        // A heredoc inside `$(...)` whose body has an early `)` and an odd quote
+        // reads as top-level lines to this lexer, but ends inside a quote: a
+        // shell runs none of it.
+        none(
+            "git commit -m \"$(cat <<'EOF'\nRefuse launches\n\nSteps: 1) open the 5\" screen\nherdr agent start x --kind claude --pane p\nEOF\n)\"",
+        );
+        for command in [
+            "herdr agent start a --kind claude --pane \"p",
+            "herdr agent start a --kind claude --pane 'p",
+            "herdr agent start a --kind claude --pane `p",
+            "echo $(herdr agent start a --kind claude --pane p",
+            "herdr agent start a --kind claude --pane p; echo \"unterminated",
+        ] {
+            none(command);
+        }
     }
 
     #[test]

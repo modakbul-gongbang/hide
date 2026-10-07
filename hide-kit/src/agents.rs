@@ -106,7 +106,7 @@ fn skill_file_in(root: &Path) -> PathBuf {
 /// What Hide writes into an agent's hook configuration, if anything.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookSupport {
-    /// Claude Code and Codex: the five-event hook that is also one kit part.
+    /// Claude Code and Codex: the six-event hook that is also one kit part.
     Part(ComponentId),
     /// The SessionStart guidance hook for an agent with documented command
     /// hooks (`hide_agent_hooks::guidance`).
@@ -372,8 +372,8 @@ impl AgentAdapter {
         match feature {
             Feature::Skill => true,
             Feature::Guidance => !matches!(self.hook, HookSupport::None),
-            // The five-event hook is the one that also carries `PreToolUse`, so
-            // an agent has the guard exactly when it has that hook.
+            // The six-event hook is the one that carries `PreToolUse`, so an agent
+            // has the guard exactly when it has that hook.
             Feature::Letters | Feature::Memory | Feature::Subagents | Feature::SpawnGuard => {
                 matches!(self.hook, HookSupport::Part(_))
             }

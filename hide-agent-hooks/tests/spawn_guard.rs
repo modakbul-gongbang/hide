@@ -67,7 +67,7 @@ impl Machine {
         std::fs::write(
             &fake,
             format!(
-                "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\necho \"$@\" >> '{calls}'\ncase \"$(/bin/cat '{mode}')\" in\n  registered) echo '{{\"ok\":true,\"reference\":\"/x\"}}' ;;\n  unregistered) echo checkout_not_registered >&2; exit 2 ;;\n  down) echo hide_unavailable >&2; exit 2 ;;\n  mute) exit 2 ;;\n  slow) /bin/sleep 30 ;;\nesac\n",
+                "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\necho \"$@\" >> '{calls}'\ncase \"$(/bin/cat '{mode}')\" in\n  registered) echo '{{\"ok\":true,\"reference\":\"/x\"}}' ;;\n  unregistered) echo checkout_not_registered >&2; exit 2 ;;\n  down) echo hide_unavailable >&2; exit 2 ;;\n  mute) exit 2 ;;\n  bridge) echo bridge_unavailable >&2; exit 2 ;;\n  later) echo a_reason_a_later_build_adds >&2; exit 2 ;;\n  slow) /bin/sleep 30 ;;\nesac\n",
                 calls = root.join("hide-calls").display(),
                 mode = root.join("mode").display(),
             ),
@@ -258,24 +258,25 @@ fn outside_a_registered_checkout_or_a_herdr_pane_the_same_command_runs() {
 
 #[test]
 fn a_daemon_that_cannot_be_asked_lets_the_call_run_and_leaves_one_diagnostic() {
-    for (daemon, cause) in [("down", "daemon"), ("mute", "daemon")] {
+    // A daemon that is down, mute, a device bridge that is gone and a reason this
+    // build does not know are all "could not ask", never "not Hide's".
+    for daemon in ["down", "mute", "bridge", "later"] {
         let machine = Machine::new(daemon);
         let first = machine.run("claude-code", &machine.payload(START), Some(PANE), &[]);
         assert!(first.status_ok, "B6: the hook does not fail the call");
         assert_eq!(first.stdout, "", "nothing on screen");
-        assert!(
-            first.stderr.contains("daemon.unreachable") && first.stderr.contains(cause),
-            "{}",
-            first.stderr
-        );
-        // The same cause is recorded once, not on every call.
+        assert_eq!(first.stderr, "", "nothing on the hook's stderr either");
+        // The diagnostic is one line of the guard's log, and a repeat within the
+        // throttle window adds none.
         let second = machine.run("codex", &machine.payload(START), Some(PANE), &[]);
         assert_eq!(second.stdout, "");
-        assert_eq!(
-            second.stderr, "",
-            "{daemon}: a repeated cause is suppressed"
-        );
-        assert_eq!(machine.guard_log(), "");
+        assert_eq!(second.stderr, "");
+        let log = machine.guard_log();
+        assert_eq!(log.lines().count(), 1, "{daemon}: {log}");
+        let line: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(line["kind"], "daemon.unreachable", "{daemon}");
+        assert_eq!(line["runtime"], "claude-code");
+        assert_eq!(line["cause"], "daemon");
     }
 }
 
@@ -285,7 +286,11 @@ fn a_daemon_that_does_not_answer_in_time_lets_the_call_run() {
     let run = machine.run("claude-code", &machine.payload(START), Some(PANE), &[]);
     assert!(run.status_ok);
     assert_eq!(run.stdout, "");
-    assert!(run.stderr.contains("deadline"), "{}", run.stderr);
+    assert!(
+        machine.guard_log().contains("\"cause\":\"deadline\""),
+        "{}",
+        machine.guard_log()
+    );
     assert!(
         run.elapsed < Duration::from_secs(6),
         "the guard stays inside the entry's own timeout: {:?}",
@@ -334,4 +339,50 @@ fn a_checkout_with_a_detached_head_leaves_the_branch_for_the_agent() {
     .unwrap();
     let run = machine.run("claude-code", &machine.payload(START), Some(PANE), &[]);
     assert!(machine.reason(&run).contains("--branch <branch>"));
+}
+
+#[test]
+fn a_failed_owner_handshake_never_ends_the_guard_with_a_refusal_code() {
+    // Exit 2 from a pre-tool hook blocks the call; the guard's own bookkeeping
+    // failing must not do that.
+    let machine = Machine::new("registered");
+    // Another system's launch metadata is the handshake's refusal on Unix. A
+    // plain `Command`, because the owned launcher clears these variables.
+    let mut child = Command::new(&machine.hook)
+        .args(["hook", "--runtime", "claude-code", "--event", "PreToolUse"])
+        .args(["--source", "hide-subagents@6"])
+        .env_clear()
+        .env("PATH", &machine.home)
+        .env("HERDR_PANE_ID", PANE)
+        .env("HIDE_PROCESS_OWNER_JOB", "no-such-job")
+        .env(hide_platform::host::HOME_VARIABLE, &machine.home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(machine.payload(START).as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{:?}", output.status);
+    assert_eq!(output.stdout, b"");
+}
+
+#[test]
+fn a_call_aimed_at_another_herdr_runs_in_a_registered_checkout() {
+    let machine = Machine::new("registered");
+    let run = machine.run(
+        "claude-code",
+        &machine
+            .payload("HERDR_SOCKET_PATH=/tmp/qa.sock herdr agent start qa --kind claude --pane p"),
+        Some(PANE),
+        &[("HERDR_SOCKET_PATH", "/run/own.sock")],
+    );
+    assert!(run.status_ok);
+    assert_eq!(run.stdout, "");
+    assert!(machine.calls().is_empty(), "{:?}", machine.calls());
 }

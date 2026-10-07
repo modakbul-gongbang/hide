@@ -277,7 +277,7 @@ struct Target {
 /// - it is a command hook;
 /// - its event is one Hide registers, its command is, byte for byte, the
 ///   command Hide writes for that event with this kit's helper, and its
-///   matcher is the one Hide writes for it (none today);
+///   matcher is the one Hide writes for it (`Bash` for `PreToolUse`, none for the rest);
 /// - Codex does not trust it yet (`untrusted`, or `modified` after a change).
 fn select_targets(expected: &[Expected], listed: &[Listed], hooks_json: &Path) -> Vec<Target> {
     let wanted = canonical_or_given(hooks_json);

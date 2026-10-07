@@ -79,7 +79,7 @@ The shared `BackgroundRead` has one in-flight request and observes the latest de
 ## The spawn guard hook on a shell call
 
 `PreToolUse` with the `Bash` matcher runs `hide-agent-hooks` before every shell call a Claude Code or Codex agent makes, so it is a high-frequency path that every agent pays and no operator sees (PRD herdr-spawn-guard B13).
-Per input it adds one process start: the helper reads the payload (at most 256 KiB, waiting at most 0.5 seconds), runs a byte test for `herdr` or `HERDR_BIN_PATH`, and exits with no output when neither is there, before it parses JSON, reads a file or starts a child.
+Per input it adds one process start: the helper reads the payload (at most 256 KiB, waiting at most 0.5 seconds), runs a byte test for `herdr` or `HERDR_BIN_PATH` over the whole payload (its `cwd` and transcript path too, so under a checkout whose path contains `herdr` every call also pays the JSON parse and the lexer, microseconds that start nothing), and exits with no output when neither is there, before it parses JSON, reads a file or starts a child.
 A call that mentions `herdr` without launching an agent (`pane split`, `agent list`) pays one JSON parse and the shell lexer, and still starts nothing.
 Only a launch in a Herdr pane starts a child: one `hide workspace bootstrap`, owned through `hide_platform::process` with the guard's 2.5 second deadline, a 16 KiB output cap, and an end of the child on success, failure and timeout alike.
 The guard keeps no state, runs no timer or worker, takes no lock of the runtime, publishes nothing and fans out no notification; the daemon sees one `bootstrap` request per refused launch, the call `SessionStart` already makes.
@@ -88,7 +88,7 @@ A defect, a missing `hide` or a daemon that does not answer lets the shell call 
 
 Measure it at the command boundary: the installed command line run as the runtime runs it (`sh -c`, the payload on stdin), wall time per call from the caller's side, against a process-spawn baseline, with the first ten calls discarded as warm-up.
 Report p50, p95 and the load average before and after, and report the idle and driven (launch) paths separately.
-`agents/runs/<slug>/live/bench-latency.py` of the run that introduced the guard is the harness; a release `hide-agent-hooks` on an Apple silicon Mac gave the following, with the machine's load average about 4, so these are not idle-machine floors:
+The harness is a small script that times the installed command through `sh -c` with the payload on stdin, kept in the run directory that introduced the guard; a release `hide-agent-hooks` on an Apple silicon Mac gave the following, with the machine's load average about 4, so these are not idle-machine floors:
 
 | Call | Samples | p50 | p95 |
 | --- | --- | --- | --- |
@@ -97,7 +97,7 @@ Report p50, p95 and the load average before and after, and report the idle and d
 | Codex, ordinary call (`cargo test`) | 300 | 5.6 ms | 8.0 ms |
 | Claude Code, mentions `herdr`, not a launch | 300 | 5.6 ms | 7.1 ms |
 | Claude Code, launch refused (stand-in `hide`) | 100 | 8.9 ms | 12.4 ms |
-| Claude Code, launch refused (real `hide` and daemon, from a Herdr pane) | 20 | 10 ms | 12 ms |
+| Claude Code, launch refused (real `hide` and daemon, from a Herdr pane; 25 calls, the first 5 not counted) | 20 | 10 ms | 12 ms |
 
 An ordinary call therefore pays about 3 ms over the process-start baseline, and a refused launch about 10 ms in total.
 These numbers prove the helper's cost at that boundary; they do not prove the agent's own time to a first token, and a runtime that serializes hooks on its own schedule can add more.
