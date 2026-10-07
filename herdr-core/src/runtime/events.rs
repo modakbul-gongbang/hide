@@ -1002,7 +1002,7 @@ pub(super) struct RetryConnectPayload {
 
 /// The operator pressed Reinstall (PRD device-parity B8): on a machine's
 /// row, which repairs every part of it that needs it, or on one hook row,
-/// which names that part. `device_id` is `local` for this Mac.
+/// which names that part. `device_id` is the core's own node id for this Mac.
 #[derive(Debug, Deserialize)]
 pub(super) struct KitReinstallPayload {
     pub(super) device_id: String,
@@ -1016,7 +1016,7 @@ pub(super) struct KitReinstallPayload {
 
 /// The operator asked, from a not connected Codex pane's popover, for Codex's
 /// shared server to be turned off on one machine (PRD settings-cleanup B27).
-/// `device_id` is `local` for this Mac.
+/// `device_id` is the core's own node id for this Mac.
 #[derive(Debug, Deserialize)]
 pub(super) struct CodexDaemonDisablePayload {
     pub(super) device_id: String,

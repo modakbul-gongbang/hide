@@ -1194,7 +1194,8 @@ pub struct Runtime {
     /// yet" rather than as "not installed".
     hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
     /// Each machine's install kit as its last check found it, keyed by
-    /// device id (`local` for this Mac); `runtime/kit.rs` owns it.
+    /// device id (the core's own node id for this Mac); `runtime/kit.rs`
+    /// owns it.
     kit_states: BTreeMap<String, crate::model::KitSnapshot>,
     /// The install this Mac's kit worker runs next, merged across requests.
     local_kit_pending: Option<hide_kit::Scope>,

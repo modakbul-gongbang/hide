@@ -67,7 +67,7 @@ export type ProjectTarget = {
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
 export type FileIndexResult = {
-  /** The device the root is on; `local` for this Hide host. */
+  /** The device the root is on; the core's own node id for this Hide host. */
   device_id: string;
   root_path: string;
   query: string;

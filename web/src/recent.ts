@@ -36,7 +36,7 @@ const AGENT_SURFACE = "herdr";
 export type Surface = {
   key: string;
   kind: SurfaceKind;
-  /** The device the checkout is on; `local` for this machine's. */
+  /** The device the checkout is on; the core's own node id for this machine's. */
   deviceId: string;
   workspaceId: string;
   checkoutId: string;

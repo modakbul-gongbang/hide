@@ -924,7 +924,7 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "pane_reopen", payload: { pane_id: paneId } });
     },
 
-    /** Turn off Codex's shared server on one machine (`local` for this Mac), the popover's secondary link (B30). */
+    /** Turn off Codex's shared server on one machine (the core's own node id for this Mac), the popover's secondary link (B30). */
     turnOffCodexSharedServer(deviceId: string) {
       dispatch({ schema_version: 2, kind: "codex_daemon_disable", payload: { device_id: deviceId } });
     },

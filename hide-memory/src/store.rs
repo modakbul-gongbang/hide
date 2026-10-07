@@ -3623,4 +3623,41 @@ mod tests {
         let state = store.project_state("p").unwrap();
         assert!(state.enabled && state.disclosure_accepted_at_unix_ms.is_some());
     }
+
+    // PRD core-host-node D-23: an active item's search row moves with its
+    // Project, so the converted Project still finds what it remembered.
+    #[test]
+    fn a_converted_project_keeps_its_searchable_memory() {
+        let (temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b-convert", "h-convert"),
+                &[candidate(
+                    "Keep the retry budget small",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+        let fts_rows = |id: &str| {
+            store
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM memory_fts WHERE project_id=?1",
+                    [id],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(fts_rows(&project), 1);
+
+        let moved = store.convert_device("local", "node-a").unwrap();
+        let new = hide_project::project_id("node-a", temp.path());
+        assert_eq!(moved, vec![(project.clone(), new.clone())]);
+        assert_eq!(fts_rows(&project), 0);
+        assert_eq!(fts_rows(&new), 1);
+        assert_eq!(
+            store.search_active(&new, "retry budget", "").unwrap().len(),
+            1
+        );
+    }
 }
