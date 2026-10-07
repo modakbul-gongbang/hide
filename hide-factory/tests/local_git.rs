@@ -137,6 +137,10 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_on(Local::new(None))
+}
+
+fn fixture_on<N: NodeLink + 'static>(node_link: N) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let project = root.path().join("repo");
     std::fs::create_dir(&project).unwrap();
@@ -149,7 +153,7 @@ fn fixture() -> Fixture {
     write(&project, "Makefile", "test:\n\ttrue\n");
     git(&project, &["add", "."]);
     git(&project, &["commit", "--quiet", "-m", "base"]);
-    let (machine, calls) = node(Local::new(None));
+    let (machine, calls) = node(node_link);
     let projects =
         SharedProjects::new(machine, Box::new(Book::default()), root.path().join("logs"));
     Fixture {
@@ -233,6 +237,51 @@ fn settle_main(projects: &mut SharedProjects, factory: &Factory, sha: &str) -> M
         }
         std::thread::yield_now();
     }
+}
+
+/// The core's own node, busy for the first verify poll it is asked.
+struct BusyOnce {
+    node: Local,
+    busy: AtomicBool,
+}
+
+impl NodeLink for BusyOnce {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let poll = matches!(
+            call,
+            Call::Factory {
+                call: FactoryCall::VerifyPoll { .. }
+            }
+        );
+        if poll && self.busy.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            return Err(LinkError::Busy);
+        }
+        self.node.call(call, timeout)
+    }
+
+    fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        self.node.call_with_progress(call, timeout, progress)
+    }
+}
+
+/// A node too busy to answer a poll says nothing about the run: the poll
+/// stays pending, and the next one reads the run's own verdict.
+#[test]
+fn a_busy_node_leaves_a_verify_pending_rather_than_failed() {
+    let mut fx = fixture_on(BusyOnce {
+        node: Local::new(None),
+        busy: AtomicBool::new(true),
+    });
+    let factory = factory(&fx.project, &["true"]);
+    let t = task(&fx, "T-1", "b.txt", "two\n");
+    let run = fx.projects.start(&factory, &t).unwrap();
+    assert_eq!(fx.projects.poll(&factory, &run), VerifyPoll::Pending);
+    assert_eq!(settle(&mut fx.projects, &factory, &run), VerifyPoll::Passed);
 }
 
 #[test]

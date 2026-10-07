@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use hide_node_link::factory::{FactoryCall, FactoryGh, FactoryGit, RUN_DEADLINE_MS, RunAnswer};
 use hide_node_link::protocol::Call;
-use hide_node_link::{NodeLink, call_as, call_as_with_progress};
+use hide_node_link::{LinkError, NodeLink, call_as, call_as_with_progress};
 use serde::de::DeserializeOwned;
 
 use crate::adapters::{EnvSignal, Failure};
@@ -92,6 +92,16 @@ impl Machine {
             Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
         )
         .map_err(|error| Failure::task(stage, error.to_string()))
+    }
+
+    /// A Factory read whose link failure stays apart from the node's answer,
+    /// so a caller can ask again rather than read it as the answer.
+    pub fn read<T: DeserializeOwned>(&self, call: FactoryCall) -> Result<T, LinkError> {
+        call_as(
+            self.node.as_ref(),
+            Call::Factory { call },
+            Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
+        )
     }
 
     /// Any other node request, answered as `T`.

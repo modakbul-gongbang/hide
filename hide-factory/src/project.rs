@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use hide_node_link::LinkError;
 use hide_node_link::cleanup::PathState;
 use hide_node_link::factory::{
     FactoryCall, FactoryGh, FactoryGit, GhMergeMethod, PrFindFields, ProjectFiles, VerifyJob,
@@ -285,12 +286,17 @@ impl Projects {
     fn verify_poll(&mut self, id: &str) -> VerifyPoll {
         match self
             .machine
-            .call("verify", FactoryCall::VerifyPoll { id: id.to_owned() })
+            .read(FactoryCall::VerifyPoll { id: id.to_owned() })
         {
             Ok(outcome) => read_outcome(outcome),
-            Err(failure) => VerifyPoll::Failed {
+            // The link failed, not the run: a poll is a read, and the next
+            // one asks again.
+            Err(LinkError::Busy | LinkError::NotConnected(_) | LinkError::Unknown(_)) => {
+                VerifyPoll::Pending
+            }
+            Err(refused @ LinkError::Refused(_)) => VerifyPoll::Failed {
                 check: "verify".into(),
-                link: failure.detail,
+                link: refused.to_string(),
             },
         }
     }
