@@ -160,10 +160,13 @@ No group signal is sent after that child is reaped.
 Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
 A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
 A different live guardian's marker belongs to concurrent work and is excluded.
+Private issued marker families are retained under `agents/runs/process-owner-families/` so a fabricated scope prefix cannot claim a previous run.
+The registry has a locked 4096-family cap; exhausting it is a reported failure rather than an unbounded directory.
 The private Herdr server and hided also receive their protocol close before process teardown.
 Unrelated orphans whose environment is empty or unreadable are neither signalled nor treated as cleanup failures.
 The report lists these as "출처 확인 못 함" with only PID, birth and executable name, within a declared record cap.
 A known owned identity that becomes uninspectable still makes cleanup unconfirmed.
+Every launched guardian must produce a confirmed cleanup receipt; a missing receipt, an unconfirmed receipt or a diagnostic write failure fails cleanup.
 An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution; record this limitation in the PR's Review section.
 This ownership boundary follows the explicitly recorded B8/D-09 scope decision; it does not claim complete workstation process attribution.
 Linux fixture supervision uses a child subreaper and validates its procfs namespace and visibility before using process identities.

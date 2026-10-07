@@ -306,13 +306,8 @@ def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, 
             if remember:
                 remember(pid, process)
             continue
-        # Ordinary Darwin orphans go to init. ptrace can instead reparent a
-        # live child to its tracer: the public BSD flag makes that another
-        # candidate, never ownership proof. Unrelated ordinary children need
-        # no argument inspection.
-        if process.parent != 1 and not process.traced and not (
-                sys.platform.startswith("linux") and process.parent == os.getpid()):
-            continue
+        # A marked helper can have a live escaped parent. Parentage and the
+        # traced flag are not filters for positive marker ownership.
         if sys.platform.startswith("linux"):
             try:
                 with (Path("/proc") / str(pid) / "environ").open("rb") as stream:

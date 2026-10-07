@@ -1,22 +1,23 @@
 """One child-start boundary, with an EOF guardian for external processes."""
 
 import ctypes
-import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
 import selectors
 import secrets
 import signal
+import stat
 import subprocess
 import sys
 import threading
 import time
 
 if __package__:
-    from .process_table import darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
+    from .process_table import ProcessTable, darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
 else:
-    from process_table import darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
+    from process_table import ProcessTable, darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
 
 MAX_CHILDREN = 16
 MAX_DESCENDANTS = 128
@@ -24,6 +25,7 @@ MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024
 MAX_OUTPUT = 1024 * 1024
 MAX_FAILURE_REASON = 512
 MAX_COMMANDS = 4096
+MAX_OWNER_FAMILIES = 4096
 COMMAND_SECONDS = 15
 RUN_SECONDS = 30 * 60
 POLL_SECONDS = 0.1
@@ -31,6 +33,25 @@ POLL_SECONDS = 0.1
 
 class ProcessError(RuntimeError):
     pass
+
+
+def owner_registry():
+    directory = Path(__file__).resolve().parents[2] / "agents/runs/process-owner-families"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ProcessError("owner_registry_not_private")
+    return directory
+
+
+def issued_family(family):
+    if len(family) != 64 or any(character not in "0123456789abcdef" for character in family):
+        return False
+    try:
+        info = (owner_registry() / family).lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
 
 
 def linux_children_remain():
@@ -57,6 +78,8 @@ class OwnedProcesses:
     def __init__(self, cancelled: threading.Event | None = None, diagnostics: Path | None = None):
         self.children = {}
         self.diagnostics = diagnostics
+        self.receipts = {}
+        self.family = None
         self.sequence = 0
         if diagnostics is not None:
             diagnostics.mkdir(mode=0o700)
@@ -75,6 +98,15 @@ class OwnedProcesses:
         reader = writer = None
         command = argv
         if _guarded:
+            if self.family is None:
+                directory = owner_registry()
+                with open(directory / ".lock", "a", opener=lambda path, flags: os.open(path, flags, 0o600)) as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    if sum(1 for path in directory.iterdir() if path.name != ".lock") >= MAX_OWNER_FAMILIES:
+                        raise ProcessError("owner_family_count_over_budget")
+                    self.family = secrets.token_hex(32)
+                    descriptor = os.open(directory / self.family, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                    os.close(descriptor)
             reader, writer = os.pipe()
             diagnostic = ""
             if self.diagnostics is not None:
@@ -85,7 +117,7 @@ class OwnedProcesses:
                 self.sequence += 1
                 diagnostic = str(self.diagnostics / (str(self.sequence) + ".json"))
             command = [sys.executable, str(Path(__file__).resolve()),
-                       "--guard", str(reader), diagnostic, "--", *map(str, argv)]
+                       "--guard", str(reader), diagnostic, self.family, "--", *map(str, argv)]
         try:
             # The only raw spawn. Only the guardian uses the unguarded branch.
             child = subprocess.Popen(command, env=env, cwd=cwd, stdin=stdin,
@@ -100,6 +132,8 @@ class OwnedProcesses:
             if reader is not None:
                 os.close(reader)
         self.children[child] = writer
+        if _guarded and diagnostic:
+            self.receipts[child] = Path(diagnostic)
         return child
 
     def run(self, argv, *, env, cwd=None, seconds=COMMAND_SECONDS, check=True):
@@ -157,6 +191,14 @@ class OwnedProcesses:
                 raise ProcessError("cleanup_unconfirmed") from error
         if writer is not None and (child.returncode == 125 or child.returncode < 0):
             raise ProcessError("guardian_cleanup_or_resource_failure")
+        receipt = self.receipts.pop(child, None)
+        if receipt is not None:
+            try:
+                data = receipt.read_bytes()
+                if len(data) > MAX_OUTPUT or json.loads(data).get("confirmed") is not True:
+                    raise ProcessError("guardian_cleanup_receipt_unconfirmed")
+            except (OSError, ValueError) as error:
+                raise ProcessError("guardian_cleanup_receipt_missing_or_invalid") from error
 
     def usage(self):
         table = snapshot()
@@ -190,17 +232,25 @@ class OwnedProcesses:
         records = {}
         omitted = False
         if self.diagnostics is not None:
+            count = 0
             for path in self.diagnostics.iterdir():
+                count += 1
                 with path.open("rb") as stream:
                     data = stream.read(MAX_OUTPUT + 1)
                 if len(data) > MAX_OUTPUT:
                     raise ProcessError("process_diagnostic_over_budget")
-                for item in json.loads(data)["unattributed"]:
+                record = json.loads(data)
+                if record.get("confirmed") is not True:
+                    raise ProcessError("guardian_cleanup_receipt_unconfirmed")
+                omitted |= record["additional_records_omitted"]
+                for item in record["unattributed"]:
                     key = (item["pid"], item["birth"])
                     if key not in records and len(records) >= MAX_DESCENDANTS:
                         omitted = True
                     else:
                         records[key] = item
+            if count != self.sequence:
+                raise ProcessError("guardian_cleanup_receipt_missing")
         return {"status": "출처 확인 못 함", "processes": list(records.values()),
                 "limit": MAX_DESCENDANTS, "additional_records_omitted": omitted,
                 "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}
@@ -220,7 +270,7 @@ def group_exists(group):
         return False
 
 
-def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
+def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") -> int:
     cancelled = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, lambda *_: cancelled.set())
@@ -245,22 +295,29 @@ def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
     group = None
     observed = {}
     unattributed = {}
+    omitted = False
     failed = False
     confirmed = False
-    scope = hashlib.sha256(str(Path(__file__).resolve()).encode()).hexdigest()[:16]
     initial = snapshot()
     identity = initial[os.getpid()]
-    marker = f"{scope}:{identity.pid}:{identity.birth}:{secrets.token_hex(32)}"
+    if not issued_family(family):
+        raise ProcessError("owner_family_not_issued")
+    marker = f"{family}:{identity.pid}:{identity.birth}:{secrets.token_hex(32)}"
     deadline = time.monotonic() + RUN_SECONDS
 
     def unknown(process):
+        nonlocal omitted
+        if process.parent != 1 and not process.traced:
+            return
         key = (process.pid, process.birth)
         if key not in unattributed and len(unattributed) < MAX_DESCENDANTS:
             unattributed[key] = {"pid": process.pid, "birth": process.birth,
                                  "executable": process.name[:32]}
+        elif key not in unattributed:
+            omitted = True
 
-    def collect():
-        table = snapshot(group)
+    def collect(include_group=True):
+        table = snapshot(group) if include_group else ProcessTable()
         require_complete(table)
         # Never infer ownership from an unreadable host orphan. A readable
         # token from a dead guardian in this checkout proves an earlier run;
@@ -271,14 +328,16 @@ def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
                 raise ProcessError("known_owned_metadata_unavailable")
 
             def matches(entry):
-                prefix = ("HIDE_LIVE_CHECK_OWNER=" + scope + ":").encode()
+                prefix = b"HIDE_LIVE_CHECK_OWNER="
                 if not entry.startswith(prefix):
                     return False
                 value = entry.split(b"=", 1)[1].decode("ascii", errors="replace")
                 if value == marker:
                     return True
                 parts = value.split(":")
-                if len(parts) != 4 or not parts[1].isdecimal() or not parts[2].isdecimal():
+                if (len(parts) != 4 or not issued_family(parts[0]) or
+                        not parts[1].isdecimal() or not parts[2].isdecimal() or
+                        len(parts[3]) != 64 or any(c not in "0123456789abcdef" for c in parts[3])):
                     return False
                 guardian_pid, birth = int(parts[1]), int(parts[2])
                 guardian = all_processes.get(guardian_pid)
@@ -298,6 +357,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
                 actual = all_processes.get(pid)
                 if actual and actual.birth == previous.birth:
                     table[pid] = actual
+        observed.clear()
         observed.update(table)
         return table
 
@@ -381,7 +441,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
                 while True:
                     if sys.platform.startswith("linux"):
                         linux_children_remain()
-                    remaining = collect()
+                    remaining = collect(include_group=False)
                     live_extras = [p for p in remaining.values() if p.group != group and not p.zombie]
                     for process in live_extras:
                         actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
@@ -403,14 +463,23 @@ def guard(reader: int, argv: list[str], diagnostic: str = "") -> int:
             sys.stderr.write("guardian_cleanup_failure:" + type(error).__name__ + ":" + str(error) + "\n")
             failed = True
         if diagnostic:
-            with open(diagnostic, "x", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
-                json.dump({"confirmed": confirmed, "unattributed": list(unattributed.values()),
-                           "unattributed_limit": MAX_DESCENDANTS,
-                           "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}, stream)
+            try:
+                with open(diagnostic, "x", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
+                    json.dump({"confirmed": confirmed, "unattributed": list(unattributed.values()),
+                               "unattributed_limit": MAX_DESCENDANTS,
+                               "additional_records_omitted": omitted}, stream)
+            except BaseException as error:
+                failed = True
+                sys.stderr.write("guardian_cleanup_failure:diagnostic_write:" + type(error).__name__ + "\n")
     return 125 if failed or not confirmed else (child.returncode if child is not None else 125)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 6 or sys.argv[1] != "--guard" or sys.argv[4] != "--":
+    if len(sys.argv) < 7 or sys.argv[1] != "--guard" or sys.argv[5] != "--":
         raise SystemExit(2)
-    raise SystemExit(guard(int(sys.argv[2]), sys.argv[5:], sys.argv[3]))
+    try:
+        code = guard(int(sys.argv[2]), sys.argv[6:], sys.argv[3], sys.argv[4])
+    except BaseException as error:
+        sys.stderr.write("guardian_failure:" + type(error).__name__ + "\n")
+        code = 125
+    raise SystemExit(code)
