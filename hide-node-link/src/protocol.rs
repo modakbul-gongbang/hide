@@ -55,7 +55,12 @@ use crate::error::HostError;
 /// did not take effect as `stop_failed` (PRD codex-daemon-apply D-11). A
 /// helper on 20 is refused when it connects, so it never receives a request
 /// that would only turn autostart off.
-pub const PROTOCOL_VERSION: u32 = 21;
+/// 22: the node answers the machine work the core used to do itself (PRD
+/// core-host-node D-21): Git, `gh`, the provider CLIs, sessions, ports,
+/// disk, attachments, project creation, clone, worktree cleanup and the Git
+/// watch, each its own call. A helper on 21 would refuse each as unknown, so
+/// it is refused at Hello instead.
+pub const PROTOCOL_VERSION: u32 = 22;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
