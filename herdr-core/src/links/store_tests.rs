@@ -597,6 +597,9 @@ fn the_issue_panel_joins_its_pull_requests_and_names_which_one_a_session_made() 
 /// worked on include a merged one and no open one; a session belongs to the
 /// deepest checkout holding its folder, and a checkout on no branch (one
 /// left on a main commit after its branches merged) still has its sessions.
+/// A pull request a session only printed is not work, and a checkout on a
+/// branch weighs only that branch's, so an earlier checkout at a path that
+/// was used again says nothing of the new one.
 #[test]
 fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
     let home = tempfile::tempdir().unwrap();
@@ -612,8 +615,9 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
         open_pr(14, "feat/root"),
         dropped,
         merged(16, "feat/mixed"),
-        open_pr(17, "feat/mixed-2"),
+        pr(17, "feat/mixed", T0 + 70 * MIN, None),
         merged(18, "feat/gone"),
+        merged(19, "feat/old"),
     ]);
     facts.worktrees = [
         (ROOT, Some("main")),
@@ -623,6 +627,8 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
         ("/work/app-dropped", Some("feat/dropped")),
         ("/work/app-detached", None),
         ("/work/app-untouched", Some("gen-prd/spec")),
+        ("/work/app-looked", None),
+        ("/work/app-reused", Some("feat/next")),
     ]
     .map(|(path, branch)| WorktreeFact {
         path: path.into(),
@@ -668,8 +674,8 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
             &[
                 turn("feat/mixed"),
                 Turn {
-                    at: T0 + 2 * MIN,
-                    branch: "feat/mixed-2",
+                    at: T0 + 90 * MIN,
+                    branch: "feat/mixed",
                     text: "다음 것",
                 },
             ],
@@ -698,6 +704,24 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
             "cli",
             &[turn("gen-prd/spec")],
             None,
+        ),
+        // Printed a merged pull request's address long after it was made.
+        claude_file(
+            home.path(),
+            "s-looked",
+            "/work/app-looked",
+            "cli",
+            &[turn("gen-prd/looked")],
+            Some((10, T0 + 40 * MIN)),
+        ),
+        // Made a pull request at this path before it held its branch now.
+        claude_file(
+            home.path(),
+            "s-reused",
+            "/work/app-reused",
+            "cli",
+            &[turn("feat/old")],
+            Some((19, T0 + 1_000)),
         ),
     ];
     for file in &files {

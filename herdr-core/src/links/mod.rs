@@ -173,6 +173,10 @@ pub struct LinkedSession {
     pub cwd: Option<String>,
     pub file: FileState,
     pub parent: Option<LinkedParent>,
+    /// The line worked on the pull request's branch while it lived (a branch
+    /// span, not only a printed address). Core only: `summary` weighs it.
+    #[serde(skip)]
+    pub on_branch: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -204,8 +208,9 @@ pub struct ProjectLinkSummary {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
     /// The checkouts, by path, whose work landed: the sessions that worked
-    /// in each made or worked on a merged pull request and on none still
-    /// open. A session belongs to the deepest checkout holding its folder.
+    /// in each made, or worked on the branch of, a merged pull request and
+    /// none still open, of the checkout's own branch when it is on one. A
+    /// session belongs to the deepest checkout holding its folder.
     /// Core only: the runtime carries it onto each checkout's `landed`.
     #[serde(skip)]
     pub landed: BTreeSet<String>,

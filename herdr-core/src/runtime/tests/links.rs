@@ -292,6 +292,7 @@ fn an_answer_for_a_superseded_read_is_dropped_and_a_failure_keeps_the_lines() {
         cwd: None,
         file: crate::links::FileState::Unknown,
         parent: None,
+        on_branch: false,
     }];
     runtime.snapshot.link_panel = Some(held);
     assert!(runtime.ingest_link_panel(generation, Err("links_store_busy".into())));

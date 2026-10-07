@@ -61,6 +61,10 @@ CREATE TABLE cursors(device TEXT NOT NULL, path TEXT NOT NULL, agent TEXT NOT NU
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
+/// A session joined to a pull request: its role, its request, and whether
+/// it worked on the pull request's branch rather than only printing it.
+type Member = (SessionRow, SessionRole, Option<String>, bool);
+
 /// The file `pane` in `session_branches`: a span a Hide pane's place said.
 const PANE_FILE: &str = "pane";
 
@@ -1098,7 +1102,7 @@ impl LinkStore {
                 }
             }
         }
-        let mut members: Vec<(SessionRow, SessionRole, Option<String>)> = Vec::new();
+        let mut members: Vec<Member> = Vec::new();
         let keys = printed
             .keys()
             .chain(worked.keys())
@@ -1131,7 +1135,7 @@ impl LinkStore {
                 let printed_request = printed.get(&key).and_then(|(_, request)| request.clone());
                 (SessionRole::Worked, branch_request.or(printed_request))
             };
-            members.push((session, role, request));
+            members.push((session, role, request, worked.contains_key(&key)));
         }
         self.lines(members, pr.number, local_device)
     }
@@ -1140,23 +1144,22 @@ impl LinkStore {
     /// newest first, with their parent and file state.
     fn lines(
         &self,
-        members: Vec<(SessionRow, SessionRole, Option<String>)>,
+        members: Vec<Member>,
         pr: u64,
         local_device: Option<&str>,
     ) -> Result<Vec<LinkedSession>, String> {
-        let mut groups: BTreeMap<SessionKey, Vec<(SessionRow, SessionRole, Option<String>)>> =
-            BTreeMap::new();
+        let mut groups: BTreeMap<SessionKey, Vec<Member>> = BTreeMap::new();
         for member in members {
             let root = self.chain_root(&member.0)?;
             groups.entry(root).or_default().push(member);
         }
         let mut lines = Vec::new();
         for (_, mut group) in groups {
-            group.sort_by_key(|(session, _, _)| session.started_at.unwrap_or(0));
+            group.sort_by_key(|(session, _, _, _)| session.started_at.unwrap_or(0));
             let last = &group[group.len() - 1].0;
             let role = if group
                 .iter()
-                .any(|(_, role, _)| *role == SessionRole::Created)
+                .any(|(_, role, _, _)| *role == SessionRole::Created)
             {
                 SessionRole::Created
             } else {
@@ -1165,8 +1168,8 @@ impl LinkStore {
             let request = group
                 .iter()
                 .rev()
-                .find(|(_, member_role, request)| *member_role == role && request.is_some())
-                .and_then(|(_, _, request)| request.clone());
+                .find(|(_, member_role, request, _)| *member_role == role && request.is_some())
+                .and_then(|(_, _, request, _)| request.clone());
             let file = match (last.path.as_deref(), local_device) {
                 (None, _) => FileState::Unknown,
                 (Some(_), _) if last.file_gone => FileState::Missing,
@@ -1185,14 +1188,14 @@ impl LinkStore {
                 id: last.key.id.clone(),
                 ids: group
                     .iter()
-                    .map(|(session, _, _)| session.key.id.clone())
+                    .map(|(session, _, _, _)| session.key.id.clone())
                     .collect(),
                 device_id: last.key.device.clone(),
                 role,
                 pr,
                 request,
-                started_at_unix_ms: group.iter().filter_map(|(s, _, _)| s.started_at).min(),
-                ended_at_unix_ms: group.iter().filter_map(|(s, _, _)| s.ended_at).max(),
+                started_at_unix_ms: group.iter().filter_map(|(s, _, _, _)| s.started_at).min(),
+                ended_at_unix_ms: group.iter().filter_map(|(s, _, _, _)| s.ended_at).max(),
                 path: last
                     .path
                     .clone()
@@ -1200,6 +1203,7 @@ impl LinkStore {
                 cwd: last.cwd.clone(),
                 file,
                 parent,
+                on_branch: group.iter().any(|(_, _, _, on_branch)| *on_branch),
             });
         }
         lines.sort_by(|left, right| {
@@ -1470,8 +1474,9 @@ impl LinkStore {
         } else {
             SessionRole::Worked
         };
+        let on_branch = prs.iter().any(|(_, line)| line.on_branch);
         let line = self
-            .lines(vec![(session, role, request)], 0, local_device)?
+            .lines(vec![(session, role, request, on_branch)], 0, local_device)?
             .remove(0);
         Ok(Some((line, prs)))
     }
@@ -1517,13 +1522,21 @@ impl LinkStore {
                         created: line.role == SessionRole::Created,
                     });
                 }
+                // Only work counts: a session that made the pull request or
+                // worked on its branch, not one that printed its address.
+                if line.role != SessionRole::Created && !line.on_branch {
+                    continue;
+                }
+                // A checkout on a branch lands through that branch's pull
+                // requests, so an earlier checkout at its path says nothing.
                 let checkout = line
                     .cwd
                     .as_deref()
                     .filter(|_| line.device_id == row.device)
-                    .and_then(|cwd| deepest_checkout(checkouts, cwd));
+                    .and_then(|cwd| deepest_checkout(checkouts, cwd))
+                    .filter(|checkout| checkout.branch.as_ref().is_none_or(|b| *b == pr.branch));
                 if let Some(checkout) = checkout {
-                    let (merged, open) = work.entry(checkout).or_default();
+                    let (merged, open) = work.entry(checkout.path.as_str()).or_default();
                     *merged |= pr.merged_at.is_some();
                     *open |= pr.end().is_none();
                 }
@@ -1587,12 +1600,11 @@ impl LinkStore {
 
 /// The checkout a session in `cwd` worked in: the deepest one holding it, so
 /// a worktree inside another checkout keeps its own sessions.
-fn deepest_checkout<'a>(checkouts: &'a [WorktreeFact], cwd: &str) -> Option<&'a str> {
+fn deepest_checkout<'a>(checkouts: &'a [WorktreeFact], cwd: &str) -> Option<&'a WorktreeFact> {
     checkouts
         .iter()
-        .map(|checkout| checkout.path.as_str())
-        .filter(|path| within(cwd, path))
-        .max_by_key(|path| path.trim_end_matches('/').len())
+        .filter(|checkout| within(cwd, &checkout.path))
+        .max_by_key(|checkout| checkout.path.trim_end_matches('/').len())
 }
 
 fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
