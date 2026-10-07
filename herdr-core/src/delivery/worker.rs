@@ -662,8 +662,8 @@ fn run(
         let state = runtime
             .lock()
             .map_err(|_| "delivery_unavailable".to_owned())
-            .and_then(|guard| guard.delivery_state());
-        let state = match state {
+            .and_then(|guard| Ok((guard.delivery_state()?, guard.delivery_registrations_gone())));
+        let (state, gone) = match state {
             Ok(state) => state,
             Err(code) => {
                 for request in batch {
@@ -678,21 +678,23 @@ fn run(
                 continue;
             }
             maintenance_at = now;
-            if !state.letters.iter().any(|letter| {
-                (letter.state == super::ledger::State::Pending
-                    && now.saturating_sub(letter.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS)
-                    || (!letter.open()
-                        && letter.finished_at_unix_ms.is_some_and(|finished| {
-                            now.saturating_sub(finished) >= super::RETENTION_MS
-                        }))
-            }) {
+            if gone.is_empty()
+                && !state.letters.iter().any(|letter| {
+                    letter.intake_overdue(now)
+                        || (!letter.open()
+                            && letter.finished_at_unix_ms.is_some_and(|finished| {
+                                now.saturating_sub(finished) >= super::RETENTION_MS
+                            }))
+                })
+            {
                 continue;
             }
         }
         let mut candidate = (*state).clone();
         candidate.expire(now);
+        let ended = crate::coordination::end_gone(&mut candidate, &gone);
         let mut results = Vec::with_capacity(batch.len());
-        let mut transitions = false;
+        let mut transitions = !ended.is_empty();
         for request in &batch {
             let before = candidate.clone();
             let current = match &request.effect {
@@ -818,6 +820,13 @@ fn run(
             }
             crate::diagnostic!(json!({"component":"delivery","kind":"ledger.save_failed",
                     "code":error.code(),"persistence":error.diagnostic()}));
+        }
+        if saved.is_ok() {
+            for (record, reason) in &ended {
+                crate::diagnostic!(json!({"component":"coordination","kind":"agent.ended",
+                    "agent_id":record.id,"machine":record.machine,"pane_id":record.pane,
+                    "reason":reason.reason()}));
+            }
         }
         if saved.is_ok() && changed {
             match runtime.lock() {

@@ -2234,6 +2234,149 @@ fn coordinator_resyncs_after_events_lost_without_reporting_herdr_stale() {
     remove_fixture(&root, &socket_path, &state_path);
 }
 
+/// Registrations ended on what Herdr's own session reads prove: a pane missing
+/// from the fresh snapshot of a connect, never one missing while the stream
+/// that lost events is being replaced.
+#[test]
+fn registrations_end_only_on_a_fresh_snapshot_never_during_the_resync() {
+    let folder = tempfile::Builder::new()
+        .prefix("herdr-core-session-gone-")
+        .tempdir_in(socket_parent())
+        .expect("create socket directory");
+    let root = folder.path().to_path_buf();
+    let socket_path = root.join("herdr.sock");
+    let state_path = root.join("state.json");
+    let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
+    let (resync_asked, resync_seen) = std::sync::mpsc::channel::<()>();
+    let (answer_resync, resync_answered) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut first_subscription, first_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut first_subscription,
+            &first_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
+        let (mut first_snapshot_stream, first_snapshot_request) =
+            accept_request_for(&listener, "session.snapshot");
+        write_result(
+            &mut first_snapshot_stream,
+            &first_snapshot_request,
+            json!({"type": "session_snapshot", "snapshot": snapshot()}),
+        );
+        writeln!(
+            first_subscription,
+            "{}",
+            json!({
+                "id": first_subscribe_request["id"],
+                "error": {"code": "events_lost", "message": "subscriber fell behind"}
+            })
+        )
+        .expect("write events_lost");
+        drop(first_subscription);
+        let (mut final_subscription, final_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut final_subscription,
+            &final_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
+        let (mut second_snapshot_stream, second_snapshot_request) =
+            accept_request_for(&listener, "session.snapshot");
+        resync_asked.send(()).expect("report the resync request");
+        resync_answered
+            .recv()
+            .expect("the test releases the resync snapshot");
+        // The pane closed while the stream was lost; another took its place.
+        let replaced = snapshot().to_string().replace("\"w1:p1\"", "\"w1:p3\"");
+        write_result(
+            &mut second_snapshot_stream,
+            &second_snapshot_request,
+            json!({"type": "session_snapshot",
+                "snapshot": serde_json::from_str::<Value>(&replaced).unwrap()}),
+        );
+        let mut byte = [0_u8; 1];
+        assert_eq!(
+            final_subscription
+                .read(&mut byte)
+                .expect("wait for shutdown"),
+            0
+        );
+    });
+
+    let runtime = runtime_for_fixture(&socket_path, &state_path);
+    {
+        let mut guard = runtime.lock().expect("runtime lock");
+        let node = guard.node().to_string();
+        let scope = socket_path.to_str().unwrap().to_owned();
+        let record = |id: &str, pane: &str, scope: &str| crate::coordination::AgentRecord {
+            id: id.into(),
+            name: id.into(),
+            machine: node.clone(),
+            host_scope: scope.into(),
+            native_machine: "fixture-machine".into(),
+            session: format!("{id}-native"),
+            instance: format!("terminal-{id}"),
+            pane: pane.into(),
+            parent: None,
+            project: None,
+            actor: crate::delivery::Actor {
+                pane_id: pane.into(),
+                name: id.into(),
+                kind: "claude".into(),
+                device_id: node.clone(),
+                session: crate::wire::session_digest(&format!("{id}-native")),
+            },
+            ended: false,
+        };
+        let ledger = crate::delivery::ledger::Ledger {
+            next_id: 4,
+            agents: vec![
+                record("agent-1", "w1:p1", &scope),
+                // Its pane closed while no Hide was reading this Herdr.
+                record("agent-2", "w1:p9", &scope),
+                // Another Herdr's pane of the same name.
+                record("agent-3", "w1:p9", "/elsewhere/herdr.sock"),
+            ],
+            ..Default::default()
+        };
+        ledger.validate().expect("valid ledger");
+        guard.publish_delivery(Arc::new(ledger), false);
+    }
+    let gone = || {
+        runtime
+            .lock()
+            .expect("runtime lock")
+            .delivery_registrations_gone()
+            .into_iter()
+            .map(|(id, reason)| (id, reason.reason()))
+            .collect::<Vec<_>>()
+    };
+    let context = context_for_fixture(&runtime, &socket_path);
+    let handle = spawn(context, None).expect("start session sync");
+    resync_seen
+        .recv_timeout(Duration::from_secs(10))
+        .expect("events_lost leads to a fresh subscription and snapshot");
+    // The first snapshot lacked only agent-2's pane. While the lost stream
+    // is replaced nothing is read, so agent-1 is not ended.
+    assert_eq!(gone(), [("agent-2".to_owned(), "pane_absent")]);
+    answer_resync.send(()).expect("release the resync snapshot");
+    wait_until(Instant::now() + Duration::from_secs(3), || {
+        gone().len() == 2
+    });
+    assert_eq!(
+        gone(),
+        [
+            ("agent-1".to_owned(), "pane_absent"),
+            ("agent-2".to_owned(), "pane_absent")
+        ]
+    );
+
+    drop(handle);
+    server.join().expect("fake server joins");
+    remove_fixture(&root, &socket_path, &state_path);
+}
+
 /// S6 B21: a device's declared parent is one of its own panes, so it is
 /// scoped to the device like the pane ids the lineage joins it with.
 #[test]

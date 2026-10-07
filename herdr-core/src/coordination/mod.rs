@@ -361,16 +361,7 @@ pub(crate) fn apply(
             }) {
                 return Err("actor_identity_conflict".into());
             }
-            let target = record.actor.clone();
-            ledger
-                .agents
-                .iter_mut()
-                .find(|record| &record.id == id)
-                .ok_or("agent_unavailable")?
-                .ended = true;
-            ledger
-                .watches
-                .retain(|watch| !watch.target.same_identity(&target));
+            end_record(ledger, id);
             Ok(view(
                 ledger
                     .agents
@@ -600,6 +591,117 @@ pub(crate) fn apply(
             Ok(json!(spawn))
         }
     }
+}
+
+/// Ends a registration and the watches on it. Returns whether it was live.
+fn end_record(ledger: &mut Ledger, id: &str) -> bool {
+    let Some(record) = ledger.agents.iter_mut().find(|record| record.id == id) else {
+        return false;
+    };
+    let live = !std::mem::replace(&mut record.ended, true);
+    let target = record.actor.clone();
+    ledger
+        .watches
+        .retain(|watch| !watch.target.same_identity(&target));
+    live
+}
+
+/// Why the core ended a registration whose pane Herdr no longer has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PaneGone {
+    /// The pane was in the host's previous in-sync read and is not in this
+    /// one: Herdr closed it, or moved it to another tab under a new id.
+    Left,
+    /// The registration was made before this read's snapshot was asked for,
+    /// and the snapshot lacks its pane.
+    Absent,
+}
+
+impl PaneGone {
+    pub(crate) fn reason(self) -> &'static str {
+        match self {
+            Self::Left => "pane_left",
+            Self::Absent => "pane_absent",
+        }
+    }
+}
+
+/// One host's Herdr panes as its in-sync replica last published them. Only a
+/// replica that bootstrapped from a fresh `session.snapshot` and has applied
+/// every event since publishes, so a pane missing from it is closed; a
+/// replica that lost events or a host that is unreachable publishes nothing,
+/// and a stale read only ever lists more panes than exist.
+pub(crate) struct PaneRead {
+    /// The Herdr socket a local read came from; a remote device has one Herdr.
+    pub(crate) host_scope: Option<String>,
+    /// The ledger's `next_id` before the snapshot was asked for: a
+    /// registration below it existed, with its pane, before that snapshot.
+    /// `None` until a snapshot is asked for with the ledger available.
+    pub(crate) floor: Option<u64>,
+    /// `None` until the snapshot's first publish.
+    pub(crate) panes: Option<std::collections::HashSet<String>>,
+}
+
+/// The live registrations on `device` whose panes the new read lacks, given
+/// the panes of the read before it. A registration made after the snapshot
+/// was asked for, whose pane no read has listed yet, is left alone: its pane
+/// may be one the replica has not heard about.
+pub(crate) fn gone_registrations(
+    ledger: &Ledger,
+    device: &str,
+    read: &PaneRead,
+    previous: Option<&std::collections::HashSet<String>>,
+) -> Vec<(String, PaneGone)> {
+    let Some(panes) = &read.panes else {
+        return Vec::new();
+    };
+    ledger
+        .agents
+        .iter()
+        .filter(|record| {
+            !record.ended
+                && !record.actor.code_owned()
+                && record.actor.device_id == device
+                && read
+                    .host_scope
+                    .as_ref()
+                    .is_none_or(|scope| *scope == record.host_scope)
+                && !panes.contains(&record.pane)
+        })
+        .filter_map(|record| {
+            if previous.is_some_and(|previous| previous.contains(&record.pane)) {
+                return Some((record.id.clone(), PaneGone::Left));
+            }
+            let sequence = record
+                .id
+                .strip_prefix("agent-")
+                .and_then(|value| value.parse::<u64>().ok())?;
+            read.floor
+                .is_some_and(|floor| sequence < floor)
+                .then(|| (record.id.clone(), PaneGone::Absent))
+        })
+        .collect()
+}
+
+/// Ends each registration the core found gone that is still live, with the
+/// watches on it. Returns the ones it ended.
+pub(crate) fn end_gone(
+    ledger: &mut Ledger,
+    gone: &std::collections::BTreeMap<String, PaneGone>,
+) -> Vec<(AgentRecord, PaneGone)> {
+    let mut ended = Vec::new();
+    for (id, reason) in gone {
+        if ledger
+            .agents
+            .iter()
+            .any(|record| &record.id == id && !record.ended)
+            && end_record(ledger, id)
+            && let Some(record) = ledger.agents.iter().find(|record| &record.id == id)
+        {
+            ended.push((record.clone(), *reason));
+        }
+    }
+    ended
 }
 
 fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
@@ -1163,9 +1265,12 @@ mod tests {
     }
 
     #[test]
-    fn ack_only_report_installs_initial_watch_until_actual_confirmation_and_replays_once() {
+    fn acknowledged_report_prevents_the_initial_watch_unless_its_receipt_is_unknown() {
         use crate::delivery::mailbox;
-        for legacy in [false, true] {
+        // An acknowledgement now is the receipt; one a build before this
+        // left without a receipt (`false`) or with none recorded (`null`)
+        // proves nothing until actual confirmation.
+        for receipt in [Some(true), Some(false), None] {
             let (mut ledger, parent, _, spawn, child) = pending_spawn();
             let child_actor = child.actor.clone();
             apply(
@@ -1201,18 +1306,21 @@ mod tests {
                     },
                     5,
                 )
-                .unwrap()["state"],
-                "acknowledged"
+                .unwrap()["hook_confirmed"],
+                true
             );
-            if legacy {
-                ledger.letters[0].hook_confirmed = None;
-                ledger.letters[0].finished_at_unix_ms = Some(5);
-            }
+            ledger.letters[0].hook_confirmed = receipt;
+            ledger.letters[0].finished_at_unix_ms = (receipt != Some(false)).then_some(5);
             let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
             let complete = Mutation::Complete { id: spawn };
-            let receipt = apply(&mut restored, &parent, &complete, 6).unwrap();
-            assert_eq!(restored.watches.len(), 1);
-            assert_eq!(receipt["auto_watch_id"], restored.watches[0].id);
+            let receipt_known = receipt == Some(true);
+            let completed = apply(&mut restored, &parent, &complete, 6).unwrap();
+            assert_eq!(restored.watches.len(), usize::from(!receipt_known));
+            if receipt_known {
+                assert!(completed["auto_watch_id"].is_null());
+                continue;
+            }
+            assert_eq!(completed["auto_watch_id"], restored.watches[0].id);
             let confirm = mailbox::Command::Confirm { ids: intake.ids };
             mailbox::apply(&mut restored, &parent, None, &confirm, 7).unwrap();
             assert!(restored.watches.is_empty());
@@ -1221,7 +1329,7 @@ mod tests {
             let before = restored.clone();
             assert_eq!(
                 apply(&mut restored, &parent, &complete, 9).unwrap(),
-                receipt
+                completed
             );
             mailbox::apply(&mut restored, &parent, None, &confirm, 10).unwrap();
             assert_eq!(restored, before);
