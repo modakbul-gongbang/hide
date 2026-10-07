@@ -9,7 +9,7 @@ import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
 import { useUiStore, type FactoryPlace } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
-import { StateMark } from "./FactoryCard";
+import { StateMark, stateIcon } from "./FactoryCard";
 import { useTaskDetail } from "./FactoryScreen";
 import { ACTION_LABEL, GATE_LABEL, OUTCOME_LABEL, STAGE_LABEL, STOP_LABEL, TONE_TEXT, stateTone } from "./labels";
 import type { AttemptView, CardView, FactorySummary, FactoryView, Question, TaskDetail } from "./model";
@@ -194,7 +194,7 @@ function Chain({ factory, card, before, after, canRemove, send }: { factory: Fac
       <div className="flex shrink-0 flex-col gap-xs">
         <span className="text-caption text-muted-foreground">{t("factory.task.this")}</span>
         <span className="flex items-center gap-xs rounded-md bg-muted px-md py-xs font-mono text-body font-semibold" data-factory-chain-this={card.task}>
-          <CircleIcon aria-hidden="true" className={cn("size-(--size-icon-sm)", TONE_TEXT[stateTone(card.state, card.needs_person)])} />
+          <ThisState card={card} />
           {card.display_id}
         </span>
       </div>
@@ -202,6 +202,12 @@ function Chain({ factory, card, before, after, canRemove, send }: { factory: Fac
       <ChainColumn title={t("factory.task.after")} cards={after} factory={factory} onRemove={null} />
     </div>
   );
+}
+
+/** This Task's state in the chain, drawn with the mark its neighbours carry; the words are in the title row. */
+function ThisState({ card }: { card: CardView }) {
+  const Icon = stateIcon(card.state);
+  return <Icon aria-hidden="true" className={cn("size-(--size-icon-sm)", TONE_TEXT[stateTone(card.state, card.needs_person)])} />;
 }
 
 function ChainColumn({ title, cards, factory, onRemove }: { title: string; cards: CardView[]; factory: FactoryView; onRemove: ((card: CardView) => void) | null }) {

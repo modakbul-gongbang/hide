@@ -233267,7 +233267,7 @@
                                                       "enabled": true,
                                                       "width": 12,
                                                       "height": 12,
-                                                      "icon": "circle",
+                                                      "icon": "circle-dot",
                                                       "library": "lucide",
                                                       "fill": "$--agent-working"
                                                     },
@@ -250966,7 +250966,7 @@
                                                       "enabled": true,
                                                       "width": 12,
                                                       "height": 12,
-                                                      "icon": "circle",
+                                                      "icon": "circle-dot",
                                                       "library": "lucide",
                                                       "fill": "$--agent-working"
                                                     },

@@ -20,10 +20,15 @@ const STATE_ICON: Partial<Record<TaskState, typeof CircleIcon>> = {
 };
 
 /** A Task's state as a mark and its word, with a stopped card's reason, in the tone the board and graph share (B15, B17). */
+/** The icon a Task's state is drawn with, the same wherever the state shows. */
+export function stateIcon(state: TaskState): typeof CircleIcon {
+  return STATE_ICON[state] ?? CircleIcon;
+}
+
 export function StateMark({ card, className }: { card: CardView; className?: string }) {
   const { t } = useInterfaceTranslation();
   const tone = stateTone(card.state, card.needs_person);
-  const Icon = STATE_ICON[card.state] ?? CircleIcon;
+  const Icon = stateIcon(card.state);
   const words = card.stop ? `${t(STATE_LABEL[card.state])} · ${t(STOP_LABEL[card.stop])}` : t(STATE_LABEL[card.state]);
   return (
     <span className={cn("flex min-w-0 items-center gap-xxs text-caption", TONE_TEXT[tone], className)} data-factory-state={card.state} data-factory-stop-reason={card.stop ?? undefined}>

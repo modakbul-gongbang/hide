@@ -426,7 +426,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       row(`${id}-chain`, [
         chainCell(`${id}-ch0`, 't410', '선행', chainW),
         icon(`${id}-ca0`, 'arrow-right', {size: 14, fill: MUT}),
-        col(`${id}-ch1`, [cap(`${id}-ch1-l`, '이 Task'), row(`${id}-ch1-b`, [icon(`${id}-ch1-g`, 'circle', {size: 12, fill: WORK}), text(`${id}-ch1-t`, '#412', {size: '$--text-body', weight: '600', mono: true})], {gap: '$--spacing-xs', height: 28, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-md', fill: '$--muted'})], {gap: '$--spacing-xs'}),
+        col(`${id}-ch1`, [cap(`${id}-ch1-l`, '이 Task'), row(`${id}-ch1-b`, [icon(`${id}-ch1-g`, 'circle-dot', {size: 12, fill: WORK}), text(`${id}-ch1-t`, '#412', {size: '$--text-body', weight: '600', mono: true})], {gap: '$--spacing-xs', height: 28, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-md', fill: '$--muted'})], {gap: '$--spacing-xs'}),
         icon(`${id}-ca1`, 'arrow-right', {size: 14, fill: MUT}),
         chainCell(`${id}-ch2`, 't422', '기다리는 것', chainW),
       ], {gap: '$--spacing-md', alignItems: 'end', width: 'fill_container'}),
