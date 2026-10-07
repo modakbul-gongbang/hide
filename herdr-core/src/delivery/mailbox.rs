@@ -1279,7 +1279,10 @@ mod tests {
         super::super::ledger::save(&path, &ledger).unwrap();
         let mut restored = super::super::ledger::load(&path).unwrap();
         let now = 2 + super::super::DELIVERY_EXPIRY_MS - 1;
-        assert_eq!(pull(&restored, &parent).unwrap().ids, [report.id.clone()]);
+        assert_eq!(
+            pull(&restored, &parent).unwrap().ids,
+            std::slice::from_ref(&report.id)
+        );
         assert_eq!(
             send(
                 &mut restored,
