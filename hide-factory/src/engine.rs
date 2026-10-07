@@ -1467,9 +1467,20 @@ impl Engine {
             } else {
                 card.out_of_scope.clone()
             },
-            open_decisions: card.open_decisions.clone(),
+            // A re-add that leaves a list out keeps it, as for criteria.
+            open_decisions: if card.open_decisions.is_empty() {
+                existing
+                    .map(|c| c.open_decisions.clone())
+                    .unwrap_or_default()
+            } else {
+                card.open_decisions.clone()
+            },
             depends_on: depends,
-            external: card.external.clone(),
+            external: if card.external.is_empty() {
+                existing.map(|c| c.external.clone()).unwrap_or_default()
+            } else {
+                card.external.clone()
+            },
         })
     }
 

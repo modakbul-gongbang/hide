@@ -399,6 +399,38 @@ fn review_questions_hold_the_task_until_answered_and_re_adding_is_idempotent() {
 }
 
 #[test]
+fn a_re_add_that_leaves_lists_out_keeps_them() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().hold_judgments = true;
+    let first = h.op(Command::Add {
+        project: None,
+        task: None,
+        issue: None,
+        card: CardInput {
+            external: vec!["other/repo#7".into()],
+            open_decisions: vec!["Which format?".into()],
+            ..card("Lists", &[])
+        },
+        producer_pane: None,
+    });
+    let id = first["task"]["id"].as_str().unwrap().to_owned();
+    h.op(Command::Add {
+        project: None,
+        task: Some(id.clone()),
+        issue: None,
+        card: CardInput {
+            goal: Some("Make Lists work".into()),
+            ..CardInput::default()
+        },
+        producer_pane: None,
+    });
+    let card = h.task(&f, &id).card;
+    assert_eq!(card.external, vec!["other/repo#7".to_owned()]);
+    assert_eq!(card.open_decisions, vec!["Which format?".to_owned()]);
+}
+
+#[test]
 fn a_re_add_keeps_a_dependency_a_person_added() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
