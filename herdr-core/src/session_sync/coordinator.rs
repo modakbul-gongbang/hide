@@ -185,6 +185,10 @@ fn run_coordinator(
         if subscription.is_none() && Instant::now() >= reconnect_at {
             let has_projection = replica.is_some();
             let snapshot_started_at = Instant::now();
+            if !begin_delivery_pane_read(&context) {
+                stop_subscription(&mut subscription);
+                return;
+            }
             match connect(
                 &context,
                 &sender,
@@ -1591,6 +1595,23 @@ fn begin_local_read_record_reconciliation(context: &SessionSyncContext) -> bool 
         return false;
     };
     guard.begin_local_read_record_reconciliation();
+    true
+}
+
+/// Forgets the host's published panes before a fresh snapshot is asked for,
+/// and notes the ledger position that snapshot is complete for.
+fn begin_delivery_pane_read(context: &SessionSyncContext) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let Ok(mut guard) = runtime.lock() else {
+        return false;
+    };
+    let device = match &context.target {
+        SessionSyncTarget::Local { .. } => guard.node().to_string(),
+        SessionSyncTarget::Remote { target_id, .. } => target_id.clone(),
+    };
+    guard.begin_delivery_pane_read(&device);
     true
 }
 

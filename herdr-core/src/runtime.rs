@@ -1071,6 +1071,12 @@ pub struct Runtime {
     factory_recipients: std::collections::BTreeMap<String, u64>,
     delivery_overflow: HashSet<String>,
     delivery_connected: HashSet<String>,
+    /// Each host's Herdr panes as its in-sync replica last published them.
+    delivery_panes: HashMap<String, crate::coordination::PaneRead>,
+    /// Live registrations whose panes Herdr no longer has, for the delivery
+    /// store to end; an entry leaves once the published ledger shows it
+    /// ended.
+    registrations_gone: std::collections::BTreeMap<String, crate::coordination::PaneGone>,
     /// The machine this core runs on. Device labels are mutable
     /// presentation, while lineage and every key naming this machine use
     /// this operating-system id.
@@ -1864,6 +1870,8 @@ impl Runtime {
             factory_recipients: std::collections::BTreeMap::new(),
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),
+            delivery_panes: HashMap::new(),
+            registrations_gone: std::collections::BTreeMap::new(),
             node: options.node_id.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),

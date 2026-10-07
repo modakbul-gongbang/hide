@@ -214,12 +214,11 @@ pub fn apply(
             if matches!(command, Command::Ack { .. }) {
                 if matches!(letter.state, State::Pending | State::Delivered) {
                     letter.state = State::Acknowledged;
-                    // An agent with no prompt hook has no other way to take a
-                    // letter in, so its acknowledgement is the receipt; a
-                    // letter already cancelled or expired has none to give.
-                    if !prompt_hook(&letter.recipient.kind) {
-                        ended = record_intake(letter, now);
-                    }
+                    // Only the recipient's own pane and session may
+                    // acknowledge, so the acknowledgement is its receipt
+                    // whatever its kind; a letter already cancelled or
+                    // expired has none to give.
+                    ended = record_intake(letter, now);
                 }
             } else {
                 letter.state = State::Cancelled;
@@ -382,7 +381,9 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
         .iter()
         .filter(|letter| letter.recipient.same_identity(actor) && letter.awaiting_intake())
         .collect();
-    pending.sort_by_key(|letter| letter.created_at_unix_ms);
+    // The letters a bell rings for come first, so a backlog acknowledged
+    // without a receipt never displaces the one that opened this turn.
+    pending.sort_by_key(|letter| (letter.state != State::Pending, letter.created_at_unix_ms));
     let mut context = String::new();
     let mut ids = Vec::new();
     // Reserve the tail before rendering bodies, including IDs and sender
@@ -834,13 +835,8 @@ mod tests {
     }
 
     #[test]
-    fn acknowledging_is_the_receipt_only_for_an_agent_without_a_prompt_hook() {
-        for (kind, receipt) in [
-            ("grok", true),
-            ("gemini", true),
-            ("codex", false),
-            ("claude", false),
-        ] {
+    fn acknowledging_is_the_receipt_for_every_agent_kind() {
+        for kind in ["grok", "gemini", "codex", "claude"] {
             let mut ledger = Ledger::default();
             let child = actor("child");
             let mut parent = actor("parent");
@@ -857,7 +853,7 @@ mod tests {
                 2,
             )
             .unwrap();
-            apply(
+            let acknowledged = apply(
                 &mut ledger,
                 &parent,
                 None,
@@ -865,10 +861,11 @@ mod tests {
                 3,
             )
             .unwrap();
-            let letter = &ledger.letters[0];
-            assert_eq!(letter.intake_confirmed(), receipt, "{kind}");
-            assert_eq!(letter.awaiting_intake(), !receipt, "{kind}");
-            assert_eq!(ledger.watches.is_empty(), receipt, "{kind}");
+            assert_eq!(acknowledged["state"], "acknowledged", "{kind}");
+            assert_eq!(acknowledged["hook_confirmed"], true, "{kind}");
+            assert!(!ledger.letters[0].open(), "{kind}");
+            assert!(ledger.watches.is_empty(), "{kind}");
+            assert!(pull(&ledger, &parent).unwrap().ids.is_empty(), "{kind}");
         }
     }
 
@@ -974,38 +971,31 @@ mod tests {
     }
 
     #[test]
-    fn acknowledging_or_canceling_a_report_never_ends_a_watch() {
-        for cancel in [false, true] {
-            let mut ledger = Ledger::default();
-            let child = actor("child");
-            let parent = actor("parent");
-            super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
-            let report = send(
-                &mut ledger,
-                &child,
-                &parent,
-                "report",
-                "done",
-                "report",
-                None,
-                2,
-            )
-            .unwrap();
-            let command = if cancel {
-                Command::Cancel { id: report.id }
-            } else {
-                Command::Ack { id: report.id }
-            };
-            apply(
-                &mut ledger,
-                if cancel { &child } else { &parent },
-                None,
-                &command,
-                3,
-            )
-            .unwrap();
-            assert_eq!(ledger.watches.len(), 1);
-        }
+    fn canceling_a_report_never_ends_a_watch() {
+        let mut ledger = Ledger::default();
+        let child = actor("child");
+        let parent = actor("parent");
+        super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        let report = send(
+            &mut ledger,
+            &child,
+            &parent,
+            "report",
+            "done",
+            "report",
+            None,
+            2,
+        )
+        .unwrap();
+        apply(
+            &mut ledger,
+            &child,
+            None,
+            &Command::Cancel { id: report.id },
+            3,
+        )
+        .unwrap();
+        assert_eq!(ledger.watches.len(), 1);
     }
 
     #[test]
@@ -1044,32 +1034,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(acknowledged["state"], "acknowledged");
-        assert_eq!(acknowledged["hook_confirmed"], false);
-        assert_eq!(restored.watches.len(), 2);
-        let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
-        let confirm = Command::Confirm { ids: intake.ids };
-        assert_eq!(
-            apply(&mut restored, &parent, None, &confirm, 4).unwrap()["confirmed"],
-            json!([report.id.clone()])
-        );
+        assert_eq!(acknowledged["hook_confirmed"], true);
         assert_eq!(restored.watches.len(), 1);
         assert_eq!(restored.watches[0].id, unrelated.id);
-        let shown = apply(
-            &mut restored,
-            &parent,
-            None,
-            &Command::Show {
-                id: report.id.clone(),
-            },
-            4,
-        )
-        .unwrap();
-        assert_eq!(shown["state"], "acknowledged");
-        assert_eq!(shown["hook_confirmed"], true);
-        let rearmed = super::super::watch::start(&mut restored, &parent, &child, 5).unwrap();
+        assert!(pull(&restored, &parent).unwrap().ids.is_empty());
+        // The interrupted hook's confirmation still answers and changes nothing.
         let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+        let rearmed = super::super::watch::start(&mut restored, &parent, &child, 4).unwrap();
         let before = restored.clone();
-        apply(&mut restored, &parent, None, &confirm, 6).unwrap();
+        let confirm = Command::Confirm { ids: intake.ids };
+        assert_eq!(
+            apply(&mut restored, &parent, None, &confirm, 5).unwrap()["confirmed"],
+            json!([report.id.clone()])
+        );
         assert_eq!(restored, before);
         assert!(restored.watches.iter().any(|watch| watch.id == rearmed.id));
         assert_eq!(
@@ -1131,7 +1108,7 @@ mod tests {
     }
 
     #[test]
-    fn ack_only_intake_reinjects_the_same_id_after_interruption_until_actual_confirmation() {
+    fn an_acknowledgement_after_an_interrupted_pull_is_the_receipt() {
         for kind in ["request", "report"] {
             let mut ledger = Ledger::default();
             let sender = actor("sender");
@@ -1158,7 +1135,8 @@ mod tests {
             )
             .unwrap();
             let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
-            assert_eq!(pull(&restored, &recipient).unwrap().ids, intake.ids);
+            assert!(pull(&restored, &recipient).unwrap().ids.is_empty());
+            let before = restored.clone();
             apply(
                 &mut restored,
                 &recipient,
@@ -1167,7 +1145,7 @@ mod tests {
                 3,
             )
             .unwrap();
-            assert!(pull(&restored, &recipient).unwrap().ids.is_empty());
+            assert_eq!(restored, before);
         }
     }
 
@@ -1254,55 +1232,56 @@ mod tests {
         }
     }
 
+    /// A letter a build before this one acknowledged without a receipt.
+    fn acknowledged_without_receipt(ledger: &mut Ledger, index: usize) {
+        let letter = &mut ledger.letters[index];
+        letter.state = State::Acknowledged;
+        letter.hook_confirmed = Some(false);
+        letter.finished_at_unix_ms = None;
+    }
+
     #[test]
-    fn acknowledged_unconfirmed_reports_retain_ids_and_consume_open_capacity_until_intake() {
+    fn a_bell_turn_hands_over_pending_letters_before_an_acknowledged_backlog() {
+        let mut ledger = Ledger::default();
+        let recipient = actor("recipient");
+        pending_for(&mut ledger, &recipient, HOOK_LETTERS + 2);
+        for index in 0..HOOK_LETTERS + 1 {
+            acknowledged_without_receipt(&mut ledger, index);
+        }
+        let fresh = ledger.letters[HOOK_LETTERS + 1].id.clone();
+        let intake = pull_for(&mut ledger, &recipient, true);
+        assert_eq!(intake.ids.len(), HOOK_LETTERS);
+        assert_eq!(intake.ids[0], fresh, "the letter the bell rang for");
+        assert_eq!(
+            intake.ids[1], ledger.letters[0].id,
+            "then the oldest backlog"
+        );
+        assert_eq!(intake.remaining, 2);
+    }
+
+    #[test]
+    fn an_acknowledged_letter_without_a_receipt_stops_awaiting_intake_at_its_deadline() {
         let mut ledger = Ledger::default();
         let sender = actor("sender");
         let recipient = actor("recipient");
-        let mut first_id = String::new();
         for index in 0..OPEN_LIMIT {
-            let letter = send(
+            let kind = if index == 0 { "block" } else { "report" };
+            send(
                 &mut ledger,
                 &sender,
                 &recipient,
                 &format!("receipt-{index}"),
                 "body",
-                "report",
+                kind,
                 None,
                 1,
             )
             .unwrap();
-            if index == 0 {
-                first_id = letter.id.clone();
-            }
-            apply(
-                &mut ledger,
-                &recipient,
-                None,
-                &Command::Ack { id: letter.id },
-                2,
-            )
-            .unwrap();
+            acknowledged_without_receipt(&mut ledger, index);
         }
-        let now = RETENTION_MS + 3;
         let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
-        assert!(!restored.expire(now));
-        assert_eq!(restored.letters.len(), OPEN_LIMIT);
-        assert_eq!(
-            send(
-                &mut restored,
-                &sender,
-                &recipient,
-                "receipt-0",
-                "changed",
-                "report",
-                None,
-                now
-            )
-            .unwrap()
-            .id,
-            first_id
-        );
+        let deadline = 1 + super::super::DELIVERY_EXPIRY_MS;
+        assert!(!restored.expire(deadline - 1));
         assert_eq!(
             send(
                 &mut restored,
@@ -1312,31 +1291,42 @@ mod tests {
                 "body",
                 "report",
                 None,
-                now
+                deadline - 1
             )
             .unwrap_err(),
             "capacity"
         );
-        let intake = pull(&restored, &recipient).unwrap();
-        assert_eq!(intake.ids.len(), HOOK_LETTERS);
-        assert_eq!(intake.remaining, OPEN_LIMIT - HOOK_LETTERS);
-        assert_eq!(intake.ids[0], first_id);
-        assert!(intake.context.len() <= HOOK_LIMIT);
-        apply(
+        assert_eq!(pull(&restored, &recipient).unwrap().ids.len(), HOOK_LETTERS);
+        assert!(restored.expire(deadline));
+        assert!(pull(&restored, &recipient).unwrap().ids.is_empty());
+        // A block still awaiting its reply stays open; the reports do not.
+        assert_eq!(restored.letters.iter().filter(|l| l.open()).count(), 1);
+        let report = restored.letters[1].id.clone();
+        let shown = apply(
             &mut restored,
             &recipient,
             None,
-            &Command::Confirm { ids: intake.ids },
-            now,
+            &Command::Show { id: report },
+            deadline,
         )
         .unwrap();
-        assert!(!restored.cleanup(now));
-        assert!(restored.cleanup(now + RETENTION_MS));
-        assert_eq!(restored.letters.len(), OPEN_LIMIT - HOOK_LETTERS);
-        assert_eq!(
-            pull(&restored, &recipient).unwrap().remaining,
-            OPEN_LIMIT - HOOK_LETTERS * 2
-        );
+        assert_eq!(shown["state"], "acknowledged");
+        assert!(shown["hook_confirmed"].is_null());
+        assert_eq!(shown["finished_at_unix_ms"], deadline);
+        send(
+            &mut restored,
+            &sender,
+            &recipient,
+            "overflow",
+            "body",
+            "report",
+            None,
+            deadline,
+        )
+        .unwrap();
+        let reloaded: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+        assert_eq!(reloaded, restored);
+        assert!(!restored.clone().expire(deadline + 1));
     }
 
     #[test]

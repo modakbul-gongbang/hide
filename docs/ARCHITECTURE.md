@@ -424,15 +424,17 @@ Herdr's readiness is three-valued at the wire boundary (`wire::Readiness`): only
 Pending delivery becomes undelivered after 60 minutes; watch warnings use 20-minute inactivity and first-warning time plus 60 minutes, with persistent counts and activity reset.
 The helper's metadata-only session activity uses the same native ownership proof as the local reader.
 A confirmed report to its parent ends the sender's watch immediately; unanswered parent warnings and overdue undelivered letters use the existing human notification paths once per cause.
-Each letter keeps a durable `hook_confirmed` receipt separate from manual acknowledgement and cancellation.
-A new acknowledged letter with `hook_confirmed: false` remains eligible for the same bounded hook batch and consumes open-letter capacity until confirmed or cancelled, so retention cannot discard an interrupted intake.
-Expiry and automatic doorbells remain limited to pending letters; acknowledgement still counts as checking a watch warning and does not schedule another doorbell.
-The first actual post-flush confirmation records that receipt and ends a matching report watch, including when acknowledgement, cancellation or the delivery deadline arrived between pull and confirmation.
+Each letter keeps a durable `hook_confirmed` receipt separate from cancellation.
+Acknowledgement can come only from the recipient's own pane and session, so it is that receipt; it still counts as checking a watch warning and does not schedule another doorbell.
+A letter an earlier build acknowledged with `hook_confirmed: false` stays in the bell turn's batch after the pending letters and counts as open until its delivery deadline, when `Ledger::expire` ends that wait.
+Automatic doorbells remain limited to pending letters; the delivery deadline ends the intake wait of a pending letter (it becomes undelivered) and of such an acknowledged one.
+The first receipt ends a matching report watch; an actual post-flush confirmation still does when cancellation or the delivery deadline arrived between pull and confirmation.
 Cancellation and the undelivered state prevent a new pull; an already-printed in-flight confirmation remains valid, preserving cancellation while changing undelivered to delivered.
-Replayed confirmation after restart preserves a watch explicitly started after that first receipt; an Ack-only report does not suppress spawn's initial watch.
+Replayed confirmation after restart preserves a watch explicitly started after that first receipt; a report whose acknowledgement left no receipt does not suppress spawn's initial watch.
 Legacy letters with an absent or null field prove confirmation only in `delivered` state; an older `acknowledged` record cannot distinguish manual acknowledgement from confirmed intake.
 Older acknowledged records remain excluded from pull and keep their existing closed-state retention rules unless they still await a reply; the missing receipt never becomes delivery proof.
 The same core owns registration, spawning, lineage, the mailbox and inactivity watches; no external coordinator or conflict probe remains.
+A registration ends when its host's in-sync replica stops listing its pane: each publish hands the published pane set to `Runtime::observe_delivery`, which compares it with the previous one only when it moved (`coordination::gone_registrations`), and the delivery store ends what it found in its next transaction; a connect forgets the host's panes and notes the ledger's next id before asking for the snapshot, so a snapshot judges only registrations made before it.
 [delivery.md](delivery.md) owns the CLI, capacities, privacy, completion reports, remote delivery, manual fallback and the residual external-input race.
 
 ### Explicit terminal attachments
