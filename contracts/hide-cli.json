@@ -1220,7 +1220,7 @@
                 }
             ],
             "refusals": [
-                "pane_capability_required",
+                "agent_pane_required",
                 "caller_identity_conflict",
                 "participant_unavailable",
                 "participant_ended",
@@ -1639,7 +1639,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:fc44824071732f5194c6497aa81e8df46a0aeea384ab824edde65f8cb3ccc36f",
+    "digest": "sha256:004d10ca60636b6045e225f820929d8f3143cd04de0c2a42112648656bcd1a25",
     "envelopes": {
         "agent": {
             "answer": "value",

@@ -59,8 +59,9 @@ fn guard(runtime: &Arc<Mutex<Runtime>>) -> MutexGuard<'_, Runtime> {
 pub struct FactoryCaller {
     pub pane: Option<String>,
     pub cwd: Option<String>,
-    /// A pane the caller named but could not be checked against: it can only
-    /// make the caller a worker, never an operator.
+    /// Another pane a pane-bound caller's hint named, which cannot be checked
+    /// against its credential: it can only make the caller a worker, never an
+    /// operator. A checkout-bound caller's hint is never read.
     pub claimed: Option<String>,
     /// The agents above the caller in the spawn lineage: a worker's child is
     /// a worker of the same Task (D-33).

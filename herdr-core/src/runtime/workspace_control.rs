@@ -814,18 +814,6 @@ impl Runtime {
         });
         let mut capabilities = vec![
             "workspace.info",
-            "request.send",
-            "request.reply",
-            "request.show",
-            "request.ack",
-            "request.cancel",
-            "inbox",
-            "inbox.hook",
-            "inbox.confirm",
-            "watch.start",
-            "watch.assign",
-            "watch.stop",
-            "watch.list",
             "view.list",
             "view.select",
             "view.split",
@@ -834,6 +822,23 @@ impl Runtime {
             "browser.open",
             "browser.status",
         ];
+        // Delivery acts as one agent, which only a pane-bound caller names.
+        if matches!(Caller::parse(pane_id), Caller::Pane(_)) {
+            capabilities.extend([
+                "request.send",
+                "request.reply",
+                "request.show",
+                "request.ack",
+                "request.cancel",
+                "inbox",
+                "inbox.hook",
+                "inbox.confirm",
+                "watch.start",
+                "watch.assign",
+                "watch.stop",
+                "watch.list",
+            ]);
+        }
         if context.device_id == "local"
             || self
                 .device_hosts
