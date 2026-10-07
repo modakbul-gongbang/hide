@@ -12,13 +12,18 @@
 //! count, size and include depth, aliases by [`MAX_HOSTS`], each `ssh -G` by
 //! [`RESOLVE_DEADLINE`], and the children by [`CONCURRENCY`] at a time, each an
 //! owned child that ends with its tree (`hide_platform::process::run_to_end`).
+//!
+//! Asking where an alias leads is a [`Resolve`], so the listing's own rules
+//! (the bound, each alias once, the order) are tested with answers the test
+//! decides, and no test races a child against the deadline (issue 728).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use hide_platform::process::{RunFailure, restrict_to_login_environment, run_to_end};
+use hide_platform::process::{Finished, RunFailure, restrict_to_login_environment, run_to_end};
 
 /// Concrete aliases listed; more are reported as truncated.
 pub(crate) const MAX_HOSTS: usize = 32;
@@ -270,15 +275,27 @@ impl Problem {
     }
 }
 
-/// Resolves one alias with `ssh -F <config> -G -- <alias>`. `-F` names the
-/// account's own config, because `ssh` would otherwise read the passwd
-/// entry's home and not the one hided was given.
-fn resolve_one(
-    ssh: &Path,
-    home: &Path,
-    alias: &str,
-    stop: &AtomicBool,
-) -> Result<Address, Problem> {
+/// Asks where one alias leads, given the account's home and the listing's
+/// stop flag. The listing calls it from [`CONCURRENCY`] threads at once.
+pub(crate) type Resolve =
+    Arc<dyn Fn(&Path, &str, &AtomicBool) -> Result<Address, Problem> + Send + Sync>;
+
+/// Asks the `ssh` program at `ssh`, one owned child per alias under
+/// [`RESOLVE_DEADLINE`].
+pub(crate) fn ssh_g(ssh: PathBuf) -> Resolve {
+    Arc::new(move |home, alias, stop| {
+        answer(run_to_end(
+            &mut command(&ssh, home, alias),
+            RESOLVE_DEADLINE,
+            stop,
+        ))
+    })
+}
+
+/// `ssh -F <config> -G -- <alias>` in a login environment plus `HOME`. `-F`
+/// names the account's own config, because `ssh` would otherwise read the
+/// passwd entry's home and not the one hided was given.
+fn command(ssh: &Path, home: &Path, alias: &str) -> Command {
     let mut command = Command::new(ssh);
     restrict_to_login_environment(&mut command);
     command
@@ -287,7 +304,12 @@ fn resolve_one(
         .arg(home.join(".ssh").join("config"))
         .args(["-G", "--"])
         .arg(alias);
-    match run_to_end(&mut command, RESOLVE_DEADLINE, stop) {
+    command
+}
+
+/// What one run of `ssh -G` says about its alias.
+fn answer(run: Result<Finished, RunFailure>) -> Result<Address, Problem> {
+    match run {
         Ok(finished) if finished.succeeded() => {
             parse_resolved(&finished.stdout).ok_or(Problem::SshFailed)
         }
@@ -301,12 +323,12 @@ fn resolve_one(
 }
 
 /// Resolves every alias, [`CONCURRENCY`] at a time, in the order given. The
-/// threads end with the call, and `stop` ends the children early.
+/// threads end with the call, and once `stop` is raised no further alias is
+/// asked.
 pub(crate) fn resolve_all(
-    ssh: &Path,
-    home: &Path,
     aliases: &[String],
     stop: &AtomicBool,
+    resolve: impl Fn(&str) -> Result<Address, Problem> + Sync,
 ) -> Vec<Result<Address, Problem>> {
     let next = AtomicUsize::new(0);
     let results: Vec<std::sync::Mutex<Option<Result<Address, Problem>>>> = aliases
@@ -324,7 +346,7 @@ pub(crate) fn resolve_all(
                     let outcome = if stop.load(Ordering::SeqCst) {
                         Err(Problem::SshFailed)
                     } else {
-                        resolve_one(ssh, home, alias, stop)
+                        resolve(alias)
                     };
                     if let Ok(mut slot) = results[index].lock() {
                         *slot = Some(outcome);
@@ -364,7 +386,12 @@ pub(crate) struct Listing {
 
 /// Reads the config and resolves its aliases and `registered` (the aliases of
 /// the devices already added), as one bounded run.
-pub(crate) fn list(ssh: &Path, home: &Path, registered: &[String], stop: &AtomicBool) -> Listing {
+pub(crate) fn list(
+    resolve: &Resolve,
+    home: &Path,
+    registered: &[String],
+    stop: &AtomicBool,
+) -> Listing {
     let config = read_aliases(home);
     let mut wanted = config.aliases.clone();
     let extra: Vec<String> = registered
@@ -374,7 +401,7 @@ pub(crate) fn list(ssh: &Path, home: &Path, registered: &[String], stop: &Atomic
         .cloned()
         .collect();
     wanted.extend(extra);
-    let mut outcomes = resolve_all(ssh, home, &wanted, stop).into_iter();
+    let mut outcomes = resolve_all(&wanted, stop, |alias| resolve(home, alias, stop)).into_iter();
     let entries = config
         .aliases
         .iter()
@@ -493,37 +520,106 @@ mod tests {
         assert!(!wildcard_match("a?.conf", "a.conf"));
     }
 
-    /// At most [`CONCURRENCY`] children run at once, and every alias is asked
-    /// exactly once. The stand-in keeps each call alive briefly, counts how
-    /// many are alive when it starts and records the count.
-    #[cfg(unix)]
+    /// Every alias is asked once and answered in the order given, and at most
+    /// [`CONCURRENCY`] are asked at once: a call runs on the worker that made
+    /// it, so the workers that called bound how many run together.
     #[test]
-    fn resolving_runs_a_bounded_number_of_children_and_asks_each_alias_once() {
-        let folder = tempfile::tempdir().unwrap();
-        let ssh = folder.path().join("ssh");
-        crate::executable_fixture::write_executable(
-            &ssh,
-            "#!/bin/sh\ndir=$(dirname \"$0\")\nmkdir -p \"$dir/alive\"\n: > \"$dir/alive/$5\"\n\
-             ls \"$dir/alive\" | wc -l >> \"$dir/counts\"\n\
-             /bin/sleep 0.2\nrm \"$dir/alive/$5\"\n\
-             printf 'user u\\nhostname %s\\nport 22\\n' \"$5\"\n",
-        );
+    fn resolving_asks_each_alias_once_from_a_bounded_number_of_workers_in_order() {
+        let asked = std::sync::Mutex::new(Vec::new());
         let aliases: Vec<String> = (0..12).map(|index| format!("h{index}")).collect();
         let stop = AtomicBool::new(false);
-        let resolved = resolve_all(&ssh, folder.path(), &aliases, &stop);
+        let resolved = resolve_all(&aliases, &stop, |alias| {
+            asked
+                .lock()
+                .unwrap()
+                .push((std::thread::current().id(), alias.to_owned()));
+            Ok(Address {
+                user: "u".to_owned(),
+                host: alias.to_owned(),
+                port: 22,
+            })
+        });
         assert_eq!(resolved.len(), aliases.len());
         for (alias, outcome) in aliases.iter().zip(&resolved) {
             assert_eq!(outcome.as_ref().unwrap().host, *alias, "in the order asked");
         }
-        let counts = std::fs::read_to_string(folder.path().join("counts")).unwrap();
-        let counts: Vec<usize> = counts
-            .lines()
-            .map(|line| line.trim().parse().unwrap())
-            .collect();
-        assert_eq!(counts.len(), aliases.len(), "each alias was asked once");
-        assert!(
-            counts.iter().all(|alive| *alive <= CONCURRENCY),
-            "{counts:?}"
+        let asked = asked.into_inner().unwrap();
+        let mut names: Vec<&str> = asked.iter().map(|(_, alias)| alias.as_str()).collect();
+        names.sort_unstable();
+        let mut want: Vec<&str> = aliases.iter().map(String::as_str).collect();
+        want.sort_unstable();
+        assert_eq!(names, want, "each alias was asked once");
+        let workers: std::collections::HashSet<_> =
+            asked.iter().map(|(worker, _)| *worker).collect();
+        assert!(workers.len() <= CONCURRENCY, "{} workers", workers.len());
+        assert!(!workers.contains(&std::thread::current().id()));
+    }
+
+    #[test]
+    fn a_raised_stop_asks_no_alias() {
+        let aliases: Vec<String> = (0..6).map(|index| format!("h{index}")).collect();
+        let stop = AtomicBool::new(true);
+        let resolved = resolve_all(&aliases, &stop, |alias| panic!("{alias} was asked"));
+        assert_eq!(resolved, vec![Err(Problem::SshFailed); aliases.len()]);
+    }
+
+    #[test]
+    fn ssh_g_names_the_accounts_own_config_and_home() {
+        let home = Path::new("/account");
+        let command = command(Path::new("/usr/bin/ssh"), home, "studio");
+        let config = home.join(".ssh").join("config");
+        assert_eq!(command.get_program(), "/usr/bin/ssh");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["-F", config.to_str().unwrap(), "-G", "--", "studio"]
         );
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "HOME" && value == Some(home.as_os_str())),
+            "HOME is the account's"
+        );
+    }
+
+    #[test]
+    fn each_way_ssh_g_can_end_has_one_answer() {
+        let finished = |code, stdout: &str| {
+            Ok(Finished {
+                code,
+                stdout: stdout.to_owned(),
+                stderr: String::new(),
+            })
+        };
+        let start = |kind| Err(RunFailure::Start(std::io::Error::from(kind)));
+        assert_eq!(
+            answer(finished(Some(0), "user u\nhostname h\nport 22\n")),
+            Ok(Address {
+                user: "u".to_owned(),
+                host: "h".to_owned(),
+                port: 22,
+            })
+        );
+        assert_eq!(
+            answer(finished(Some(0), "user u\n")),
+            Err(Problem::SshFailed)
+        );
+        assert_eq!(
+            answer(finished(Some(255), "user u\nhostname h\nport 22\n")),
+            Err(Problem::SshFailed)
+        );
+        assert_eq!(answer(finished(None, "")), Err(Problem::SshFailed));
+        assert_eq!(
+            answer(start(std::io::ErrorKind::NotFound)),
+            Err(Problem::SshMissing)
+        );
+        assert_eq!(
+            answer(start(std::io::ErrorKind::PermissionDenied)),
+            Err(Problem::SshFailed)
+        );
+        assert_eq!(answer(Err(RunFailure::TimedOut)), Err(Problem::TimedOut));
+        assert_eq!(answer(Err(RunFailure::Stopped)), Err(Problem::SshFailed));
     }
 }

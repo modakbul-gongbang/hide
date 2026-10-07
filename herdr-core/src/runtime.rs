@@ -1610,8 +1610,8 @@ pub struct Runtime {
     next_ssh_hosts_id: u64,
     /// The listing `status.ssh_hosts` reports as loading, while its worker runs.
     ssh_hosts_job: Option<ssh_hosts::SshHostsJob>,
-    /// The `ssh` that resolves a Host entry with `-G`; tests name a stand-in.
-    ssh_program: PathBuf,
+    /// What resolves a Host entry: `ssh -G`, or a test's answers.
+    ssh_resolve: crate::ssh_hosts::Resolve,
     /// The checkout a purpose receipt belongs to. A remote checkout lives in
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
@@ -2034,7 +2034,7 @@ impl Runtime {
             repository_clone_job: None,
             next_ssh_hosts_id: 0,
             ssh_hosts_job: None,
-            ssh_program: PathBuf::from("ssh"),
+            ssh_resolve: crate::ssh_hosts::ssh_g(PathBuf::from("ssh")),
             purpose_operation_target: None,
             created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),
