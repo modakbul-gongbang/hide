@@ -6,6 +6,12 @@
 // and nothing is copied. A link cannot cross volumes, and a Windows runner's
 // temporary folder is on another drive, so the bundle sits beside the build
 // in `target/debug`, one per worker, and is removed when the worker exits.
+//
+// A packaged app also carries the pinned Herdr in its resources, which the kit
+// installs agents' Herdr integrations with. The plain bundle leaves it out, so
+// a daemon's kit sees no Herdr CLI and touches no agent's Herdr integration; a
+// spec about those integrations asks for the `herdr` bundle, a second one per
+// worker, so whether a daemon has Herdr never depends on which spec ran first.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -18,35 +24,53 @@ import "./worker-owned";
 const DEBUG = path.resolve("..", "target", "debug");
 const BUNDLES = path.join(DEBUG, "e2e-apps");
 const BINARIES = ["hided", "hide", "hide-agent-hooks"];
-const ROOT = path.join(BUNDLES, String(process.pid));
-const RESOURCES = path.join(ROOT, "hide.app", "Contents", "Resources");
-let linked = false;
+
+/** `plain` is the build alone; `herdr` also carries the fixture's pinned Herdr, as a packaged app does. */
+export type Bundle = "plain" | "herdr";
+const root = (bundle: Bundle) => path.join(BUNDLES, bundle === "plain" ? String(process.pid) : `${process.pid}-herdr`);
+const resources = (bundle: Bundle) => path.join(root(bundle), "hide.app", "Contents", "Resources");
+const linked = new Set<Bundle>();
 
 /** Where this worker's bundle keeps `name` (`hided`, `hide`, `hide-agent-hooks`); `linkBundle` makes it. */
-export function bundledExecutable(name: string): string {
-  return path.join(RESOURCES, fixtureExecutable(name));
+export function bundledExecutable(name: string, bundle: Bundle = "plain"): string {
+  return path.join(resources(bundle), fixtureExecutable(name));
 }
 
-/** Links this worker's bundle the first time a daemon is about to run from it. */
-export function linkBundle(): void {
-  if (linked) return;
-  removeOrphans();
+/**
+ * Links this worker's bundle the first time a daemon is about to run from it; the `herdr` bundle also takes
+ * `herdrBin`, linked where a link can be made and copied where the pinned binary is on another volume.
+ */
+export function linkBundle(bundle: Bundle = "plain", herdrBin?: string): void {
+  if (linked.has(bundle)) return;
+  if (bundle === "herdr" && !herdrBin) throw new Error("the herdr bundle needs the fixture's Herdr binary");
+  if (linked.size === 0) removeOrphans();
+  const folder = root(bundle);
   // A folder under this pid is an earlier process's that the pid was reused from.
-  fs.rmSync(ROOT, { recursive: true, force: true });
-  fs.mkdirSync(RESOURCES, { recursive: true });
+  fs.rmSync(folder, { recursive: true, force: true });
+  fs.mkdirSync(resources(bundle), { recursive: true });
   for (const name of BINARIES) {
     const built = path.join(DEBUG, fixtureExecutable(name));
     if (!fs.existsSync(built)) throw new Error(`${built} is missing; the lane must build it (scripts/verify-cargo.sh cli)`);
-    fs.linkSync(built, bundledExecutable(name));
+    fs.linkSync(built, bundledExecutable(name, bundle));
+  }
+  if (herdrBin) {
+    const target = bundledExecutable("herdr", bundle);
+    try {
+      fs.linkSync(herdrBin, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      fs.copyFileSync(herdrBin, target);
+      fs.chmodSync(target, 0o755);
+    }
   }
   process.once("exit", () => {
     try {
-      fs.rmSync(ROOT, { recursive: true, force: true });
+      fs.rmSync(folder, { recursive: true, force: true });
     } catch (error) {
-      console.error(`e2e app bundle ${ROOT} was not removed at worker exit`, error);
+      console.error(`e2e app bundle ${folder} was not removed at worker exit`, error);
     }
   });
-  linked = true;
+  linked.add(bundle);
 }
 
 // A worker that was killed never ran its exit handler; its bundle would keep a
@@ -54,7 +78,8 @@ export function linkBundle(): void {
 function removeOrphans(): void {
   if (!fs.existsSync(BUNDLES)) return;
   for (const entry of fs.readdirSync(BUNDLES)) {
-    const pid = Number(entry);
+    // `<pid>` or `<pid>-herdr`.
+    const pid = Number(entry.split("-")[0]);
     if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && !alive(pid)) {
       fs.rmSync(path.join(BUNDLES, entry), { recursive: true, force: true });
     }

@@ -21,9 +21,9 @@ const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf
 async function start(record: boolean, options: { seedHideAi?: boolean } = {}) {
   const herdr = await startHerdr();
   const home = path.join(fs.mkdtempSync(path.join(herdr.root, "ob-")), "home");
-  for (const folder of [".claude", ".gemini"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
+  for (const folder of [".claude", ".cursor"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
   fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
-  for (const program of ["claude", "gemini"]) fs.writeFileSync(path.join(home, ".local", "bin", program), "#!/bin/sh\n", { mode: 0o755 });
+  for (const program of ["claude", "cursor-agent"]) fs.writeFileSync(path.join(home, ".local", "bin", program), "#!/bin/sh\n", { mode: 0o755 });
   if (record) {
     fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
     fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [] }));
@@ -42,10 +42,10 @@ test("a Mac with no kit record is asked once, the installed agents are on, and A
     await open(page, daemon);
     await expect(modal(page)).toBeVisible({ timeout: 60_000 });
     await expect(tile(page, "claude-code", "on")).toBeVisible();
-    await expect(tile(page, "gemini-cli", "on")).toBeVisible();
+    await expect(tile(page, "cursor", "on")).toBeVisible();
     // Nothing was written to any agent while the question was open.
     expect(read(path.join(home, ".claude", "settings.json"))).not.toContain("hide-subagents@");
-    expect(fs.existsSync(path.join(home, ".gemini", "settings.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".cursor", "hooks.json"))).toBe(false);
 
     // B46: under Apply, the agent Hide AI will use (the fixture's signed-in Claude Code, first in the fixed order).
     await expect(page.locator("[data-onboarding-hide-ai]")).toHaveText("Hide AI uses Claude Code");
@@ -53,11 +53,11 @@ test("a Mac with no kit record is asked once, the installed agents are on, and A
 
     await tile(page, "claude-code", "on").click();
     await expect(tile(page, "claude-code", "off")).toHaveAttribute("aria-checked", "false");
-    // Turned off, nothing chosen is signed in (the fixture has no Gemini CLI login), so the line goes (B46).
+    // Turned off, nothing chosen is signed in (Hide AI cannot use Cursor yet), so the line goes (B46).
     await expect(page.locator("[data-onboarding-hide-ai]")).toHaveCount(0);
     await page.locator("[data-onboarding-apply]").click();
     await expect(modal(page)).toHaveCount(0);
-    await expect.poll(() => read(path.join(home, ".gemini", "settings.json")), { timeout: 60_000 }).toContain("hide-guidance@");
+    await expect.poll(() => read(path.join(home, ".cursor", "hooks.json")), { timeout: 60_000 }).toContain("hide-guidance@");
     expect(read(path.join(home, ".claude", "settings.json"))).not.toContain("hide-subagents@");
 
     // Decided: a reload does not ask again.
@@ -99,7 +99,7 @@ test("Apply is the only way out: Escape and a click outside do nothing, and the 
     await page.reload();
     await expect(modal(page)).toBeVisible({ timeout: 60_000 });
     expect(read(path.join(home, ".claude", "settings.json"))).not.toContain("hide-subagents@");
-    expect(fs.existsSync(path.join(home, ".gemini", "settings.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".cursor", "hooks.json"))).toBe(false);
 
     await page.locator("[data-onboarding-apply]").click();
     await expect(modal(page)).toHaveCount(0);
@@ -117,7 +117,7 @@ test("a Mac that already has a kit record is never asked and keeps getting its d
     await expect(page.locator("[data-open-settings], [data-sidebar-title-name]").first()).toBeVisible();
     await expect(modal(page)).toHaveCount(0);
     // Not turned on by a pass: an agent beyond the defaults waits for the operator.
-    expect(fs.existsSync(path.join(home, ".gemini", "settings.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".cursor", "hooks.json"))).toBe(false);
   } finally {
     daemon.stop();
   }
