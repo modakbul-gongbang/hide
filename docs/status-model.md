@@ -164,6 +164,8 @@ The session tokens are lowercase hexadecimal SHA-256 digests of each original `a
 A same-server relationship omits `parent_machine`.
 A changed child session clears all four tokens, while an absent session proves neither a valid relationship nor a session change.
 Ending registration leaves the tokens until the child pane changes or disappears.
+A registration ends by itself when the host's authoritative pane topology stops reporting its pane, as a read record is dropped, and never from an incomplete or stale read ([delivery.md](delivery.md#agent-registration-and-spawning)).
+`hide agent list` then reports it `ended` and `disconnected`, and its name is free on that host.
 A relationship is accepted only when both panes still report the recorded session digests; without both digests the child is a root until a complete declaration is written.
 A changed parent session cannot adopt the previous session's children, and an absent parent agent retains the existing orphan presentation.
 A missing or unknown remote machine identity leaves the child a root until its matching device connects.

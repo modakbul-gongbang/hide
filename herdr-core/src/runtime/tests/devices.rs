@@ -71,6 +71,92 @@ fn registering_a_device_opens_its_remote_status_and_removing_it_closes_it() {
     );
 }
 
+#[test]
+fn removing_devices_retires_only_their_pane_reads_and_rejects_late_publications() {
+    use crate::delivery::{Actor, ledger::Ledger};
+
+    let mut runtime = runtime();
+    let mut ledger = Ledger::default();
+    runtime.delivery_ledger = Ok(Arc::new(ledger.clone()));
+    let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
+        "agents": [], "panes": [{"pane_id": "child"}]
+    }))
+    .unwrap();
+    let empty: SessionSnapshotPayload =
+        serde_json::from_value(serde_json::json!({"agents": []})).unwrap();
+    runtime.observe_delivery(crate::node::TEST_NODE, &payload, Some("local-scope"), None);
+    assert!(register_device(&mut runtime, "remaining", "remaining-host"));
+    runtime.begin_delivery_pane_read("remaining");
+    runtime.observe_delivery("remaining", &payload, Some("remaining-scope"), None);
+    let reads = |runtime: &Runtime| {
+        runtime
+            .delivery_panes
+            .iter()
+            .map(|(device, read)| {
+                (
+                    device.clone(),
+                    (read.host_scope.clone(), read.floor, read.panes.clone()),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let baseline = reads(&runtime);
+    assert_eq!(baseline.len(), 2);
+    let parent = Actor {
+        pane_id: "parent".into(),
+        name: "parent".into(),
+        kind: "codex".into(),
+        device_id: crate::node::TEST_NODE.into(),
+        session: Some("parent-native".into()),
+    };
+    for index in 0..8 {
+        let id = format!("device-{index}");
+        assert!(register_device(&mut runtime, &id, "fixture-host"));
+        let child = Actor {
+            pane_id: format!("remote:{id}:pane:child"),
+            name: format!("child-{index}"),
+            device_id: id.clone(),
+            session: crate::wire::session_digest(&format!("child-native-{index}")),
+            ..parent.clone()
+        };
+        ledger.agents.push(crate::coordination::AgentRecord {
+            id: format!("agent-{}", ledger.next_id),
+            name: child.name.clone(),
+            machine: id.clone(),
+            host_scope: "fixture-scope".into(),
+            native_machine: format!("fixture-machine-{index}"),
+            session: format!("child-native-{index}"),
+            instance: format!("terminal-{index}"),
+            pane: "child".into(),
+            parent: None,
+            origin: None,
+            project: None,
+            actor: child.clone(),
+            ended: false,
+        });
+        ledger.next_id += 1;
+        crate::delivery::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        ledger.validate().unwrap();
+        runtime.delivery_ledger = Ok(Arc::new(ledger.clone()));
+        runtime.begin_delivery_pane_read(&id);
+        runtime.observe_delivery(&id, &payload, Some("fixture-scope"), None);
+        assert_eq!(runtime.delivery_panes.len(), baseline.len() + 1);
+
+        assert!(dispatch_device(&mut runtime, "remove_device", &id));
+        assert_eq!(reads(&runtime), baseline);
+        assert_eq!(*runtime.delivery_state().unwrap(), ledger);
+        assert!(runtime.delivery_registrations_gone().is_empty());
+
+        // A retired coordinator can finish a read before its off-lock join.
+        runtime.begin_delivery_pane_read(&id);
+        assert_eq!(reads(&runtime), baseline);
+        runtime.observe_delivery(&id, &empty, Some("fixture-scope"), None);
+        assert_eq!(reads(&runtime), baseline);
+        assert_eq!(*runtime.delivery_state().unwrap(), ledger);
+        assert!(runtime.delivery_registrations_gone().is_empty());
+    }
+}
+
 /// An alias the SSH config does not know is the first thing that can go
 /// wrong, and the row has to say so rather than spin on "connecting".
 #[test]
