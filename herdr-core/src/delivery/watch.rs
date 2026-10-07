@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ledger::Ledger;
@@ -5,7 +6,7 @@ use super::{Actor, FILE_LIMIT, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
 
 /// The inactivity episode and external notification reservation survive the
 /// watch itself, so stopping/restarting or sibling watches cannot resend.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WarningReceipt {
     pub target: Actor,
     pub activity_at_unix_ms: u64,
@@ -20,7 +21,7 @@ impl WarningReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Watch {
     pub id: String,
     pub parent: Actor,
