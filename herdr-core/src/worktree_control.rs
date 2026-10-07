@@ -2864,13 +2864,37 @@ mod tests {
                 "pid {shell}"
             );
         }
-        // The shell is also the foreground process, and is listed once.
-        let server = server(vec![process_info("w1:p1", me)]);
-        let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
-        assert_eq!(
-            held.iter().map(|process| process.pid).collect::<Vec<_>>(),
-            [me]
+        // The shell is also the foreground process, and is listed once. It
+        // is a child of its own: the test process's pid would also have
+        // every other running test's children under it (issue 746).
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("ping");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        } else {
+            let mut command = Command::new("sleep");
+            command.arg("30");
+            command
+        };
+        let mut shell = command.stdout(std::process::Stdio::null()).spawn().unwrap();
+        let pid = shell.id();
+        let server = server(vec![process_info("w1:p1", pid)]);
+        let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1");
+        let tree = hide_platform::process::descendants(pid);
+        let _ = shell.kill();
+        let _ = shell.wait();
+        let held = held
+            .unwrap()
+            .iter()
+            .map(|process| process.pid)
+            .collect::<Vec<_>>();
+        let tree = tree.unwrap();
+        assert_eq!(held.iter().filter(|held| **held == pid).count(), 1);
+        assert!(
+            held.iter().all(|held| *held == pid || tree.contains(held)),
+            "only the shell and what runs under it: {held:?}"
         );
+        assert!(!held.contains(&me));
     }
 
     #[test]

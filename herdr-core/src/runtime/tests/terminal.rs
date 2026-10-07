@@ -330,8 +330,11 @@ fn repeated_sync_updates_do_not_start_a_second_terminal_session() {
     assert!(!terminal_control_request_allowed("idle", true));
 }
 
+/// An answer for which no operation of this runtime is waiting (a late or a
+/// foreign one) moves nothing: only an operation Hide started is drawn ahead
+/// of Herdr.
 #[test]
-fn pane_mutation_receipts_never_publish_topology_ahead_of_session_sync() {
+fn pane_mutation_receipts_without_an_operation_move_nothing() {
     let mut runtime = runtime();
     let pane_id = "w1:p1";
     let layout = PaneLayoutSnapshot {

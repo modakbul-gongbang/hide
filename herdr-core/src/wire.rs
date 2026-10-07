@@ -1623,6 +1623,24 @@ pub(crate) fn moved_tabs(value: Value) -> Result<Vec<String>, String> {
         _ => Err(missing.into()),
     }
 }
+/// Whether a `pane.zoom` answer changed the zoom. A one-pane tab answers
+/// `zoom_changed: false` (`reason: single_pane`) while `changed` can still be
+/// true because the zoom moved focus (Herdr 0.9.1), so the zoom bit is read.
+pub(crate) fn pane_zoom_changed(value: Value) -> Result<bool, String> {
+    let missing = "pane.zoom response is missing zoom";
+    match response(value, missing)? {
+        res::ResponseResult::PaneZoom { zoom } => Ok(zoom.zoom_changed),
+        _ => Err(missing.into()),
+    }
+}
+/// Whether a `pane.resize` answer moved a split.
+pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
+    let missing = "pane.resize response is missing resize";
+    match response(value, missing)? {
+        res::ResponseResult::PaneResize { resize } => Ok(resize.changed),
+        _ => Err(missing.into()),
+    }
+}
 pub(crate) fn split_pane(value: Value) -> Result<String, String> {
     let missing = "pane.split response is missing pane.pane_id";
     match response(value, missing)? {

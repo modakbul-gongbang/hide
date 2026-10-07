@@ -322,6 +322,7 @@ fn authoritative_overflow_waits_without_hidden_focus_and_admits_when_a_slot_open
         checkout_id: Some(checkout.clone()),
         label: "Tab".into(),
         area_id: None,
+        request_id: None,
     }));
     // There is no live control worker in this fixture. Admission must fail
     // before even trying to obtain one or changing the current selection.

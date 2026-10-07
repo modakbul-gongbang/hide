@@ -363,7 +363,7 @@ export const PaneView = memo(function PaneView({
       <ChildChipRow pane={pane} actions={actions} />
       <div className="h-[var(--size-hairline)] shrink-0 bg-border" />
       <div className="relative min-h-0 flex-1">
-        <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} onContextMenu={openTerminalMenu} />
+        <div ref={hostRef} className="absolute inset-0 overflow-hidden" data-terminal-host={paneId} onContextMenu={openTerminalMenu} />
         {refusal?.pane_id === paneId ? (
           <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-card px-sm py-xxs text-caption text-destructive" data-pane-attachment-refusal="true">
             <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason, t)}</span>
