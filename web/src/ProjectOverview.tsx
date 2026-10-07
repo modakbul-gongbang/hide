@@ -11,7 +11,7 @@ import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen
 import { boardProjects, overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
-import { foldId, NO_GRAPH_FILTER } from "./agentGraph";
+import { foldId } from "./agentGraph";
 import { OverviewTitleRow } from "./OverviewTitleRow";
 import { LensTabs, lensHandlers } from "./OverviewLenses";
 import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
@@ -50,7 +50,6 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key, panel: task.key }),
     toggleFold: (fold) => setLens({ folds: toggledFold(lens.folds, fold) }),
-    selectBox: (box, { fold, clearFilter }) => setLens({ box, folds: fold === null || lens.folds.includes(fold) ? lens.folds : [...lens.folds, fold], ...(clearFilter ? { graph: NO_GRAPH_FILTER } : {}) }),
   }), [actions, setLens, lens.folds]);
   // The Project whose Done column is open.
   const [doneOpenFor, setDoneOpenFor] = useState<string | null>(null);

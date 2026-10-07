@@ -395,6 +395,8 @@ describe("across projects (issue 718)", () => {
       ["out", "docs", ["Docs"], "docs-main", null],
     ]);
     expect(row(board, "s1").cross.map((chip) => [chip.direction, chip.project.id, chip.names, chip.box])).toEqual([["in", "herdr-ide", ["Lead"], "ide-main"]]);
+    // The projects stand in the order of their most urgent agent, not the order the snapshot lists them.
+    expect(row(graph(projects().reverse(), { scope: "all" }), "lead").cross.map((chip) => chip.project.id)).toEqual(["sasu", "docs"]);
     // A delegation inside the project keeps its indent and has no chip.
     expect(row(board, "helper")).toMatchObject({ depth: 1, cross: [] });
     // The child stands as a root of its own project, with no line out of it.

@@ -68,7 +68,7 @@ async function pathRow() {
     await act(async () => chip()!.click());
     return events.filter((event) => event.kind === "reveal_path").at(-1);
   };
-  const render = async () => act(async () => root.render(<TooltipProvider><RequestView rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {}, selectBox: () => {} })} actions={actions} /></TooltipProvider>));
+  const render = async () => act(async () => root.render(<TooltipProvider><RequestView rows={[row]} scope="all" lens={NO_REQUEST_LENS} onLens={() => {}} handlers={lensHandlers(actions, { openIssue: () => {}, toggleFold: () => {} })} actions={actions} /></TooltipProvider>));
   const cleanup = async () => {
     await act(async () => root.unmount());
     container.remove();
@@ -144,7 +144,7 @@ it("keeps twenty unchanged rows asleep, but renders changed facts and uses curre
     return { lens: { agent, bucket: "working", project, checkout, device: null, task: null }, verb: "working", children: [] };
   });
   const actions = createActions(() => true);
-  let props: RequestViewProps = { rows, scope: "all", lens: NO_REQUEST_LENS, onLens: vi.fn(), handlers: lensHandlers(actions, { openIssue: vi.fn(), toggleFold: vi.fn(), selectBox: vi.fn() }), actions };
+  let props: RequestViewProps = { rows, scope: "all", lens: NO_REQUEST_LENS, onLens: vi.fn(), handlers: lensHandlers(actions, { openIssue: vi.fn(), toggleFold: vi.fn() }), actions };
   const render = async () => act(async () => root.render(<TooltipProvider><RequestView {...props} /></TooltipProvider>));
   try {
     observation.rows = 0;

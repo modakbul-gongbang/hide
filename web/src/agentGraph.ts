@@ -479,7 +479,11 @@ function crossChipsOf(value: LensAgent, lineage: Lineage): CrossChip[] {
   const chips: CrossChip[] = [];
   const byProject = new Map<string, LensAgent[]>();
   for (const other of lineage.children.get(value.agent.pane_id) ?? []) if (other.project.id !== value.project.id) push(byProject, other.project.id, other);
-  for (const others of byProject.values()) chips.push(chip("out", others));
+  // Projects in the order of their most urgent agent, so a snapshot that only reorders the list keeps the chips in place.
+  const outs = [...byProject.values()].map((others) => chip("out", others));
+  const urgency = (out: CrossChip) => lineage.byPane.get(out.paneIds[0]!)!;
+  outs.sort((a, b) => byAttentionThenActivity(urgency(a), urgency(b)));
+  chips.push(...outs);
   const parentId = value.agent.lineage_parent_pane_id;
   const parent = parentId ? lineage.byPane.get(parentId) : undefined;
   if (parent && parent.project.id !== value.project.id) chips.push(chip("in", [parent]));

@@ -180,11 +180,16 @@ export type AgentGraphProps = {
   folds: readonly string[];
   /** Every agent of every project on every device, where a chip finds the other end of a delegation into another project. */
   everyone: readonly LensAgent[];
+  /** All projects only: a chip whose box this page draws selects it here, its fold opened and a filter that hides it cleared (issue 718). */
+  onSelectBox?: (box: string, reveal: GraphReveal) => void;
   handlers: LensHandlers;
   now: number;
 };
 
-export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFilter, folds, everyone, handlers, now }: AgentGraphProps) {
+/** What a chip's box needs before it can be seen: its fold opened, the filter turned off. */
+export type GraphReveal = { fold: string | null; clearFilter: boolean };
+
+export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFilter, folds, everyone, onSelectBox, handlers, now }: AgentGraphProps) {
   const { t } = useInterfaceTranslation();
   // The sizes are tokens, read once: the layout is numbers (D-31).
   const [geometry] = useState(() => readGraphGeometry());
@@ -207,9 +212,9 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   }, [jump]);
   // A chip goes to the other end's box: here when this page draws its project, else on that project's Overview (issue 718).
   const onCross = (chip: CrossChip) => {
-    if (scope === "all" && projects.some(({ workspace }) => workspace.id === chip.project.id)) {
+    if (onSelectBox && projects.some(({ workspace }) => workspace.id === chip.project.id)) {
       const drawn = board.sections.some((section) => section.rows.has(chip.paneIds[0]!));
-      handlers.selectBox(chip.box, { fold: drawn ? null : foldHolding(chip.project, everyone, chip.box, "all"), clearFilter: !drawn && graphFilterActive(filter) });
+      onSelectBox(chip.box, { fold: drawn ? null : foldHolding(chip.project, everyone, chip.box, "all"), clearFilter: !drawn && graphFilterActive(filter) });
       setJump((last) => ({ box: chip.box, count: (last?.count ?? 0) + 1 }));
     } else handlers.openProjectBox(chip.project, chip.box, foldHolding(chip.project, everyone, chip.box, "project"));
   };
@@ -544,7 +549,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
         {row.depth > 0 ? <CornerDownRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" data-graph-indent="true" /> : null}
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
         <AgentMark kind={agent.agent_kind} />
-        <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", asking && "font-semibold")}>{agent.identity_label}</span>
+        <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", row.cross.length > 0 && "min-w-1/4", asking && "font-semibold")}>{agent.identity_label}</span>
         {row.cross.map((chip) => (
           <CrossProjectChip key={`${chip.direction}:${chip.project.id}`} chip={chip} onClick={() => onCross(chip)} />
         ))}
@@ -589,7 +594,7 @@ function CrossProjectChip({ chip, onClick }: { chip: CrossChip; onClick: () => v
         data-graph-focus="chip"
         data-graph-cross={chip.direction}
         data-graph-cross-project={chip.project.id}
-        className="pointer-events-auto relative z-10 inline-flex h-(--graph-row-line) max-w-(--size-pane-child-chip-max) shrink-0 items-center gap-xxs rounded-xs border border-border px-xs font-mono text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        className="pointer-events-auto relative z-10 inline-flex h-(--graph-row-line) min-w-0 max-w-(--size-pane-child-chip-max) items-center gap-xxs rounded-xs border border-border px-xs font-mono text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         onClick={(event) => {
           event.stopPropagation();
           onClick();
@@ -597,7 +602,7 @@ function CrossProjectChip({ chip, onClick }: { chip: CrossChip; onClick: () => v
       >
         <Arrow aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
         <span className="min-w-0 truncate font-sans">{chip.project.label}</span>
-        {device ? <span className="shrink-0 font-sans text-subtle-foreground">{device}</span> : null}
+        {device ? <span className="min-w-0 truncate font-sans text-subtle-foreground">{device}</span> : null}
         {chip.paneIds.length > 1 ? <span className="shrink-0">{chip.paneIds.length}</span> : null}
       </button>
     </Hint>

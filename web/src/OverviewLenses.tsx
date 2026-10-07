@@ -43,14 +43,12 @@ export type LensHandlers = {
   cleanup: (project: Workspace, checkout: Checkout) => void;
   /** A fold line, by `foldId`: the line of one project opens or closes in place. */
   toggleFold: (fold: string) => void;
-  /** A cross-project chip whose box this page draws: that box selected, its fold opened and a filter that hides it cleared (issue 718). */
-  selectBox: (box: string, reveal: { fold: string | null; clearFilter: boolean }) => void;
-  /** A cross-project chip whose box is on another project: that project's Overview with the box selected and its fold opened. */
+  /** A cross-project chip whose box is not on this page: that project's Overview with the box selected and its fold opened (issue 718). */
   openProjectBox: (project: Workspace, box: string, fold: string | null) => void;
 };
 
-/** The handlers both scopes share, around the ones that are each page's own: where an issue chip goes, how a fold opens and how a box is selected. */
-export function lensHandlers(actions: Actions, page: Pick<LensHandlers, "openIssue" | "toggleFold" | "selectBox">): LensHandlers {
+/** The handlers both scopes share, around the two that are each page's own: where an issue chip goes and how a fold opens. */
+export function lensHandlers(actions: Actions, page: Pick<LensHandlers, "openIssue" | "toggleFold">): LensHandlers {
   return {
     ...page,
     openProjectBox: (project, box, fold) => actions.openOverview(project.device_id, project.id, { box, fold }),
