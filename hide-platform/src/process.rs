@@ -2494,10 +2494,10 @@ pub fn temp_process_cwds() -> Vec<(u32, u32, String, Option<PathBuf>)> {
         unsafe { CloseHandle(process) };
         answer
     }
-    let mut table = Vec::new();
+    let mut table: Vec<(u32, u32, String)> = Vec::new();
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
-        return table;
+        return Vec::new();
     }
     let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
     entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
