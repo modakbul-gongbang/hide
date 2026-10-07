@@ -13,6 +13,8 @@ export type AgentRow = {
   id: string;
   pane_id: string;
   identity_label: string;
+  /** The name Herdr knows the agent by (`agent start --name`, `agent rename`); absent when it was given none. */
+  herdr_name?: string;
   agent_kind: string;
   /** The checkout that physically owns this pane. */
   checkout_label?: string | null;
@@ -515,6 +517,8 @@ export type Checkout = {
   agent_summary?: CheckoutAgentSummary;
   /** The worktree row behind a Git checkout, or null for a plain folder. */
   worktree?: WorktreeRow | null;
+  /** The work done here is in the base: Git finds HEAD there and the link record ties its sessions to a merged pull request and to none still open. Git alone cannot say so, since a checkout with no commits of its own is in its base too. Absent from older daemons. */
+  landed?: boolean;
   pull_request: PullRequest | null;
   /** The issue this checkout's work is linked to. */
   issue?: IssueLink | null;
@@ -993,8 +997,8 @@ export type KitAgent = {
   partial?: boolean;
   /** Every feature of the Partial popover in the table's order (`hide_kit::Feature` ids); `supported` is what this build does. */
   features?: { id: KitFeatureId; supported: boolean }[];
-  /** The agent's open sessions on this machine; null for an agent with no connection to judge (Partial agents) and before the machine's sessions are read. */
-  sessions?: KitAgentSessions | null;
+  /** How many of the agent's sessions run on this machine now, a sleeping agent not counted; null for an agent whose sessions Hide does not read (Partial agents) and before the machine's sessions are read. */
+  sessions?: number | null;
   doc_url: string;
 };
 
@@ -1011,13 +1015,6 @@ export type KitFeatureId =
   | "fork"
   | "start"
   | "titles";
-
-/** `KitAgentSessionsSnapshot`: `not_connected` lists at most 32 sessions, and `not_connected_hidden` counts the rest. */
-export type KitAgentSessions = {
-  connected: number;
-  not_connected: { pane_id: string; title: string; project: string; reason: PaneConnectionReason }[];
-  not_connected_hidden: number;
-};
 
 /** How the last turn-off of Codex's shared server on a machine ended (`CodexDaemonOffSnapshot`). */
 export type CodexDaemonOff =

@@ -14,6 +14,7 @@ path = "src/bin/hide.rs"
 
 [dependencies]
 herdr-core = { path = "../herdr-core" }
+hide-factory = { path = "../hide-factory" }
 hide-host = { path = "../hide-host" }
 hide-platform = { path = "../hide-platform" }
 hide-kit = { path = "../hide-kit" }

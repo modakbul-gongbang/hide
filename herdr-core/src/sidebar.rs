@@ -181,6 +181,10 @@ pub struct AgentLabel {
 pub struct SessionAgentPayload {
     #[serde(default)]
     pub id: Option<String>,
+    /// The name Herdr knows the agent by (`agent.start --name`, `agent
+    /// rename`); absent when it was given none.
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub pane_id: Option<String>,
     #[serde(default)]
@@ -1198,9 +1202,10 @@ pub fn project_pane_children(
 /// [`project_pane_children`] with the pane's connection judged on top of it.
 ///
 /// The connection is read from the observation the children were just
-/// projected from, so the header's mark and the Settings counts cannot
-/// disagree about which sessions Hide hears (PRD settings-cleanup B16, B26,
-/// D-09). `codex_daemon_on` is the machine's Codex shared-server setting.
+/// projected from (PRD settings-cleanup B26, D-09). A sleeping agent has
+/// ended its process, so there is no session for a hook to speak from and
+/// nothing to judge until it wakes. `codex_daemon_on` is the machine's Codex
+/// shared-server setting.
 pub fn project_pane_children_connected(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
@@ -1211,7 +1216,7 @@ pub fn project_pane_children_connected(
     let mut children = project_pane_children(agents, pane_id, tokens, status_of)?;
     let runtime = agents
         .iter()
-        .find(|agent| agent.pane_id == pane_id)
+        .find(|agent| agent.pane_id == pane_id && agent.sleep.is_none())
         .and_then(|agent| crate::agent_hooks::runtime_of(&agent.agent_kind));
     children.connection = pane_connection(runtime, pane_id, &children, codex_daemon_on);
     Some(children)
@@ -1495,6 +1500,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
+        herdr_name: non_empty(agent.name.as_deref())
+            .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
+            .map(str::to_owned),
         pane_id,
         workspace_label,
         checkout_label: None,

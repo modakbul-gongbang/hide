@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ledger::Ledger;
@@ -5,7 +6,7 @@ use super::{Actor, FILE_LIMIT, INACTIVITY_MS, SECOND_WARNING_MS, WATCH_LIMIT};
 
 /// The inactivity episode and external notification reservation survive the
 /// watch itself, so stopping/restarting or sibling watches cannot resend.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WarningReceipt {
     pub target: Actor,
     pub activity_at_unix_ms: u64,
@@ -20,7 +21,7 @@ impl WarningReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Watch {
     pub id: String,
     pub parent: Actor,
@@ -65,6 +66,17 @@ impl Watch {
             && self.warning_count <= 2
             && super::valid_key(&self.last_status)
             && (self.warning_count == 0) == self.first_warning_at_unix_ms.is_none()
+    }
+}
+
+/// How long a watch waits before its first warning: a Factory observer
+/// stops a quiet worker after 30 minutes unless the reading carries the
+/// Factory's own window, every other observer after 20.
+pub fn inactivity_window(watch: &Watch) -> u64 {
+    if watch.parent.code_owned() {
+        super::FACTORY_INACTIVITY_MS
+    } else {
+        INACTIVITY_MS
     }
 }
 
@@ -172,6 +184,9 @@ pub struct Reading {
     pub session_modified_at_unix_ms: Option<u64>,
     pub failure: Option<String>,
     pub gone: bool,
+    /// A window that replaces [`inactivity_window`] for this watch: a
+    /// Factory's stall setting (D-30).
+    pub inactivity_ms: Option<u64>,
 }
 
 #[derive(Default)]
@@ -279,7 +294,12 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             watch.last_activity_at_unix_ms
         };
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
-            (0, _) => now.saturating_sub(activity) >= INACTIVITY_MS,
+            (0, _) => {
+                now.saturating_sub(activity)
+                    >= reading
+                        .inactivity_ms
+                        .unwrap_or_else(|| inactivity_window(watch))
+            }
             (1, Some(first)) => now.saturating_sub(first) >= SECOND_WARNING_MS,
             _ => false,
         };
@@ -414,6 +434,7 @@ mod tests {
             session_modified_at_unix_ms: None,
             failure: None,
             gone: false,
+            inactivity_ms: None,
         }
     }
 
@@ -537,6 +558,33 @@ mod tests {
             "native_identity_required"
         );
         assert_eq!(ledger, before);
+    }
+
+    #[test]
+    fn a_factory_observer_warns_after_thirty_quiet_minutes_not_twenty() {
+        let mut ledger = Ledger::default();
+        let factory = Actor::factory("f-1");
+        let watch = start(&mut ledger, &factory, &actor("worker"), 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        assert!(ledger.letters.is_empty());
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + 30 * 60_000 - 1).unwrap();
+        assert!(ledger.letters.is_empty());
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + 30 * 60_000).unwrap();
+        assert_eq!(ledger.letters.len(), 1);
+    }
+
+    #[test]
+    fn a_factory_s_stall_setting_replaces_the_thirty_minute_window() {
+        let mut ledger = Ledger::default();
+        let watch = start(&mut ledger, &Actor::factory("f-1"), &actor("worker"), 10).unwrap();
+        let within = |id: &str| Reading {
+            inactivity_ms: Some(45 * 60_000),
+            ..reading(id, 10)
+        };
+        tick(&mut ledger, &[within(&watch.id)], 10 + 45 * 60_000 - 1).unwrap();
+        assert!(ledger.letters.is_empty());
+        tick(&mut ledger, &[within(&watch.id)], 10 + 45 * 60_000).unwrap();
+        assert_eq!(ledger.letters.len(), 1);
     }
 
     #[test]
@@ -666,6 +714,7 @@ mod tests {
             session_modified_at_unix_ms: None,
             failure: None,
             gone: false,
+            inactivity_ms: None,
         };
         reading.gone = true;
         tick(&mut ledger, &[reading], 2 + INACTIVITY_MS).unwrap();

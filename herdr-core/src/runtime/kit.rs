@@ -1047,22 +1047,16 @@ impl Runtime {
             .unwrap_or_default()
     }
 
-    /// Each agent's open sessions on one machine, counted by whether Hide
-    /// hears them (PRD settings-cleanup B16, B17, B19).
+    /// How many of each agent's sessions run on one machine now (PRD
+    /// settings-cleanup B16, B19).
     ///
     /// Only the sessions that exist now are counted: the walk is over the
     /// panes the snapshot holds, so a closed session leaves the count on the
-    /// next pass and nothing accumulates per session (D-23). The work is one
-    /// pass over the machine's panes each time the agent lineage pass or a
-    /// device's session republishes, not a per-tick cost, and the list it
-    /// builds is capped at [`crate::model::MAX_NOT_CONNECTED_SESSIONS`].
-    fn agent_sessions(
-        &self,
-        device_id: &str,
-    ) -> std::collections::BTreeMap<&'static str, crate::model::KitAgentSessionsSnapshot> {
-        use crate::model::{
-            KitAgentSessionsSnapshot, MAX_NOT_CONNECTED_SESSIONS, NotConnectedSessionSnapshot,
-        };
+    /// next pass and nothing accumulates per session (D-23). A sleeping agent
+    /// has ended its process, so its pane holds no running session. The work
+    /// is one pass over the machine's panes each time the agent lineage pass
+    /// or a device's session republishes, not a per-tick cost.
+    fn agent_sessions(&self, device_id: &str) -> std::collections::BTreeMap<&'static str, u32> {
         let remote = self
             .snapshot
             .status
@@ -1080,11 +1074,11 @@ impl Runtime {
         } else {
             return std::collections::BTreeMap::new();
         };
-        let mut sessions: std::collections::BTreeMap<&'static str, KitAgentSessionsSnapshot> =
+        let mut sessions: std::collections::BTreeMap<&'static str, u32> =
             hide_kit::agents::ADAPTERS
                 .iter()
                 .filter(|adapter| adapter.supports(hide_kit::Feature::Letters))
-                .map(|adapter| (adapter.id, KitAgentSessionsSnapshot::default()))
+                .map(|adapter| (adapter.id, 0))
                 .collect();
         let panes = workspaces
             .iter()
@@ -1096,46 +1090,29 @@ impl Runtime {
             if (device_id == LOCAL_DEVICE_ID) != local_pane {
                 continue;
             }
-            let Some(connection) = pane
-                .children
-                .as_ref()
-                .and_then(|children| children.connection)
+            let Some(agent) = agents
+                .iter()
+                .find(|agent| agent.pane_id == pane.id && agent.sleep.is_none())
             else {
                 continue;
             };
-            let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane.id) else {
-                continue;
-            };
-            let Some(adapter_id) = crate::agent_hooks::runtime_of(&agent.agent_kind)
+            let Some(count) = crate::agent_hooks::runtime_of(&agent.agent_kind)
                 .map(crate::agent_hooks::adapter_id)
+                .and_then(|adapter_id| sessions.get_mut(adapter_id))
             else {
                 continue;
             };
-            let Some(row) = sessions.get_mut(adapter_id) else {
-                continue;
-            };
-            match connection.reason {
-                None => row.connected += 1,
-                Some(reason) if row.not_connected.len() < MAX_NOT_CONNECTED_SESSIONS => {
-                    row.not_connected.push(NotConnectedSessionSnapshot {
-                        pane_id: pane.id.clone(),
-                        title: agent.identity_label.clone(),
-                        project: agent.workspace_label.clone(),
-                        reason,
-                    });
-                }
-                Some(_) => row.not_connected_hidden += 1,
-            }
+            *count += 1;
         }
         sessions
     }
 
     /// Puts [`Self::agent_sessions`] on a kit snapshot's agent rows; an agent
-    /// with no connection to judge keeps `None`.
+    /// whose sessions Hide does not read keeps `None`.
     fn fill_agent_sessions(&self, device_id: &str, kit: &mut KitSnapshot) {
         let sessions = self.agent_sessions(device_id);
         for agent in &mut kit.agents {
-            agent.sessions = sessions.get(agent.id.as_str()).cloned();
+            agent.sessions = sessions.get(agent.id.as_str()).copied();
         }
     }
 
@@ -1162,7 +1139,7 @@ impl Runtime {
                 continue;
             };
             for agent in &mut device.kit.agents {
-                let next = sessions.get(agent.id.as_str()).cloned();
+                let next = sessions.get(agent.id.as_str()).copied();
                 if agent.sessions != next {
                     agent.sessions = next;
                     changed = true;

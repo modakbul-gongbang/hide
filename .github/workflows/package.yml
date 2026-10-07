@@ -3,13 +3,18 @@
 # and then started without a window by `desktop/scripts/smoke-package.mjs`,
 # because no machine of either system is at hand to try a package on.
 #
-# A release calls this workflow and attaches what it uploads. A pull request
-# runs it only when it changes what goes into a package; a cold release build
-# of the workspace takes several times the `windows check` job, and a pull
-# request that touches none of these paths changes no package that
-# `verify`'s own lanes would not already catch (the workspace compiling and
-# `hide connect` starting its daemon on Windows). It is not part of `verify`:
-# a check that runs on some pull requests only cannot be required.
+# A release calls this workflow and attaches what it uploads, and the nightly
+# calls it on main. A pull request runs it as `pr.yml`'s `package` lane, which
+# `scripts/ci-plan.py` plans only for a change to what goes into a package
+# (PACKAGE_PATHS, the one list of those paths); a cold release build of the
+# workspace takes several times the `windows check` job, and a pull request
+# that touches none of those paths changes no package that `verify`'s other
+# lanes would not already catch (the workspace compiling and `hide connect`
+# starting its daemon on Windows).
+#
+# `include-macos` adds the macOS archive and runs the packaged app's own specs
+# on it: the signed bundle with its own host, daemon and Herdr, which no other
+# lane starts.
 name: package
 
 on:
@@ -20,33 +25,13 @@ on:
         type: string
         required: true
       include-macos:
-        description: Also test the macOS archive and its packaged app (nightly).
+        description: Also test the macOS archive and its packaged app (pull requests and nightly).
         type: boolean
         required: false
         default: false
-  pull_request:
-    paths:
-      - desktop/scripts/**
-      - desktop/package.json
-      - desktop/resources/**
-      - contracts/herdr-bundle.json
-      - scripts/fetch-herdr-runtime.*
-      - scripts/verify-cargo.sh
-      - scripts/verify-web.sh
-      - scripts/toolchain-env.sh
-      - hided/build.rs
-      - hided/src/cli.rs
-      - hide-kit/**
-      - hide-agent-hooks/**
-      - .github/workflows/package.yml
-      - .github/workflows/release.yml
 
 permissions:
   contents: read
-
-concurrency:
-  group: package-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   package:
@@ -84,12 +69,11 @@ jobs:
         if: matrix.system == 'linux'
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Name the version
-        # A pull request's package reports a version no release uses.
         env:
           REQUESTED: ${{ inputs.version }}
         run: |
           version="${REQUESTED#v}"
-          echo "HIDE_VERSION=${version:-0.0.0-ci.${{ github.run_number }}}" >> "$GITHUB_ENV"
+          echo "HIDE_VERSION=$version" >> "$GITHUB_ENV"
       - run: bash scripts/verify-web.sh install
       - name: Package the unsigned app and its checksum
         # The packager builds the web shell and the release binaries,

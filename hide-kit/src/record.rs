@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use hide_agent_hooks::codex_trust::HookEntry;
 use serde::{Deserialize, Serialize};
 
 use crate::ComponentId;
@@ -39,6 +40,14 @@ pub(crate) struct Record {
     /// is one that predates the choice, so it was never held.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     awaiting_choice: bool,
+    /// The entries Herdr's integration install added to an agent's hook file
+    /// when the kit ran it, by adapter id (PRD codex-herdr-hook-trust): what
+    /// Herdr wrote, as the kit saw it, so Codex's trust for it is for exactly
+    /// those bytes. Read only while the record also holds that agent's
+    /// `herdr:<agent>` piece; an integration the operator installed first has
+    /// neither. A build that does not know the field ignores it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    herdr_hooks: BTreeMap<String, Vec<HookEntry>>,
     /// There was no record file when this one was loaded: the machine has
     /// never had the kit applied. Never written.
     #[serde(skip)]
@@ -64,8 +73,30 @@ impl Record {
         self.installed.insert(code.to_owned())
     }
 
+    /// Forgets a piece, and with it the hook entries learned for it.
     pub(crate) fn forget_piece(&mut self, code: &str) -> bool {
+        if let Some(agent) = code.strip_prefix("herdr:") {
+            self.herdr_hooks.remove(agent);
+        }
         self.installed.remove(code)
+    }
+
+    /// The hook entries the kit saw Herdr's integration for `agent` write,
+    /// only while the record holds that integration as the kit's own.
+    pub(crate) fn herdr_hook_entries(&self, agent: &str) -> &[HookEntry] {
+        if !self.contains_piece(&format!("herdr:{agent}")) {
+            return &[];
+        }
+        self.herdr_hooks.get(agent).map_or(&[], Vec::as_slice)
+    }
+
+    /// Keeps what Herdr's integration for `agent` wrote; true when that
+    /// changed the record.
+    pub(crate) fn set_herdr_hook_entries(&mut self, agent: &str, entries: Vec<HookEntry>) -> bool {
+        if entries.is_empty() {
+            return self.herdr_hooks.remove(agent).is_some();
+        }
+        self.herdr_hooks.insert(agent.to_owned(), entries.clone()) != Some(entries)
     }
 
     /// Whether the machine has never had the kit applied.
@@ -187,6 +218,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
         retired: record.retired.clone(),
         agents: record.agents.clone(),
         awaiting_choice: record.awaiting_choice,
+        herdr_hooks: record.herdr_hooks.clone(),
         fresh: false,
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;

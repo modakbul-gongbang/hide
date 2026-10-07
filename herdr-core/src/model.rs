@@ -733,11 +733,11 @@ pub struct KitAgentSnapshot {
     /// Every feature of the Partial popover, in the table's order, with
     /// whether this build does it for the agent (`hide_kit::agents::Feature`).
     pub features: Vec<KitFeatureSnapshot>,
-    /// The agent's sessions open on this machine now, counted for the row's
-    /// "N connected" and "N not connected" (B16, B17); `None` for an agent
-    /// Hide cannot tell a connection of (B19) and for a machine whose
-    /// sessions are not read yet.
-    pub sessions: Option<KitAgentSessionsSnapshot>,
+    /// How many of the agent's sessions run on this machine now, for the
+    /// row's "N sessions" (B16); a sleeping agent is not running and is not
+    /// counted. `None` for an agent whose sessions Hide does not read (B19)
+    /// and for a machine whose sessions are not read yet.
+    pub sessions: Option<u32>,
     /// The official page the adapter's answers come from.
     pub doc_url: String,
 }
@@ -746,31 +746,6 @@ pub struct KitAgentSnapshot {
 pub struct KitFeatureSnapshot {
     pub id: hide_kit::Feature,
     pub supported: bool,
-}
-
-/// One agent's open sessions on one machine, by whether Hide hears them.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct KitAgentSessionsSnapshot {
-    pub connected: u32,
-    /// Each open session Hide does not hear, in the order the sidebar lists
-    /// their panes. Capped at [`MAX_NOT_CONNECTED_SESSIONS`]; `connected` and
-    /// the list's length together are the open sessions up to the cap.
-    pub not_connected: Vec<NotConnectedSessionSnapshot>,
-    /// The count of not connected sessions beyond the cap, so the number the
-    /// row says stays true while the list is bounded.
-    pub not_connected_hidden: u32,
-}
-
-/// Cap on the sessions one agent row lists; a person fixes them one pane at a
-/// time, and a longer list is a count.
-pub const MAX_NOT_CONNECTED_SESSIONS: usize = 32;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct NotConnectedSessionSnapshot {
-    pub pane_id: String,
-    pub title: String,
-    pub project: String,
-    pub reason: PaneConnectionReason,
 }
 
 impl KitAgentSnapshot {
@@ -971,6 +946,13 @@ pub struct DeviceTestStageSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub id: String,
+    /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
+    /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
+    /// none or only one Hide made up from its pane (`fork::hide_made_name`).
+    /// `id` falls back to the pane id and a device's row replaces it, so it
+    /// cannot stand in for this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub herdr_name: Option<String>,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -1417,6 +1399,13 @@ pub struct CheckoutSnapshot {
     /// The complete worktree row backing the card and both removal menus.
     /// All three surfaces therefore consume one core-owned policy result.
     pub worktree: Option<WorktreeSnapshot>,
+    /// The work done here is in the base: Git finds HEAD in it, and the link
+    /// record ties the sessions that worked here to a merged pull request and
+    /// to none still open. Git alone cannot say this, because a checkout with
+    /// no commits of its own is in its base too. A merged pull request on
+    /// this checkout's own HEAD is the other proof, which `pull_request`
+    /// carries.
+    pub landed: bool,
     pub tabs: Vec<TabSnapshot>,
     /// The tab Herdr reports as active in this checkout, or `None` when the
     /// workspace's active tab lives in a sibling checkout. A checkout never

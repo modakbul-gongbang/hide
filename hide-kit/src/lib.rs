@@ -719,6 +719,7 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         changed = true;
     }
     let mut components = Vec::with_capacity(ComponentId::ALL.len());
+    let mut trust_codex = false;
     for id in ComponentId::ALL {
         // The owner is quitting: what is done is recorded, and the rest waits
         // for the next launch or connection.
@@ -786,17 +787,16 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         } else {
             observed
         };
-        // The entries are in place for an agent that is on: have Codex trust
-        // them, whether this pass wrote them or found them (PRD
-        // codex-hook-trust D-05). A failure here is the part's, and the
-        // other parts go on.
+        // The entries are in place for an agent that is on: Codex is asked to
+        // trust them below, once Herdr's integration is in place too (PRD
+        // codex-hook-trust D-05, codex-herdr-hook-trust D-03).
         if id == ComponentId::CodexHook
             && failure.is_none()
             && !turning_off
             && !agent_off
             && matches!(after, Observed::Current)
         {
-            failure = codex_trust::ensure(target);
+            trust_codex = true;
         }
         // A part the operator turned off is recorded too, so the next pass
         // reads it as theirs rather than as never installed.
@@ -813,18 +813,42 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         let off = agent_off || agent_kit::part_is_off(&record, id);
         components.push(report(id, target, after, recorded_now, off, failure));
     }
-    let (agents, agents_changed, agents_retirement) = agent_kit::apply(
+    let applied = agent_kit::apply(target, scope, &mut record, record_failure.as_ref());
+    changed |= applied.changed;
+    // Whether this pass wrote the entries or found them, Codex trusts Hide's
+    // and, when the kit installed it, Herdr's, in one check: Herdr's
+    // integration is only in place now. A failure is the Codex part's, and the
+    // other parts are already installed.
+    if trust_codex
+        && !target.stop.load(Ordering::Relaxed)
+        && let Some(codex) = agents::adapter_of_part(ComponentId::CodexHook)
+        && let Some(failure) = codex_trust::ensure(
+            target,
+            // Herdr's entries only while Herdr says its integration is in place.
+            codex
+                .herdr
+                .filter(|integration| applied.herdr_current(integration.name))
+                .map_or(&[][..], |_| record.herdr_hook_entries(codex.id)),
+        )
+        && let Some(part) = components
+            .iter_mut()
+            .find(|part| part.id == ComponentId::CodexHook)
+    {
+        part.state = ComponentState::Failed;
+        part.reason = Some(failure);
+    }
+    let agents = agent_kit::reports(
         target,
         scope,
-        &mut record,
+        &record,
         record_failure.as_ref(),
+        &applied,
         &agent_kit::part_views(&components),
     );
-    changed |= agents_changed;
-    legacy_retirement.removed.extend(agents_retirement.removed);
+    legacy_retirement.removed.extend(applied.retirement.removed);
     legacy_retirement
         .failures
-        .extend(agents_retirement.failures);
+        .extend(applied.retirement.failures);
     // The part an earlier build recorded for the Codex setting it used to
     // switch is gone; its record entry goes with it.
     if record_failure.is_none() {

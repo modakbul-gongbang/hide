@@ -2,8 +2,7 @@
 // B8 to B20): the seven supported agents of this Mac, the ones whose program the private HOME holds under
 // Installed and the rest folded under Not installed, a switch that writes and removes Hide's own entries,
 // the Partial popover from its chip by keyboard, and a hook the operator removed shown on its row with
-// Reinstall. How a status reads for sessions that run without Hide is the component test's, on invented
-// snapshots; a real session of each kind needs an agent the machine does not have.
+// Reinstall.
 
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
@@ -62,14 +61,9 @@ test("lists the installed agents with a status and a switch, and folds the other
     await expect(list.locator('[data-agent-status="local:codex:ready"]')).toHaveText(/Ready/);
     await expect(list.locator('[data-agent-row="local:gemini-cli:off"] [data-agent-status]')).toHaveCount(0);
 
-    // B17: the fixture's two Claude Code panes run without Hide; the row counts them and opens their list.
-    const notConnected = list.locator('[data-agent-status="local:claude-code:not-connected"]');
-    await expect(notConnected).toContainText("2 not connected");
-    await expect(notConnected).toHaveAttribute("aria-expanded", "false");
-    await notConnected.click();
-    await expect(notConnected).toHaveAttribute("aria-expanded", "true");
-    await expect(list.locator("[data-agent-go-to-pane]")).toHaveCount(2);
-    await screenshot(page, "agents-not-connected");
+    // B16: the fixture's two Claude Code panes are running sessions, and the row says how many and nothing more.
+    await expect(list.locator('[data-agent-status="local:claude-code:sessions"]')).toHaveText(/2 sessions/);
+    await expect(list.locator('[data-agent-row="local:claude-code:on"]')).not.toContainText("connected");
 
     // B8: Not installed is closed until opened and each row's Install opens the vendor's guide.
     const fold = list.locator("[data-agents-not-installed]");

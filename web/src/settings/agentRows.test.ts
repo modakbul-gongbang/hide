@@ -14,11 +14,6 @@ const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({
   doc_url: "https://example.test",
   ...patch,
 });
-const sessions = (connected: number, not: number, hidden = 0): KitAgent["sessions"] => ({
-  connected,
-  not_connected: Array.from({ length: not }, (_, index) => ({ pane_id: `p${index}`, title: "t", project: "p", reason: "started_before_hide" as const })),
-  not_connected_hidden: hidden,
-});
 const device = (patch: Partial<Device> & { agents?: KitAgent[]; unavailable?: string | null }): Device => {
   const { agents = [], unavailable = null, ...rest } = patch;
   return {
@@ -49,12 +44,12 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: false }))).toBe(false);
     expect(agentInstalled(agent("codex", { availability: "unsupported_system", enabled: false }))).toBe(false);
     // On only because Claude Code and Codex are on by default (no recorded choice): not installed, and never Ready.
-    const byDefault = agent("codex", { availability: "not_installed", enabled: true, chosen: false, sessions: sessions(0, 0) });
+    const byDefault = agent("codex", { availability: "not_installed", enabled: true, chosen: false, sessions: 0 });
     expect(agentInstalled(byDefault)).toBe(false);
     expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: true }))).toBe(false);
     expect(agentStatus(byDefault)).toEqual({ kind: "none" });
     // The operator switched it on and its program then went away: it stays listed so it can be switched off.
-    const gone = agent("codex", { availability: "not_installed", enabled: true, chosen: true, sessions: sessions(0, 0) });
+    const gone = agent("codex", { availability: "not_installed", enabled: true, chosen: true, sessions: 0 });
     expect(agentInstalled(gone)).toBe(true);
     expect(agentStatus(gone)).toEqual({ kind: "none" });
   });
@@ -118,14 +113,12 @@ describe("what a row says (B13, B14, B16, B19, B20)", () => {
     expect(agentLeftover(agent("pi", { enabled: true, skill: piece("failed") }))).toBeNull();
   });
 
-  it("says Ready, how many sessions are connected and how many are not, and nothing for the rest", () => {
-    expect(agentStatus(agent("codex", { sessions: sessions(0, 0) }))).toEqual({ kind: "ready" });
-    expect(agentStatus(agent("codex", { sessions: sessions(3, 0) }))).toEqual({ kind: "sessions", connected: 3, notConnected: 0 });
-    // The list holds at most 32; the rest are counted, so the number is never short (B17).
-    expect(agentStatus(agent("codex", { sessions: sessions(1, 2, 14) }))).toEqual({ kind: "sessions", connected: 1, notConnected: 16 });
-    expect(agentStatus(agent("codex", { enabled: false, sessions: sessions(3, 0) }))).toEqual({ kind: "none" });
+  it("says Ready, how many sessions run, and nothing for the rest", () => {
+    expect(agentStatus(agent("codex", { sessions: 0 }))).toEqual({ kind: "ready" });
+    expect(agentStatus(agent("codex", { sessions: 3 }))).toEqual({ kind: "sessions", count: 3 });
+    expect(agentStatus(agent("codex", { enabled: false, sessions: 3 }))).toEqual({ kind: "none" });
     expect(agentStatus(agent("grok", { partial: true, sessions: null }))).toEqual({ kind: "none" });
-    expect(agentStatus(agent("grok", { partial: true, sessions: sessions(2, 0) }))).toEqual({ kind: "none" });
+    expect(agentStatus(agent("grok", { partial: true, sessions: 2 }))).toEqual({ kind: "none" });
     expect(agentStatus(agent("codex", { sessions: null }))).toEqual({ kind: "none" });
   });
 });

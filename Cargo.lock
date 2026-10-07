@@ -1159,6 +1159,7 @@ dependencies = [
  "cap-std",
  "hide-agent-hooks",
  "hide-ai",
+ "hide-factory",
  "hide-herdr-client",
  "hide-host",
  "hide-kit",
@@ -1222,6 +1223,18 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "hide-factory"
+version = "0.1.0"
+dependencies = [
+ "hide-platform",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tempfile",
 ]
 
@@ -1333,6 +1346,7 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-factory",
  "hide-herdr-client",
  "hide-host",
  "hide-kit",

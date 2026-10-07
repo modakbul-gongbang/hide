@@ -1,6 +1,6 @@
-//! Whether Hide hears each Claude Code and Codex session, counted per
-//! machine and named per pane (PRD settings-cleanup B16, B17, B19, B26 to
-//! B28, D-23). Expected answers come from the PRD, not from the projector.
+//! How many Claude Code and Codex sessions run on each machine, and whether
+//! Hide hears each one's pane (PRD settings-cleanup B16, B19, B26 to B28,
+//! D-23). Expected answers come from the PRD, not from the projector.
 
 use super::*;
 use crate::model::{
@@ -60,7 +60,7 @@ fn session(panes: &[(&str, &str, bool)]) -> serde_json::Value {
     })
 }
 
-fn diagnosis(claude: HookStatus, codex: HookStatus) -> hide_agent_hooks::Diagnosis {
+pub(super) fn diagnosis(claude: HookStatus, codex: HookStatus) -> hide_agent_hooks::Diagnosis {
     let row = |runtime: AgentRuntime, status| hide_agent_hooks::diagnosis::RuntimeDiagnosis {
         runtime,
         label: runtime.label().to_owned(),
@@ -80,14 +80,14 @@ fn diagnosis(claude: HookStatus, codex: HookStatus) -> hide_agent_hooks::Diagnos
     }
 }
 
-fn installed() -> HookStatus {
+pub(super) fn installed() -> HookStatus {
     HookStatus::Installed {
         version: hide_agent_hooks::HOOK_VERSION,
     }
 }
 
 /// This Mac's kit as the first check reported it: every adapter's row, on.
-fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
+pub(super) fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
     let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
     kit.codex_daemon = Some(true);
     kit.codex_daemon_on = codex_daemon_on;
@@ -118,7 +118,7 @@ fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
     runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
 }
 
-fn sessions_of(runtime: &Runtime, agent: &str) -> Option<crate::model::KitAgentSessionsSnapshot> {
+pub(super) fn sessions_of(runtime: &Runtime, agent: &str) -> Option<u32> {
     runtime.snapshot.navigator.devices[0]
         .kit
         .agents
@@ -126,10 +126,9 @@ fn sessions_of(runtime: &Runtime, agent: &str) -> Option<crate::model::KitAgentS
         .find(|row| row.id == agent)
         .unwrap_or_else(|| panic!("no kit row for {agent}"))
         .sessions
-        .clone()
 }
 
-fn connection_of(runtime: &Runtime, pane_id: &str) -> Option<PaneConnectionSnapshot> {
+pub(super) fn connection_of(runtime: &Runtime, pane_id: &str) -> Option<PaneConnectionSnapshot> {
     runtime
         .snapshot
         .navigator
@@ -163,28 +162,10 @@ fn the_counts_follow_the_sessions_open_now_and_never_accumulate() {
             ("w1:p3", "claude", false),
         ],
     );
-    let claude = sessions_of(&runtime, "claude-code").expect("Claude Code is judged");
-    assert_eq!(claude.connected, 1);
     assert_eq!(
-        claude
-            .not_connected
-            .iter()
-            .map(|session| (
-                session.pane_id.as_str(),
-                session.title.as_str(),
-                session.project.as_str()
-            ))
-            .collect::<Vec<_>>(),
-        [
-            ("w1:p2", "Task of w1:p2", "fixture"),
-            ("w1:p3", "Task of w1:p3", "fixture")
-        ]
-    );
-    assert!(
-        claude
-            .not_connected
-            .iter()
-            .all(|session| session.reason == PaneConnectionReason::StartedBeforeHide)
+        sessions_of(&runtime, "claude-code"),
+        Some(3),
+        "every running session counts, heard or not"
     );
 
     // Two sessions close: the count shrinks with them (D-23).
@@ -192,16 +173,13 @@ fn the_counts_follow_the_sessions_open_now_and_never_accumulate() {
         &mut runtime,
         &[("w1:p1", "claude", true), ("w1:p2", "claude", false)],
     );
-    let claude = sessions_of(&runtime, "claude-code").unwrap();
-    assert_eq!((claude.connected, claude.not_connected.len()), (1, 1));
+    assert_eq!(sessions_of(&runtime, "claude-code"), Some(2));
     feed(&mut runtime, &[("w1:p1", "claude", true)]);
-    let claude = sessions_of(&runtime, "claude-code").unwrap();
-    assert_eq!((claude.connected, claude.not_connected.len()), (1, 0));
+    assert_eq!(sessions_of(&runtime, "claude-code"), Some(1));
     feed(&mut runtime, &[("w1:p4", "claude", true)]);
-    let claude = sessions_of(&runtime, "claude-code").unwrap();
     assert_eq!(
-        (claude.connected, claude.not_connected.len()),
-        (1, 0),
+        sessions_of(&runtime, "claude-code"),
+        Some(1),
         "a different open session replaces the closed one"
     );
 }
@@ -219,10 +197,7 @@ fn an_agent_hide_cannot_hear_is_never_given_a_count() {
     assert_eq!(sessions_of(&runtime, "gemini-cli"), None, "B19");
     assert_eq!(connection_of(&runtime, "w1:p1"), None);
     // An on agent with no session is "Ready": a count of zero, not an absent one.
-    assert_eq!(
-        sessions_of(&runtime, "codex"),
-        Some(crate::model::KitAgentSessionsSnapshot::default())
-    );
+    assert_eq!(sessions_of(&runtime, "codex"), Some(0));
 }
 
 #[test]
@@ -239,11 +214,6 @@ fn a_codex_pane_on_the_shared_server_says_so_and_one_started_earlier_says_that()
             reason: Some(PaneConnectionReason::CodexSharedServer),
             reopen: None,
         })
-    );
-    let codex = sessions_of(&runtime, "codex").unwrap();
-    assert_eq!(
-        codex.not_connected[0].reason,
-        PaneConnectionReason::CodexSharedServer
     );
 
     // The same pane with the shared server off is a session that started

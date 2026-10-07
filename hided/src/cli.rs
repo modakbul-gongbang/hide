@@ -13,7 +13,15 @@ use crate::state_file::{self, DaemonState};
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandKind {
     Delivery(herdr_core::delivery::Command),
+    /// `hide factory ...`
+    Factory(crate::factory_cli::FactoryRequest),
     Help,
+    /// `hide version [--json]`: this build's version, commit and contract.
+    Version {
+        json: bool,
+    },
+    /// `hide contract --json`: the contract of the commands tools call.
+    Contract,
     Open,
     /// `hide connect`: `open` without the browser, answered as one JSON line
     /// for a host that loads the shell itself (the desktop app).
@@ -57,10 +65,30 @@ const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | bran
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
+/// The version this build reports: `HIDE_VERSION` when it was built (a
+/// package passes the version it ships), else the crate's own.
+pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
+
+/// The commit this build was made from, when it was built from a checkout.
+pub const COMMIT: Option<&str> = match env!("HIDE_BUILD_COMMIT").as_bytes() {
+    [] => None,
+    _ => Some(env!("HIDE_BUILD_COMMIT")),
+};
+
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
     match iter.next().map(String::as_str) {
         Some("help" | "--help" | "-h") if iter.next().is_none() => Ok(CommandKind::Help),
+        Some("--version") if iter.next().is_none() => Ok(CommandKind::Version { json: false }),
+        Some("version") => match (iter.next().map(String::as_str), iter.next()) {
+            (None, _) => Ok(CommandKind::Version { json: false }),
+            (Some("--json"), None) => Ok(CommandKind::Version { json: true }),
+            _ => Err("usage: hide version [--json]".to_owned()),
+        },
+        Some("contract") => match (iter.next().map(String::as_str), iter.next()) {
+            (Some("--json"), None) => Ok(CommandKind::Contract),
+            _ => Err("usage: hide contract --json".to_owned()),
+        },
         None | Some("open") => Ok(CommandKind::Open),
         Some("connect") => Ok(CommandKind::Connect),
         Some("status") => {
@@ -73,10 +101,17 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Serve { keep_alive })
         }
         Some("dev") => Ok(CommandKind::Dev),
-        Some("agent") => crate::agent_cli::parse(iter).map(CommandKind::Delivery),
+        Some("agent") => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", crate::agent_cli::USAGE))?;
+            crate::agent_cli::parse(iter).map(CommandKind::Delivery)
+        }
         Some(topic @ ("request" | "inbox" | "watch")) => {
+            crate::cli_contract::admit(&args[1..])
+                .map_err(|refusal| format!("{refusal}\n{}", crate::delivery_cli::USAGE))?;
             crate::delivery_cli::parse(topic, iter).map(CommandKind::Delivery)
         }
+        Some("factory") => crate::factory_cli::parse(iter).map(CommandKind::Factory),
         Some("browser") => parse_browser(iter),
         Some("workspace") => match (iter.next().map(String::as_str), iter.next()) {
             (Some("bootstrap"), None) => Ok(CommandKind::WorkspaceBootstrap),
@@ -314,9 +349,31 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 }
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
+    // Neither reads the environment nor needs a daemon.
+    if let CommandKind::Version { json } = kind {
+        let digest = crate::cli_contract::digest();
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"version": VERSION, "commit": COMMIT, "contract": digest})
+            );
+        } else {
+            match COMMIT {
+                Some(commit) => println!("hide {VERSION} {commit}"),
+                None => println!("hide {VERSION}"),
+            }
+        }
+        return Ok(());
+    }
+    if kind == CommandKind::Contract {
+        println!("{}", crate::cli_contract::document());
+        return Ok(());
+    }
     if kind == CommandKind::Help {
+        println!("hide version [--json]\nhide contract --json");
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
+        println!("{}", hide_factory::command::USAGE);
         println!(
             "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given."
         );
@@ -334,6 +391,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 &kind,
                 CommandKind::WorkspaceBootstrap
                     | CommandKind::Delivery(_)
+                    | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
                     | CommandKind::ViewList
                     | CommandKind::ViewStatus { .. }
@@ -365,7 +423,11 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 crate::delivery_cli::run(&env, command)
             }
         }
-        CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
+        CommandKind::Factory(request) => crate::factory_cli::run(&env, request),
+        CommandKind::Help
+        | CommandKind::BrowserHelp
+        | CommandKind::Version { .. }
+        | CommandKind::Contract => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
         CommandKind::Status { json: true } => status_json(&env.state_dir),
@@ -403,20 +465,14 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
 /// Prints the record's answer as one line; a refusal prints its reason and
 /// next action and exits non-zero (B42, B43).
 fn links(env: &Env, query: &herdr_core::links::query::LinksQuery) -> Result<(), String> {
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => return query_refusal(&reason, bootstrap_next_action(&reason), true),
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request_links(&reference, query) {
+    let answer = match crate::workspace_cli::request_links(&mut credential, query) {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                true,
-            );
+            return query_refusal(&reason, request_next_action(&reason), true);
         }
     };
     println!("{answer}");
@@ -485,14 +541,15 @@ fn workspace_action_value(
             Err(reason) => return workspace_refusal(&reason, "Check the local runtime and retry"),
         },
     };
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => return workspace_action_before_send_refusal(&request_id, &reason),
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request_action(&reference, action, &request_id) {
+    let answer = match crate::workspace_cli::request_action(&mut credential, action, &request_id) {
         Ok(answer) => answer,
+        Err(reason) if bootstrap_refused(&reason) => {
+            return workspace_action_before_send_refusal(&request_id, &reason);
+        }
         Err(reason) => return workspace_action_refusal(&request_id, &reason),
     };
     if answer["ok"] == true {
@@ -513,6 +570,21 @@ pub(crate) fn bootstrap_next_action(reason: &str) -> &'static str {
         "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
         _ => "Open Hide, reconnect this pane, and retry the same command",
+    }
+}
+
+/// A bootstrap refusal reaches a request when the reference `HIDE_CAP_REF`
+/// named was gone and the bare bootstrap that replaces it was refused;
+/// nothing was sent, and the bootstrap's next step still applies.
+fn bootstrap_refused(reason: &str) -> bool {
+    matches!(reason, "checkout_not_registered" | "caller_unavailable")
+}
+
+fn request_next_action(reason: &str) -> &'static str {
+    if bootstrap_refused(reason) {
+        bootstrap_next_action(reason)
+    } else {
+        "Check Hide status, reconnect the pane, and retry"
     }
 }
 
@@ -589,14 +661,6 @@ fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, Stri
     Err(reason.to_owned())
 }
 
-pub(crate) fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> {
-    match std::env::var(env::HIDE_CAP_REF) {
-        Ok(value) if !value.is_empty() => Ok((std::path::PathBuf::from(value), false)),
-        Ok(_) => Err("invalid_reference".to_owned()),
-        Err(_) => crate::workspace_cli::bootstrap(env, true).map(|path| (path, true)),
-    }
-}
-
 fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
     let answer = workspace_query_value(env, query, true)?;
     println!("{answer}");
@@ -625,27 +689,21 @@ fn workspace_query_options(
     display_id: Option<&str>,
     report: bool,
 ) -> Result<serde_json::Value, String> {
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => {
             return query_refusal(&reason, bootstrap_next_action(&reason), report);
         }
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
     let requested = if query == "browser_connect" {
-        crate::workspace_cli::browser_connect(&reference, display_id)
+        crate::workspace_cli::browser_connect(&mut credential, display_id)
     } else {
-        crate::workspace_cli::request(&reference, query)
+        crate::workspace_cli::request(&mut credential, query)
     };
     let answer = match requested {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                report,
-            );
+            return query_refusal(&reason, request_next_action(&reason), report);
         }
     };
     if answer["ok"] == true {

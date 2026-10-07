@@ -2,12 +2,13 @@ use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Component, Path};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::watch::Watch;
 use super::{Actor, BODY_LIMIT, FILE_LIMIT, LETTER_LIMIT, OPEN_LIMIT, RETENTION_MS, WATCH_LIMIT};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Pending,
@@ -18,7 +19,7 @@ pub enum State {
     Undelivered,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Letter {
     pub id: String,
     pub intent: String,
