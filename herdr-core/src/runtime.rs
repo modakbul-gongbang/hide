@@ -1211,6 +1211,13 @@ pub struct Runtime {
     device_first_run_choice: BTreeMap<String, kit::FirstRunChoice>,
     /// Devices whose kit worker is running; at most one per device.
     device_kit_running: BTreeSet<String>,
+    /// The numbered run of each device's shared-server turn-off its worker
+    /// took: only the answer for the run still current settles the request,
+    /// so a late answer from a connection that ended changes nothing (PRD
+    /// codex-daemon-apply B11).
+    codex_daemon_off_running: BTreeMap<String, u64>,
+    /// The last turn-off run handed out.
+    codex_daemon_off_runs: u64,
     /// The removal each removed device's kit worker runs next, holding the
     /// helper connection it runs on.
     device_kit_removals: BTreeMap<String, DeviceKitCall>,
@@ -1844,6 +1851,8 @@ impl Runtime {
             device_kit_pending: BTreeMap::new(),
             device_first_run_choice: BTreeMap::new(),
             device_kit_running: BTreeSet::new(),
+            codex_daemon_off_running: BTreeMap::new(),
+            codex_daemon_off_runs: 0,
             device_kit_removals: BTreeMap::new(),
             device_kit_removing: BTreeSet::new(),
             ai_settings: None,

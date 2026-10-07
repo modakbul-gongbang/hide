@@ -170,6 +170,17 @@ pub struct KitReport {
     /// no such setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_daemon_on: Option<bool>,
+    /// Whether a shared daemon answers now, read with `codex app-server daemon
+    /// version` for a Codex that has the setting: with the setting already
+    /// off, `Some(true)` is a daemon still serving each Codex started by hand
+    /// (PRD codex-daemon-apply D-07, B9). `None` when there is no Codex, no
+    /// setting, or no answer Hide can read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon_running: Option<bool>,
+    /// An answer about the daemon Hide could not read, for the core's log
+    /// only; the screen reads it as no answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon_unreadable: Option<String>,
     /// How the operator's request to turn the shared server off ended; present
     /// only in the report of the pass that carried it ([`Scope::codex_daemon_off`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,6 +223,8 @@ impl KitReport {
             agents: Vec::new(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
             held_for_onboarding: false,
             labels_retirement: Retirement::default(),
@@ -534,8 +547,8 @@ pub fn status(target: &KitTarget) -> KitReport {
         .into_iter()
         .map(|id| {
             let observed = observe(id, target);
-            // `status` starts no process, so Codex's trust is what the last
-            // pass found (`codex_trust`).
+            // `status` asks Codex no trust question, so Codex's trust is
+            // what the last pass found (`codex_trust`).
             let failure = (id == ComponentId::CodexHook
                 && matches!(observed, Observed::Current)
                 && !switched_off(id))
@@ -556,8 +569,10 @@ pub fn status(target: &KitTarget) -> KitReport {
     KitReport {
         components,
         agents,
-        codex_daemon: daemon.0,
-        codex_daemon_on: daemon.1,
+        codex_daemon: daemon.feature,
+        codex_daemon_on: daemon.on,
+        codex_daemon_running: daemon.running,
+        codex_daemon_unreadable: daemon.unreadable,
         codex_daemon_off: None,
         held_for_onboarding: held,
         labels_retirement: Retirement::default(),
@@ -569,10 +584,20 @@ pub fn status(target: &KitTarget) -> KitReport {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CodexDaemonOff {
-    /// Codex answered that it is off, and a read afterwards agrees.
-    Done,
-    /// The setting is as it was. `reason` is a code the screen turns into a
-    /// line; `detail` is Codex's own words, for the core's log only.
+    /// Codex answered that autostart is off, a read afterwards agrees, and
+    /// no daemon answers any more. `no_daemon` is what the version command
+    /// said when no daemon answered before the stop, so nothing was stopped;
+    /// it is for the core's log only, so a transient failure that read as
+    /// "no daemon" stays visible.
+    Done {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        no_daemon: Option<String>,
+    },
+    /// `reason` is a code the screen turns into a line; `detail` is Codex's
+    /// own words, for the core's log only. `StopFailed` always leaves the
+    /// setting off; `Unreachable` (Hide quit or the device's helper went
+    /// away) may leave it either way, before or after Codex turned it off;
+    /// every other reason leaves it as it was.
     Failed {
         reason: CodexDaemonOffFailure,
         #[serde(default)]
@@ -592,12 +617,22 @@ pub enum CodexDaemonOffFailure {
     /// The machine could not be asked: Hide was quitting or the device's
     /// helper was away.
     Unreachable,
+    /// The setting is off now, but the running daemon did not stop, came
+    /// back, or answered in a way Hide cannot read; the same request again
+    /// only stops it (PRD codex-daemon-apply B7, B8).
+    StopFailed,
 }
 
-/// Turns the machine's Codex shared server off through Codex's own command
-/// and reads the setting back, so a Done is what Codex now says.
+/// Turns the machine's Codex shared server off through Codex's own command,
+/// reads the setting back, and then stops the daemon that is still running,
+/// so a Done is what Codex now says: autostart off and no daemon answering
+/// (PRD codex-daemon-apply D-11, B3, B5-B8). The stop disconnects every
+/// Codex attached to that daemon; it runs only for this request, which the
+/// operator confirmed.
 fn turn_codex_daemon_off(target: &KitTarget) -> CodexDaemonOff {
-    use hide_agent_hooks::codex_daemon::{DaemonSetting, SwitchFailure, read_setting, turn_off};
+    use hide_agent_hooks::codex_daemon::{
+        DaemonSetting, Stopped, SwitchFailure, read_setting, stop, turn_off,
+    };
     let failed = |reason, detail: String| CodexDaemonOff::Failed { reason, detail };
     let Some(codex) = target.codex.as_deref() else {
         return failed(
@@ -617,12 +652,26 @@ fn turn_codex_daemon_off(target: &KitTarget) -> CodexDaemonOff {
         );
     }
     match read_setting(codex, &target.home, &target.stop) {
-        Ok(DaemonSetting::Off) => CodexDaemonOff::Done,
-        Ok(setting) => failed(
-            CodexDaemonOffFailure::CodexRefused,
-            format!("codex still reports the shared server as {setting:?}"),
-        ),
-        Err(message) => failed(CodexDaemonOffFailure::CodexRefused, message),
+        Ok(DaemonSetting::Off) => {}
+        Ok(setting) => {
+            return failed(
+                CodexDaemonOffFailure::CodexRefused,
+                format!("codex still reports the shared server as {setting:?}"),
+            );
+        }
+        Err(message) => return failed(CodexDaemonOffFailure::CodexRefused, message),
+    }
+    match stop(codex, &target.home, &target.stop) {
+        Ok(Stopped::Stopped) => CodexDaemonOff::Done { no_daemon: None },
+        Ok(Stopped::AlreadyStopped { answer }) => CodexDaemonOff::Done {
+            no_daemon: Some(answer),
+        },
+        // Hide quitting mid-stop is not Codex refusing: the machine could
+        // not be asked to the end.
+        Err(message) if target.stop.load(std::sync::atomic::Ordering::Relaxed) => {
+            failed(CodexDaemonOffFailure::Unreachable, message)
+        }
+        Err(message) => failed(CodexDaemonOffFailure::StopFailed, message),
     }
 }
 
@@ -832,8 +881,10 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
     KitReport {
         components,
         agents,
-        codex_daemon: daemon.0,
-        codex_daemon_on: daemon.1,
+        codex_daemon: daemon.feature,
+        codex_daemon_on: daemon.on,
+        codex_daemon_running: daemon.running,
+        codex_daemon_unreadable: daemon.unreadable,
         codex_daemon_off: None,
         held_for_onboarding,
         labels_retirement,
@@ -842,18 +893,47 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
 }
 
 /// What the machine's Codex says about its shared daemon, read without
-/// changing it: whether it has the setting (`KitReport::codex_daemon`) and
-/// whether the setting is on (`KitReport::codex_daemon_on`).
-fn codex_daemon(target: &KitTarget) -> (Option<bool>, Option<bool>) {
-    use hide_agent_hooks::codex_daemon::{DaemonSetting, read_setting};
+/// changing anything or starting a daemon.
+#[derive(Default)]
+struct DaemonRead {
+    /// It has the setting (`KitReport::codex_daemon`).
+    feature: Option<bool>,
+    /// The setting is on (`KitReport::codex_daemon_on`).
+    on: Option<bool>,
+    /// A daemon answers (`KitReport::codex_daemon_running`).
+    running: Option<bool>,
+    /// The daemon's answer Hide could not read.
+    unreadable: Option<String>,
+}
+
+fn codex_daemon(target: &KitTarget) -> DaemonRead {
+    use hide_agent_hooks::codex_daemon::{DaemonSetting, daemon_running, read_setting};
     let Some(codex) = target.codex.as_deref() else {
-        return (None, None);
+        return DaemonRead::default();
     };
-    match read_setting(codex, &target.home, &target.stop) {
+    let (feature, on) = match read_setting(codex, &target.home, &target.stop) {
         Ok(DaemonSetting::Unsupported) => (Some(false), None),
         Ok(DaemonSetting::On) => (Some(true), Some(true)),
         Ok(DaemonSetting::Off) => (Some(true), Some(false)),
         Err(_) => (None, None),
+    };
+    // A Codex older than the setting starts no shared daemon to ask about.
+    if feature != Some(true) {
+        return DaemonRead {
+            feature,
+            on,
+            ..DaemonRead::default()
+        };
+    }
+    let (running, unreadable) = match daemon_running(codex, &target.home, &target.stop) {
+        Ok(running) => (Some(running), None),
+        Err(reason) => (None, Some(reason)),
+    };
+    DaemonRead {
+        feature,
+        on,
+        running,
+        unreadable,
     }
 }
 

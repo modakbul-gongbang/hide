@@ -654,7 +654,7 @@ mod tests {
         );
         assert!(
             Command::new("git")
-                .args(["commit", "-qm", "init"])
+                .args(["-c", "commit.gpgsign=false", "commit", "-qm", "init"])
                 .current_dir(&main)
                 .status()
                 .unwrap()

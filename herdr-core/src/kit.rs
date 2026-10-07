@@ -193,10 +193,9 @@ pub(crate) fn spawn_device_worker(
                 let Some(core) = runtime.upgrade() else {
                     return;
                 };
-                let Ok(changed) = core
-                    .lock()
-                    .map(|mut locked| locked.ingest_device_kit_answer(&device_id, answer))
-                else {
+                let Ok(changed) = core.lock().map(|mut locked| {
+                    locked.ingest_device_kit_answer(&device_id, answer, call.daemon_off_run)
+                }) else {
                     return;
                 };
                 drop(core);

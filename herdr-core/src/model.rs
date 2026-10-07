@@ -657,6 +657,15 @@ pub struct KitSnapshot {
     /// with no answer or an older Codex). With it on, a Codex pane that
     /// reports nothing is read as running on the shared server (B27).
     pub codex_daemon_on: Option<bool>,
+    /// Whether a shared daemon answers now (`None` with no readable answer).
+    /// With the setting already off, a daemon that still answers keeps a
+    /// Codex pane on the shared server (PRD codex-daemon-apply D-07, B9). The
+    /// core reads it into the pane's reason; the shell never does.
+    #[serde(skip)]
+    pub codex_daemon_running: Option<bool>,
+    /// The daemon answer the kit could not read, for the log only.
+    #[serde(skip)]
+    pub codex_daemon_unreadable: Option<String>,
     /// How the last turn-off of the shared server ended, until the next one
     /// starts; the pane popover reads it (B30).
     pub codex_daemon_off: Option<CodexDaemonOffSnapshot>,
@@ -837,11 +846,13 @@ impl KitSnapshot {
             shares_account_with: None,
             codex_daemon: report.codex_daemon,
             codex_daemon_on: report.codex_daemon_on,
+            codex_daemon_running: report.codex_daemon_running,
+            codex_daemon_unreadable: report.codex_daemon_unreadable.clone(),
             codex_daemon_off: report
                 .codex_daemon_off
                 .as_ref()
                 .map(|outcome| match outcome {
-                    hide_kit::CodexDaemonOff::Done => CodexDaemonOffSnapshot::Done,
+                    hide_kit::CodexDaemonOff::Done { .. } => CodexDaemonOffSnapshot::Done,
                     hide_kit::CodexDaemonOff::Failed { reason, .. } => {
                         CodexDaemonOffSnapshot::Failed { reason: *reason }
                     }
@@ -856,6 +867,25 @@ impl KitSnapshot {
             unavailable: Some(reason.into()),
             ..Self::default()
         }
+    }
+
+    /// Whether a Codex started by hand on this machine joins the shared
+    /// server: the setting starts it, or a daemon still answers after the
+    /// setting went off (PRD settings-cleanup B27; codex-daemon-apply D-07,
+    /// B9). After a stop that did not take effect, only a read that says no
+    /// daemon answers ends it, so an answer Hide could not read keeps the
+    /// retry on offer (B7). The pane popover's turn-off is offered exactly
+    /// while this holds.
+    pub fn shares_codex_server(&self) -> bool {
+        let stop_failed = matches!(
+            self.codex_daemon_off,
+            Some(CodexDaemonOffSnapshot::Failed {
+                reason: CodexDaemonOffFailure::StopFailed
+            })
+        );
+        self.codex_daemon_on == Some(true)
+            || self.codex_daemon_running == Some(true)
+            || stop_failed && self.codex_daemon_running.is_none()
     }
 }
 
@@ -5150,13 +5180,15 @@ mod wire_enum_tests {
             CodexDaemonOffFailure::CodexRefused,
             CodexDaemonOffFailure::TimedOut,
             CodexDaemonOffFailure::Unreachable,
+            CodexDaemonOffFailure::StopFailed,
         ];
         for variant in daemon_failures {
             match variant {
                 CodexDaemonOffFailure::CodexMissing
                 | CodexDaemonOffFailure::CodexRefused
                 | CodexDaemonOffFailure::TimedOut
-                | CodexDaemonOffFailure::Unreachable => {}
+                | CodexDaemonOffFailure::Unreachable
+                | CodexDaemonOffFailure::StopFailed => {}
             }
         }
         assert_wire(&contract, "codex_daemon_off_failure", &daemon_failures);
