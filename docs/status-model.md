@@ -105,11 +105,12 @@ Demand has two sources:
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
 - Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
-- Approval is also a plan waiting for the operator's approval that Herdr reads as `done`, Codex's "Implement this plan?" (PRD codex-plan-approval-hold).
+- Approval is also a plan waiting for the operator's approval that Herdr reads as an ordinary stop, Codex's "Implement this plan?" (PRD codex-plan-approval-hold).
   The core reads it from the session file, not the screen: the label worker's session read folds the agent's turn records into a turn tracker (`hide-session/src/turns.rs`), and a plan-mode turn that proposed a plan and finished, with no later turn or person's message, waits.
   The answer holds only for the Herdr `state_change_seq` the read was asked under and the session it proved, it is laid on the row's facts (`RowFacts.awaiting_operator`, never on the wire), and it is not shown while Herdr says the agent works.
-  A wait no read has settled for the current state is not shown: the row shows what Herdr says, and the letter doorbell holds instead (`docs/delivery.md`, A menu Herdr reads as done).
+  A wait no read has settled for the current state is not shown: the row shows what Herdr says, and the letter doorbell holds instead (`docs/delivery.md`, A menu Herdr reads as a stop).
   It needs no Hide AI: agent summaries off, the read still runs.
+  "No, stay in Plan mode" writes nothing to the session, so after that answer the row stays in Needs You until Codex's next turn starts.
   The row's `blocked` value carries it, so it is held exactly like Herdr's `blocked` below, including close confirmation and agent sleep, and the Enter that approves it still counts as the operator's submit, since Codex writes the next turn's message from it.
 
 Error is still a demand value on the wire and in the vocabulary, but nothing produces it since the hand-installed hook path was retired (PRD labels-in-hided D-06); a question outranks an approval.

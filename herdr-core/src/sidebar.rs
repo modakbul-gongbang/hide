@@ -1811,7 +1811,7 @@ fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
 }
 
 /// The agent's session says its plan waits for the operator's approval in
-/// its current Herdr state, a prompt Herdr reports as `done` (PRD
+/// its current Herdr state, a prompt Herdr reads as a stop (PRD
 /// codex-plan-approval-hold D-05). It is an approval like Herdr's `blocked`
 /// and holds the row the same way; a wait not read for the current state is
 /// not shown, and neither is one while Herdr says the agent works: a running

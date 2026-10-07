@@ -46,7 +46,7 @@ pub(crate) enum Hold {
     /// Herdr reports a permission or selection menu.
     Blocked,
     /// The agent's session says its last turn waits for the operator to
-    /// approve a plan, a menu Herdr reports as `done`.
+    /// approve a plan, a menu Herdr reads as an ordinary stop.
     AwaitingOperator,
     /// The agent's session can say it waits for the operator, and no read of
     /// it settled that for Herdr's current state.
@@ -101,7 +101,7 @@ impl Hold {
 
 /// The agent kinds a bell may be typed into: those whose permission and
 /// selection menus Herdr was observed to report as `blocked` in an isolated
-/// run (`docs/delivery.md`, Verification). A menu Herdr reports as `done`
+/// run (`docs/delivery.md`, Verification). A menu Herdr reads as a stop
 /// (Codex's plan approval) is guarded by the session read instead
 /// ([`Turn`]), so a kind that was not observed is not in this list.
 pub(crate) fn bell_target(kind: &str) -> bool {
