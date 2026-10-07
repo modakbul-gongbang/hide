@@ -134,6 +134,8 @@ impl Drop for RunningDaemon {
 }
 
 pub async fn run_daemon(env: Env) -> Result<(), String> {
+    #[cfg(windows)]
+    temp_start_cwd_sampler();
     let state_dir = env.state_dir.clone();
     let running = start_daemon(env).await?;
     wait_shutdown_or_signal(&running).await;
@@ -829,4 +831,42 @@ mod tests {
         }
         assert!(roots_from_snapshot(b"not json").is_empty());
     }
+}
+
+/// TEMP evidence for issue 707 (do not merge): every 25 ms, the processes
+/// whose working directory is inside an e2e fixture folder, logged when each
+/// first appears there and when it leaves.
+#[cfg(windows)]
+fn temp_start_cwd_sampler() {
+    let _ = std::thread::Builder::new().name("temp-cwd-sampler".into()).spawn(|| {
+        let now_ms = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis())
+                .unwrap_or(0)
+        };
+        let mut seen: std::collections::BTreeMap<(u32, String), (u32, String)> = Default::default();
+        loop {
+            let mut current = std::collections::BTreeMap::new();
+            for (pid, parent, name, cwd) in hide_platform::process::temp_process_cwds() {
+                let Some(cwd) = cwd else { continue };
+                let cwd = cwd.to_string_lossy().into_owned();
+                if cwd.to_lowercase().contains("hide-e2e-herdr-") {
+                    current.insert((pid, cwd), (parent, name));
+                }
+            }
+            for (key, (parent, name)) in &current {
+                if !seen.contains_key(key) {
+                    eprintln!("{}", serde_json::json!({"kind": "temp.cwd_seen", "pid": key.0, "parent": parent, "name": name, "cwd": key.1, "at_ms": now_ms(), "self_pid": std::process::id()}));
+                }
+            }
+            for (key, (_, name)) in &seen {
+                if !current.contains_key(key) {
+                    eprintln!("{}", serde_json::json!({"kind": "temp.cwd_gone", "pid": key.0, "name": name, "cwd": key.1, "at_ms": now_ms()}));
+                }
+            }
+            seen = current;
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    });
 }

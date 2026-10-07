@@ -237,7 +237,7 @@ jobs:
           fi
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: End-to-end
-        timeout-minutes: 20
+        timeout-minutes: 120
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
@@ -269,7 +269,7 @@ jobs:
           fi
           # TEMP evidence run (do not merge): every CPU busy, the delete tests repeated.
           for i in $(seq "$(nproc)"); do (while :; do :; done) & done
-          bash scripts/verify-web.sh web e2e "${args[@]}" --repeat-each 40 --retries 0
+          bash scripts/verify-web.sh web e2e "${args[@]}" --repeat-each 30 --retries 0
       - name: Report flaky tests
         # A test that failed and passed its retry becomes an issue with a
         # seven-day deadline, or a comment on the issue that tracks it. A
