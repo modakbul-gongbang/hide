@@ -296,10 +296,16 @@ async function enterState(page, state) {
   if (state === 'folded-parent' || state === 'checkout-closed') await page.mouse.move(0, 0);
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
   // The Factory screen's other views, reached through its own tabs and cards.
-  if (state === 'board' || state === 'graph') await page.locator(`[data-factory-tab="${state}"]`).click();
+  if (['board', 'graph', 'sizes'].includes(state)) {
+    const url = new URL(page.url());
+    url.searchParams.set('state', state);
+    await page.goto(url.href);
+    await page.locator('[data-factory-screen]').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+  }
   if (state === 'task') {
     await page.locator('[data-factory-tab="board"]').click();
-    await page.locator('[data-factory-card="t-412"]').click();
+    await page.locator('[data-factory-card="t-412"] [data-factory-card-open]').click();
     await page.locator('[data-factory-task-page]').waitFor();
   }
   if (state === 'content-match') {

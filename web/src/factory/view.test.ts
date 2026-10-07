@@ -5,7 +5,7 @@ import { boardColumns, factoryGraph, splitAtCuts, taskChain, workerPanes } from 
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
-    task, display_id: task, column: "waiting", title: task, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
+    task, display_id: task, column: "before", title: task, summary: task, issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 0, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
     priority: 0, since: 0, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch,
   };
 }
@@ -13,8 +13,8 @@ function card(task: string, patch: Partial<CardView> = {}): CardView {
 function factory(cards: CardView[], dependencies: [string, string][], edges: [string, string][] = []): FactoryView {
   return {
     id: "f-1", project: "/p", project_name: "p", source: "local", verification: "verify", closed: false,
-    flow: { drafting: 0, waiting: 0, running: 0, done_today: 0 }, my_turn: 0,
-    columns: [{ column: "waiting", label: "", cards }], cancelled: [],
+    flow: { before: 0, stuck: 0, moving: 0, done_today: 0 }, my_turn: 0,
+    columns: [{ column: "before", label: "", cards }], cancelled: [],
     graph: { nodes: cards.map((value) => value.task), edges, unrelated: [] }, dependencies,
     outside_read_at: null, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "auto",
   };
