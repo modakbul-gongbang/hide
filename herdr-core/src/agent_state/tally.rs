@@ -389,6 +389,7 @@ pub mod phone {
     #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
     pub struct Group {
         pub group: String,
+        pub count: usize,
         pub agents: Vec<PhoneAgent>,
     }
 
@@ -636,6 +637,7 @@ pub mod phone {
             .iter()
             .map(|group| Group {
                 group: (*group).to_owned(),
+                count: 0,
                 agents: Vec::new(),
             })
             .collect();
@@ -644,11 +646,15 @@ pub mod phone {
                 Some(group) => group.agents.push(agent),
                 None => groups.push(Group {
                     group: agent.group.clone(),
+                    count: 0,
                     agents: vec![agent],
                 }),
             }
         }
-        groups.retain(|group| !group.agents.is_empty());
+        for group in &mut groups {
+            group.count = group.agents.len();
+        }
+        groups.retain(|group| group.count > 0);
         let interface_language = rest
             .pointer("/ui_state/interface_language")
             .and_then(Value::as_str)

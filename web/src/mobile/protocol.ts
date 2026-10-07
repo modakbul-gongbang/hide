@@ -34,7 +34,7 @@ export type PhoneAgent = {
 
 export type GroupId = "needs_you" | "done" | "working" | "seen";
 
-export type AgentGroup = { group: GroupId; agents: PhoneAgent[] };
+export type AgentGroup = { group: GroupId; count: number; agents: PhoneAgent[] };
 
 export type Notifications = "on" | "off" | "unasked";
 

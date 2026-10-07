@@ -79,7 +79,7 @@ mod tests {
         let order: Vec<_> = projection
             .groups
             .iter()
-            .map(|group| (group.group.as_str(), group.agents.len()))
+            .map(|group| (group.group.as_str(), group.count))
             .collect();
         assert_eq!(
             order,

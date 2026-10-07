@@ -149,13 +149,13 @@ function ListScreen() {
         ) : null}
         {groups?.map((group) => {
           const id = group.group;
-          if (group.agents.length === 0) return null;
+          if (group.count === 0) return null;
           return (
             <section key={id} className="px-lg pt-lg" data-phone-group={id}>
               <h2 className="flex gap-sm pb-xs text-subhead text-muted-foreground">
                 <span>{t(GROUP_TITLE[id])}</span>
-                <span className="font-mono" data-phone-group-count={group.agents.length}>
-                  {group.agents.length}
+                <span className="font-mono" data-phone-group-count={group.count}>
+                  {group.count}
                 </span>
               </h2>
               <ul className="divide-y divide-border border-b border-border">
