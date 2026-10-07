@@ -1262,8 +1262,8 @@ export function DependencyGraphView<T>({ graph, draw, idOf }: { graph: LayeredGr
   const marker = `dependency-arrow-${useId()}`;
   const values = graph.layers.flat();
   // What the layout depends on: the nodes and the edges, not the object a snapshot rebuilt.
-  const structure = JSON.stringify([values.map(idOf), graph.edges.map((edge) => `${edge.from}>${edge.to}`)]);
-  const placement = useDependencyPlacement(box, structure, graph.edges);
+  const structure = JSON.stringify([values.map(idOf), graph.edges.map((edge) => [edge.from, edge.to])]);
+  const placement = useDependencyPlacement(box, structure);
   const places = placement ? values.map((value) => placement.nodes.get(idOf(value))) : [];
   const placed = placement !== null && places.every((place) => place !== undefined);
   const arrows = useMeasuredPaths(
@@ -1329,10 +1329,11 @@ export function DependencyGraphView<T>({ graph, draw, idOf }: { graph: LayeredGr
  * structure the layout refused stays in columns without asking again, and
  * the reason goes to the diagnostic log once.
  */
-function useDependencyPlacement(box: RefObject<HTMLDivElement | null>, structure: string, edges: readonly GraphEdge[]): Placement | null {
+function useDependencyPlacement(box: RefObject<HTMLDivElement | null>, structure: string): Placement | null {
   const [placed, setPlaced] = useState<{ key: string; placement: Placement } | null>(null);
   const [measured, setMeasured] = useState<{ key: string; nodes: NodeBox[] } | null>(null);
-  const refused = useRef(new Set<string>());
+  // The one structure the layout refused; another structure clears it.
+  const refused = useRef<string | null>(null);
   const layout = placed?.key.startsWith(`${structure}|`) ? "layered" : "columns";
   useLayoutEffect(() => {
     const root = box.current;
@@ -1348,11 +1349,11 @@ function useDependencyPlacement(box: RefObject<HTMLDivElement | null>, structure
     for (const node of root.querySelectorAll("[data-dependency-node]")) observer.observe(node);
     return () => observer.disconnect();
   }, [structure, layout]);
-  const edgeList = useRef(edges);
-  edgeList.current = edges;
   useEffect(() => {
     if (!measured || !measured.key.startsWith(`${structure}|`) || measured.nodes.length === 0) return;
-    if (placed?.key === measured.key || refused.current.has(measured.key)) return;
+    if (placed?.key === measured.key || refused.current === structure) return;
+    const [, pairs] = JSON.parse(structure) as [string[], [string, string][]];
+    const edges: GraphEdge[] = pairs.map(([from, to]) => ({ from, to }));
     const root = box.current;
     if (!root) return;
     // The same gaps the columns keep: between columns, and between cards in one.
@@ -1362,7 +1363,7 @@ function useDependencyPlacement(box: RefObject<HTMLDivElement | null>, structure
     workerElk()
       .then((elk) => {
         if (!Number.isFinite(spacing.betweenLayers) || !Number.isFinite(spacing.betweenNodes)) throw new Error("the graph's spacing tokens are not set");
-        return placeWithin(elk, measured.nodes, edgeList.current, spacing);
+        return placeWithin(elk, measured.nodes, edges, spacing);
       })
       .then(
         (placement) => {
@@ -1370,7 +1371,7 @@ function useDependencyPlacement(box: RefObject<HTMLDivElement | null>, structure
         },
         (error: unknown) => {
           if (!current) return;
-          refused.current.add(measured.key);
+          refused.current = structure;
           useShellStore.getState().noteDiagnostic(`dependency graph stays in columns: ${error instanceof Error ? error.message : String(error)}`);
         },
       );
