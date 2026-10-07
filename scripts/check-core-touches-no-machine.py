@@ -95,15 +95,15 @@ def blank(match: re.Match) -> str:
 
 
 def strip_comments_and_literals(text: str) -> str:
-    """Blanks comments, string literals and brace character literals, keeping
+    """Blanks comments, string literals and character literals, keeping
     line numbers, so a brace in a string cannot end an item early and a path
     in a message is not code."""
     pattern = re.compile(
         r"/\*.*?\*/"
         r"|//[^\n]*"
-        r"|r(#*)\".*?\"\1"
-        r"|b?\"(?:\\.|[^\"\\])*\""
-        r"|'[{}]'",
+        r"|b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\}|.)|[^'\\\n])'"
+        r"|(?<![A-Za-z0-9_])b?r(#*)\".*?\"\1"
+        r"|b?\"(?:\\.|[^\"\\])*\"",
         re.S,
     )
     return pattern.sub(blank, text)

@@ -43,6 +43,14 @@ class CoreTouchesNoMachine(unittest.TestCase):
                                              '    fn u() { std::fs::read("q").unwrap(); }\n}\n'})
         self.assertEqual(check.findings(root / 'herdr-core/src/store.rs'), [])
 
+    def test_a_quote_character_does_not_open_a_string(self):
+        root, check = self.tree({'quote.rs': 'fn q(v: &mut String) { v.push(\'"\'); v.push(\'\\\\\'); }\n'
+                                             '#[cfg(test)]\nmod tests {\n    fn t() { std::fs::read("q").unwrap(); }\n}\n'
+                                             'fn after() { std::fs::read("x"); }\n'})
+        found = check.findings(root / 'herdr-core/src/quote.rs')
+        self.assertEqual(len(found), 1, found)
+        self.assertIn('quote.rs:6', found[0])
+
     def test_the_own_pid_and_a_path_in_a_message_are_not_machine_access(self):
         root, check = self.tree({'name.rs': 'fn name() -> String { format!("{}", std::process::id()) }\n'
                                             'fn advice() -> &\'static str { "see std::fs" }\n'})
