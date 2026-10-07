@@ -206,9 +206,7 @@ impl PaneEvents for Events {
             NodeEvent::StreamData { stream, data } => panes.stream_data(node, link, stream, &data),
             NodeEvent::StreamClosed { stream } => panes.stream_closed(node, link, stream),
             NodeEvent::Refused { pane_id, reason } => {
-                // The device chooses both; the record keeps a bounded prefix.
-                let pane_id = pane_id.as_deref().map(|pane_id| prefix(pane_id, 256));
-                record_refusal(node, pane_id, prefix(&reason, 64), "node");
+                record_refusal(node, pane_id.as_deref(), &reason, "node");
             }
         }
     }
@@ -261,14 +259,21 @@ fn issue(
 /// B30: a caller turned away, by the device's node or by this daemon, is a
 /// record with the node and the pane it named, never a screen state.
 fn record_refusal(node: &str, pane_id: Option<&str>, reason: &str, by: &str) {
-    herdr_core::diagnostic!(json!({
+    herdr_core::diagnostic!(refusal_record(node, pane_id, reason, by));
+}
+
+/// The record of one refusal. A device chooses the pane id a proof names and
+/// the reason it reports, so both are cut to a bounded prefix here, where no
+/// caller can skip it.
+fn refusal_record(node: &str, pane_id: Option<&str>, reason: &str, by: &str) -> serde_json::Value {
+    json!({
         "component": "node_panes",
         "kind": "pane.refused",
         "node": node,
-        "pane_id": pane_id,
-        "reason": reason,
+        "pane_id": pane_id.map(|pane_id| prefix(pane_id, 256)),
+        "reason": prefix(reason, 64),
         "by": by,
-    }));
+    })
 }
 
 fn prefix(text: &str, chars: usize) -> &str {
@@ -354,4 +359,32 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    /// B30: a refusal is recorded with the node, the pane and the reason,
+    /// and what a device chose is cut to a bounded prefix whoever records it.
+    #[test]
+    fn a_refusal_record_names_its_pane_and_bounds_what_a_device_chose() {
+        assert_eq!(
+            refusal_record("mini", Some("w1:p2"), "bridge_busy", "core"),
+            json!({
+                "component": "node_panes",
+                "kind": "pane.refused",
+                "node": "mini",
+                "pane_id": "w1:p2",
+                "reason": "bridge_busy",
+                "by": "core",
+            })
+        );
+        let long = "é".repeat(4096);
+        let record = refusal_record("mini", Some(&long), &long, "node");
+        assert_eq!(record["pane_id"].as_str().unwrap().chars().count(), 256);
+        assert_eq!(record["reason"].as_str().unwrap().chars().count(), 64);
+        assert_eq!(refusal_record("mini", None, "streams_full", "node")["pane_id"], Value::Null);
+    }
 }
