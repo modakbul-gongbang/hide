@@ -353,7 +353,7 @@ While a popup holds the keyboard, Close (⌘W) and Close pane close the popup an
 While a page holds the keyboard, the text-size commands zoom the page instead of sizing text, the way ⌘= / ⌘- / ⌘0 do in Chrome.
 The desktop app routes them by command, not by key, so a rebound text-size chord zooms the page too: an app-menu command for Larger, Smaller or Reset text that arrives while a page holds the keyboard steps that page through Chrome's zoom levels (25% to 500%) or back to 100%, and the page keeps the keyboard (`BrowserViews.zoomFocused`).
 Chrome's second zoom-in chord, ⌘+ (⌘⇧= on a US keyboard), reaches no menu item, so the host zooms the focused page on that key before the page or the menu sees it, unless the operator bound that chord to a command.
-With the shell holding the keyboard the same commands size the focused terminal or document text as before.
+With the shell holding the keyboard the same commands size the focused terminal or document text as before, or zoom the image or PDF in front in the same steps ([UI_BEHAVIOR.md](UI_BEHAVIOR.md#file-document-toolbar-and-markdown)).
 Chromium keeps one zoom level per host within a page's session partition, so web pages of the same host in different Workspaces zoom together.
 The shell's own zoom, which places every page on its slot, is a separate session and never moves with a page's zoom.
 

@@ -349,6 +349,7 @@ impl Runtime {
         changed |= self.expire_provisional_tabs(now_unix_ms);
         changed |= self.expire_remote_operations(now_unix_ms);
         changed |= self.advance_tree_closes();
+        changed |= self.expire_attachment_wait(now_unix_ms);
         changed |= self.reconcile_attachment_target();
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);

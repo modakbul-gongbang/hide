@@ -9,6 +9,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
@@ -23,6 +24,37 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
 );
+
+/**
+ * A wide RGB PNG of 64-pixel squares, larger than any viewer, so it opens
+ * fitted to the viewer's width and every zoom past the fit scrolls across.
+ */
+function widePng(width: number, height: number): Buffer {
+  const rows = Array.from({ length: height }, (_, y) => {
+    const row = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x += 1) row.fill(((x >> 6) + (y >> 6)) % 2 ? 60 : 210, 1 + x * 3, 4 + x * 3);
+    return row;
+  });
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const frame = Buffer.alloc(8 + data.length + 4);
+    frame.writeUInt32BE(data.length, 0);
+    body.copy(frame, 4);
+    frame.writeUInt32BE(zlib.crc32(body), 4 + body.length);
+    return frame;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bits per sample
+  header[9] = 2; // RGB
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 /** A minimal one-page PDF with a correct cross-reference table. */
 function minimalPdf(): Buffer {
@@ -86,6 +118,7 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     );
     fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
     fs.writeFileSync(path.join(repoDir, "shot.png"), PNG);
+    fs.writeFileSync(path.join(repoDir, "wide.png"), widePng(2400, 600));
     fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
     fs.copyFileSync(path.resolve("e2e/fixtures/tiny.mp4"), path.join(repoDir, "clip.mp4"));
     gitFixture(repoDir);
@@ -608,6 +641,76 @@ test("images, PDFs and videos render from hided file bytes", async ({ page }) =>
     });
     await expect.poll(async () => video.evaluate((node) => (node as HTMLVideoElement).currentTime)).toBeGreaterThan(0.4);
     await screenshot(page, "s3-viewer-video");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an image and a PDF zoom like a browser page: a pinch around the pointer, the text-size chords in Chrome's steps", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    // The image opens at its fit: whole across the viewer.
+    await page.locator(`[data-explorer-row="${repo}/wide.png"]`).click();
+    const viewer = page.locator('[data-viewer="image"]');
+    const image = viewer.locator("img");
+    await expect(image).toHaveCSS("visibility", "visible");
+    await expect(viewer).toHaveAttribute("data-viewer-zoom", "1");
+    const room = (await viewer.boundingBox())!;
+    const fit = (await image.boundingBox())!;
+    expect(fit.width).toBeLessThan(2400);
+    expect(fit.width).toBeLessThanOrEqual(room.width);
+
+    // A pinch arrives as a Ctrl wheel: it grows the image around the
+    // pointer, so the point 70% across stays under it.
+    const pointer = { x: fit.x + fit.width * 0.7, y: fit.y + fit.height * 0.5 };
+    await page.mouse.move(pointer.x, pointer.y);
+    await page.keyboard.down("Control");
+    for (let notch = 0; notch < 3; notch += 1) await page.mouse.wheel(0, -100);
+    await page.keyboard.up("Control");
+    const width = async () => (await image.boundingBox())?.width ?? 0;
+    await expect.poll(width).toBeGreaterThan(fit.width * 2);
+    const zoomed = (await image.boundingBox())!;
+    expect((pointer.x - zoomed.x) / zoomed.width).toBeCloseTo(0.7, 2);
+    await screenshot(page, "s3-viewer-image-zoomed");
+
+    // With the image holding the keyboard, ⌘0 returns to the fit and ⌘= takes
+    // Chrome's next step; neither sizes the editor's text.
+    await viewer.click();
+    await page.keyboard.press(chord("text_reset"));
+    await expect(viewer).toHaveAttribute("data-viewer-zoom", "1");
+    await expect.poll(width).toBeCloseTo(fit.width, 0);
+    await page.keyboard.press(chord("text_larger"));
+    await expect(viewer).toHaveAttribute("data-viewer-zoom", "1.1");
+    await expect.poll(width).toBeCloseTo(fit.width * 1.1, 0);
+    expect(sent.get("editor_text_scale") ?? 0).toBe(0);
+
+    // A PDF page is drawn again at the scale it is shown at, so it stays sharp.
+    await page.locator(`[data-explorer-row="${repo}/doc.pdf"]`).click();
+    const pdf = page.locator('[data-viewer="pdf"]');
+    const sheet = pdf.locator('[data-pdf-page="1"]');
+    const canvas = sheet.locator("canvas");
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+    const pixels = () => canvas.evaluate((node) => (node as HTMLCanvasElement).width);
+    const shown = (await sheet.boundingBox())!;
+    const ratio = await page.evaluate(() => window.devicePixelRatio);
+    expect(await pixels()).toBeCloseTo(shown.width * ratio, -1);
+    await page.mouse.move(shown.x + shown.width / 2, shown.y + shown.height / 2);
+    await page.keyboard.down("Control");
+    for (let notch = 0; notch < 3; notch += 1) await page.mouse.wheel(0, -100);
+    await page.keyboard.up("Control");
+    await expect.poll(async () => (await sheet.boundingBox())?.width ?? 0).toBeGreaterThan(shown.width * 2);
+    const grown = (await sheet.boundingBox())!;
+    await expect.poll(pixels, { timeout: 10_000 }).toBeCloseTo(grown.width * ratio, -1);
+    await screenshot(page, "s3-viewer-pdf-zoomed");
+
+    // The text-size chords still size a text document's text.
+    await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
+    const code = page.locator("[data-editor-codemirror] .cm-content");
+    await expect(code).toContainText("export const answer = 41;");
+    await code.click();
+    await page.keyboard.press(chord("text_larger"));
+    await expect.poll(() => sent.get("editor_text_scale")).toBe(1);
   } finally {
     close(fixture);
   }
