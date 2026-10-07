@@ -2171,6 +2171,19 @@ impl Runtime {
             .insert(context.target_id().to_owned(), context);
     }
 
+    /// The installed connection owns coordinator writes even before its first
+    /// successful read. Retired coordinators retain their distinct connector
+    /// allocation until they stop, so removal or replacement revokes writes.
+    pub(crate) fn remote_coordinator_is_current(
+        &self,
+        target_id: &str,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+    ) -> bool {
+        self.remote_controls
+            .get(target_id)
+            .is_some_and(|context| Arc::ptr_eq(&context.api_connector(), connector))
+    }
+
     /// The Herdr API connection the core already holds for a connected SSH
     /// device, for a daemon request that reads or writes one of its panes
     /// outside the attach set. A device that is not connected has none.
