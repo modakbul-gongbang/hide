@@ -122,10 +122,11 @@ async fn the_pane_bootstrap_answers_a_caller_on_the_local_stream() {
 
 /// A command whose `HIDE_CAP_REF` names a reference the daemon no longer
 /// holds answers what a bare `hide` answers, because it runs on a bare
-/// bootstrap: the daemon removed the file of a reference that expired, and
-/// never issued the token of one a stopped daemon left behind. This process
-/// sits in no checkout the daemon can reach, so the bare answer is a
-/// refusal, which also shows the fallback lets in nobody a bare command
+/// bootstrap: the daemon removed the file of a reference that expired; a
+/// daemon that crashed left one pointing at a port nothing listens on; and
+/// one a revoked or restarted daemon on the same port never issued. This
+/// process sits in no checkout the daemon can reach, so the bare answer is
+/// a refusal, which also shows the fallback lets in nobody a bare command
 /// would not.
 #[tokio::test]
 async fn a_command_whose_reference_is_gone_answers_as_a_bare_command() {
@@ -135,19 +136,26 @@ async fn a_command_whose_reference_is_gone_answers_as_a_bare_command() {
         .expect("start daemon");
     env.pane_id = None;
     let expired = dir.path().join("expired.json");
-    let stale = dir.path().join("stale.json");
-    let mut file = hide_platform::fs::private::create_new_file(&stale).unwrap();
-    std::io::Write::write_all(
-        &mut file,
-        json!({"token": "ab".repeat(32), "port": running.port, "origin_port": running.port})
-            .to_string()
-            .as_bytes(),
-    )
-    .unwrap();
-    drop(file);
+    let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let crashed = dir.path().join("crashed.json");
+    let unknown = dir.path().join("unknown.json");
+    for (path, port) in [(&crashed, closed_port), (&unknown, running.port)] {
+        let mut file = hide_platform::fs::private::create_new_file(path).unwrap();
+        std::io::Write::write_all(
+            &mut file,
+            json!({"token": "ab".repeat(32), "port": port, "origin_port": port})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+    }
     let (bare, answers) = tokio::task::spawn_blocking(move || {
         let bare = hided::workspace_cli::bootstrap(&env, true).unwrap_err();
-        let answers = [expired, stale].map(|path| {
+        let answers = [expired, crashed, unknown].map(|path| {
             let mut credential = hided::workspace_cli::Credential::named(&env, path);
             hided::workspace_cli::request(&mut credential, "info")
         });

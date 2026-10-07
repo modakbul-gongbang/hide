@@ -81,10 +81,11 @@ impl<'a> Credential<'a> {
     }
 
     /// Replaces a named reference the daemon no longer holds with a bare
-    /// one-shot bootstrap. False when `reason` is not an expired reference
-    /// or the credential was already bootstrapped, so a request retries once.
+    /// one-shot bootstrap. False when `reason` does not say the reference is
+    /// gone or the credential was already bootstrapped, so a request retries
+    /// once.
     fn renew(&mut self, reason: &str) -> Result<bool, String> {
-        if !self.named || reason != "credential_expired" {
+        if !self.named || !matches!(reason, "credential_expired" | UNREACHABLE) {
             return Ok(false);
         }
         *self = Self::one_shot(self.env)?;
@@ -92,14 +93,30 @@ impl<'a> Credential<'a> {
     }
 
     /// Runs one request, and again with a bare bootstrap when the named
-    /// reference has expired. Every `credential_expired` a request returns
-    /// is decided before the daemon runs the command, or follows a read, so
-    /// the second run never repeats an applied action.
+    /// reference is gone. A gone reference is found before the daemon runs
+    /// the command (the file, the connect, the handshake, the daemon's
+    /// credential check) or, as a lost claim acknowledgement, after a read;
+    /// a lost claim after an action keeps its result, so the second run
+    /// never repeats an applied action.
     fn run<T>(&mut self, mut request: impl FnMut(&Path) -> Result<T, String>) -> Result<T, String> {
         match request(&self.path) {
             Err(reason) if self.renew(&reason)? => request(&self.path),
             outcome => outcome,
         }
+        .map_err(reported)
+    }
+}
+
+/// No daemon listens where the reference points, before anything was sent:
+/// the daemon that issued it stopped without removing it. Reported as
+/// `hide_unavailable`, the reason a caller already acts on.
+const UNREACHABLE: &str = "hide_unreachable";
+
+fn reported(reason: String) -> String {
+    if reason == UNREACHABLE {
+        "hide_unavailable".to_owned()
+    } else {
+        reason
     }
 }
 
@@ -362,12 +379,17 @@ pub(crate) async fn browser_relay(
     credential: &mut Credential<'_>,
     display_id: &str,
 ) -> Result<(WorkspaceSocket, bool), (String, Option<String>)> {
+    let renewed = |reason: String| {
+        let next_action = crate::cli::bootstrap_next_action(&reason).to_owned();
+        (reason, Some(next_action))
+    };
     match relay_once(&credential.path, display_id).await {
-        Err((reason, _)) if credential.renew(&reason).map_err(|reason| (reason, None))? => {
+        Err((reason, _)) if credential.renew(&reason).map_err(renewed)? => {
             relay_once(&credential.path, display_id).await
         }
         outcome => outcome,
     }
+    .map_err(|(reason, next_action)| (reported(reason), next_action))
 }
 
 async fn relay_once(
@@ -503,7 +525,7 @@ async fn exchange_response(
     );
     let (mut socket, _) = tokio_tungstenite::connect_async(request)
         .await
-        .map_err(|_| "hide_unavailable".to_owned())?;
+        .map_err(|_| UNREACHABLE.to_owned())?;
     socket
         .send(Message::Text(
             json!({"token":reference.token,"schema_version":SCHEMA_VERSION})

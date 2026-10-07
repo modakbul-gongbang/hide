@@ -416,11 +416,7 @@ fn links(env: &Env, query: &herdr_core::links::query::LinksQuery) -> Result<(), 
     let answer = match crate::workspace_cli::request_links(&mut credential, query) {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                true,
-            );
+            return query_refusal(&reason, request_next_action(&reason), true);
         }
     };
     println!("{answer}");
@@ -495,6 +491,9 @@ fn workspace_action_value(
     };
     let answer = match crate::workspace_cli::request_action(&mut credential, action, &request_id) {
         Ok(answer) => answer,
+        Err(reason) if bootstrap_refused(&reason) => {
+            return workspace_action_before_send_refusal(&request_id, &reason);
+        }
         Err(reason) => return workspace_action_refusal(&request_id, &reason),
     };
     if answer["ok"] == true {
@@ -515,6 +514,21 @@ pub(crate) fn bootstrap_next_action(reason: &str) -> &'static str {
         "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
         _ => "Open Hide, reconnect this pane, and retry the same command",
+    }
+}
+
+/// A bootstrap refusal reaches a request when the reference `HIDE_CAP_REF`
+/// named was gone and the bare bootstrap that replaces it was refused;
+/// nothing was sent, and the bootstrap's next step still applies.
+fn bootstrap_refused(reason: &str) -> bool {
+    matches!(reason, "checkout_not_registered" | "caller_unavailable")
+}
+
+fn request_next_action(reason: &str) -> &'static str {
+    if bootstrap_refused(reason) {
+        bootstrap_next_action(reason)
+    } else {
+        "Check Hide status, reconnect the pane, and retry"
     }
 }
 
@@ -633,11 +647,7 @@ fn workspace_query_options(
     let answer = match requested {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                report,
-            );
+            return query_refusal(&reason, request_next_action(&reason), report);
         }
     };
     if answer["ok"] == true {
