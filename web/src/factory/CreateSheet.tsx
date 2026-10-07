@@ -7,7 +7,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { useInterfaceTranslation } from "../i18n/client";
-import { catalogWorkspaces } from "../snapshot";
+import { catalogWorkspaces, localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import type { MergeMode, VerificationChoice } from "./commands";
@@ -72,7 +72,8 @@ export function CreateSheet({ actions }: { actions: Actions }) {
 function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest);
-  const projects = useMemo(() => catalogWorkspaces(workspaces).filter((workspace) => !workspace.is_home && workspace.device_id === "local"), [workspaces]);
+  // This machine's projects: the engine runs here and reads only local folders.
+  const projects = useMemo(() => catalogWorkspaces(workspaces).filter((workspace) => !workspace.is_home && workspace.device_id === localDeviceId(workspaces)), [workspaces]);
   const [project, setProject] = useState<string | null>(null);
   const [verification, setVerification] = useState<Verification | null>(null);
   // Whether the verification is the sheet's own first pick rather than the person's.
