@@ -3235,6 +3235,75 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
     assert!(runtime.confirmed_worktree_removal(2).is_none());
 }
 
+/// Closing a checkout's last pane can end the only workspace that asked the
+/// reader for its repository, and the reader's next answer then has no project
+/// for it (seen on Windows CI once the close took longer). That answer says
+/// nothing about the worktree, so it does not stop the removal; the host checks
+/// the registration, HEAD and branch again before it removes anything. A HEAD
+/// that moved in a repository the reader still answers for still stops it.
+#[test]
+fn a_repository_the_reader_stopped_answering_for_does_not_stop_the_removal() {
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot};
+
+    let catalog = |head: &str| WorktreeCatalogSnapshot {
+        projects: vec![ProjectWorktreesSnapshot {
+            root_path: "/repo".to_owned(),
+            worktrees: vec![
+                WorktreeSnapshot {
+                    path: "/repo".to_owned(),
+                    branch: Some("main".to_owned()),
+                    is_main: true,
+                    ..WorktreeSnapshot::default()
+                },
+                WorktreeSnapshot {
+                    path: "/repo.worktrees/open".to_owned(),
+                    branch: Some("open".to_owned()),
+                    head_sha: Some(head.to_owned()),
+                    ..WorktreeSnapshot::default()
+                },
+            ],
+            ..ProjectWorktreesSnapshot::default()
+        }],
+    };
+    let closing = |id: u64| crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
+        id,
+        repository_root: "/repo".into(),
+        checkout_path: "/repo.worktrees/open".into(),
+        expected_head_sha: Some("abc".into()),
+        expected_branch: Some("open".into()),
+        protected_base_branch: Some("main".into()),
+        branch: Some("open".into()),
+        delete_branch: false,
+        force_delete_branch: false,
+        discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
+        phase: "closing".into(),
+        message: None,
+    };
+    let phase = |runtime: &Runtime| {
+        runtime
+            .snapshot()
+            .worktree_removal
+            .as_ref()
+            .map(|removal| removal.phase.clone())
+    };
+
+    let mut unanswered = runtime();
+    unanswered.ingest_worktrees(catalog("abc"), 0);
+    unanswered.snapshot.worktree_removal = Some(closing(1));
+    unanswered.ingest_worktrees(WorktreeCatalogSnapshot::default(), 0);
+    assert!(unanswered.ingest_worktree_close_result(1, &["w1:p1".to_owned()], Ok(())));
+    assert_eq!(phase(&unanswered).as_deref(), Some("removing"));
+
+    let mut moved = runtime();
+    moved.ingest_worktrees(catalog("abc"), 0);
+    moved.snapshot.worktree_removal = Some(closing(2));
+    moved.ingest_worktrees(catalog("def"), 0);
+    assert!(moved.ingest_worktree_close_result(2, &["w1:p1".to_owned()], Ok(())));
+    assert_eq!(phase(&moved).as_deref(), Some("failed"));
+}
+
 /// A finished removal takes its row out in the same frame, without making
 /// every project's Git state stale; a catalog read that started before the
 /// removal settled still lists the worktree and cannot bring the row back,

@@ -2491,15 +2491,26 @@ impl Runtime {
                     .unwrap_or_default(),
                 None => self.worktree_catalog.projects.iter().collect(),
             };
-            let current = catalog
+            // The catalog is the reader's latest answer. Closing a checkout's
+            // last pane can end the only workspace that asked for its
+            // repository, and the next answer then has no project for it,
+            // which says nothing about the worktree, so only a repository the
+            // reader still answers for is compared. The host checks the
+            // registration, HEAD and branch again before it removes anything.
+            let identity_changed = catalog
                 .into_iter()
-                .flat_map(|project| &project.worktrees)
-                .find(|worktree| worktree.path == active.checkout_path);
-            let identity_changed = current.is_none_or(|worktree| {
-                worktree.head_sha != active.expected_head_sha
-                    || worktree.branch != active.expected_branch
-                    || worktree.deletion_gate.blocked_reason.is_some()
-            });
+                .find(|project| project.root_path == active.repository_root)
+                .is_some_and(|project| {
+                    project
+                        .worktrees
+                        .iter()
+                        .find(|worktree| worktree.path == active.checkout_path)
+                        .is_none_or(|worktree| {
+                            worktree.head_sha != active.expected_head_sha
+                                || worktree.branch != active.expected_branch
+                                || worktree.deletion_gate.blocked_reason.is_some()
+                        })
+                });
             // The close worker names a device's panes by Herdr's own ids.
             let workspaces = match device {
                 Some(device) => self
