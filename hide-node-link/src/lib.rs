@@ -15,6 +15,7 @@ pub mod bytes;
 pub mod catalog;
 pub mod cleanup;
 pub mod clone;
+pub mod device;
 pub mod disk;
 pub mod document;
 pub mod error;
