@@ -178,7 +178,7 @@ A connected device's immutable machine identity comes from its consented helper'
 A declaration whose machine cannot be matched stays a root and records one diagnostic for that pane instead of guessing.
 
 A pane outlives the agent it hosted and the tokens outlive the agent with it, so a declaration is only a claim until the sessions prove it: it holds while the child's pane reports the `child_session` and the parent's pane the `parent_session`.
-`wire.rs` checks the child as it turns the tokens into a row, and `sidebar::apply_lineage` checks the parent because that is where both rows are known, on this machine or another.
+`wire.rs` checks the child as it turns the tokens into a row, and `agent_state::apply_lineage` checks the parent because that is where both rows are known, on this machine or another.
 An agent that took over a pane is therefore a root, and a parent pane taken over by another agent adopts none of the old children: no line, no descendant badge, and no orphan hint, since the child was never that agent's.
 A pane Herdr reports without a session cannot prove a match, so its relationship does not hold until it reports the recorded session again, and a `parent_pane` without the session tokens is not a relationship at all.
 A parent whose pane no longer lists an agent is a different case: the child stays an orphan root with its hint.
