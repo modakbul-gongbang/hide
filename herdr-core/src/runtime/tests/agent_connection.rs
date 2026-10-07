@@ -689,6 +689,56 @@ fn a_daemon_still_answering_with_autostart_off_keeps_the_shared_server_and_its_t
     assert!(!disable(&mut runtime, "local"));
 }
 
+/// B7: a stop that failed because the daemon's answer could not be read
+/// leaves nothing known about the daemon; the retry stays on offer until a
+/// read says no daemon answers.
+#[test]
+fn a_stop_that_failed_on_an_unreadable_answer_keeps_the_retry_until_no_daemon_answers() {
+    let local = crate::workspace::LOCAL_DEVICE_ID;
+    let read = |running: Option<bool>, off: Option<hide_kit::CodexDaemonOff>| hide_kit::KitReport {
+        codex_daemon_running: running,
+        ..report_with(false, off)
+    };
+    let mut runtime = runtime();
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    kit_rows(&mut runtime, Some(false));
+    feed(&mut runtime, &[("w1:p1", "codex", false)]);
+    let reason = |runtime: &Runtime| {
+        connection_of(runtime, "w1:p1").and_then(|connection| connection.reason)
+    };
+    runtime.ingest_kit_report(local, &read(Some(true), None));
+    assert!(disable(&mut runtime, "local"));
+
+    runtime.ingest_kit_report(
+        local,
+        &read(
+            None,
+            Some(hide_kit::CodexDaemonOff::Failed {
+                reason: hide_kit::CodexDaemonOffFailure::StopFailed,
+                detail: "codex app-server daemon version printed an answer Hide cannot read"
+                    .to_owned(),
+            }),
+        ),
+    );
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::CodexSharedServer)
+    );
+    runtime.ingest_kit_report(local, &read(None, None));
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::CodexSharedServer),
+        "a later read that still cannot tell keeps the retry"
+    );
+    assert!(disable(&mut runtime, "local"), "the retry is accepted");
+
+    runtime.ingest_kit_report(local, &read(Some(false), None));
+    assert_eq!(
+        reason(&runtime),
+        Some(PaneConnectionReason::StartedBeforeHide)
+    );
+}
+
 /// An answer about the daemon the kit could not read reads as no answer and
 /// goes to the log once, not on every read (B13).
 #[test]

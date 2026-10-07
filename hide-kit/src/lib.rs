@@ -547,8 +547,8 @@ pub fn status(target: &KitTarget) -> KitReport {
         .into_iter()
         .map(|id| {
             let observed = observe(id, target);
-            // `status` starts no process, so Codex's trust is what the last
-            // pass found (`codex_trust`).
+            // `status` asks Codex no trust question, so Codex's trust is
+            // what the last pass found (`codex_trust`).
             let failure = (id == ComponentId::CodexHook
                 && matches!(observed, Observed::Current)
                 && !switched_off(id))
@@ -664,6 +664,11 @@ fn turn_codex_daemon_off(target: &KitTarget) -> CodexDaemonOff {
         Ok(Stopped::AlreadyStopped { answer }) => CodexDaemonOff::Done {
             no_daemon: Some(answer),
         },
+        // Hide quitting mid-stop is not Codex refusing: the machine could
+        // not be asked to the end.
+        Err(message) if target.stop.load(std::sync::atomic::Ordering::Relaxed) => {
+            failed(CodexDaemonOffFailure::Unreachable, message)
+        }
         Err(message) => failed(CodexDaemonOffFailure::StopFailed, message),
     }
 }

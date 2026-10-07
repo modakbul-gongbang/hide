@@ -136,11 +136,11 @@ fn daemon_answer(codex: &Path, home: &Path, stop: &AtomicBool) -> Result<Option<
         Some(true) => Ok(None),
         Some(false) => Ok(Some(format!(
             "codex app-server daemon version answered: {}",
-            finished.stdout.trim()
+            excerpt(&finished.stdout)
         ))),
         None => Err(format!(
             "codex app-server daemon version printed an answer Hide cannot read: {}",
-            finished.stdout.trim().lines().next().unwrap_or_default()
+            excerpt(&finished.stdout)
         )),
     }
 }
@@ -268,8 +268,25 @@ impl From<RunError> for String {
     }
 }
 
+/// At most this many characters of what Codex printed reach a report and the
+/// core's log (engineering rule 15): enough to tell one failure from another.
+const EXCERPT_CHARS: usize = 240;
+
+/// The first non-empty line of what Codex printed, cut to [`EXCERPT_CHARS`].
+fn excerpt(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    match line.char_indices().nth(EXCERPT_CHARS) {
+        Some((end, _)) => format!("{}...", &line[..end]),
+        None => line.to_owned(),
+    }
+}
+
 fn failed(codex: &Path, what: &str, finished: &Finished) -> String {
-    let line = finished.last_error_line();
+    let line = excerpt(&finished.last_error_line());
     let code = finished
         .code
         .map_or_else(|| "a signal".to_owned(), |code| format!("code {code}"));
@@ -405,6 +422,18 @@ mod tests {
         assert_eq!(parse_daemon_status(r#"{"status":"stopped"}"#), Some(false));
         assert_eq!(parse_daemon_status("Error: failed to connect"), None);
         assert_eq!(parse_daemon_status(r#"{"pid":1}"#), None);
+    }
+
+    #[test]
+    fn what_codex_printed_reaches_the_log_as_one_short_line() {
+        assert_eq!(
+            excerpt("\n  Error: failed to connect  \nCaused by: x\n"),
+            "Error: failed to connect"
+        );
+        let long = "é".repeat(10_000);
+        let cut = excerpt(&long);
+        assert_eq!(cut.chars().count(), EXCERPT_CHARS + 3);
+        assert!(cut.ends_with("..."));
     }
 
     /// A stand-in `codex` whose daemon is the file `running` in its HOME;

@@ -897,9 +897,20 @@ impl KitSnapshot {
     /// Whether a Codex started by hand on this machine joins the shared
     /// server: the setting starts it, or a daemon still answers after the
     /// setting went off (PRD settings-cleanup B27; codex-daemon-apply D-07,
-    /// B9). The pane popover's turn-off is offered exactly while this holds.
+    /// B9). After a stop that did not take effect, only a read that says no
+    /// daemon answers ends it, so an answer Hide could not read keeps the
+    /// retry on offer (B7). The pane popover's turn-off is offered exactly
+    /// while this holds.
     pub fn shares_codex_server(&self) -> bool {
-        self.codex_daemon_on == Some(true) || self.codex_daemon_running == Some(true)
+        let stop_failed = matches!(
+            self.codex_daemon_off,
+            Some(CodexDaemonOffSnapshot::Failed {
+                reason: CodexDaemonOffFailure::StopFailed
+            })
+        );
+        self.codex_daemon_on == Some(true)
+            || self.codex_daemon_running == Some(true)
+            || stop_failed && self.codex_daemon_running.is_none()
     }
 }
 
