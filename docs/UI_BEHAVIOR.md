@@ -392,6 +392,7 @@ Among the bounded interpretations, the longest existing path wins; a failed or b
 In Korean prose such as `보드 보기 (docs/README.md)에 C안을 추가했습니다.`, only `docs/README.md` is underlined and clickable when that is the actual path.
 Grammar is interpreted only after a closing parenthesis, square/curly bracket or quotation mark: 에, 에서, 에게, 께, 으로, 로, 와, 과, 을, 를, 은, 는, 이, 가, 의, 도, 만, 부터, 까지, optionally followed by one of 도, 만, 는 or 은.
 An unsupported word, an unbounded particle chain, or Hangul attached without that closing boundary is never shortened.
+A URL takes the same boundary, and since a URL cannot be checked, a particle after its closing mark is always prose: in `PR #682 (https://github.com/o/r/pull/682)이 끝났습니다`, only `https://github.com/o/r/pull/682` is the link.
 Ranges follow the terminal's actual cells, including wide glyphs, combining sequences and wrapped rows.
 A path or URL the terminal wrapped at its last column, or a TUI broke at its own margin and indented, is one link across its rows; a URL spans rows only where the terminal wrapped it, because it cannot be checked.
 Under the pointer a link is underlined and the pointer becomes a hand; a click on it is the link's and never reaches the program, and a drag across it selects its text and opens nothing.
