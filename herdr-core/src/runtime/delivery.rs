@@ -187,6 +187,109 @@ impl Runtime {
             self.delivery_overflow.remove(device);
         }
         self.delivery_connected.insert(device.to_owned());
+        self.observe_registration_panes(device, payload, host_scope);
+    }
+
+    /// A host's session sync is about to ask Herdr for a fresh snapshot.
+    /// Until that snapshot publishes, the host's panes are unknown and no
+    /// registration on it is ended.
+    pub(crate) fn begin_delivery_pane_read(&mut self, device: &str) {
+        if !self.delivery_pane_owner_registered(device) {
+            return;
+        }
+        let floor = self
+            .delivery_ledger
+            .as_ref()
+            .ok()
+            .map(|ledger| ledger.next_id);
+        self.delivery_panes.insert(
+            device.to_owned(),
+            crate::coordination::PaneRead {
+                host_scope: None,
+                floor,
+                panes: None,
+            },
+        );
+    }
+
+    /// Records the host's published panes and, when they changed, which live
+    /// registrations on it lost their pane. A publish whose panes did not
+    /// move costs one borrowed set and no copy; the pass over the
+    /// registrations runs only when they moved.
+    fn observe_registration_panes(
+        &mut self,
+        device: &str,
+        payload: &SessionSnapshotPayload,
+        host_scope: Option<&str>,
+    ) {
+        if !self.delivery_pane_owner_registered(device) {
+            return;
+        }
+        // An agent's pane is one of the panes; a payload of agents alone
+        // (a device read before its layout) still names them.
+        let panes: HashSet<&str> = payload
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .chain(
+                payload
+                    .agents
+                    .iter()
+                    .filter_map(|agent| agent.pane_id.as_deref()),
+            )
+            .collect();
+        let read = self.delivery_panes.get(device);
+        if read.is_some_and(|read| {
+            read.host_scope.as_deref() == host_scope
+                && read.panes.as_ref().is_some_and(|known| {
+                    known.len() == panes.len() && panes.iter().all(|pane| known.contains(*pane))
+                })
+        }) {
+            return;
+        }
+        // A transition judged without the ledger would be lost, so the
+        // previous read stays until a ledger can judge it.
+        let Ok(ledger) = self.delivery_ledger.as_ref() else {
+            return;
+        };
+        let read =
+            self.delivery_panes
+                .entry(device.to_owned())
+                .or_insert(crate::coordination::PaneRead {
+                    host_scope: None,
+                    floor: None,
+                    panes: None,
+                });
+        read.host_scope = host_scope.map(str::to_owned);
+        let previous = read
+            .panes
+            .replace(panes.into_iter().map(str::to_owned).collect());
+        self.registrations_gone
+            .extend(crate::coordination::gone_registrations(
+                ledger,
+                device,
+                read,
+                previous.as_ref(),
+            ));
+    }
+
+    /// A retired remote coordinator may finish before its off-lock join,
+    /// but only a registered device still owns a pane read.
+    fn delivery_pane_owner_registered(&self, device: &str) -> bool {
+        device == self.node.as_str()
+            || self
+                .snapshot
+                .ui_state
+                .device_registrations
+                .iter()
+                .any(|registration| registration.id == device)
+    }
+
+    /// The registrations the delivery store has still to end.
+    pub(crate) fn delivery_registrations_gone(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::coordination::PaneGone> {
+        self.registrations_gone.clone()
     }
 
     /// A key, paste or phone write hide routed to a pane: a draft may have
@@ -433,6 +536,14 @@ impl Runtime {
         let changed = transitions && before.as_ref() != Some(&after);
         if changed {
             self.snapshot.delivery_watches = after;
+        }
+        if !self.registrations_gone.is_empty() {
+            self.registrations_gone.retain(|id, _| {
+                ledger
+                    .agents
+                    .iter()
+                    .any(|record| &record.id == id && !record.ended)
+            });
         }
         self.delivery_ledger = Ok(ledger);
         self.feed_link_parents();
@@ -1682,5 +1793,151 @@ pub(crate) mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
         drop(worker);
+    }
+
+    /// Two agents in panes `lead` and `child` on this machine's Herdr at
+    /// `scope`, each registered, with `lead` watching `child`.
+    fn registered_pair(runtime: &mut Runtime) -> Ledger {
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"lead","pane_id":"lead","agent":"claude","agent_status":"idle","state_change_seq":1,
+             "lineage_session":crate::wire::session_digest("lead-native")},
+            {"id":"child","pane_id":"child","agent":"codex","agent_status":"working","state_change_seq":1,
+             "lineage_session":crate::wire::session_digest("child-native")},
+        ]}))
+        .unwrap();
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, Some("scope"), None);
+        let mut ledger = (*runtime.delivery_state().unwrap()).clone();
+        for (id, pane) in [("agent-1", "lead"), ("agent-2", "child")] {
+            ledger.agents.push(crate::coordination::AgentRecord {
+                id: id.into(),
+                name: pane.into(),
+                machine: crate::node::TEST_NODE.into(),
+                host_scope: "scope".into(),
+                native_machine: "fixture-machine".into(),
+                session: format!("{pane}-native"),
+                instance: format!("terminal-{pane}"),
+                pane: pane.into(),
+                parent: (pane == "child").then(|| "agent-1".into()),
+                project: None,
+                actor: runtime.delivery_observations[pane].actor.clone(),
+                ended: false,
+            });
+        }
+        ledger.next_id = 3;
+        let lead = ledger.agents[0].actor.clone();
+        let child = ledger.agents[1].actor.clone();
+        crate::delivery::watch::start(&mut ledger, &lead, &child, 1).unwrap();
+        ledger.validate().unwrap();
+        runtime.delivery_ledger = Ok(Arc::new(ledger.clone()));
+        ledger
+    }
+
+    fn only_lead() -> SessionSnapshotPayload {
+        serde_json::from_value(json!({"agents":[
+            {"id":"lead","pane_id":"lead","agent":"claude","agent_status":"idle","state_change_seq":1,
+             "lineage_session":crate::wire::session_digest("lead-native")},
+        ]}))
+        .unwrap()
+    }
+
+    /// Herdr closing a registered agent's pane ends its registration and the
+    /// watches on it in the durable ledger, and frees its name; the agent
+    /// whose pane is still open stays registered.
+    #[test]
+    fn herdr_closing_a_registered_pane_ends_the_registration_and_its_watches() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        registered_pair(&mut runtime.lock().unwrap());
+        runtime.lock().unwrap().observe_delivery(
+            crate::node::TEST_NODE,
+            &only_lead(),
+            Some("scope"),
+            None,
+        );
+        // Any transaction commits the pending ends with it.
+        client
+            .submit(
+                crate::delivery::worker::Effect::HumanClaim,
+                Duration::from_secs(5),
+            )
+            .unwrap();
+        let persisted = crate::delivery::ledger::load(&path).unwrap();
+        let ended = |ledger: &Ledger| {
+            ledger
+                .agents
+                .iter()
+                .map(|record| (record.id.clone(), record.ended))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ended(&persisted),
+            [("agent-1".to_owned(), false), ("agent-2".to_owned(), true)]
+        );
+        assert!(persisted.watches.is_empty());
+        let guard = runtime.lock().unwrap();
+        assert_eq!(*guard.delivery_state().unwrap(), persisted);
+        assert!(guard.delivery_registrations_gone().is_empty());
+        assert!(crate::coordination::resolve_actor(&persisted, "child").is_none());
+        drop(guard);
+        drop(worker);
+    }
+
+    /// A pane read ends only this Herdr's registrations it can vouch for:
+    /// none made after its snapshot was asked for, none on another Herdr or
+    /// device, and never a Factory's code-owned one, all of whose panes the
+    /// snapshot lacks; a registration made before it whose pane it lacks
+    /// does end.
+    #[test]
+    fn a_pane_read_never_ends_a_registration_it_cannot_vouch_for() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        let mut ledger = registered_pair(&mut guard);
+        let child = ledger.agents[1].clone();
+        let variant = |id: u64, pane: &str| {
+            let mut record = child.clone();
+            record.id = format!("agent-{id}");
+            record.name = pane.into();
+            record.pane = pane.into();
+            record.actor.pane_id = pane.into();
+            record.parent = None;
+            record
+        };
+        let next = ledger.next_id;
+        let mut elsewhere = variant(next, "elsewhere");
+        elsewhere.host_scope = "another-herdr".into();
+        let mut device = variant(next + 1, "device-pane");
+        device.machine = "device".into();
+        device.actor.device_id = "device".into();
+        device.actor.pane_id = "remote:device:pane:device-pane".into();
+        let factory = Actor::factory("f1", crate::node::TEST_NODE);
+        let mut owned = variant(next + 2, &factory.pane_id);
+        owned.actor = factory;
+        ledger.agents.extend([elsewhere, device, owned]);
+        ledger.next_id = next + 3;
+        guard.delivery_ledger = Ok(Arc::new(ledger.clone()));
+        // A reconnect asks for a fresh snapshot, and an agent registers
+        // while it is out.
+        guard.begin_delivery_pane_read(crate::node::TEST_NODE);
+        let late = variant(ledger.next_id, "late");
+        ledger.agents.push(late);
+        ledger.next_id += 1;
+        guard.delivery_ledger = Ok(Arc::new(ledger));
+        // The snapshot lists only the lead.
+        guard.observe_delivery(crate::node::TEST_NODE, &only_lead(), Some("scope"), None);
+        assert_eq!(
+            guard
+                .delivery_registrations_gone()
+                .into_iter()
+                .map(|(id, reason)| (id, reason.reason()))
+                .collect::<Vec<_>>(),
+            [("agent-2".to_owned(), "pane_absent")]
+        );
     }
 }

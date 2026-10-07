@@ -2445,6 +2445,7 @@ impl Runtime {
                     .ui_state
                     .device_registrations
                     .retain(|device| device.id != payload.device_id);
+                self.delivery_panes.remove(&payload.device_id);
                 // Hide's kit comes off the device on its own helper
                 // connection, which the disconnect below leaves open for it.
                 let kit_removal = self.queue_device_kit_removal(&registration);
