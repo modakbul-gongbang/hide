@@ -20,14 +20,17 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import (Process, ProcessTable, descendants, marked_descendants,
-                                           procargs_environment, require_complete, snapshot, validate_linux_procfs)
+                                           procargs_owned, require_complete, snapshot, validate_linux_procfs)
 from agent_live_check.processes import OwnedProcesses, ProcessError, guard, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 
 
-def procargs(*environment):
-    return (1).to_bytes(4, sys.byteorder, signed=True) + b"/fixture\0\0fixture\0" + b"\0".join(environment) + b"\0"
+def procargs(*environment, argv=(b"fixture",), pointer_width=8):
+    path = b"/fixture\0"
+    return (len(argv).to_bytes(4, sys.byteorder, signed=True) + path
+            + b"\0" * (-len(path) % pointer_width)
+            + b"\0".join(argv) + b"\0" + b"\0".join(environment) + b"\0")
 
 
 class ConfigurationProtection(unittest.TestCase):
@@ -202,9 +205,10 @@ class ProcessProtection(unittest.TestCase):
         library.sysctl.assert_called_once()
 
     def test_successful_argument_only_read_cannot_exclude_an_owned_restricted_helper(self):
-        self.assertEqual(procargs_environment(procargs(b"OTHER=fixture")), [b"OTHER=fixture"])
+        owner = b"HIDE_LIVE_CHECK_OWNER=fixture-run"
+        self.assertFalse(procargs_owned(procargs(b"OTHER=fixture"), 8, owner))
         with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
-            procargs_environment(procargs())
+            procargs_owned(procargs(), 8, owner)
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
         library = Mock()
         def query(mib, unused, buffer, size, *rest):
@@ -217,6 +221,50 @@ class ProcessProtection(unittest.TestCase):
                 patch("agent_live_check.process_table.darwin_candidate_current", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
                 marked_descendants({111: orphan}, "fixture-run", 1)
+
+    def test_empty_first_argument_cannot_hide_owned_environment_or_prove_a_cropped_negative(self):
+        owner = b"HIDE_LIVE_CHECK_OWNER=fixture-run"
+        for width in (4, 8):
+            orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), pointer_width=width)
+            library = Mock()
+            data = procargs(owner, b"OTHER=fixture", argv=(b"",), pointer_width=width)
+            def query(mib, unused, buffer, size, *rest):
+                ctypes.memmove(buffer, data, len(data))
+                size._obj.value = len(data)
+                return 0
+            library.sysctl.side_effect = query
+            with self.subTest(pointer_width=width), \
+                    patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
+                    patch("agent_live_check.process_table.darwin_candidate_current", return_value=True):
+                self.assertEqual(marked_descendants({111: orphan}, "fixture-run", 1), {111: orphan})
+            # The restricted-target crop can retain OTHER while hiding the
+            # later owner entry. A readable prefix cannot exclude ownership.
+            cropped = procargs(b"OTHER=fixture", argv=(b"",), pointer_width=width)
+            with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
+                procargs_owned(cropped, width, owner)
+            malformed = bytearray(data)
+            malformed[13] = ord("x")  # The first required path-padding byte.
+            with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable"):
+                procargs_owned(malformed, width, owner)
+
+    def test_successful_token_answer_is_rejected_if_exec_changed_pointer_width(self):
+        orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), pointer_width=4)
+        table = ProcessTable()
+        table[111] = orphan
+        library = Mock()
+        def query(mib, unused, buffer, size, *rest):
+            data = procargs(b"OTHER=fixture", pointer_width=4)
+            ctypes.memmove(buffer, data, len(data))
+            size._obj.value = len(data)
+            return 0
+        def changed_width(pid, flavor, unused, buffer, size):
+            info = buffer._obj
+            info.sec, info.usec, info.uid, info.flags = 0, 10, os.getuid(), 0x10
+            return size
+        library.sysctl.side_effect, library.proc_pidinfo.side_effect = query, changed_width
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            self.assertEqual(marked_descendants(table, "fixture-run", 1), {})
+        self.assertEqual(table.vanished, [111])
 
     def test_successful_token_answer_is_rejected_if_sampled_pid_was_reused(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid())

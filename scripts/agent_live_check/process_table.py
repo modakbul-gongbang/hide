@@ -85,6 +85,7 @@ class Process:
     zombie: bool
     uid: int
     traced: bool = False
+    pointer_width: int = 8
 
 
 class BsdInfo(ctypes.Structure):
@@ -151,7 +152,8 @@ def snapshot() -> dict[int, Process]:
             result[pid] = Process(pid, info.ppid, info.pgid,
                                   info.sec * 1_000_000 + info.usec,
                                   task.resident if read == ctypes.sizeof(task) else -1,
-                                  info.status == 5, info.uid, bool(info.flags & 2))
+                                  info.status == 5, info.uid, bool(info.flags & 2),
+                                  8 if info.flags & 0x10 else 4)
     elif sys.platform.startswith("linux"):
         linux_procfs_context()
         with os.scandir("/proc") as entries:
@@ -206,31 +208,47 @@ def darwin_candidate_current(process: Process) -> bool:
             return False
         raise RuntimeError("owned_process_identity_unavailable_" + str(error) + ":" + str(process.pid))
     return (info.sec * 1_000_000 + info.usec == process.birth
-            and info.uid == process.uid and info.status != 5)
+            and info.uid == process.uid and info.status != 5
+            and (8 if info.flags & 0x10 else 4) == process.pointer_width)
 
 
-def procargs_environment(data: bytes) -> list[bytes]:
-    """Read KERN_PROCARGS2's environment, distinguishing omitted from absent owner."""
+def procargs_owned(data: bytes, pointer_width: int, expected: bytes) -> bool:
+    """Prove token ownership or a complete negative KERN_PROCARGS2 answer."""
     argc = int.from_bytes(data[:4], sys.byteorder, signed=True)
-    if len(data) < 4 or not 1 <= argc <= MAX_SYSTEM_PROCESSES:
+    if len(data) < 4 or not 1 <= argc <= MAX_SYSTEM_PROCESSES or pointer_width not in (4, 8):
         raise RuntimeError("owner_environment_unavailable")
     offset = data.find(b"\0", 4)
     if offset < 0:
         raise RuntimeError("owner_environment_unavailable")
     offset += 1
-    while offset < len(data) and data[offset] == 0:
-        offset += 1
-    for _ in range(argc):
+    # exec_extract_strings aligns the saved executable path to the target's
+    # pointer width. sysctl strips its 16-byte key and prepends a 4-byte argc.
+    # Skipping every NUL here would also consume a legitimate empty argv[0].
+    aligned = 4 + ((offset - 4 + pointer_width - 1) // pointer_width) * pointer_width
+    if aligned >= len(data) or any(data[offset:aligned]):
+        raise RuntimeError("owner_environment_unavailable")
+    offset = aligned
+    first_empty = False
+    for index in range(argc):
         end = data.find(b"\0", offset)
         if end < 0:
             raise RuntimeError("owner_environment_unavailable")
+        if index == 0:
+            first_empty = end == offset
         offset = end + 1
     environment = [entry for entry in data[offset:].split(b"\0") if entry]
     # XNU may successfully return argv but omit ALL environment variables for
     # a restricted target. An empty/invalid environment cannot exclude ours.
     if not data.endswith(b"\0") or not environment or any(b"=" not in entry for entry in environment):
         raise RuntimeError("owner_environment_unavailable")
-    return environment
+    if expected in environment:
+        return True
+    # XNU's restricted-target crop also skips every NUL after the path. With
+    # empty argv[0] it can expose only an environment prefix. Missing ownership
+    # in that prefix is not a complete negative observation.
+    if first_empty:
+        raise RuntimeError("owner_environment_unavailable")
+    return False
 
 
 def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *, known=None, remember=None) -> dict[int, Process]:
@@ -288,7 +306,7 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
             if hasattr(table, "vanished"):
                 table.vanished.append(pid)
             continue
-        if expected in procargs_environment(buffer.raw[:size.value]):
+        if procargs_owned(buffer.raw[:size.value], process.pointer_width, expected):
             result[pid] = process
             if remember:
                 # Retain proven ownership even if a later unrelated process
