@@ -1757,6 +1757,8 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
         },
     );
@@ -1799,6 +1801,8 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
         },
     );
@@ -2397,6 +2401,8 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
     let report = |codex_daemon| hide_kit::KitReport {
         codex_daemon,
         codex_daemon_on: None,
+        codex_daemon_running: None,
+        codex_daemon_unreadable: None,
         codex_daemon_off: None,
         ..Default::default()
     };

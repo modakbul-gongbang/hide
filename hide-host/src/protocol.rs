@@ -49,7 +49,13 @@ use crate::root::RootIdentity;
 /// on 19 would run the pass and silently ignore the request. An agent row
 /// of the report carries `chosen`, the operator's own choice on record (PRD
 /// settings-cleanup B9, D-07); a report without it reads as no choice.
-pub const PROTOCOL_VERSION: u32 = 20;
+/// 21: that `codex_daemon_off` request also stops the device's running
+/// shared Codex daemon after the operator confirmed it, and the report says
+/// whether a daemon answers (`codex_daemon_running`) and answers a stop that
+/// did not take effect as `stop_failed` (PRD codex-daemon-apply D-11). A
+/// helper on 20 is refused when it connects, so it never receives a request
+/// that would only turn autostart off.
+pub const PROTOCOL_VERSION: u32 = 21;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {

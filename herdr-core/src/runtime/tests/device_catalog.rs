@@ -1393,6 +1393,8 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
         },
     );
@@ -1481,6 +1483,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
     runtime.ingest_device_kit_answer(
         TARGET,
         crate::runtime::DeviceKitAnswer::Report(Err("the helper connection closed".to_owned())),
+        None,
     );
     let unread = children(&runtime);
     assert!(!unread.instrumented);
@@ -1504,6 +1507,8 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_running: None,
+            codex_daemon_unreadable: None,
             codex_daemon_off: None,
         },
     );

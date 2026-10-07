@@ -41,6 +41,8 @@ fn git(directory: &Path, args: &[&str]) {
             "user.name=Fixture",
             "-c",
             "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
         ])
         .args(args)
         .current_dir(directory)
