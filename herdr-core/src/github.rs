@@ -2174,7 +2174,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 arguments,
-                Duration::from_secs(5),
+                FIXTURE_DEADLINE,
             )
         };
         assert_eq!(write_closing_line_with(gh, 12, 7), Ok(true));
@@ -2255,7 +2255,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 arguments,
-                Duration::from_secs(5),
+                FIXTURE_DEADLINE,
             )
         };
         for allowed in [
@@ -3225,9 +3225,8 @@ esac"#,
     #[cfg(unix)]
     fn a_search_takes_its_repositories_the_cap_fixed_fields_and_the_query_words_after_the_dashes() {
         let fixture = GhFixture::new(r#"printf '[]'"#);
-        let allowed = |arguments: &[&str]| {
-            run_gh(&fixture.binary, None, arguments, Duration::from_secs(5)).is_ok()
-        };
+        let allowed =
+            |arguments: &[&str]| run_gh(&fixture.binary, None, arguments, FIXTURE_DEADLINE).is_ok();
         let prs = |repositories: &[&'static str], words: &[&'static str]| {
             let mut arguments = vec!["search", "prs"];
             for repository in repositories {
