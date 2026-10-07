@@ -598,9 +598,11 @@ fn the_issue_panel_joins_its_pull_requests_and_names_which_one_a_session_made() 
 /// worked on include a merged one and no open one; a session belongs to the
 /// deepest checkout holding its folder, and a checkout on no branch (one
 /// left on a main commit after its branches merged) still has its sessions.
-/// A pull request a session only printed is not work, and a session counts
-/// only from when its checkout was added, so a worktree made again at a used
-/// path and branch inherits nothing, and one whose age is unread has none.
+/// A pull request a session only printed is not work; a session counts only
+/// if it started after its checkout was added, so a worktree made again at a
+/// used path and branch inherits nothing even from a session still running,
+/// and one whose age is unread has none; and a checkout on a branch weighs
+/// only that branch's pull requests, so a branch switched in place is clean.
 #[test]
 fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
     let home = tempfile::tempdir().unwrap();
@@ -619,6 +621,7 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
         pr(17, "feat/mixed", T0 + 70 * MIN, None),
         merged(18, "feat/gone"),
         merged(19, "feat/old"),
+        merged(20, "feat/a"),
     ]);
     facts.worktrees = [
         (ROOT, Some("main")),
@@ -631,6 +634,7 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
         ("/work/app-looked", None),
         ("/work/app-reused", Some("feat/old")),
         ("/work/app-unread", Some("feat/done")),
+        ("/work/app-switched", Some("feat/b")),
     ]
     .map(|(path, branch)| WorktreeFact {
         path: path.into(),
@@ -722,14 +726,31 @@ fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
             &[turn("gen-prd/looked")],
             Some((10, T0 + 40 * MIN)),
         ),
-        // Made a pull request at this path before the worktree there now.
+        // Worked on a pull request's branch at this path before the worktree
+        // there now was added, and still ran after it was.
         claude_file(
             home.path(),
             "s-reused",
             "/work/app-reused",
             "cli",
-            &[turn("feat/old")],
-            Some((19, T0 + 1_000)),
+            &[
+                turn("feat/old"),
+                Turn {
+                    at: T0 + 120 * MIN,
+                    branch: "feat/old",
+                    text: "계속",
+                },
+            ],
+            None,
+        ),
+        // Made a pull request on the branch the worktree has since left.
+        claude_file(
+            home.path(),
+            "s-switched",
+            "/work/app-switched",
+            "cli",
+            &[turn("feat/a")],
+            Some((20, T0 + 1_000)),
         ),
         claude_file(
             home.path(),

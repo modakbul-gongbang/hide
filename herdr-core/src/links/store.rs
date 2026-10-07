@@ -1527,9 +1527,11 @@ impl LinkStore {
                 if line.role != SessionRole::Created && !line.on_branch {
                     continue;
                 }
-                // A checkout's sessions are the ones active since it was
-                // added, so a worktree made again at a used path inherits
-                // nothing, and one whose age is not read yet has none.
+                // A checkout's sessions are the ones that started in it since
+                // it was added, so a worktree made again at a used path
+                // inherits nothing, and one whose age is not read yet has
+                // none. On a branch it weighs only that branch's pull
+                // requests, so switching to a new branch starts clean.
                 let checkout = line
                     .cwd
                     .as_deref()
@@ -1537,9 +1539,11 @@ impl LinkStore {
                     .and_then(|cwd| deepest_checkout(checkouts, cwd))
                     .filter(|checkout| {
                         checkout.created_at_unix_ms.is_some_and(|added| {
-                            line.ended_at_unix_ms.is_some_and(|ended| ended >= added)
+                            line.started_at_unix_ms
+                                .is_some_and(|started| started >= added)
                         })
-                    });
+                    })
+                    .filter(|checkout| checkout.branch.as_ref().is_none_or(|b| *b == pr.branch));
                 if let Some(checkout) = checkout {
                     let (merged, open) = work.entry(checkout.path.as_str()).or_default();
                     *merged |= pr.merged_at.is_some();

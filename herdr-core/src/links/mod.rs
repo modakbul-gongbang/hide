@@ -210,10 +210,10 @@ pub struct ProjectLinkSummary {
     /// Session id → the pull requests it made or worked on.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
-    /// The checkouts, by path, whose work landed: the sessions that worked
+    /// The checkouts, by path, whose work landed: the sessions that started
     /// in each since it was added made, or worked on the branch of, a merged
-    /// pull request and none still open. A session belongs to the deepest
-    /// checkout holding its folder.
+    /// pull request and none still open, of the checkout's own branch when it
+    /// is on one. A session belongs to the deepest checkout holding its folder.
     /// Core only: the runtime carries it onto each checkout's `landed`.
     #[serde(skip)]
     pub landed: BTreeSet<String>,
