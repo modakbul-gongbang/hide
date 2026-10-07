@@ -10,6 +10,7 @@ import { StatusMark } from "../components/status-mark";
 import { Button } from "../components/ui/button";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
+import { localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { ACTION_LABEL, GATE_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
@@ -47,7 +48,8 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
   const main = useRef<HTMLButtonElement>(null);
   const agents = useShellStore((state) => state.agents);
   const navigator = useShellStore((state) => state.rest?.navigator);
-  const localProject = navigator?.workspaces?.find((project) => project.path === factory.project);
+  const localDevice = useShellStore((state) => localDeviceId(state.rest));
+  const localProject = navigator?.workspaces?.find((project) => project.device_id === localDevice && project.path === factory.project);
   const localIssue = localProject?.tasks?.tasks.find((issue) => issue.source === "local" && issue.id === card.issue);
   const summaries = useShellStore((state) => state.rest?.ui_state?.agent_summary !== false);
   const byPane = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, agent])), [agents]);

@@ -385,12 +385,15 @@ it.each([
   ["blocked", { ...MERGE, group: "answer", kind: "blocking", question: "q1", suggestion: "WS", choices: ["REST"], text: "Which endpoint?" }, { verb: "answer", task: "f1/T-1", question: "q1", choice: "suggestion", text: null }],
   ["merge_waiting", MERGE, { verb: "merge", task: "f1/T-1" }],
   ["stopped", { ...MERGE, group: "stopped", kind: "stopped", suggestion: "retry", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
+  ["stopped", { ...MERGE, group: "stopped", kind: "action", question: "q1", suggestion: "retry", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
+  ["stopped", { ...MERGE, group: "answer", kind: "new_task_cap", question: "q1", suggestion: "raise cap", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
 ] as const)("sends the %s card's canonical command once, preserves a refusal and allows retry", async (state, item, expected) => {
   const task = card("T-1", state, { column: "stuck", waiting_group: "person", needs_person: true, stop: state === "stopped" ? "verify_failed" : null });
   const summary = { my_turn: 1, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [{ ...item, choices: [...item.choices], gates: [...item.gates], unblocks: [...item.unblocks] } as InboxItem] };
-  if (state === "merge_waiting" || state === "stopped") summary.inbox.unshift({ ...MERGE, kind: "action", question: "older-question", suggestion: "approve", gates: [] });
+  if (state === "merge_waiting" || item.kind === "stopped") summary.inbox.unshift({ ...MERGE, kind: "action", question: "older-question", suggestion: "approve", gates: [] });
   const { container, events } = await mount(summary, { tab: "board" });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-card-send]")!;
+  expect(send).not.toBeNull();
   await act(async () => send.click());
   expect((events.at(-1)!.payload as { command: unknown }).command).toEqual(expected);
   expect(useUiStore.getState().screen).toMatchObject({ place: { task: null } });
@@ -421,7 +424,10 @@ it("opens the corresponding inbox item for another answer and keeps issue/PR con
 });
 
 it("opens a local issue through its catalog identity without opening the Factory task", async () => {
-  const rest = { navigator: { focused_device_id: "local", workspaces: [{ id: "project", path: "/fixture", device_id: "local", tasks: { tasks: [{ id: "L-7", key: "local:/fixture#7", source: "local" }] } }] } } as unknown as SnapshotRest;
+  const rest = { navigator: { focused_device_id: "remote", devices: [{ id: "remote", kind: "remote" }, { id: "local", kind: "local" }], workspaces: [
+    { id: "remote-project", path: "/fixture", device_id: "remote", tasks: { tasks: [{ id: "L-7", key: "remote:/fixture#7", source: "local" }] } },
+    { id: "project", path: "/fixture", device_id: "local", tasks: { tasks: [{ id: "L-7", key: "local:/fixture#7", source: "local" }] } },
+  ] } } as unknown as SnapshotRest;
   useShellStore.setState({ rest });
   const task = card("T-1", "running", { issue: "L-7" });
   const { container } = await mount({ my_turn: 0, factories: [factory({ columns: [{ column: "moving", label: "", cards: [task] }] })], inbox: [] }, { tab: "board" });

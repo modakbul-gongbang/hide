@@ -13,6 +13,18 @@ import { Refusal } from "./MyTurn";
 import { useFactoryRequest } from "./request";
 import { boardColumns, cancelledCards } from "./view";
 
+function cardInboxItem(inbox: InboxItem[], factory: string, card: CardView) {
+  const preferred = card.state === "merge_waiting" ? "merge" : card.state === "stopped" ? "stopped" : null;
+  let fallback: InboxItem | undefined;
+  for (const item of inbox) {
+    if (item.factory !== factory || item.task !== card.task || item.kind === "notice") continue;
+    if (preferred === null || item.kind === preferred) return item;
+    fallback ??= item;
+  }
+  // Action and cap questions replace the engine's synthetic stopped item.
+  return fallback;
+}
+
 /**
  * Four movement columns, with person waits first and old completions folded.
  * Card commands share the inbox request path; the board owns no engine state.
@@ -59,7 +71,7 @@ export function FactoryBoard({ factories, place, actions, inbox }: { factories: 
                   {waiting !== null ? <h3 className="text-caption text-muted-foreground">{t(waiting === "person" ? "factory.board.person" : "factory.board.other")} {count}</h3> : null}
                   {groups.map((group) => <div key={group.factory.id} className="flex min-w-0 flex-col gap-sm">
                     {many && group.cards.length + group.folded.length > 0 ? <span className="truncate text-caption text-muted-foreground">{group.factory.project_name}</span> : null}
-                    {group.cards.map((card) => <TaskCardView key={card.task} factory={group.factory} card={card} showProject={false} actions={actions} item={inbox.find((item) => item.factory === group.factory.id && item.task === card.task && (card.state === "merge_waiting" ? item.kind === "merge" : card.state === "stopped" ? item.kind === "stopped" : item.kind !== "notice"))} />)}
+                    {group.cards.map((card) => <TaskCardView key={card.task} factory={group.factory} card={card} showProject={false} actions={actions} item={cardInboxItem(inbox, group.factory.id, card)} />)}
                     {waiting === null && group.folded.length > 0 ? <FoldedDone factory={group.factory} cards={group.folded} /> : null}
                   </div>)}
                 </div>;
