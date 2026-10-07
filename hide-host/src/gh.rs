@@ -148,12 +148,11 @@ fn run_gh(
         .map_err(|error| GhFailure::network(format!("gh output was not UTF-8: {error}")))
 }
 
-#[cfg(test)]
+// Every case drives a fake `gh` shell script.
+#[cfg(all(test, unix))]
 mod tests {
-    #[cfg(unix)]
     use std::path::PathBuf;
 
-    #[cfg(unix)]
     use hide_node_link::gh::{ISSUE_DETAIL_FIELDS, PR_FEEDBACK_FIELDS};
 
     use super::*;
