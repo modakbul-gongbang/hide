@@ -4,9 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
-import type { Device, Kit, KitAgent, KitAgentSessions, KitFeatureId, KitPiece } from "../snapshot";
+import type { Device, Kit, KitAgent, KitFeatureId, KitPiece } from "../snapshot";
 import { useShellStore } from "../store";
-import { useUiStore } from "../ui";
 import type { DispatchFn } from "../ws";
 import { AgentsTab } from "./AgentsTab";
 
@@ -31,7 +30,6 @@ const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   doc_url: `https://docs.example.test/${id}`,
   ...over,
 });
-const sessions = (connected: number, not: KitAgentSessions["not_connected"] = [], hidden = 0): KitAgentSessions => ({ connected, not_connected: not, not_connected_hidden: hidden });
 // What a Partial agent does in the fixture: the skill and the subagent count, and Herdr's own status where it has an integration.
 const supports = (id: string, feature: KitFeatureId) => ["skill", "subagents"].includes(feature) || (feature === "herdr_integration" && id !== "gemini-cli");
 const partial = (id: string, over: Partial<KitAgent> = {}): KitAgent =>
@@ -47,8 +45,8 @@ const partial = (id: string, over: Partial<KitAgent> = {}): KitAgent =>
   });
 
 const SEVEN = [
-  agent("claude-code", { sessions: sessions(2) }),
-  agent("codex", { sessions: sessions(0) }),
+  agent("claude-code", { sessions: 2 }),
+  agent("codex", { sessions: 0 }),
   partial("gemini-cli"),
   partial("grok"),
   partial("opencode", { availability: "not_installed" }),
@@ -117,16 +115,19 @@ it("lists the installed agents in the supported order with a switch each, and fo
   await unmount();
 });
 
-it("shows a status only for an agent that is on: Ready, connected, not connected, and nothing for Partial agents (B16, B19)", async () => {
+it("shows a status only for an agent that is on: Ready, how many sessions run, and nothing for Partial agents (B16, B19)", async () => {
   const set = [
-    agent("claude-code", { sessions: sessions(2) }),
-    agent("codex", { sessions: sessions(0) }),
+    agent("claude-code", { sessions: 2 }),
+    agent("codex", { sessions: 0 }),
     partial("gemini-cli", { enabled: true, sessions: null }),
-    partial("grok", { sessions: sessions(3) }),
+    partial("grok", { sessions: 3 }),
   ];
-  const { q, unmount } = await mount(state([device("local", { kit: kit(set) })]));
-  expect(q('[data-agent-status="local:claude-code:connected"]')?.textContent).toContain("2 connected");
+  const { q, text, unmount } = await mount(state([device("local", { kit: kit(set) })]));
+  expect(q('[data-agent-status="local:claude-code:sessions"]')?.textContent).toContain("2 sessions");
   expect(q('[data-agent-status="local:codex:ready"]')?.textContent).toContain("Ready");
+  // A count is all a row says about sessions: no list to open and no pane to go to.
+  expect(q('[data-agent-row="local:claude-code:on"] button:not([role="switch"])')).toBeNull();
+  expect(text()).not.toContain("connected");
   // Partial: the chip only, on or off, never a count.
   expect(q('[data-agent-partial="gemini-cli"]')).not.toBeNull();
   expect(q('[data-agent-partial="grok"]')).not.toBeNull();
@@ -134,33 +135,6 @@ it("shows a status only for an agent that is on: Ready, connected, not connected
   expect(q('[data-agent-row="local:gemini-cli:on"] [data-agent-status]')).toBeNull();
   // A Full agent never wears the chip.
   expect(q('[data-agent-partial="codex"]')).toBeNull();
-  await unmount();
-});
-
-it("expands the sessions that run without Hide, counts the ones past the list, and goes to a pane (B17, B31)", async () => {
-  const set = [
-    agent("codex", {
-      sessions: sessions(1, [{ pane_id: "w1:p3", title: "Run overnight task safely", project: "browser-control", reason: "codex_shared_server" }], 13),
-    }),
-  ];
-  const { q, click, events, text, unmount } = await mount(state([device("local", { kit: kit(set) })]));
-  const chip = q('[data-agent-status="local:codex:not-connected"]')!;
-  expect(chip.textContent).toContain("14 not connected");
-  expect(chip.getAttribute("aria-expanded")).toBe("false");
-  expect(q("[data-agent-sessions]")).toBeNull();
-  await click(chip);
-  expect(chip.getAttribute("aria-expanded")).toBe("true");
-  expect(q("[data-agent-session='w1:p3']")?.textContent).toContain("Run overnight task safely");
-  expect(q("[data-agent-session='w1:p3']")?.textContent).toContain("browser-control · w1:p3");
-  expect(q("[data-agent-sessions-more]")?.textContent).toBe("+13 more");
-  // Settings has no Reopen: that is the pane's own chip (B31).
-  expect(text()).not.toContain("Reopen");
-  useUiStore.getState().openOverlay("settings");
-  await click(q("[data-agent-go-to-pane='w1:p3']"));
-  expect(sent(events, "focus_pane")).toHaveLength(1);
-  expect(sent(events, "focus_pane")[0]?.payload).toMatchObject({ pane_id: "w1:p3" });
-  // The pane shows behind the sheet, so the sheet closes.
-  expect(useUiStore.getState().overlay).not.toBe("settings");
   await unmount();
 });
 
@@ -188,7 +162,7 @@ it("turns an agent on or off on the machine the list is for, and not while the m
 });
 
 it("lists one machine at a time under a switch that appears only with a device, and shows an unreachable device as one line with Try again (B11)", async () => {
-  const studio = device("studio", { kit: kit([agent("claude-code", { sessions: sessions(0) }), agent("codex", { availability: "not_installed", enabled: false })]) });
+  const studio = device("studio", { kit: kit([agent("claude-code", { sessions: 0 }), agent("codex", { availability: "not_installed", enabled: false })]) });
   const { q, all, click, unmount } = await mount(state([device("local"), studio]));
   expect(all("[data-agents-machine]").map((item) => item.textContent)).toEqual(["This Mac", "Studio"]);
   expect(all("[data-agent-row]")).toHaveLength(7);
@@ -252,14 +226,14 @@ it("draws no Docs link from a URL a machine reports, whatever its scheme (W7)", 
 });
 
 it("lists an agent that is on only by default, with no program, as not installed and never Ready (B9)", async () => {
-  const set = [agent("claude-code", { availability: "not_installed", enabled: true, chosen: false, sessions: sessions(0) }), agent("codex", { sessions: sessions(0) }), ...SEVEN.slice(2)];
+  const set = [agent("claude-code", { availability: "not_installed", enabled: true, chosen: false, sessions: 0 }), agent("codex", { sessions: 0 }), ...SEVEN.slice(2)];
   const { all, text, q, unmount } = await mount(state([device("local", { kit: kit(set) })]));
   expect(all("[data-agent-row]").map((row) => row.getAttribute("data-agent-row"))).toContain("claude-code:not-installed");
   expect(q('[data-agent-row="local:claude-code:on"]')).toBeNull();
   expect(text()).toContain("Installed 3");
   await unmount();
   // An agent the operator switched on keeps its row and switch after its program went away.
-  const kept = [agent("claude-code", { availability: "not_installed", enabled: true, chosen: true, sessions: sessions(0) }), ...SEVEN.slice(1)];
+  const kept = [agent("claude-code", { availability: "not_installed", enabled: true, chosen: true, sessions: 0 }), ...SEVEN.slice(1)];
   const again = await mount(state([device("local", { kit: kit(kept) })]));
   expect(again.q('[data-agent-row="local:claude-code:on"]')).not.toBeNull();
   expect(again.q('[data-agent-status="local:claude-code:ready"]')).toBeNull();
@@ -281,7 +255,7 @@ it("keeps a recorded-on agent with no program under Installed with its switch, f
         herdr: { state: "absent", reason: null, location: null },
         partial: false,
         features: FEATURES.map((feature) => ({ id: feature, supported: true })),
-        sessions: { connected: 0, not_connected: [], not_connected_hidden: 0 },
+        sessions: 0,
         doc_url: `https://docs.example.test/${id}`,
       }),
     );

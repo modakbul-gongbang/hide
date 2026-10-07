@@ -264,7 +264,7 @@ Each row also carries what Hide can do for that agent as a list of features (`hi
 | `herdr_integration` | the row has a Herdr target | yes | no | yes | yes |
 | `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no | no |
 
-Claude Code and Codex are the only agents whose sessions Hide reads, so only they get per-agent session counts, and the counts are per machine and only of the panes open now: `connected` and a `not_connected` list (capped at 32, with `not_connected_hidden` for the rest), never an accumulation of warnings.
+Claude Code and Codex are the only agents whose sessions Hide reads, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
 `herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`, the adapter's `herdr`), so a flag cannot say yes where the core says no.
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
