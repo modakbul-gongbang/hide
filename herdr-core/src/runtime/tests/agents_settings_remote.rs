@@ -1471,7 +1471,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));

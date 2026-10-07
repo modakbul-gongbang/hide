@@ -560,7 +560,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
         Some(session_sync::PrecomputedCatalog {
             registrations: vec![registration],
             workspaces: vec![current_workspace],
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     assert_eq!(

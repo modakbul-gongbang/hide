@@ -394,17 +394,21 @@ impl Runtime {
         let loading = self.snapshot.git_worktrees_loading && !current;
         let changed =
             self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading != loading;
-        self.local_worktree_paths = catalog
-            .projects
-            .iter()
-            .map(|project| {
-                project
-                    .worktrees
-                    .iter()
-                    .map(|worktree| session::PathRules::Local.read(&worktree.path))
-                    .collect()
-            })
-            .collect();
+        self.local_worktree_paths = Arc::new(
+            catalog
+                .projects
+                .iter()
+                .map(|project| {
+                    project
+                        .worktrees
+                        .iter()
+                        .map(|worktree| {
+                            session::PathRules::Local.read(&worktree.path, &self.catalog_paths)
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
@@ -863,7 +867,7 @@ impl Runtime {
             if workspace.remote_target_id.is_some() {
                 continue;
             }
-            workspace::apply_worktrees(workspace, &self.worktree_catalog);
+            workspace::apply_worktrees(workspace, &self.worktree_catalog, &self.catalog_paths);
             // The commit a checkout is on is what ties a settled pull request
             // to it, so a catalog read that moved a HEAD decides again here,
             // and whether its work landed follows the same read.

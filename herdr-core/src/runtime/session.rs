@@ -20,9 +20,6 @@ pub(crate) type BirthClock = Arc<dyn Fn() -> Instant + Send + Sync>;
 /// announces settling.
 pub(super) struct CreatedTabCheckout {
     path: String,
-    /// `path` as `PathRules` read it, so a comparison costs no file system
-    /// lookup of the checkout.
-    root: String,
     /// The session has carried the tab at least once, so its absence from a
     /// later session means it closed.
     seen: bool,
@@ -61,9 +58,11 @@ pub(super) enum PathRules {
 }
 
 impl PathRules {
-    pub(super) fn read(self, path: &str) -> String {
+    /// `path` in the form it is compared in: this machine's as its node
+    /// spelled it in `paths`, else by names.
+    pub(super) fn read(self, path: &str, paths: &workspace::PathIndex) -> String {
         match self {
-            Self::Local => workspace::normalized_for_comparison(Path::new(path)),
+            Self::Local => paths.comparison(path),
             Self::Device => path.trim_end_matches('/').to_owned(),
         }
     }
@@ -84,23 +83,21 @@ pub(crate) struct CreatedTabClamp {
     /// The checkout as it was asked for, which a clamped pane reads as its cwd.
     pub(crate) path: String,
     rules: PathRules,
-    /// `path` as `rules` read it, once, when the tab was recorded.
-    root: String,
-    /// The repository's other worktrees below `root`, as `rules` read them.
-    /// A folder in one is that worktree's, so it is no more the outer
-    /// checkout's shell start folder than a sibling is.
-    nested: Vec<String>,
+    /// Each repository's worktree paths as `rules` read them. A folder in
+    /// another worktree below the checkout is that worktree's, so it is no
+    /// more the outer checkout's shell start folder than a sibling is.
+    repositories: Arc<Vec<Vec<String>>>,
 }
 
 impl CreatedTabClamp {
-    /// Whether `cwd` is the checkout's own. One read of `cwd`; the nested
-    /// worktrees are compared by names, so their number costs no file system
-    /// lookup.
-    pub(super) fn holds(&self, cwd: &str) -> bool {
-        let cwd = self.rules.read(cwd);
-        within_by_names(&cwd, &self.root)
-            && !self
-                .nested
+    /// Whether `cwd` is the checkout's own. The checkout and `cwd` are read
+    /// as `paths` gives them and compared by names, as are the nested
+    /// worktrees, so no comparison reads a folder.
+    pub(super) fn holds(&self, cwd: &str, paths: &workspace::PathIndex) -> bool {
+        let root = self.rules.read(&self.path, paths);
+        let cwd = self.rules.read(cwd, paths);
+        within_by_names(&cwd, &root)
+            && !nested_worktrees(&self.repositories, &root)
                 .iter()
                 .any(|nested| within_by_names(&cwd, nested))
     }
@@ -138,7 +135,7 @@ fn suppress_unconfirmed_created_purposes(
         .iter_mut()
         .flat_map(|workspace| workspace.checkouts.iter_mut())
     {
-        let path = workspace::normalized_for_comparison(Path::new(&checkout.path));
+        let path = workspace::comparison_by_names(Path::new(&checkout.path));
         let Some(unconfirmed) = pending.get(&path) else {
             continue;
         };
@@ -165,7 +162,7 @@ impl Runtime {
     /// Registers the exact value a creation worker is about to write before
     /// the Herdr token request can publish an event to the purpose mirror.
     pub(crate) fn begin_created_purpose_write(&mut self, path: &str, purpose: &str) {
-        let path = workspace::normalized_for_comparison(Path::new(path));
+        let path = workspace::comparison_by_names(Path::new(path));
         self.created_purpose_writes_in_flight
             .insert(path, purpose.to_owned());
     }
@@ -180,7 +177,56 @@ impl Runtime {
     /// The Herdr workspaces and the directories their panes occupy, as the
     /// project catalog sees them.
     ///
-    pub fn session_spaces(payload: &SessionSnapshotPayload) -> Vec<workspace::SessionSpace> {
+    /// Every path a catalog of `payload` and the created tabs' clamps read.
+    fn wanted_paths(&self, payload: &SessionSnapshotPayload) -> BTreeSet<String> {
+        let mut wanted = workspace::PathIndex::wanted(
+            &self.node,
+            &self.snapshot.ui_state.workspace_registrations,
+            &[],
+            &self.worktree_catalog,
+        );
+        wanted.extend(Self::session_cwds(payload));
+        wanted.extend(
+            self.created_tab_checkouts
+                .values()
+                .map(|created| created.path.clone()),
+        );
+        wanted
+    }
+
+    /// What the core's own node says of `wanted`, asked from inside the
+    /// runtime. Only a runtime the sync coordinator does not feed reads its
+    /// paths this way: a fixture, a test, and the registrations-only catalog
+    /// before Herdr first answers. A failed ask is logged and the paths are
+    /// read by their names.
+    pub(super) fn ask_paths(&self, wanted: BTreeSet<String>) -> workspace::PathIndex {
+        workspace::PathIndex::ask(self.own_node.as_ref(), wanted).unwrap_or_else(|error| {
+            crate::diagnostic!(serde_json::json!({
+                "component": "workspace_catalog",
+                "kind": "catalog.path_facts_failed",
+                "message": error,
+            }));
+            workspace::PathIndex::default()
+        })
+    }
+
+    /// Every directory the session's panes occupy, as Herdr reported it: what
+    /// the core's own node is asked about before a catalog is built.
+    pub(crate) fn session_cwds(payload: &SessionSnapshotPayload) -> BTreeSet<String> {
+        payload
+            .layouts
+            .iter()
+            .flat_map(|layout| &layout.panes)
+            .filter_map(|pane| Self::pane_cwd(payload, &pane.pane_id))
+            .collect()
+    }
+
+    /// The session's Herdr workspaces with the directories their panes
+    /// occupy, each in comparison form as `paths` gives it.
+    pub fn session_spaces(
+        payload: &SessionSnapshotPayload,
+        paths: &workspace::PathIndex,
+    ) -> Vec<workspace::SessionSpace> {
         let labels: HashMap<&str, &str> = payload
             .workspaces
             .iter()
@@ -221,6 +267,7 @@ impl Runtime {
                 let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) else {
                     continue;
                 };
+                let cwd = paths.comparison(&cwd);
                 if !spaces[index].cwds.contains(&cwd) {
                     spaces[index].cwds.push(cwd);
                 }
@@ -256,6 +303,7 @@ impl Runtime {
         &mut self,
         payload: &SessionSnapshotPayload,
         precomputed: Option<session_sync::PrecomputedCatalog>,
+        inline_paths: Option<Arc<workspace::PathIndex>>,
     ) -> bool {
         // Catalog reconstruction precedes canonical machine-qualified lineage.
         // Preserve known ownership until that pass, so admission cannot evict
@@ -270,7 +318,6 @@ impl Runtime {
             .filter(|tab| tab.delegated)
             .filter_map(|tab| tab.id.clone())
             .collect::<HashSet<_>>();
-        self.last_session_spaces = Self::session_spaces(payload);
         self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog and the root index shell out to git, so the sync
         // coordinator builds them before taking the runtime lock. A
@@ -281,37 +328,42 @@ impl Runtime {
         // and every attach reader for a third of their time (2026-09-06,
         // 18 agents, load 7 to 11). Only a runtime that has never accepted a
         // catalog builds one inline, which is the fixture and test path.
-        let (mut workspaces, roots) = match precomputed {
+        let (mut workspaces, paths) = match precomputed {
             Some(catalog)
                 if catalog.registrations == self.snapshot.ui_state.workspace_registrations =>
             {
+                self.last_session_spaces = Self::session_spaces(payload, &catalog.paths);
                 self.last_accepted_catalog = Some(catalog.workspaces.clone());
-                self.catalog_roots = catalog.roots.clone();
-                (catalog.workspaces, catalog.roots)
+                self.catalog_paths = Arc::clone(&catalog.paths);
+                (catalog.workspaces, catalog.paths)
             }
             Some(_) if self.last_accepted_catalog.is_some() => {
                 self.push_diagnostic(
                     "catalog.precomputed_stale",
                     "The precomputed workspace catalog no longer matches the registrations; the last accepted catalog stands until the next publish".to_owned(),
                 );
+                self.last_session_spaces = Self::session_spaces(payload, &self.catalog_paths);
                 (
                     self.last_accepted_catalog
                         .clone()
                         .expect("checked by the match guard"),
-                    self.catalog_roots.clone(),
+                    Arc::clone(&self.catalog_paths),
                 )
             }
             _ => {
+                let paths = inline_paths
+                    .unwrap_or_else(|| Arc::new(self.ask_paths(self.wanted_paths(payload))));
+                self.last_session_spaces = Self::session_spaces(payload, &paths);
                 let workspaces = workspace::build_catalog(
                     &self.node,
                     &self.snapshot.ui_state.workspace_registrations,
                     &self.last_session_spaces,
                     &self.worktree_catalog,
+                    &paths,
                 );
-                let roots = workspace::root_index(&self.last_session_spaces);
                 self.last_accepted_catalog = Some(workspaces.clone());
-                self.catalog_roots = roots.clone();
-                (workspaces, roots)
+                self.catalog_paths = Arc::clone(&paths);
+                (workspaces, paths)
             }
         };
         let mut unresolved_roots: Vec<String> = Vec::new();
@@ -437,16 +489,15 @@ impl Runtime {
                         &mut workspaces,
                         context_path.as_deref(),
                         &layout.workspace_id,
-                        &roots,
+                        &paths,
                         &mut unresolved_roots,
                     ) else {
                         continue;
                     };
                     let checkout_index = context_path.as_deref().and_then(|path| {
-                        workspace_snapshot
-                            .checkouts
-                            .iter()
-                            .position(|checkout| path_is_within_checkout(path, &checkout.path))
+                        workspace_snapshot.checkouts.iter().position(|checkout| {
+                            path_is_within_checkout(&paths, path, &checkout.path)
+                        })
                     });
                     (workspace_snapshot, checkout_index)
                 }
@@ -2120,11 +2171,22 @@ impl Runtime {
         // Sleeping agents Herdr no longer lists are drawn from their records
         // before anything below reads the agents (PRD agent-sleep B10).
         let mut fetched = fetched;
+        let mut inline_paths = None;
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
-            let unsettled = self.settle_created_tabs(payload, self.created_tab_clamps());
-            Self::clamp_created_tab_cwds(payload, &unsettled);
+            // A runtime the sync coordinator does not feed asks its own node
+            // here, before the clamps read the session's cwds.
+            let paths = match &precomputed {
+                Some(catalog) => Arc::clone(&catalog.paths),
+                None => {
+                    let paths = Arc::new(self.ask_paths(self.wanted_paths(payload)));
+                    inline_paths = Some(Arc::clone(&paths));
+                    paths
+                }
+            };
+            let unsettled = self.settle_created_tabs(payload, self.created_tab_clamps(), &paths);
+            Self::clamp_created_tab_cwds(payload, &unsettled, &paths);
         } else {
             // Herdr's tab ids are its own server's; a later connection may
             // hand one to a tab Hide never created.
@@ -2230,7 +2292,7 @@ impl Runtime {
         let mut rejected_layouts: Vec<(String, String)> = Vec::new();
         let catalog_changed = fetched
             .as_ref()
-            .map(|payload| self.reconcile_session_catalog(payload, precomputed))
+            .map(|payload| self.reconcile_session_catalog(payload, precomputed, inline_paths))
             .unwrap_or(false);
         // A refused revision names both protocols; a connected Herdr's details
         // are its version and the revision this build requires, which its
@@ -3504,7 +3566,7 @@ impl Runtime {
                     self.snapshot.focused.pane_id = Some(pane_id.clone());
                     self.snapshot.ui_state.selected_pane_id = Some(pane_id);
                 }
-                let normalized = workspace::normalized_for_comparison(Path::new(&path));
+                let normalized = workspace::comparison_by_names(Path::new(&path));
                 self.created_purpose_writes_in_flight.remove(&normalized);
                 if let Some(unconfirmed) = unconfirmed_purpose_token {
                     self.unconfirmed_created_purposes
@@ -3639,7 +3701,7 @@ impl Runtime {
                 })
                 .map(|checkout| checkout.path.clone())
         {
-            let normalized = workspace::normalized_for_comparison(Path::new(&path));
+            let normalized = workspace::comparison_by_names(Path::new(&path));
             self.unconfirmed_created_purposes.remove(&normalized);
         }
         if let Some((purpose, token_written)) = visible_purpose {
@@ -4713,14 +4775,21 @@ impl Runtime {
     /// `rebuild_device_rows`.
     #[cfg(test)]
     pub(super) fn rebuild_catalog(&mut self) {
+        let paths = Arc::new(self.ask_paths(workspace::PathIndex::wanted(
+            &self.node,
+            &self.snapshot.ui_state.workspace_registrations,
+            &self.last_session_spaces,
+            &self.worktree_catalog,
+        )));
         let mut workspaces = workspace::build_catalog(
             &self.node,
             &self.snapshot.ui_state.workspace_registrations,
             &self.last_session_spaces,
             &self.worktree_catalog,
+            &paths,
         );
         self.last_accepted_catalog = Some(workspaces.clone());
-        self.catalog_roots = workspace::root_index(&self.last_session_spaces);
+        self.catalog_paths = paths;
         Self::apply_workspace_expansion(
             &mut workspaces,
             &self.snapshot.ui_state.collapsed_workspace_ids,
@@ -5130,7 +5199,7 @@ impl Runtime {
                 Some(session_sync::PrecomputedCatalog {
                     registrations: self.snapshot.ui_state.workspace_registrations.clone(),
                     workspaces: outcome.workspaces,
-                    roots: self.catalog_roots.clone(),
+                    paths: outcome.paths,
                 }),
             );
         } else {
@@ -5193,7 +5262,6 @@ impl Runtime {
             tab_id.to_owned(),
             CreatedTabCheckout {
                 path: path.to_owned(),
-                root: PathRules::Local.read(path),
                 seen: false,
                 settled: false,
                 recorded_at: (self.birth_clock)(),
@@ -5223,6 +5291,7 @@ impl Runtime {
         &mut self,
         payload: &SessionSnapshotPayload,
         clamps: Vec<CreatedTabClamp>,
+        paths: &workspace::PathIndex,
     ) -> Vec<CreatedTabClamp> {
         let now = (self.birth_clock)();
         clamps
@@ -5241,7 +5310,7 @@ impl Runtime {
                 {
                     carried = true;
                     if let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) {
-                        inside |= clamp.holds(&cwd);
+                        inside |= clamp.holds(&cwd, paths);
                     }
                 }
                 created.settled =
@@ -5261,8 +5330,7 @@ impl Runtime {
                 tab_id: tab_id.clone(),
                 path: created.path.clone(),
                 rules: PathRules::Local,
-                nested: nested_worktrees(&self.local_worktree_paths, &created.root),
-                root: created.root.clone(),
+                repositories: Arc::clone(&self.local_worktree_paths),
             })
             .collect()
     }
@@ -5276,6 +5344,7 @@ impl Runtime {
     pub(crate) fn clamp_created_tab_cwds(
         payload: &mut SessionSnapshotPayload,
         clamps: &[CreatedTabClamp],
+        paths: &workspace::PathIndex,
     ) {
         for clamp in clamps {
             let pane_ids = payload
@@ -5285,8 +5354,9 @@ impl Runtime {
                 .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.clone()))
                 .collect::<Vec<_>>();
             for pane_id in pane_ids {
-                let outside =
-                    |cwd: &Option<String>| cwd.as_deref().is_none_or(|cwd| !clamp.holds(cwd));
+                let outside = |cwd: &Option<String>| {
+                    cwd.as_deref().is_none_or(|cwd| !clamp.holds(cwd, paths))
+                };
                 for pane in payload
                     .panes
                     .iter_mut()
@@ -5336,7 +5406,6 @@ impl Runtime {
             key,
             CreatedTabCheckout {
                 path: path.to_owned(),
-                root: PathRules::Device.read(path),
                 seen: false,
                 settled: false,
                 recorded_at: (self.birth_clock)(),
@@ -5354,8 +5423,9 @@ impl Runtime {
 
     /// The worktrees of each repository a device's helper listed, as the
     /// helper spelled them.
-    fn device_worktree_paths(&self, target_id: &str) -> Vec<Vec<String>> {
-        self.device_worktrees
+    fn device_worktree_paths(&self, target_id: &str) -> Arc<Vec<Vec<String>>> {
+        let paths = self
+            .device_worktrees
             .get(target_id)
             .into_iter()
             .flat_map(|listed| listed.projects.values())
@@ -5363,10 +5433,13 @@ impl Runtime {
                 project
                     .worktrees
                     .iter()
-                    .map(|worktree| PathRules::Device.read(&worktree.path))
+                    .map(|worktree| {
+                        PathRules::Device.read(&worktree.path, &workspace::PathIndex::NONE)
+                    })
                     .collect()
             })
-            .collect()
+            .collect();
+        Arc::new(paths)
     }
 
     /// Reads a device tab Hide created as in the folder it was created for
@@ -5410,8 +5483,7 @@ impl Runtime {
                 tab_id: tab_id.clone(),
                 path: created.path.clone(),
                 rules: PathRules::Device,
-                nested: nested_worktrees(&repositories, &created.root),
-                root: created.root.clone(),
+                repositories: Arc::clone(&repositories),
             })
             .map(|clamp| (clamp.tab_id.clone(), clamp))
             .collect::<BTreeMap<_, _>>();
@@ -5434,13 +5506,16 @@ impl Runtime {
                     else {
                         continue;
                     };
-                    created.settled = tab.panes.iter().any(|pane| clamp.holds(&pane.cwd))
+                    created.settled = tab
+                        .panes
+                        .iter()
+                        .any(|pane| clamp.holds(&pane.cwd, &workspace::PathIndex::NONE))
                         || (!tab.panes.is_empty() && created.birth_window_over(now, native));
                     if created.settled {
                         continue;
                     }
                     for pane in &mut tab.panes {
-                        if !clamp.holds(&pane.cwd) {
+                        if !clamp.holds(&pane.cwd, &workspace::PathIndex::NONE) {
                             pane.cwd = clamp.path.clone();
                         }
                     }

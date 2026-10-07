@@ -32,6 +32,7 @@ pub mod list;
 pub mod mutate;
 pub mod pane_peer;
 pub mod ports;
+pub mod project;
 pub mod register;
 pub mod reporting;
 pub mod root;

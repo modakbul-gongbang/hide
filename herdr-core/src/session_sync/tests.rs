@@ -1719,7 +1719,8 @@ fn fresh_catalog() -> CatalogCache {
         spaces: Vec::new(),
         worktrees: crate::model::WorktreeCatalogSnapshot::default(),
         workspaces: Vec::new(),
-        roots: workspace::RootIndex::new(),
+        asked: BTreeSet::new(),
+        paths: Default::default(),
         built_at: Instant::now(),
     }
 }
@@ -1738,7 +1739,7 @@ fn agent_refresh_reconciles_a_plain_new_panes_live_checkout_cwd() {
     replica.refresh_published_state().expect("publish live cwd");
     let projected = replica.project();
     assert_eq!(
-        Runtime::session_spaces(&projected)[0].cwds,
+        Runtime::session_spaces(&projected, &workspace::PathIndex::NONE)[0].cwds,
         vec!["/tmp/fixture".to_owned()],
         "the shell's live directory, not its inherited birth cwd, owns both tabs"
     );

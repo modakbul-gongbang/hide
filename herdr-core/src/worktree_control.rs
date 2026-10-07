@@ -574,8 +574,8 @@ impl PurposeMirror {
                     continue;
                 };
                 let key = (
-                    workspace::normalized_for_comparison(Path::new(&workspace.path)),
-                    workspace::normalized_for_comparison(Path::new(&checkout.path)),
+                    workspace::comparison_by_names(Path::new(&workspace.path)),
+                    workspace::comparison_by_names(Path::new(&checkout.path)),
                     branch.to_owned(),
                 );
                 current.insert(key.clone());
@@ -2396,7 +2396,7 @@ mod tests {
         };
 
         let suppressed = HashMap::from([(
-            workspace::normalized_for_comparison(Path::new("/fixture/repo/worktrees/topic")),
+            workspace::comparison_by_names(Path::new("/fixture/repo/worktrees/topic")),
             "Initial purpose".to_owned(),
         )]);
         mirror.sync(

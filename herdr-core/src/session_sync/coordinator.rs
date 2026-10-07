@@ -1024,6 +1024,42 @@ fn publish_replica(
         };
     drop(runtime);
 
+    // The node is asked about every path the catalog and the reconcile read,
+    // here and outside the lock; a set it answered recently is not asked
+    // again until the catalog's own refresh interval runs out.
+    let mut wanted = workspace::PathIndex::wanted(&node, &registrations, &[], &worktrees);
+    wanted.extend(Runtime::session_cwds(&payload));
+    wanted.extend(created_tab_clamps.iter().map(|clamp| clamp.path.clone()));
+    let recent = catalog_cache.as_ref().filter(|cache| {
+        cache.asked == wanted && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+    });
+    let recent_at = recent.map(|cache| cache.built_at);
+    let (paths, asked) = match recent {
+        Some(cache) => (Arc::clone(&cache.paths), cache.asked.clone()),
+        None => match context
+            .node()
+            .ok_or_else(|| "this target has no node".to_owned())
+            .and_then(|link| workspace::PathIndex::ask(link.as_ref(), wanted.clone()))
+        {
+            Ok(paths) => (Arc::new(paths), wanted),
+            Err(error) => {
+                crate::diagnostic!(json!({
+                    "component": "session_sync",
+                    "kind": "catalog.path_facts_failed",
+                    "target": context.log_target(),
+                    "message": error,
+                }));
+                // The previous answer stands, read by names where it is
+                // silent, and the next publish asks again.
+                let previous = catalog_cache
+                    .as_ref()
+                    .map(|cache| Arc::clone(&cache.paths))
+                    .unwrap_or_default();
+                (previous, BTreeSet::new())
+            }
+        },
+    };
+
     // The catalog is built here, outside the lock, from the cwd the runtime
     // will read for a created tab, not the one it was born with.
     // Only a tab this session carries has a cwd to clamp; a record whose tab
@@ -1042,27 +1078,32 @@ fn publish_replica(
         &payload
     } else {
         let mut copy = payload.clone();
-        Runtime::clamp_created_tab_cwds(&mut copy, &created_tab_clamps);
+        Runtime::clamp_created_tab_cwds(&mut copy, &created_tab_clamps, &paths);
         clamped = copy;
         &clamped
     };
-    let spaces = Runtime::session_spaces(birth_free);
+    let spaces = Runtime::session_spaces(birth_free, &paths);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
-        cache.registrations == registrations
+        Arc::ptr_eq(&cache.paths, &paths)
+            && cache.registrations == registrations
             && cache.spaces == spaces
             && cache.worktrees == worktrees
             && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
     });
     if !cache_is_fresh {
-        let workspaces = workspace::build_catalog(&node, &registrations, &spaces, &worktrees);
-        let roots = workspace::root_index(&spaces);
+        let workspaces =
+            workspace::build_catalog(&node, &registrations, &spaces, &worktrees, &paths);
+        // An answer reused from the cache keeps its age, so the node is asked
+        // again once the interval runs out however often the session moves.
+        let built_at = recent_at.unwrap_or_else(Instant::now);
         *catalog_cache = Some(CatalogCache {
             registrations: registrations.clone(),
             spaces,
             worktrees,
             workspaces,
-            roots,
-            built_at: Instant::now(),
+            asked,
+            paths,
+            built_at,
         });
     }
     let cache = catalog_cache
@@ -1078,7 +1119,7 @@ fn publish_replica(
     let precomputed = PrecomputedCatalog {
         registrations,
         workspaces: cache.workspaces.clone(),
-        roots: cache.roots.clone(),
+        paths: Arc::clone(&cache.paths),
     };
 
     let Some(runtime) = context.runtime.upgrade() else {
@@ -1726,7 +1767,10 @@ mod worktree_observer_tests {
                 }]
             }))
             .expect("focused project input");
-            let spaces = Runtime::session_spaces(&payload);
+            let spaces = Runtime::session_spaces(
+                &payload,
+                &workspace::paths_here(Runtime::session_cwds(&payload)),
+            );
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
                 workspaces: workspace::build_catalog(
@@ -1734,8 +1778,14 @@ mod worktree_observer_tests {
                     &[],
                     &spaces,
                     &catalog,
+                    &workspace::catalog_paths_here(&[], &spaces, &catalog),
                 ),
-                roots: workspace::root_index(&spaces),
+                paths: std::sync::Arc::new(workspace::paths_here(
+                    spaces
+                        .iter()
+                        .flat_map(|space| space.cwds.clone())
+                        .chain(Runtime::session_cwds(&payload)),
+                )),
             };
             runtime.ingest_session_with_catalog(Ok(payload), Some(precomputed));
             // A populated baseline preserves the existing initial stale-answer policy.

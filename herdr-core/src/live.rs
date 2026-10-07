@@ -2,7 +2,7 @@
 //! lives in `session_sync` and uses the sequenced socket event stream.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 #[cfg(test)]
 use std::sync::mpsc::Receiver;
@@ -26,6 +26,7 @@ use crate::model::{
     EditorDocumentSnapshot, PaneFindRoute, PaneLayoutDirection, PaneLayoutNodeSnapshot,
     PaneLayoutSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
 };
+use crate::node_access::call_as;
 use crate::recent_closed::{
     ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutBranch, ClosedLayoutNode, ClosedPane,
     PanePlacement, resume_arguments,
@@ -42,6 +43,8 @@ use hide_herdr_client::{
     ApiConnector, ApiError, request_small_response, request_with_connector,
     request_with_correlation_id,
 };
+use hide_node_link::project::ProjectCreated;
+use hide_node_link::protocol::Call;
 use hide_platform::process::OwnedChild;
 
 #[path = "worktree_cleanup.rs"]
@@ -135,6 +138,8 @@ pub struct WorkspaceCreationOutcome {
     pub base_registrations: Vec<WorkspaceRegistration>,
     pub registrations: Vec<WorkspaceRegistration>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+    /// What the node said of the paths `workspaces` was built from.
+    pub paths: Arc<workspace::PathIndex>,
     pub session: SessionSnapshotPayload,
     pub created_pane_id: Option<String>,
     pub git_init_error: Option<String>,
@@ -167,28 +172,24 @@ pub fn spawn_workspace_creation(
                     read
                 })
                 .unwrap_or_default();
-            // A new folder is made at the literal path hided checked, before
-            // the registration canonicalizes it: canonicalizing first would
-            // follow a symlink planted at the name since the check, and make
-            // or continue into its target, wherever that is.
-            let made = if new_folder {
-                workspace::create_project_folder(Path::new(&path))
-            } else {
-                Ok(())
-            };
+            // The node makes the folder and the repository, and answers the
+            // real path the project is registered by.
+            let made: Result<ProjectCreated, String> = call_as(
+                context.node.as_ref(),
+                Call::ProjectCreate {
+                    path: path.clone(),
+                    new_folder,
+                    initialize_git,
+                },
+                PROJECT_CREATE_TIMEOUT,
+            )
+            .map_err(|error| error.to_string());
             let result = made
-                .and_then(|()| workspace::registration(&path, &label, node.as_str()))
-                .and_then(|registration| {
-                    let root = Path::new(&registration.path);
-                    if !root.exists() {
-                        return Err(format!(
-                            "Workspace path does not exist: {}",
-                            registration.path
-                        ));
-                    }
-                    let git_init_error = initialize_git
-                        .then(|| workspace::initialize_git(root).err())
-                        .flatten();
+                .and_then(|created| {
+                    workspace::registration(&created.path, &label, node.as_str())
+                        .map(|registration| (registration, created.git_error))
+                })
+                .and_then(|(registration, git_init_error)| {
                     let mut registrations = base_registrations.clone();
                     if !registrations
                         .iter()
@@ -196,6 +197,12 @@ pub fn spawn_workspace_creation(
                     {
                         registrations.push(registration.clone());
                     }
+                    let ask = |session: &SessionSnapshotPayload| {
+                        let mut wanted =
+                            workspace::PathIndex::wanted(&node, &registrations, &[], &worktrees);
+                        wanted.extend(Runtime::session_cwds(session));
+                        workspace::PathIndex::ask(context.node.as_ref(), wanted)
+                    };
                     let before = fetch_session_with_connector(context.api_connector.as_ref())
                         .map_err(|error| {
                             format!(
@@ -203,9 +210,15 @@ pub fn spawn_workspace_creation(
                                 error.message()
                             )
                         })?;
-                    let before_spaces = Runtime::session_spaces(&before);
-                    let before_catalog =
-                        workspace::build_catalog(&node, &registrations, &before_spaces, &worktrees);
+                    let before_paths = ask(&before)?;
+                    let before_spaces = Runtime::session_spaces(&before, &before_paths);
+                    let before_catalog = workspace::build_catalog(
+                        &node,
+                        &registrations,
+                        &before_spaces,
+                        &worktrees,
+                        &before_paths,
+                    );
                     let needs_herdr_workspace = before_catalog
                         .iter()
                         .any(|workspace| workspace.id == registration.id);
@@ -216,7 +229,12 @@ pub fn spawn_workspace_creation(
                         .then(|| {
                             ensure_owner(
                                 context.api_connector.as_ref(),
-                                &registered_owner(&node, &registration.path, &registration.label),
+                                &registered_owner(
+                                    &node,
+                                    &before_paths,
+                                    &registration.path,
+                                    &registration.label,
+                                ),
                                 Default::default(),
                             )
                             .map_err(|error| error.message().to_owned())
@@ -234,14 +252,25 @@ pub fn spawn_workspace_creation(
                     } else {
                         before
                     };
-                    let spaces = Runtime::session_spaces(&session);
-                    let workspaces =
-                        workspace::build_catalog(&node, &registrations, &spaces, &worktrees);
+                    let paths = if created.is_some() {
+                        ask(&session)?
+                    } else {
+                        before_paths
+                    };
+                    let spaces = Runtime::session_spaces(&session, &paths);
+                    let workspaces = workspace::build_catalog(
+                        &node,
+                        &registrations,
+                        &spaces,
+                        &worktrees,
+                        &paths,
+                    );
                     Ok(WorkspaceCreationOutcome {
                         registration,
                         base_registrations,
                         registrations,
                         workspaces,
+                        paths: Arc::new(paths),
                         session,
                         created_pane_id: created
                             .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id)| pane_id)),
@@ -268,18 +297,22 @@ pub fn spawn_workspace_creation(
 /// The owner a newly registered project's checkout gets: a Git checkout is
 /// opened from its repository's main worktree, a plain folder is created
 /// and marked at the registered path, the same path the catalog keys it by.
-fn registered_owner(node: &crate::node::NodeId, path: &str, label: &str) -> OwnerOpen {
-    match hide_project::facts(Path::new(path)) {
-        Ok(facts) if facts.kind == hide_project::ProjectKind::Git => OwnerOpen::for_checkout(
-            node.as_str(),
-            &hide_platform::path::to_wire_lossy(&facts.checkout_root),
-            &hide_platform::path::to_wire_lossy(&facts.root),
-            true,
-            label,
-        ),
-        _ => OwnerOpen::for_checkout(node.as_str(), path, path, false, label).on_node(),
+fn registered_owner(
+    node: &crate::node::NodeId,
+    paths: &workspace::PathIndex,
+    path: &str,
+    label: &str,
+) -> OwnerOpen {
+    match paths.place(path) {
+        Some(place) => {
+            OwnerOpen::for_checkout(node.as_str(), &place.root, &place.main_root, true, label)
+        }
+        None => OwnerOpen::for_checkout(node.as_str(), path, path, false, label).on_node(),
     }
 }
+
+/// How long the node may take to make a project's folder and repository.
+const PROJECT_CREATE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -3947,6 +3980,7 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use std::path::Path;
 
     use hide_herdr_client::LocalSocketConnector;
 
@@ -4806,13 +4840,14 @@ mod tests {
         let folder = folder.to_string_lossy().into_owned();
         let repo = repo.to_string_lossy().into_owned();
 
+        let paths = workspace::paths_here([folder.clone(), repo.clone()]);
         assert_eq!(
-            registered_owner(&crate::node::test_node(), &folder, "Notes"),
+            registered_owner(&crate::node::test_node(), &paths, &folder, "Notes"),
             OwnerOpen::for_checkout(crate::node::TEST_NODE, &folder, &folder, false, "Notes")
                 .on_node()
         );
         assert_eq!(
-            registered_owner(&crate::node::test_node(), &repo, "Repo"),
+            registered_owner(&crate::node::test_node(), &paths, &repo, "Repo"),
             OwnerOpen::Worktree {
                 path: repo.clone(),
                 repository_root: repo.clone(),

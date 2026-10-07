@@ -83,15 +83,28 @@ fn fixture() -> Fixture {
 }
 
 fn project(path: &Path, checkouts: bool) -> WorkspaceSnapshot {
-    let mut project = workspace::inspect_registered(&crate::model::WorkspaceRegistration {
-        primary_checkout_id: None,
-        id: workspace::workspace_id_for_path(path),
-        label: "Project".to_owned(),
-        path: path.to_string_lossy().into_owned(),
-        device_id: crate::node::TEST_NODE.to_owned(),
-        pinned: false,
-        home: false,
-    });
+    let mut project = workspace::inspect_registered(
+        &crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: workspace::workspace_id_for_path(path),
+            label: "Project".to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        },
+        &workspace::paths_here([&crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: workspace::workspace_id_for_path(path),
+            label: "Project".to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
+            pinned: false,
+            home: false,
+        }
+        .path
+        .clone()]),
+    );
     if !checkouts {
         project.checkouts.clear();
     }

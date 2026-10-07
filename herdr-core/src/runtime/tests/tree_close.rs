@@ -114,8 +114,15 @@ fn tree_catalog() -> session_sync::PrecomputedCatalog {
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
+            &workspace::catalog_paths_here(
+                &[],
+                &spaces,
+                &crate::model::WorktreeCatalogSnapshot::default(),
+            ),
         ),
-        roots: workspace::root_index(&spaces),
+        paths: std::sync::Arc::new(workspace::paths_here(
+            spaces.iter().flat_map(|space| space.cwds.clone()),
+        )),
     }
 }
 

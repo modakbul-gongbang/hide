@@ -3484,7 +3484,10 @@ fn an_exited_panes_root_directory_does_not_become_a_checkout() {
     }))
     .expect("exited pane payload");
 
-    let spaces = Runtime::session_spaces(&payload);
+    let spaces = Runtime::session_spaces(
+        &payload,
+        &workspace::paths_here(Runtime::session_cwds(&payload)),
+    );
 
     assert_eq!(spaces.len(), 1);
     assert_eq!(
@@ -3581,7 +3584,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -3664,7 +3667,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     let catalog = session_sync::PrecomputedCatalog {
         registrations: vec![registration],
         workspaces: vec![selected_workspace],
-        roots: workspace::RootIndex::new(),
+        paths: Default::default(),
     };
 
     assert!(runtime.ingest_session_with_catalog(Ok(payload), Some(catalog)));
@@ -3716,7 +3719,7 @@ fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
         Some(session_sync::PrecomputedCatalog {
             registrations: Vec::new(),
             workspaces: Vec::new(),
-            roots: workspace::RootIndex::new(),
+            paths: Default::default(),
         }),
     ));
     assert_eq!(runtime.snapshot().status.last_error, None);

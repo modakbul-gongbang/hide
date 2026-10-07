@@ -850,10 +850,10 @@ impl Boundary {
             return Err(Refusal::InvalidPath);
         }
         let path = parent.join(name);
-        let leftover = match herdr_core::workspace::project_folder(&path) {
-            herdr_core::workspace::ProjectFolder::Free => false,
-            herdr_core::workspace::ProjectFolder::Leftover => true,
-            herdr_core::workspace::ProjectFolder::Taken => return Err(Refusal::AlreadyExists),
+        let leftover = match hide_host::project::folder(&path) {
+            hide_host::project::ProjectFolder::Free => false,
+            hide_host::project::ProjectFolder::Leftover => true,
+            hide_host::project::ProjectFolder::Taken => return Err(Refusal::AlreadyExists),
         };
         Ok(NewProject {
             parent,

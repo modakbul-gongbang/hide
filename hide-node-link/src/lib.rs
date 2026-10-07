@@ -27,6 +27,7 @@ pub mod list;
 pub mod mutate;
 pub mod ports;
 pub mod process;
+pub mod project;
 pub mod protocol;
 pub mod register;
 pub mod save;

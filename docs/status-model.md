@@ -553,7 +553,7 @@ Main and non-Git checkouts appear on Tasks only while an agent there works on a 
 Completed columns start collapsed and disappear only with their underlying pane or worktree.
 
 `runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.
-`wire.rs` extracts metadata and `git_dir.rs` reads the branch setting with the catalog off the runtime lock.
+`wire.rs` extracts metadata, and the core's own node reads the branch setting with the catalog's other path facts (`Call::PathFacts`) off the runtime lock.
 The existing generation-driven GitHub reader fetches PRs, repository identity and open issues together; a 201st sentinel proves overflow and `sort:updated-desc` determines backlog order.
 Missing closed or cross-repository linked issues use one bounded read-only GraphQL query, not one process per card.
 An enriched issue lookup may retry once without optional Project fields; basic issue facts remain usable and the Project failure stays in the diagnostic and GitHub availability path.

@@ -26,7 +26,6 @@ mod agent_layout;
 pub mod find;
 pub mod fixture;
 mod fork;
-mod git_dir;
 mod github;
 mod github_store;
 mod handle;

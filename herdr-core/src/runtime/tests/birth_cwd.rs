@@ -488,13 +488,20 @@ fn a_checkout_recorded_through_a_link_is_compared_as_the_folder_it_names() {
 
     let clamps = runtime.created_tab_clamps();
     let clamp = clamps.first().expect("the tab is recorded");
-    assert!(clamp.holds(&checkout_path));
-    assert!(clamp.holds(&alias));
+    let parent = directory.parent().unwrap().to_string_lossy().into_owned();
+    let paths = workspace::paths_here([
+        checkout_path.clone(),
+        alias.clone(),
+        nested.clone(),
+        parent.clone(),
+    ]);
+    assert!(clamp.holds(&checkout_path, &paths));
+    assert!(clamp.holds(&alias, &paths));
     assert!(
-        !clamp.holds(&nested),
+        !clamp.holds(&nested, &paths),
         "the nested worktree is another checkout"
     );
-    assert!(!clamp.holds(directory.parent().unwrap().to_str().unwrap()));
+    assert!(!clamp.holds(&parent, &paths));
 }
 
 /// A folder that holds other repositories is one checkout's folder and the
@@ -529,7 +536,8 @@ fn a_repository_below_the_checkout_is_not_one_of_its_nested_worktrees() {
     acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
 
     let clamps = runtime.created_tab_clamps();
-    assert!(clamps.first().expect("recorded").holds(&other));
+    let paths = workspace::paths_here([checkout_path.clone(), other.clone()]);
+    assert!(clamps.first().expect("recorded").holds(&other, &paths));
 }
 
 /// The same tab acknowledged twice (the worktree answer and the tab

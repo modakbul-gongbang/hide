@@ -228,6 +228,14 @@ pub enum Call {
     IgnoredRepository {
         worktree: String,
     },
+    /// Makes a project at `path` (`project::ProjectCreated`): its folder
+    /// first when `new_folder`, at the literal path the shell checked, then
+    /// a repository in it when `initialize_git` and it has none.
+    ProjectCreate {
+        path: String,
+        new_folder: bool,
+        initialize_git: bool,
+    },
     /// What each path is on this node, as the core's catalog reads it
     /// (`catalog::PathFacts`), at most `catalog::PATH_FACTS_LIMIT` paths.
     PathFacts {
