@@ -34,17 +34,16 @@ fn attachment_name(request_id: &str, index: usize, file: &AttachmentFile) -> Str
     )
 }
 
-impl RusshSftpTransport {
+impl RusshRemoteClient {
     /// Best-effort exact-intent cleanup. No directory recursion or unrelated deletion.
     pub(crate) fn remove_attachments(&self, request_id: &str, files: &[AttachmentFile]) {
         if !valid_request_id(request_id) || files.len() > MAX_FILES {
             return;
         }
-        let result = self.client.runtime.block_on(async {
+        let result = self.runtime.block_on(async {
             let session = tokio::time::timeout(
                 SSH_OPERATION_TIMEOUT,
-                self.client
-                    .connect(KnownHostHandler::new(&self.client.host, None)),
+                self.connect(KnownHostHandler::new(&self.host, None)),
             )
             .await
             .map_err(|_| "Cleanup connection timed out".to_owned())?
@@ -131,14 +130,14 @@ impl RusshSftpTransport {
             return Err("Invalid attachment request identity.".to_owned());
         }
         check_cancelled(cancelled)?;
-        self.client.runtime.block_on(async {
-            let mut session = tokio::time::timeout(SSH_OPERATION_TIMEOUT, self.client.connect(KnownHostHandler::new(&self.client.host, None)))
+        self.runtime.block_on(async {
+            let mut session = tokio::time::timeout(SSH_OPERATION_TIMEOUT, self.connect(KnownHostHandler::new(&self.host, None)))
                 .await.map_err(|_| "Attachment connection timed out. Check the device and retry.".to_owned())?
                 .map_err(transport_failure)?;
             let result = self.stage_on_session(&mut session, request_id, files, cancelled).await;
             let disconnected = tokio::time::timeout(Duration::from_secs(3), session.disconnect(Disconnect::ByApplication, "Attachment transfer complete", "en")).await;
             if !matches!(disconnected, Ok(Ok(()))) {
-                crate::diagnostic!(json!({"kind":"terminal.attachment.disconnect_failed", "request_id":request_id, "host_id":self.client.host.host_id}));
+                crate::diagnostic!(json!({"kind":"terminal.attachment.disconnect_failed", "request_id":request_id, "host_id":self.host.host_id}));
             }
             result
         })
@@ -232,7 +231,7 @@ impl RusshSftpTransport {
                     Ok(Ok(_))
                 ) {
                     crate::diagnostic!(
-                        json!({"kind":"terminal.attachment.cleanup_deferred", "request_id":request_id, "host_id":self.client.host.host_id})
+                        json!({"kind":"terminal.attachment.cleanup_deferred", "request_id":request_id, "host_id":self.host.host_id})
                     );
                 }
             }
@@ -398,8 +397,7 @@ mod tests {
         let alias =
             SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
                 .expect("SSH alias resolves");
-        let transport =
-            RusshSftpTransport::new(Arc::new(RusshRemoteClient::new(alias).expect("client")));
+        let transport = RusshRemoteClient::new(alias).expect("client");
         let unique = format!(
             "{:032x}",
             SystemTime::now()
@@ -420,7 +418,7 @@ mod tests {
             name: "한글 image.png".to_owned(),
             bytes: b"explicit attachment bytes\0\xff\r\n".to_vec(),
         }];
-        struct Cleanup<'a>(&'a RusshSftpTransport, &'a str, &'a [AttachmentFile]);
+        struct Cleanup<'a>(&'a RusshRemoteClient, &'a str, &'a [AttachmentFile]);
         impl Drop for Cleanup<'_> {
             fn drop(&mut self) {
                 self.0.remove_attachments(self.1, self.2);

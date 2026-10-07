@@ -438,7 +438,7 @@ The web shell has no Project Memory entry point, disabled control, or placeholde
 
 ## Terminal image attachment boundary
 
-Web owner: `web/src/attachments.ts`, `web/src/PaneView.tsx`. Core owner: `herdr-core/src/runtime/attachments.rs`, `herdr-core/src/remote/attachments.rs`.
+Web owner: `web/src/attachments.ts`, `web/src/PaneView.tsx`. Core owner: `herdr-core/src/runtime/attachments.rs`; device staging `hide-node/src/ssh/attachments.rs`.
 
 Dropping local file URLs into a visible terminal focuses that receiving pane and starts one attachment intent through the existing ordered writer.
 Paste captures PNG or TIFF clipboard images at the same ingress; ordinary text and keys keep their existing terminal behavior.

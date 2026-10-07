@@ -290,10 +290,6 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .as_ref()
             .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
-        // The device helper packages ship beside this binary.
-        host_helper_dir: std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
         host_helper_root: env.host_helper_root.clone(),
         host_cli_dir: env.host_cli_dir.clone(),
         // The web shell draws separate Agent and View areas; each

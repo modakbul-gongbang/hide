@@ -697,7 +697,6 @@ mod tests {
                     .join("state.json")
                     .to_string_lossy()
                     .into_owned(),
-                host_helper_dir: None,
                 host_helper_root: None,
                 host_cli_dir: None,
                 workspace_views_path: None,
@@ -710,6 +709,7 @@ mod tests {
                 codex_home: None,
             },
             std::sync::Arc::new(hide_node::Local::of_process()),
+            crate::node::test_devices(),
         );
         runtime.test_dirs.push(folder);
         runtime.ensure_terminal_pane("pane-one");

@@ -79,7 +79,7 @@ use crate::model::{
     UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
-use crate::remote::RusshSftpTransport;
+use crate::remote::{DeviceConnector, DeviceTransport};
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -1114,6 +1114,9 @@ pub struct Runtime {
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
     /// This machine's file host: the helper's dispatch, run in place.
     own_node: Arc<dyn crate::node_access::NodeLink>,
+    /// Opens the transport to each registered device; the node that holds
+    /// the SSH configuration implements it, so the core never reads `~/.ssh`.
+    devices: Arc<dyn DeviceConnector>,
     /// Where each open file tab's saves go.
     document_places: HashMap<String, crate::files::DocumentPlace>,
     /// Each file tab's save in flight, the newest draft waiting behind it,
@@ -1123,13 +1126,12 @@ pub struct Runtime {
     /// that fences a late answer.
     document_opens: HashMap<String, documents::OpenRequest>,
     next_document_generation: u64,
-    host_packages: crate::remote::host::HelperPackages,
     host_helper_root: String,
     host_cli_dir: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
-    remote_file_transports: HashMap<String, RusshSftpTransport>,
+    remote_file_transports: HashMap<String, Arc<dyn DeviceTransport>>,
     remote_control_requests: VecDeque<(String, String)>,
     /// Remote mutations waiting for a transport answer or fresh topology,
     /// keyed by target and request id.
@@ -1610,8 +1612,6 @@ pub struct Runtime {
     next_ssh_hosts_id: u64,
     /// The listing `status.ssh_hosts` reports as loading, while its worker runs.
     ssh_hosts_job: Option<ssh_hosts::SshHostsJob>,
-    /// The `ssh` that resolves a Host entry with `-G`; tests name a stand-in.
-    ssh_program: PathBuf,
     /// The checkout a purpose receipt belongs to. A remote checkout lives in
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
@@ -1652,6 +1652,7 @@ impl Runtime {
         options: CoreOptions,
         environment: environment::EnvironmentReport,
         own_node: Arc<dyn crate::node_access::NodeLink>,
+        devices: Arc<dyn DeviceConnector>,
     ) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
         let delivery_path =
@@ -1665,7 +1666,7 @@ impl Runtime {
                 }));
                 error.code().to_owned()
             });
-        let (host_packages, host_helper_root, host_cli_dir) = Self::helper_packages_from(&options);
+        let (host_helper_root, host_cli_dir) = Self::helper_places_from(&options);
         let mut snapshot = Snapshot::initial(&options);
         if let Ok(ledger) = &delivery_ledger {
             snapshot.delivery_watches = ledger.watches.iter().map(|watch| watch.view()).collect();
@@ -1839,11 +1840,11 @@ impl Runtime {
             device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
             own_node,
+            devices,
             document_places: HashMap::new(),
             document_saves: HashMap::new(),
             document_opens: HashMap::new(),
             next_document_generation: 0,
-            host_packages,
             host_helper_root,
             host_cli_dir,
             live: None,
@@ -2034,7 +2035,6 @@ impl Runtime {
             repository_clone_job: None,
             next_ssh_hosts_id: 0,
             ssh_hosts_job: None,
-            ssh_program: PathBuf::from("ssh"),
             purpose_operation_target: None,
             created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),
@@ -2130,7 +2130,7 @@ impl Runtime {
     pub fn install_remote_file_transport(
         &mut self,
         target_id: impl Into<String>,
-        transport: RusshSftpTransport,
+        transport: Arc<dyn DeviceTransport>,
     ) {
         self.remote_file_transports
             .insert(target_id.into(), transport);

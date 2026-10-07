@@ -237,7 +237,7 @@ fn a_connected_device_shows_its_kit_and_retirement_failure_with_recovery() {
         helper.calls(),
         vec![(
             KitAction::Apply,
-            crate::remote::host::DEFAULT_CLI_DIR.to_owned(),
+            crate::remote::DEFAULT_CLI_DIR.to_owned(),
             Some("~/.config/herdr/other.sock".to_owned()),
         )]
     );
@@ -795,7 +795,7 @@ fn a_device_on_an_unsupported_platform_shows_why() {
 #[test]
 fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
     let probe = device_runtime(None, None);
-    let identity = crate::model::HostIdentity {
+    let identity = hide_node_link::device::HostIdentity {
         user: "me".to_owned(),
         hostname: "studio.local".to_owned(),
         port: 22,
@@ -820,7 +820,7 @@ fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
         .find(|registration| registration.id == DEVICE)
         .and_then(|registration| registration.host_consent.clone())
         .unwrap();
-    assert_eq!(carried.contract, crate::remote::host::HOST_CONSENT_CONTRACT);
+    assert_eq!(carried.contract, crate::remote::HOST_CONSENT_CONTRACT);
     assert_eq!(carried.identity, Some(identity));
 
     let mut elsewhere = consent;
@@ -850,7 +850,7 @@ fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
 fn a_consent_for_the_old_default_root_moves_to_the_new_one_without_asking() {
     use hide_kit::layout::{HELPER_ROOT, LEGACY_HELPER_ROOT};
     let probe = device_runtime(None, None);
-    let identity = crate::model::HostIdentity {
+    let identity = hide_node_link::device::HostIdentity {
         user: "me".to_owned(),
         hostname: "studio.local".to_owned(),
         port: 22,
@@ -1033,12 +1033,13 @@ fn removing_one_of_two_registrations_of_the_same_account_keeps_the_kit() {
             .iter_mut()
             .find(|registration| registration.id == DEVICE)
             .unwrap();
-        device.host_consent.as_mut().unwrap().identity = Some(crate::model::HostIdentity {
-            user: "me".to_owned(),
-            hostname: "studio.local".to_owned(),
-            port: 22,
-            host_key_sha256: "SHA256:studio".to_owned(),
-        });
+        device.host_consent.as_mut().unwrap().identity =
+            Some(hide_node_link::device::HostIdentity {
+                user: "me".to_owned(),
+                hostname: "studio.local".to_owned(),
+                port: 22,
+                host_key_sha256: "SHA256:studio".to_owned(),
+            });
         let mut twin = device.clone();
         twin.id = "studio-second-herdr".to_owned();
         twin.ssh_alias = Some("studio-by-address".to_owned());

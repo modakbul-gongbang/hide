@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use herdr_core::WorkspaceRemoteRoute;
 use hide_host::pane_peer::PaneIdentity;
+use hide_node::ssh::{RusshRemoteClient, SshDevice};
 use serde_json::{Value, json};
 
 use crate::core::CoreHandle;
@@ -28,6 +29,17 @@ const RETRY_BASE: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 
 type Shutdown = Box<dyn FnOnce() + Send>;
+
+/// The SSH client behind a route's device transport, for the forwards and
+/// helper execs this daemon opens itself. Every device this daemon builds is
+/// an `SshDevice`, so `None` means a transport this daemon did not build.
+pub(crate) fn ssh_client(route: &WorkspaceRemoteRoute) -> Option<Arc<RusshRemoteClient>> {
+    Arc::clone(&route.transport)
+        .into_any()
+        .downcast::<SshDevice>()
+        .ok()
+        .map(|device| Arc::clone(device.client()))
+}
 
 struct RouteContext<'a> {
     core: &'a CoreHandle,
@@ -412,15 +424,14 @@ fn run_route(
     context: &RouteContext<'_>,
     was_ready: &mut bool,
 ) -> Result<(), String> {
-    let forward = route
-        .client
+    let client = ssh_client(route).ok_or("the device transport is not SSH")?;
+    let forward = client
         .start_reverse_workspace_forward(context.port)
         .map_err(|error| error.to_string())?;
     if stop.cancelled.load(Ordering::Acquire) {
         return Ok(());
     }
-    let process = route
-        .client
+    let process = client
         .open_workspace_bridge(&route.helper_path)
         .map_err(|error| error.to_string())?;
     let (reader, mut writer, shutdown) = process.into_parts();
@@ -428,8 +439,7 @@ fn run_route(
     if stop.cancelled.load(Ordering::Acquire) {
         return Ok(());
     }
-    let herdr_socket = route
-        .client
+    let herdr_socket = client
         .herdr_socket_path()
         .map_err(|error| error.to_string())?;
     send_frame(
@@ -510,8 +520,8 @@ fn issue_from_frame(
             .ok_or("invalid_request")?,
         shell_started: frame["shell_started"].as_u64().ok_or("invalid_request")?,
     };
-    let actual = route
-        .client
+    let client = ssh_client(route).ok_or("remote_unavailable")?;
+    let actual = client
         .workspace_pane_identity(&route.helper_path, pane_id)
         .map_err(|_| "remote_unavailable")?;
     if actual.terminal_id != identity.terminal_id
@@ -526,7 +536,7 @@ fn issue_from_frame(
         pane_auth::RemoteGrant {
             bridge_id: bridge_id.to_owned(),
             alive,
-            client: Arc::clone(&route.client),
+            client,
             helper_path: route.helper_path.clone(),
             source_pane_id: pane_id.to_owned(),
             one_shot: frame["one_shot"] == true,

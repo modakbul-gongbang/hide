@@ -15,8 +15,8 @@ use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use herdr_core::node_access::{self, NodeLink};
-use herdr_core::remote::RemoteLocalForward;
 use herdr_core::workspace_control::BrowserRouteSource;
+use hide_node::ssh::RemoteLocalForward;
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -281,7 +281,7 @@ impl BrowserRoutes {
                 RouteKind::File(stop),
             )
         } else if let Some((scheme, remote_port, host, tail)) = loopback_target(&source.url) {
-            let client = Arc::clone(&route.client);
+            let client = crate::remote_bridge::ssh_client(&route).ok_or("host_unavailable")?;
             let remote_ip = crate::browser_cli::loopback_ip(&host).ok_or("invalid_loopback")?;
             let remote = SocketAddr::new(remote_ip, remote_port);
             let alternate = (host == "localhost").then_some(SocketAddr::new(

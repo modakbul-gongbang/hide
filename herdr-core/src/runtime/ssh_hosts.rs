@@ -9,7 +9,7 @@
 
 use super::*;
 use crate::model::{SshHostSnapshot, SshHostsSnapshot};
-use crate::ssh_hosts::{self, Listing};
+use crate::remote::SshHostListing;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The listing the worker is running.
@@ -61,14 +61,14 @@ impl Runtime {
             stop: Arc::clone(&stop),
         });
         self.snapshot.status.ssh_hosts.state = "loading".to_owned();
-        let ssh = self.ssh_program.clone();
+        let devices = Arc::clone(&self.devices);
         let spawned = thread::Builder::new()
             .name("herdr-core-ssh-hosts".to_owned())
             .spawn(move || {
                 // A panic still settles the slot, which is the only one: a
                 // listing left `loading` would join every later request.
                 let listing = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    ssh_hosts::list(&ssh, &home, &registered, &stop)
+                    devices.ssh_hosts(&home, &registered, &stop)
                 }))
                 .unwrap_or_default();
                 let Some(runtime) = context.runtime.upgrade() else {
@@ -88,14 +88,14 @@ impl Runtime {
                 "kind": "ssh_hosts.not_started",
                 "message": error.to_string(),
             }));
-            self.settle_ssh_hosts(id, &Listing::default());
+            self.settle_ssh_hosts(id, &SshHostListing::default());
         }
         true
     }
 
     /// Publishes a listing's answer, naming the device that already holds each
     /// alias or reaches the same address. Only the running listing settles.
-    pub(crate) fn settle_ssh_hosts(&mut self, id: u64, listing: &Listing) -> bool {
+    pub(crate) fn settle_ssh_hosts(&mut self, id: u64, listing: &SshHostListing) -> bool {
         if self.ssh_hosts_job.as_ref().is_none_or(|job| job.id != id) {
             return false;
         }

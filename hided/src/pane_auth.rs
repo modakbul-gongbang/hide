@@ -20,9 +20,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
 use hide_node::pane_proof::{PaneIdentity, caller_directory, descends_from, process_start};
+use hide_node::ssh::RusshRemoteClient;
 use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1021,7 +1021,6 @@ mod tests {
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: directory.join("core-state.json").display().to_string(),
-            host_helper_dir: None,
             host_helper_root: None,
             host_cli_dir: None,
             workspace_views_path: None,

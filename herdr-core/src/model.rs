@@ -23,18 +23,13 @@ pub struct CoreOptions {
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
     pub app_state_path: String,
-    /// The folder holding the program builds devices run (`hided node serve`). Absent in a
-    /// shell that serves no device files, which
-    /// leaves every device's host `unsupported` with that reason.
-    #[serde(default)]
-    pub host_helper_dir: Option<String>,
     /// Where the helper is installed on devices; `~/` is the device account's
-    /// home. Absent means `remote::host::DEFAULT_HELPER_ROOT`.
+    /// home. Absent means `remote::DEFAULT_HELPER_ROOT`.
     #[serde(default)]
     pub host_helper_root: Option<String>,
     /// The folder on devices where `hide` is linked to the copy installed
     /// with the helper; `~/` is the device account's home. Absent means
-    /// `remote::host::DEFAULT_CLI_DIR`.
+    /// `remote::DEFAULT_CLI_DIR`.
     #[serde(default)]
     pub host_cli_dir: Option<String>,
     /// Where a shell that draws separate Agent and View areas keeps each
@@ -3214,7 +3209,7 @@ pub struct DeviceRegistration {
     pub host_consent: Option<HostConsent>,
 }
 
-pub use hide_node_link::device::{HostConsent, HostIdentity};
+pub use hide_node_link::device::HostConsent;
 
 pub(crate) fn default_accent_hex() -> String {
     "#B9FF66".to_owned()

@@ -17,11 +17,11 @@
 use super::*;
 #[path = "retirement.rs"]
 mod retirement;
-use crate::model::{HostConsent, HostIdentity};
-pub use crate::node_access::LinkError;
-use crate::node_access::{LinkAnswer, NodeLink, call_as};
 use hide_node_link::HostError;
+pub use hide_node_link::LinkError;
+use hide_node_link::device::{HostConsent, HostIdentity};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
+use hide_node_link::{LinkAnswer, NodeLink, call_as};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
 use serde_json::value::RawValue;

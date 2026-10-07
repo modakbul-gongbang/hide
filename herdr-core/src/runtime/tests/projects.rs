@@ -3597,7 +3597,6 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 node_id: crate::node::test_node(),
                 herdr_socket_path: None,
                 herdr_bin_path: None,
-                host_helper_dir: None,
                 host_helper_root: None,
                 host_cli_dir: None,
                 workspace_views_path: None,
@@ -3610,6 +3609,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 codex_home: None,
             },
             std::sync::Arc::new(hide_node::Local::of_process()),
+            crate::node::test_devices(),
         )
     };
     let set = |id: &str| {

@@ -391,18 +391,96 @@ pub type TerminalSessionParts = (
     Box<dyn FnOnce() + Send>,
 );
 
+/// Where an alias leads, as `ssh -G` resolved it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshAddress {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+}
+
+impl SshAddress {
+    /// `user@host:port`, the form the dialog shows and compares.
+    pub fn display(&self) -> String {
+        if self.host.contains(':') {
+            format!("{}@[{}]:{}", self.user, self.host, self.port)
+        } else {
+            format!("{}@{}:{}", self.user, self.host, self.port)
+        }
+    }
+}
+
+/// Why an alias has no address; the dialog shows a short line per code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshHostProblem {
+    /// The `ssh` program was not found.
+    SshMissing,
+    /// `ssh -G` ended without a usable answer (a bad option in the config).
+    SshFailed,
+    /// `ssh -G` did not answer within the resolve deadline.
+    TimedOut,
+}
+
+impl SshHostProblem {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::SshMissing => "ssh_missing",
+            Self::SshFailed => "ssh_failed",
+            Self::TimedOut => "timed_out",
+        }
+    }
+}
+
+/// One listed alias and where it leads.
+#[derive(Debug, Eq, PartialEq)]
+pub struct SshHostEntry {
+    pub alias: String,
+    pub address: Result<SshAddress, SshHostProblem>,
+}
+
+/// What one listing found: the config's concrete aliases with their
+/// addresses, and the address of every registered alias, whether or not the
+/// config still names it, so two aliases of one machine can be told apart
+/// from two machines.
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct SshHostListing {
+    pub entries: Vec<SshHostEntry>,
+    pub registered: Vec<(String, SshAddress)>,
+    pub truncated: bool,
+}
+
 /// Opens the transport to a registered device. The node that holds the SSH
 /// configuration and keys implements it (`hide_node::ssh`); the core asks it
 /// by alias and never reads `~/.ssh` itself (PRD core-host-node D-21).
 pub trait DeviceConnector: Send + Sync {
-    /// The transport for the device behind `alias`, resolved through this
-    /// node's SSH configuration; nothing connects until it is used.
+    /// The transport for the device behind `alias`, resolved through the SSH
+    /// configuration of the account at `home`; nothing connects until it is
+    /// used. A refusal is the sentence the device row shows.
     fn transport(
         &self,
+        home: &std::path::Path,
         alias: &str,
         herdr_socket: Option<String>,
-    ) -> RemoteResult<std::sync::Arc<dyn DeviceTransport>>;
+    ) -> Result<std::sync::Arc<dyn DeviceTransport>, String>;
+
+    /// The concrete Host aliases of the SSH configuration of the account at
+    /// `home` and where each leads, with the address of each of
+    /// `registered`, for Add device; it never connects. Blocking and
+    /// bounded; raising `stop` ends it early.
+    fn ssh_hosts(
+        &self,
+        home: &std::path::Path,
+        registered: &[String],
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> SshHostListing;
 }
+
+/// Decodes the Herdr snapshot a connection test fetched, given the device's
+/// host id and the socket it answered on, and answers the protocol revision
+/// it reports. The decode is the core's, because the snapshot's shape is its
+/// Herdr contract; the fetch is the transport's.
+pub type SnapshotCheck<'a> =
+    &'a (dyn Fn(&serde_json::Value, &str, &str) -> RemoteResult<u32> + Sync);
 
 /// One registered device as the core reaches it: its Herdr API, its node
 /// link, its terminal sessions and attachment staging, each over SSH.
@@ -411,8 +489,9 @@ pub trait DeviceTransport: Send + Sync {
     fn herdr_api_connector(&self) -> std::sync::Arc<dyn hide_herdr_client::ApiConnector>;
     /// The Herdr version the device reported last, if it has.
     fn cached_herdr_version(&self) -> Option<String>;
-    /// Probes each stage of a connection for the operator's test.
-    fn capability_test(&self, operation_id: &str) -> CapabilityReport;
+    /// Probes each stage of a connection for the operator's test; `check`
+    /// decodes the Herdr stage's snapshot.
+    fn capability_test(&self, operation_id: &str, check: SnapshotCheck<'_>) -> CapabilityReport;
     /// Connects, checks `consent` against the device that answered, installs
     /// this build's node when the device lacks it, and starts it. Blocking;
     /// run it off the runtime lock. `on_close` hears why the link ended.
@@ -442,5 +521,58 @@ pub trait DeviceTransport: Send + Sync {
     fn remove_attachments(&self, request_id: &str, files: &[crate::attachments::AttachmentFile]);
     /// The concrete transport, for the shell that built it and reaches parts
     /// the core does not use (browser and return-route forwards).
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity() -> RemoteHostIdentity {
+        RemoteHostIdentity {
+            host_id: "ssh:mini".to_owned(),
+            alias: "mini".to_owned(),
+            hostname: "mini.example.test".to_owned(),
+            port: 2200,
+        }
+    }
+
+    #[test]
+    fn capability_report_has_staged_failure_and_visible_recovery() {
+        let mut report = CapabilityReport::new("op-1", identity());
+        report.fail(RemoteStage::Tunnel, "forward denied", true, true);
+        assert!(matches!(
+            report.connection,
+            RemoteConnectionState::ActionRequired { .. }
+        ));
+        assert!(matches!(
+            report.stage(RemoteStage::Tunnel).unwrap().state,
+            CapabilityState::Failed {
+                retryable: true,
+                action_required: true
+            }
+        ));
+        report.pass(RemoteStage::Tunnel, "retried after approval");
+        report.connected();
+        assert_eq!(report.connection, RemoteConnectionState::Connected);
+    }
+
+    #[test]
+    fn capability_report_requires_every_stage_before_connected() {
+        let mut report = CapabilityReport::new("op-1", identity());
+        for stage in [
+            RemoteStage::Ssh,
+            RemoteStage::Auth,
+            RemoteStage::Herdr,
+            RemoteStage::Protocol,
+            RemoteStage::Pty,
+            RemoteStage::Sftp,
+            RemoteStage::Git,
+        ] {
+            report.pass(stage, "ok");
+        }
+        assert!(!report.all_required_passed());
+        report.pass(RemoteStage::Tunnel, "ok");
+        assert!(report.all_required_passed());
+    }
 }

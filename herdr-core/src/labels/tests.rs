@@ -928,7 +928,6 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: state.path().join("core-state.json").display().to_string(),
-        host_helper_dir: None,
         host_helper_root: None,
         host_cli_dir: None,
         workspace_views_path: None,
@@ -940,6 +939,7 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
             options("relative/home".to_owned()),
             std::sync::Arc::new(hide_node::Local::of_process()),
             None,
+            crate::node::test_devices(),
         )
         .is_none(),
         "a relative home names no account folder"
@@ -948,6 +948,7 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         options(home.path().display().to_string()),
         std::sync::Arc::new(hide_node::Local::new(Some(home.path().to_path_buf()))),
         None,
+        crate::node::test_devices(),
     )
     .expect("a core starts");
     drop(core);

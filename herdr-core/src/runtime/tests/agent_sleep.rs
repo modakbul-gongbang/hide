@@ -134,7 +134,6 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
             herdr_bin_path: None,
             app_state_path: path.to_string_lossy().into_owned(),
-            host_helper_dir: None,
             host_helper_root: None,
             host_cli_dir: None,
             workspace_views_path: None,
@@ -147,6 +146,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             codex_home: None,
         },
         std::sync::Arc::new(hide_node::Local::of_process()),
+        crate::node::test_devices(),
     );
     assert_eq!(
         restarted.snapshot().ui_state.agent_sleep_after_hours,

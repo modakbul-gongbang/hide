@@ -196,10 +196,12 @@ impl Core {
     /// core-host-node D-21); the core reaches that machine only through it.
     /// `own_herdr` is that node's connection to the Herdr server at
     /// `options.herdr_socket_path`, given exactly when a socket is.
+    /// `devices` opens the transport to each registered device.
     pub fn create(
         options: CoreOptions,
         own_node: std::sync::Arc<dyn crate::node_access::NodeLink>,
         own_herdr: Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>>,
+        devices: std::sync::Arc<dyn crate::remote::DeviceConnector>,
     ) -> Option<Box<Self>> {
         if validate_options(&options).is_err()
             || options.herdr_socket_path.is_some() != own_herdr.is_some()
@@ -232,6 +234,7 @@ impl Core {
             options.clone(),
             environment,
             Arc::clone(&own_node),
+            devices,
         )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());

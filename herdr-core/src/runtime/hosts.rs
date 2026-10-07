@@ -16,9 +16,8 @@ use std::sync::Arc;
 use super::*;
 use crate::model::{DeviceHostSnapshot, HostConsent};
 use crate::node_access::NodeLink;
-use crate::remote::host::{
-    self, EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
-    HelperPackages,
+use crate::remote::{
+    EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
 };
 
 /// The daemon may open a pane-scoped return route only while the same
@@ -29,7 +28,7 @@ pub struct WorkspaceRemoteRoute {
     pub device_id: String,
     pub generation: u64,
     pub helper_path: String,
-    pub client: Arc<crate::remote::RusshRemoteClient>,
+    pub transport: Arc<dyn crate::remote::DeviceTransport>,
     pub channel: Arc<dyn NodeLink>,
 }
 
@@ -78,12 +77,12 @@ impl Runtime {
                 {
                     return None;
                 }
-                let client = self.remote_connections.get(device_id)?.client.clone();
+                let transport = self.remote_connections.get(device_id)?.transport.clone();
                 Some(WorkspaceRemoteRoute {
                     device_id: device_id.clone(),
                     generation: host.generation,
                     helper_path: helper_path.clone(),
-                    client,
+                    transport,
                     channel: Arc::clone(channel),
                 })
             })
@@ -300,7 +299,7 @@ impl Runtime {
         let Some(client) = self
             .remote_connections
             .get(device_id)
-            .map(|connection| Arc::clone(&connection.client))
+            .map(|connection| Arc::clone(&connection.transport))
         else {
             self.set_host_phase(
                 device_id,
@@ -316,7 +315,6 @@ impl Runtime {
             return self.refresh_device_snapshots();
         };
         self.set_host_phase(device_id, HostPhase::Connecting);
-        let packages = self.host_packages.clone();
         let retirement_projects = self.retirement_projects(device_id);
         let device = device_id.to_owned();
         let spawned = thread::Builder::new()
@@ -339,8 +337,7 @@ impl Runtime {
                         close_context.notifier.notify();
                     }
                 });
-                let result =
-                    host::establish(&client, &packages, &consent, &retirement_projects, on_close);
+                let result = client.establish(&consent, &retirement_projects, on_close);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -656,20 +653,17 @@ impl Runtime {
         snapshot
     }
 
-    /// Installs the helper packages this daemon carries; a daemon that
-    /// carries none passes none. Also answers the install root and the
-    /// command folder a consent names.
-    pub(super) fn helper_packages_from(options: &CoreOptions) -> (HelperPackages, String, String) {
+    /// The install root and the command folder a consent names.
+    pub(super) fn helper_places_from(options: &CoreOptions) -> (String, String) {
         (
-            HelperPackages::new(options.host_helper_dir.as_ref().map(PathBuf::from)),
             options
                 .host_helper_root
                 .clone()
-                .unwrap_or_else(|| host::DEFAULT_HELPER_ROOT.to_owned()),
+                .unwrap_or_else(|| crate::remote::DEFAULT_HELPER_ROOT.to_owned()),
             options
                 .host_cli_dir
                 .clone()
-                .unwrap_or_else(|| host::DEFAULT_CLI_DIR.to_owned()),
+                .unwrap_or_else(|| crate::remote::DEFAULT_CLI_DIR.to_owned()),
         )
     }
 }

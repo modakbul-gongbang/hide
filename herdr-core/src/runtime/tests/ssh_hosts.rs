@@ -51,7 +51,7 @@ fn the_host_list_names_each_alias_its_address_and_the_device_that_holds_it() {
     .unwrap();
     let ssh = home.join("ssh");
     write_executable(&ssh, STAND_IN);
-    runtime.ssh_program = ssh;
+    runtime.devices = Arc::new(hide_node::ssh::Connector::new(None).with_ssh_program(ssh));
     // "Studio Mac" is added under `studio`; "Old" under an alias the config
     // no longer names that reaches the same address as `fresh`.
     runtime.snapshot.ui_state.device_registrations = vec![
@@ -128,7 +128,9 @@ fn the_host_list_names_each_alias_its_address_and_the_device_that_holds_it() {
 #[test]
 fn a_missing_config_or_program_lists_nothing_or_names_the_problem() {
     let mut runtime = super::devices::runtime_with_home();
-    runtime.ssh_program = PathBuf::from("/nonexistent/ssh");
+    runtime.devices = Arc::new(
+        hide_node::ssh::Connector::new(None).with_ssh_program(PathBuf::from("/nonexistent/ssh")),
+    );
     let home = runtime.home_path.clone().expect("fixture home");
     let shared = Arc::new(Mutex::new(runtime));
     shared.lock().unwrap().install_worker_context(

@@ -28,9 +28,6 @@ percent-encoding = "=2.3.2"
 regress = "=0.12.0"
 regex = "=1.13.1"
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
-russh = { version = "=0.63.3", default-features = false, features = ["ring", "rsa"] }
-russh-config = "=0.58.0"
-russh-sftp = "=2.4.0"
 schemars = { version = "=0.8.22", features = ["preserve_order"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
@@ -47,6 +44,8 @@ typify = "=0.7.0"
 [dev-dependencies]
 hide-host = { path = "../hide-host", features = ["call-log"] }
 hide-node = { path = "../hide-node" }
+# The loopback SSH server of the `remote_delivery` lane (tests/support).
+russh = { version = "=0.63.3", default-features = false, features = ["ring", "rsa"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

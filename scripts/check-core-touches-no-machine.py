@@ -47,6 +47,8 @@ BANNED = [
      "reads where this process runs; that is a node's"),
     (r"\bhide_factory::exec\b|\bSystemRunner\b|\bexec::(checked|shell)\b",
      "runs a Factory command on this machine; that is a node's"),
+    (r"\brussh(_config|_sftp)?\b",
+     "speaks SSH; a device is reached through `hide_node_link::device`"),
     (r"\bhide_ai::settings::(load|save)\b",
      "reads or writes the AI choice file; keep it in one of the core's stores"),
 ]
@@ -85,11 +87,6 @@ STORES = {
 # goes in the change that moves it; the check fails once a listed file no
 # longer reaches a machine, so a stale entry cannot linger.
 LATER_LAYERS = {
-    "herdr-core/src/remote.rs": (14, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/remote/host.rs": (11, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/remote/retirement.rs": (3, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/remote/attachments.rs": (1, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/ssh_hosts.rs": (7, "2b: reading ~/.ssh/config is the node's with the transport"),
     "herdr-core/src/factory.rs": (
         15,
         "2b: the Factory engine main added after layer 2a runs its git, gh and "

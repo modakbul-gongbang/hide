@@ -18,6 +18,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use hide_node_link::device::{
+    SshAddress as Address, SshHostEntry as Entry, SshHostListing as Listing,
+    SshHostProblem as Problem,
+};
 use hide_platform::process::{RunFailure, restrict_to_login_environment, run_to_end};
 
 /// Concrete aliases listed; more are reported as truncated.
@@ -210,25 +214,6 @@ fn split_line(line: &str) -> Option<(String, Vec<String>)> {
     Some((keyword, arguments))
 }
 
-/// Where an alias leads, as `ssh -G` resolved it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Address {
-    pub(crate) user: String,
-    pub(crate) host: String,
-    pub(crate) port: u16,
-}
-
-impl Address {
-    /// `user@host:port`, the form the dialog shows and compares.
-    pub(crate) fn display(&self) -> String {
-        if self.host.contains(':') {
-            format!("{}@[{}]:{}", self.user, self.host, self.port)
-        } else {
-            format!("{}@{}:{}", self.user, self.host, self.port)
-        }
-    }
-}
-
 /// The `user`, `hostname` and `port` lines of `ssh -G`'s output.
 pub(crate) fn parse_resolved(output: &str) -> Option<Address> {
     let (mut user, mut host, mut port) = (None, None, None);
@@ -247,27 +232,6 @@ pub(crate) fn parse_resolved(output: &str) -> Option<Address> {
     let (user, host, port) = (user?, host?, port?);
     let clean = |value: &str| !value.is_empty() && !value.chars().any(char::is_control);
     (clean(&user) && clean(&host)).then_some(Address { user, host, port })
-}
-
-/// Why an alias has no address; the dialog shows a short line per code.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Problem {
-    /// The `ssh` program was not found.
-    SshMissing,
-    /// `ssh -G` ended without a usable answer (a bad option in the config).
-    SshFailed,
-    /// `ssh -G` did not answer within [`RESOLVE_DEADLINE`].
-    TimedOut,
-}
-
-impl Problem {
-    pub(crate) fn code(self) -> &'static str {
-        match self {
-            Self::SshMissing => "ssh_missing",
-            Self::SshFailed => "ssh_failed",
-            Self::TimedOut => "timed_out",
-        }
-    }
 }
 
 /// Resolves one alias with `ssh -F <config> -G -- <alias>`. `-F` names the
@@ -342,24 +306,6 @@ pub(crate) fn resolve_all(
                 .unwrap_or(Err(Problem::SshFailed))
         })
         .collect()
-}
-
-/// One listed alias and where it leads.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct Entry {
-    pub(crate) alias: String,
-    pub(crate) address: Result<Address, Problem>,
-}
-
-/// What one listing found: the config's concrete aliases with their
-/// addresses, and the address of every registered alias, whether or not the
-/// config still names it, so two aliases of one machine can be told apart
-/// from two machines.
-#[derive(Debug, Default, Eq, PartialEq)]
-pub(crate) struct Listing {
-    pub(crate) entries: Vec<Entry>,
-    pub(crate) registered: Vec<(String, Address)>,
-    pub(crate) truncated: bool,
 }
 
 /// Reads the config and resolves its aliases and `registered` (the aliases of

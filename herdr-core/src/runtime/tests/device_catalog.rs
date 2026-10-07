@@ -459,7 +459,7 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
     assert!(!runtime.ingest_host_established(
         TARGET,
         stale,
-        Err(crate::remote::host::EstablishError::Helper(
+        Err(crate::remote::EstablishError::Helper(
             "old attempt".to_owned()
         )),
     ));
