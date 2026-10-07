@@ -86,7 +86,7 @@ struct EnvironmentRead {
 const REMOTE_PROCESS_ENVIRONMENT: &[EnvironmentRead] = &[
     EnvironmentRead {
         key: "HOME",
-        missing_behavior: "required: known_hosts resolution fails visibly",
+        missing_behavior: "required for a home-relative IdentityAgent, which fails visibly without it",
     },
     EnvironmentRead {
         key: "SSH_AUTH_SOCK",
@@ -226,17 +226,9 @@ impl SshAlias {
                 false,
             )
         })?;
-        let known_hosts = default_known_hosts_path().map_err(|error| {
-            remote_error(
-                "ssh-alias-import",
-                alias,
-                RemoteStage::Alias,
-                error,
-                false,
-                true,
-            )
-        })?;
-        Self::from_config_contents(alias, &contents, known_hosts)
+        // The account the config belongs to records its hosts beside it,
+        // as OpenSSH's own default (`~/.ssh/known_hosts`) does for that home.
+        Self::from_config_contents(alias, &contents, path.with_file_name("known_hosts"))
     }
 
     pub fn identity(&self) -> RemoteHostIdentity {
@@ -251,30 +243,6 @@ impl SshAlias {
     pub fn target(&self) -> String {
         format!("{}@{}:{}", self.user, self.hostname, self.port)
     }
-}
-
-pub fn import_ssh_aliases(path: &Path) -> RemoteResult<Vec<SshAlias>> {
-    let contents = std::fs::read_to_string(path).map_err(|error| {
-        remote_error(
-            "ssh-alias-import",
-            &path.display().to_string(),
-            RemoteStage::Alias,
-            error,
-            true,
-            false,
-        )
-    })?;
-    let known_hosts = default_known_hosts_path().map_err(|error| {
-        remote_error(
-            "ssh-alias-import",
-            &path.display().to_string(),
-            RemoteStage::Alias,
-            error,
-            false,
-            true,
-        )
-    })?;
-    import_ssh_aliases_from_str(&contents, known_hosts)
 }
 
 pub fn import_ssh_aliases_from_str(
@@ -479,13 +447,6 @@ fn validate_alias(alias: &str) -> RemoteResult<()> {
         ));
     }
     Ok(())
-}
-
-fn default_known_hosts_path() -> io::Result<PathBuf> {
-    read_remote_environment("HOME")?
-        .map(PathBuf::from)
-        .map(|home| home.join(".ssh").join("known_hosts"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))
 }
 
 fn read_remote_environment(key: &str) -> io::Result<Option<OsString>> {
