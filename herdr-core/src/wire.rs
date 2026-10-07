@@ -1148,6 +1148,7 @@ pub(crate) fn agent_start_params(
     args: Vec<String>,
     codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<Value, String> {
+    let kind = hide_agent_adapter::canonical_kind(kind);
     params(req::AgentStartParams {
         args: crate::codex_launch::start_arguments(kind, codex_daemon, args)?,
         kind: kind.into(),

@@ -3,6 +3,21 @@
 use hide_agent_adapter::{ADAPTERS, Feature};
 
 #[test]
+fn an_unknown_captured_start_kind_and_its_arguments_remain_byte_exact() {
+    let params = crate::wire::agent_start_params(
+        "pane",
+        "name",
+        " Future-Agent ",
+        vec!["--option".into(), "value".into()],
+        crate::codex_launch::CodexDaemon::Unknown,
+    )
+    .unwrap();
+    assert_eq!(params["kind"], " Future-Agent ");
+    assert_eq!(params["args"], serde_json::json!(["--option", "value"]));
+    assert!(hide_agent_adapter::adapter(" Future-Agent ").is_none());
+}
+
+#[test]
 fn all_core_gates_accept_the_same_aliases_without_enabling_other_agents() {
     for row in ADAPTERS {
         for spelling in std::iter::once(row.id).chain(row.aliases.iter().copied()) {

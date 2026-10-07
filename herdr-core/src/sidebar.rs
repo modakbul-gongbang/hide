@@ -1150,7 +1150,9 @@ pub fn project_pane_children(
     status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let agent = agents.iter().find(|agent| agent.pane_id == pane_id)?;
-    let runtime = crate::agent_hooks::runtime_of(&agent.agent_kind);
+    let runtime = hide_agent_adapter::adapter(&agent.agent_kind)
+        .and_then(|row| row.subagent_counts)
+        .map(hide_agent_hooks::AgentRuntime::from_dialect);
     let status = runtime.and_then(status_of);
     let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
         hide_agent_hooks::diagnosis::PaneObservation {

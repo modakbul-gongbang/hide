@@ -75,9 +75,13 @@ impl Machine {
 
     /// One hook run of Claude Code's entry, with `origin` in its environment.
     fn run(&self, event: &str, origin: &[(&str, &str)]) -> String {
+        self.run_as("claude-code", event, origin)
+    }
+
+    fn run_as(&self, runtime: &str, event: &str, origin: &[(&str, &str)]) -> String {
         let mut command = Command::new(&self.hook);
         command
-            .args(["hook", "--runtime", "claude-code", "--event", event])
+            .args(["hook", "--runtime", runtime, "--event", event])
             .args(["--source", "hide-subagents@6"])
             .env(hide_platform::host::HOME_VARIABLE, &self.home)
             .env("PATH", &self.home)
@@ -210,6 +214,22 @@ fn cursor_still_silences_the_whole_hook() {
         machine.run("UserPromptSubmit", &[("CURSOR_VERSION", "2.0.0")]),
         ""
     );
+    assert!(machine.calls().is_empty());
+    assert!(machine.files().is_empty());
+}
+
+#[test]
+fn cursor_silences_claude_aliases_before_any_hook_effect() {
+    let machine = Machine::new();
+    for runtime in ["claude", " CLAUDE_CODE ", " CLAUDE-CODE "] {
+        for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"] {
+            assert_eq!(
+                machine.run_as(runtime, event, &[("CURSOR_VERSION", "2.0.0")]),
+                "",
+                "{runtime}: {event}"
+            );
+        }
+    }
     assert!(machine.calls().is_empty());
     assert!(machine.files().is_empty());
 }

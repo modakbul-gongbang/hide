@@ -414,7 +414,10 @@ fn native_current(
         Readiness::Ready | Readiness::Unreported
             if agent.pane_id != observed.raw_pane_id
                 || agent.name != observed.actor.name
-                || agent.kind.as_ref() != Some(&observed.actor.kind)
+                || !agent.kind.as_deref().is_some_and(|kind| {
+                    hide_agent_adapter::canonical_kind(kind)
+                        == hide_agent_adapter::canonical_kind(&observed.actor.kind)
+                })
                 || agent.session != observed.actor.session =>
         {
             Err(Hold::Identity)
@@ -518,6 +521,69 @@ mod tests {
                 Turn::NotReported
             },
         }
+    }
+
+    #[test]
+    fn native_alias_identity_preserves_pane_name_session_readiness_and_sequence_guards() {
+        let flags = Arc::new(Mutex::new(json!({})));
+        let answer = Arc::clone(&flags);
+        let herdr = crate::fake_herdr::FakeHerdr::start("bell-alias", move |method, _| {
+            assert_eq!(method, "agent.get");
+            let mut agent = json!({
+                "pane_id": "pane", "terminal_id": "term", "workspace_id": "w1", "tab_id": "w1:t1",
+                "name": "agent", "agent": "claude", "agent_status": "idle", "state_change_seq": 7,
+                "focused": false, "revision": 1,
+                "agent_session": {"source": "hook", "agent": "claude", "kind": "id", "value": "session"}
+            });
+            for (key, value) in answer.lock().unwrap().as_object().unwrap() {
+                agent[key] = value.clone();
+            }
+            json!({"type": "agent_info", "agent": agent})
+        });
+        let mut observed = at_rest(" CLAUDE_CODE ");
+        observed.actor.session = wire::session_digest("session");
+        for (kind, canonical) in [
+            (" CLAUDE-CODE ", "claude"),
+            (" CLAUDE ", "claude"),
+            (" CLAUDE_CODE ", "claude"),
+            (" CODEX ", "codex"),
+        ] {
+            observed.actor.kind = kind.into();
+            *flags.lock().unwrap() = json!({"agent": canonical});
+            assert_eq!(
+                native_current(&herdr.connector(), &observed),
+                Ok(Ok(())),
+                "{kind}"
+            );
+        }
+        observed.actor.kind = " CLAUDE_CODE ".into();
+        for (change, expected) in [
+            (json!({"pane_id": "another-pane"}), Hold::Identity),
+            (json!({"name": "another-agent"}), Hold::Identity),
+            (json!({"agent": "codex"}), Hold::Identity),
+            (json!({"agent": "future-agent"}), Hold::Identity),
+            (
+                json!({"agent_session": {"source": "hook", "agent": "claude", "kind": "id", "value": "another-session"}}),
+                Hold::Identity,
+            ),
+            (json!({"agent_session": null}), Hold::Identity),
+            (json!({"interactive_ready": false}), Hold::NotReady),
+            (json!({"launch_pending": true}), Hold::Launching),
+            (json!({"agent_status": "working"}), Hold::Moved),
+            (json!({"state_change_seq": 8}), Hold::Moved),
+        ] {
+            *flags.lock().unwrap() = change;
+            assert_eq!(
+                native_current(&herdr.connector(), &observed),
+                Ok(Err(expected))
+            );
+        }
+        observed.actor.kind = "future-agent".into();
+        *flags.lock().unwrap() = json!({"agent": "FUTURE-AGENT"});
+        assert_eq!(
+            native_current(&herdr.connector(), &observed),
+            Ok(Err(Hold::Identity))
+        );
     }
 
     #[test]

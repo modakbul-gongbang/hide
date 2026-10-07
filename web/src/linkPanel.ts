@@ -6,6 +6,8 @@
 
 import type { MessageKey } from "./i18n/catalogs";
 import type { AgentRow, Checkout, Device, LinkedSession, Workspace } from "./snapshot";
+import { agentAdapter } from "./agentAdapters";
+import type { ProviderKind } from "./agentPicker";
 
 /** A line's live pane: working, asking the operator, or open and quiet. */
 export type LiveState = { kind: "working" | "question" | "idle"; agent: AgentRow };
@@ -68,8 +70,13 @@ export function viewBlock(line: LinkedSession, devices: readonly Device[] | unde
 }
 
 /** The agents Hide starts with a resume (D-10, D-42). */
-export function resumable(agent: string): agent is "claude" | "codex" {
-  return agent === "claude" || agent === "codex";
+export function resumeProvider(agent: string): ProviderKind | null {
+  const row = agentAdapter(agent);
+  return row?.can_resume ? row.herdr_kind as ProviderKind : null;
+}
+
+export function resumable(agent: string): boolean {
+  return resumeProvider(agent) !== null;
 }
 
 /** `Resume` (B12-B15, B20-B22): the agent, the file, the device and the worktree, in that order. */

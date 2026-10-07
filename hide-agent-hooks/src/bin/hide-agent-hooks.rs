@@ -81,7 +81,8 @@ fn main() -> ExitCode {
             // (`docs/agent-hooks.md`, Other agents). Grok and OpenCode run it
             // too and have no hook of Hide's: it still speaks there, but takes
             // no letters (`run_hook`).
-            if argument_value("--runtime", &arguments).as_deref() == Some("claude-code")
+            if argument_value("--runtime", &arguments).and_then(|value| AgentRuntime::parse(&value))
+                == Some(AgentRuntime::ClaudeCode)
                 && hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name))
                     .is_some_and(hide_agent_hooks::runtime::ForeignOrigin::silences_claude_hook)
             {

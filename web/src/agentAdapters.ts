@@ -4,5 +4,6 @@ import contract from "../../contracts/agent-adapters.json";
 export const AGENT_ADAPTERS = contract;
 
 export function agentAdapter(id: string) {
-  return AGENT_ADAPTERS.find((row) => row.id === id);
+  const normalized = id.trim().toLowerCase();
+  return AGENT_ADAPTERS.find((row) => row.id === normalized || row.aliases.some((alias) => alias === normalized));
 }

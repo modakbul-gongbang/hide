@@ -52,6 +52,20 @@ fn merge_scopes(before: Option<Scope>, after: Scope) -> Scope {
     }
 }
 
+/// A limit failure names its subject without copying or hashing an
+/// arbitrarily large external identifier under the runtime lock.
+fn diagnostic_identity(value: &str) -> serde_json::Value {
+    let mut end = value.len().min(128);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    serde_json::json!({
+        "prefix": &value[..end],
+        "bytes": value.len(),
+        "truncated": end != value.len(),
+    })
+}
+
 /// What a device's kit worker does on one call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DeviceKitWork {
@@ -256,6 +270,8 @@ impl Runtime {
                     crate::diagnostic!(serde_json::json!({
                         "component": "kit", "kind": "unknown_agent.diagnostic_limit",
                         "limit": LIMIT, "id_bytes": ID_BYTES,
+                        "device_id": diagnostic_identity(device_id),
+                        "agent_id": diagnostic_identity(&agent.id),
                     }));
                 }
                 continue;
@@ -1386,6 +1402,18 @@ mod tests {
                 .count(),
             1
         );
+        let limit = records
+            .iter()
+            .find(|record| record["kind"] == "unknown_agent.diagnostic_limit")
+            .unwrap();
+        assert_eq!(
+            limit["device_id"],
+            serde_json::json!({"prefix": "device", "bytes": 6, "truncated": false})
+        );
+        assert_eq!(
+            limit["agent_id"],
+            serde_json::json!({"prefix": "future-128", "bytes": 10, "truncated": false})
+        );
         let mut runtime = super::super::tests::runtime();
         let report = KitReport {
             agents: vec![unknown(&"x".repeat(513))],
@@ -1396,6 +1424,44 @@ mod tests {
         assert!(runtime.unknown_kit_agents.is_empty());
         assert_eq!(records.len(), 1);
         assert_eq!(records[0]["kind"], "unknown_agent.diagnostic_limit");
+        assert_eq!(records[0]["agent_id"]["bytes"], 513);
+        assert_eq!(records[0]["agent_id"]["prefix"], "x".repeat(128));
+        assert_eq!(records[0]["agent_id"]["truncated"], true);
+    }
+
+    #[test]
+    fn unknown_identity_boundary_is_inclusive_and_failure_references_are_utf8_safe() {
+        let mut runtime = super::super::tests::runtime();
+        let report = KitReport {
+            agents: vec![unknown(&"x".repeat(512))],
+            ..Default::default()
+        };
+        let (_, records) =
+            crate::diagnostics::capture(|| runtime.diagnose_unknown_kit_agents("device", &report));
+        assert_eq!(runtime.unknown_kit_agents.len(), 1);
+        assert_eq!(records[0]["kind"], "unknown_agent.omitted");
+        assert_eq!(records[0]["agent_id"], "x".repeat(512));
+
+        let mut runtime = super::super::tests::runtime();
+        let device = "기".repeat(200);
+        let report = KitReport {
+            agents: vec![unknown(&"가".repeat(200))],
+            ..Default::default()
+        };
+        let (_, records) = crate::diagnostics::capture(|| {
+            runtime.diagnose_unknown_kit_agents(&device, &report);
+            runtime.diagnose_unknown_kit_agents(&device, &report);
+        });
+        assert!(runtime.unknown_kit_agents.is_empty());
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]["device_id"],
+            serde_json::json!({"prefix": "기".repeat(42), "bytes": 600, "truncated": true})
+        );
+        assert_eq!(
+            records[0]["agent_id"],
+            serde_json::json!({"prefix": "가".repeat(42), "bytes": 600, "truncated": true})
+        );
     }
 
     #[test]

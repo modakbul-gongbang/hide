@@ -119,6 +119,14 @@ pub enum SkillLocation {
     Claude,
 }
 
+/// Artwork shipped by the shell, independent of labels and launch support.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarMark {
+    Claude,
+    Codex,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Os {
     Macos,
@@ -176,6 +184,7 @@ pub struct AgentAdapter {
     pub label: &'static str,
     pub picker_label: &'static str,
     pub sidebar_label: Option<&'static str>,
+    pub sidebar_mark: Option<SidebarMark>,
     pub aliases: &'static [&'static str],
     pub executables: &'static [&'static str],
     pub skill_location: SkillLocation,
@@ -214,6 +223,12 @@ pub fn adapter(value: &str) -> Option<&'static AgentAdapter> {
                 .iter()
                 .any(|alias| alias.eq_ignore_ascii_case(value))
     })
+}
+
+/// Known identities use Herdr's spelling; an unknown captured kind stays
+/// byte-for-byte intact, without granting it any adapter capability.
+pub fn canonical_kind(value: &str) -> &str {
+    adapter(value).map_or(value, |row| row.herdr.name)
 }
 
 pub fn start_kind(value: &str) -> Option<&'static str> {

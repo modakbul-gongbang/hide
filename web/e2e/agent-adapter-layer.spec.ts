@@ -6,6 +6,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
+import { afterCleanup } from "./worker-owned";
 
 test.skip(process.platform === "win32", "the kit installs POSIX hooks");
 
@@ -69,7 +70,9 @@ test("Basic chips expose three accessible groups in all four languages and retur
         await expect(chip).toBeFocused();
       }
     }
-  } finally {
-    try { daemon?.stop(); } finally { herdr.stop(); }
+  } catch (error) {
+    throw afterCleanup(afterCleanup(error, () => daemon?.stop()), () => herdr.stop());
   }
+  try { daemon?.stop(); } catch (error) { throw afterCleanup(error, () => herdr.stop()); }
+  herdr.stop();
 });
