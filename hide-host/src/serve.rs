@@ -559,6 +559,24 @@ pub fn handle_with_progress(
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
             to_value(listed)
         }
+        Call::SessionIndexRead { agent, path, saved } => {
+            let (step, _) =
+                hide_session::search_read::read_step(saved.as_ref(), agent, &absolute(&path)?)
+                    .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            to_value(step)
+        }
+        Call::SessionStamps { paths } => {
+            if paths.len() > hide_session::search::STAMP_LIMIT {
+                return Err(HostError::new(
+                    ErrorCode::InvalidRequest,
+                    format!(
+                        "At most {} session stamps are read at once",
+                        hide_session::search::STAMP_LIMIT
+                    ),
+                ));
+            }
+            to_value(hide_session::search_read::stamps(&paths))
+        }
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
                 return Err(HostError::new(

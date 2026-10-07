@@ -395,6 +395,20 @@ pub enum Call {
     LinkRead {
         requests: Vec<hide_session::links::ReadRequest>,
     },
+    /// One bounded read of a session file for the core's search index, on
+    /// from what the index saved (`hide_session::search_read::read_step`);
+    /// the answer is a `hide_session::search::IndexStep`.
+    SessionIndexRead {
+        agent: hide_session::Agent,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        saved: Option<hide_session::search::SavedFile>,
+    },
+    /// Each session file's current stamp, `null` for one gone or
+    /// unreadable, at most `hide_session::search::STAMP_LIMIT` paths.
+    SessionStamps {
+        paths: Vec<String>,
+    },
 }
 
 /// What a `kit` request does. `apply` and `reinstall` answer a

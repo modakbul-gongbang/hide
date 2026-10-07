@@ -1,11 +1,15 @@
 //! One owned search worker, one latest query slot, no I/O under Runtime.
 use super::*;
-use hide_session::search::{FILE_LIMIT, SearchIndex, SearchPage};
+use crate::node_access::{LinkError, NodeLink, call_as};
+use hide_node_link::protocol::Call;
+use hide_session::search::{FILE_LIMIT, IndexStep, SearchIndex, SearchPage};
 use std::collections::VecDeque;
 use std::sync::Condvar;
 use std::time::Duration;
 
 use crate::model::SessionSearchSnapshot as SearchSnapshot;
+/// One read of a session file on its node: at most the 1 MiB read budget.
+const NODE_READ_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SearchPayload {
@@ -31,6 +35,8 @@ struct Request {
     workspace_id: String,
     device_id: String,
     rows: Arc<Vec<SessionRowSnapshot>>,
+    /// The node that holds the rows' session files.
+    node: Arc<dyn NodeLink>,
     clear: bool,
     days: Option<u16>,
     rejected_control: Option<String>,
@@ -131,7 +137,7 @@ impl Runtime {
             loading: true,
             ..self.snapshot.session_search.take().unwrap_or_default()
         });
-        let Some(client) = self.search_client.as_ref() else {
+        let Some(client) = self.search_client.clone() else {
             self.snapshot.session_search.as_mut().unwrap().failure =
                 Some("Conversation search worker is unavailable.".into());
             self.snapshot.session_search.as_mut().unwrap().loading = false;
@@ -139,6 +145,15 @@ impl Runtime {
         };
         let Some(project) = self.project_sessions_work.project_id.clone() else {
             return true;
+        };
+        let node = match self.node_link(&payload.device_id) {
+            Ok(node) => node,
+            Err(reason) => {
+                let search = self.snapshot.session_search.as_mut().unwrap();
+                search.failure = Some(reason);
+                search.loading = false;
+                return true;
+            }
         };
         let rows = self
             .project_sessions_work
@@ -155,6 +170,7 @@ impl Runtime {
             workspace_id: payload.workspace_id,
             device_id: payload.device_id,
             rows,
+            node,
             clear: payload.clear,
             days: payload.days,
             rejected_control: None,
@@ -442,20 +458,34 @@ fn run(
                     break;
                 };
                 let row = &request.rows[i];
-                match db.update(
-                    &request.project,
-                    &row.id,
-                    if row.provider == "codex" {
-                        hide_session::Agent::Codex
-                    } else {
-                        hide_session::Agent::Claude
-                    },
-                    Path::new(&row.locator),
-                    cutoff,
-                ) {
+                let agent = if row.provider == "codex" {
+                    hide_session::Agent::Codex
+                } else {
+                    hide_session::Agent::Claude
+                };
+                let step = db
+                    .saved(&request.project, &row.id)
+                    .map_err(Failure::Index)
+                    .and_then(|saved| {
+                        read_on_node(request.node.as_ref(), agent, &row.locator, saved)
+                    });
+                let applied = step.and_then(|step| {
+                    db.apply(&request.project, &row.id, &row.locator, cutoff, step)
+                        .map_err(Failure::Index)
+                });
+                match applied {
                     Ok(true) => queue.push_back(i),
                     Ok(false) => state.indexed += 1,
-                    Err(error) => {
+                    Err(Failure::Node(reason)) => {
+                        // The node, not the file, failed: the rows read before
+                        // stay, and the next refresh reads this one again.
+                        state.failure = Some(format!(
+                            "Session files could not be read on their device: {reason}"
+                        ));
+                        queue.clear();
+                        break;
+                    }
+                    Err(Failure::Index(error)) => {
                         // Failed or missing sources cannot keep searchable old rows.
                         if let Err(e) = db.remove(&request.project, Some(&row.id)) {
                             state.failure = Some(format!("Search index invalidation failed: {e}"));
@@ -490,7 +520,23 @@ fn run(
                         .map(|row| row.id.clone())
                         .collect::<Vec<_>>()
                 });
-                db.search_scoped(&request.project, &request.query, cutoff, allowed.as_deref())
+                let node = request.node.as_ref();
+                db.search_scoped(
+                    &request.project,
+                    &request.query,
+                    cutoff,
+                    allowed.as_deref(),
+                    &mut |paths| {
+                        call_as(
+                            node,
+                            Call::SessionStamps {
+                                paths: paths.to_vec(),
+                            },
+                            NODE_READ_TIMEOUT,
+                        )
+                        .map_err(|error| error.to_string())
+                    },
+                )
             } {
                 Ok(page) => state.page = page,
                 Err(e) => {
@@ -513,6 +559,35 @@ fn run(
         }
     }
 }
+/// Why a session file was not indexed: its read or the index refused it
+/// (the file's rows go), or its node could not be reached (they stay).
+enum Failure {
+    Index(String),
+    Node(String),
+}
+
+/// Reads one step of the session file at `path` on `node`, from `saved`.
+fn read_on_node(
+    node: &dyn NodeLink,
+    agent: hide_session::Agent,
+    path: &str,
+    saved: Option<hide_session::search::SavedFile>,
+) -> Result<IndexStep, Failure> {
+    call_as(
+        node,
+        Call::SessionIndexRead {
+            agent,
+            path: path.to_owned(),
+            saved,
+        },
+        NODE_READ_TIMEOUT,
+    )
+    .map_err(|error| match error {
+        LinkError::Refused(refusal) => Failure::Index(refusal.message),
+        other => Failure::Node(other.to_string()),
+    })
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -532,11 +607,23 @@ mod tests {
         let source = temp.path().join("s.jsonl");
         fs::write(&source, r#"{"type":"response_item","timestamp":"2026-10-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"copied private body"}]}}"#.to_owned()+"\n").unwrap();
         let mut index = SearchIndex::open(&database).unwrap();
-        while index
-            .update("p", "s", hide_session::Agent::Codex, &source, 0)
-            .unwrap()
+        while hide_session::search_read::update(
+            &mut index,
+            "p",
+            "s",
+            hide_session::Agent::Codex,
+            &source,
+            0,
+        )
+        .unwrap()
         {}
-        assert_eq!(index.search("p", "private body", 0).unwrap().hits.len(), 1);
+        assert_eq!(
+            hide_session::search_read::search(&index, "p", "private body", 0)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
         drop(index);
         let client = SearchClient(Arc::new((Mutex::new(Mailbox::default()), Condvar::new())));
         client.0.0.lock().unwrap().controls.push_back(Request {
@@ -548,6 +635,7 @@ mod tests {
             workspace_id: "p".into(),
             device_id: "local".into(),
             rows: Arc::new(vec![]),
+            node: Arc::new(hide_node::Local::of_process()),
             clear: false,
             days: Some(0),
             rejected_control: None,
@@ -586,16 +674,46 @@ mod tests {
         let index = SearchIndex::open(&database).unwrap();
         assert_eq!(index.days("p").unwrap(), 0);
         assert!(
-            index
-                .search("p", "private body", 0)
+            hide_session::search_read::search(&index, "p", "private body", 0)
                 .unwrap()
                 .hits
                 .is_empty()
         );
     }
+    /// A node that cannot be reached keeps the rows read before; only a
+    /// read the node refused drops the file's rows.
+    #[test]
+    fn an_unreachable_node_is_not_read_as_a_failed_file() {
+        struct Answering(LinkError);
+        impl NodeLink for Answering {
+            fn call(
+                &self,
+                _call: Call,
+                _timeout: Duration,
+            ) -> Result<crate::node_access::LinkAnswer, LinkError> {
+                Err(match &self.0 {
+                    LinkError::Refused(refusal) => LinkError::Refused(refusal.clone()),
+                    _ => LinkError::NotConnected("gone".into()),
+                })
+            }
+        }
+        let read = |error| read_on_node(&Answering(error), hide_session::Agent::Codex, "/s", None);
+        assert!(matches!(
+            read(LinkError::NotConnected("gone".into())),
+            Err(Failure::Node(_))
+        ));
+        let refused = hide_node_link::HostError::new(
+            hide_node_link::ErrorCode::Io,
+            "Session source changed before indexing.",
+        );
+        assert!(matches!(
+            read(LinkError::Refused(refused)),
+            Err(Failure::Index(reason)) if reason == "Session source changed before indexing."
+        ));
+    }
     fn scope(r: &mut Runtime, project: &str) {
         r.snapshot.project_sessions = Some(ProjectSessionsSnapshot {
-            device_id: "local".into(),
+            device_id: crate::node::test_node().to_string(),
             workspace_id: project.into(),
             unavailable_reason: None,
             loading: false,
@@ -608,7 +726,7 @@ mod tests {
     fn payload(project: &str, query: &str, days: Option<u16>) -> SearchPayload {
         SearchPayload {
             workspace_id: project.into(),
-            device_id: "local".into(),
+            device_id: crate::node::test_node().to_string(),
             query: query.into(),
             provider: "all".into(),
             clear: false,
