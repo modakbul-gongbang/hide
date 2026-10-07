@@ -1806,3 +1806,61 @@ fn a_standalone_own_node_installs_nothing_and_says_why() {
         "nothing is written into the node's home"
     );
 }
+
+/// Letter-720: a device link that was lost or could not start is tried
+/// again on its own after two seconds, the wait doubling to a minute; a read
+/// before then starts nothing, and the operator's Retry tries at once and
+/// begins the schedule over.
+#[test]
+fn a_failed_device_link_is_tried_again_after_a_doubling_wait() {
+    let probe = device_runtime(None, None);
+    let shared = device_runtime(Some(granted(&probe)), None);
+    // Held throughout, so an attempt's own answer never lands; each failure
+    // is ingested here instead.
+    let mut runtime = shared.lock().unwrap();
+    runtime.start_device_host(DEVICE);
+    let mut waits = Vec::new();
+    for _ in 0..7 {
+        let generation = runtime.device_host_generation(DEVICE);
+        let before = super::unix_milliseconds();
+        runtime.ingest_host_established(
+            DEVICE,
+            generation,
+            Err(hide_node_link::device::EstablishError::Helper(
+                "the device did not answer".to_owned(),
+            )),
+        );
+        let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
+        waits.push((at - before) / 1_000);
+        // A read before the wait is over starts nothing.
+        assert!(runtime.node_link(DEVICE).is_err());
+        assert_eq!(runtime.device_host_generation(DEVICE), generation);
+        assert!(!runtime.tick_device_hosts(at - 1));
+        assert_eq!(runtime.device_host_generation(DEVICE), generation);
+        runtime.tick_device_hosts(at);
+        assert_eq!(runtime.device_host_generation(DEVICE), generation + 1);
+    }
+    assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60]);
+
+    let generation = runtime.device_host_generation(DEVICE);
+    runtime.ingest_host_established(
+        DEVICE,
+        generation,
+        Err(hide_node_link::device::EstablishError::Helper(
+            "again".to_owned(),
+        )),
+    );
+    runtime.retry_device_host_now(DEVICE);
+    assert_eq!(runtime.device_host_generation(DEVICE), generation + 1);
+    let generation = runtime.device_host_generation(DEVICE);
+    let before = super::unix_milliseconds();
+    runtime.ingest_host_established(
+        DEVICE,
+        generation,
+        Err(hide_node_link::device::EstablishError::Helper(
+            "again".to_owned(),
+        )),
+    );
+    let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
+    assert_eq!((at - before) / 1_000, 2);
+}

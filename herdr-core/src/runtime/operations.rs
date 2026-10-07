@@ -354,6 +354,7 @@ impl Runtime {
         changed |= self.reconcile_attachment_target();
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);
+        changed |= self.tick_device_hosts(now_unix_ms);
         changed |= self.reattach_resized_observers(now_unix_ms);
         if changed {
             self.sync_recent_closed_snapshot();

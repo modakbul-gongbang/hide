@@ -45,6 +45,28 @@ pub(super) enum HostPhase {
     Unavailable(String),
 }
 
+/// How long a device's link waits before it is tried again after it was
+/// lost or could not start: two seconds, doubling to a minute. A link that
+/// starts begins the schedule over, and the operator's Retry tries at once.
+const HOST_RETRY_FIRST_MS: u64 = 2_000;
+const HOST_RETRY_MAX_MS: u64 = 60_000;
+
+/// When a lost or failed link may be tried again, and the wait after that.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct HostRetry {
+    pub(super) at_unix_ms: Option<u64>,
+    pub(super) delay_ms: u64,
+}
+
+impl Default for HostRetry {
+    fn default() -> Self {
+        Self {
+            at_unix_ms: None,
+            delay_ms: HOST_RETRY_FIRST_MS,
+        }
+    }
+}
+
 pub(super) struct DeviceHost {
     pub(super) phase: HostPhase,
     /// Taken from the runtime-wide counter on every connection attempt and
@@ -227,7 +249,7 @@ impl Runtime {
                 "contract": HOST_CONSENT_CONTRACT,
             }));
             self.close_device_host(device_id, "consent renewed");
-            self.start_device_host(device_id);
+            self.retry_device_host_now(device_id);
             self.relist_remote_files(device_id);
         } else {
             registration.host_consent = None;
@@ -277,6 +299,11 @@ impl Runtime {
             return false;
         }
         let generation = self.advance_host_generation(device_id);
+        // This is the attempt a waiting retry was for; a failed one
+        // schedules the next.
+        if let Some(retry) = self.device_host_retries.get_mut(device_id) {
+            retry.at_unix_ms = None;
+        }
         if self.device_kit_removing(device_id) {
             self.set_host_phase(
                 device_id,
@@ -359,6 +386,64 @@ impl Runtime {
         self.refresh_device_snapshots()
     }
 
+    /// Starts the device's link for a read that needs it, unless a lost or
+    /// failed one is still waiting out its retry.
+    fn reconnect_device_host(&mut self, device_id: &str, now_unix_ms: u64) -> bool {
+        let waiting = self
+            .device_host_retries
+            .get(device_id)
+            .and_then(|retry| retry.at_unix_ms)
+            .is_some_and(|at| now_unix_ms < at);
+        !waiting && self.start_device_host(device_id)
+    }
+
+    /// The operator asked for the device's link: it is tried at once and
+    /// its retry schedule begins over.
+    pub(super) fn retry_device_host_now(&mut self, device_id: &str) -> bool {
+        self.device_host_retries.remove(device_id);
+        self.start_device_host(device_id)
+    }
+
+    /// The link was lost or could not start: it is tried again after the
+    /// device's current wait, and the wait after that doubles.
+    fn schedule_host_retry(&mut self, device_id: &str, now_unix_ms: u64) {
+        let retry = self
+            .device_host_retries
+            .entry(device_id.to_owned())
+            .or_default();
+        retry.at_unix_ms = Some(now_unix_ms.saturating_add(retry.delay_ms));
+        crate::diagnostic!(serde_json::json!({
+            "component": "remote_host",
+            "kind": "host.retry_scheduled",
+            "target": device_id,
+            "delay_ms": retry.delay_ms,
+        }));
+        retry.delay_ms = retry.delay_ms.saturating_mul(2).min(HOST_RETRY_MAX_MS);
+    }
+
+    /// Tries again each device whose lost or failed link has waited out its
+    /// retry, so its panes' `hide` comes back without a read asking first.
+    pub(crate) fn tick_device_hosts(&mut self, now_unix_ms: u64) -> bool {
+        let due: Vec<String> = self
+            .device_host_retries
+            .iter()
+            .filter(|(_, retry)| retry.at_unix_ms.is_some_and(|at| at <= now_unix_ms))
+            .map(|(device_id, _)| device_id.clone())
+            .collect();
+        let mut changed = false;
+        for device_id in due {
+            if matches!(
+                self.device_hosts.get(&device_id).map(|host| &host.phase),
+                Some(HostPhase::Unavailable(_))
+            ) {
+                changed |= self.start_device_host(&device_id);
+            } else if let Some(retry) = self.device_host_retries.get_mut(&device_id) {
+                retry.at_unix_ms = None;
+            }
+        }
+        changed
+    }
+
     fn device_host_entry(&mut self, device_id: &str) -> &mut DeviceHost {
         self.device_hosts
             .entry(device_id.to_owned())
@@ -427,6 +512,7 @@ impl Runtime {
                     "consent_bound": bound_now,
                     "upload": established.upload,
                 }));
+                self.device_host_retries.remove(device_id);
                 self.set_host_phase(
                     device_id,
                     HostPhase::Ready {
@@ -463,10 +549,15 @@ impl Runtime {
                     .entry(device_id.to_owned())
                     .or_default()
                     .unavailable = Some(message.clone());
+                // A changed identity or an unsupported device waits for the
+                // operator; anything else may pass, so it is tried again.
                 let phase = match error {
                     EstablishError::IdentityChanged { .. } => HostPhase::IdentityChanged(message),
                     EstablishError::Unsupported(_) => HostPhase::Unsupported(message),
-                    _ => HostPhase::Unavailable(message),
+                    _ => {
+                        self.schedule_host_retry(device_id, now_unix_ms());
+                        HostPhase::Unavailable(message)
+                    }
                 };
                 self.set_host_phase(device_id, phase);
                 self.refresh_device_catalog(device_id);
@@ -503,6 +594,7 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
+        self.schedule_host_retry(device_id, now_unix_ms());
         self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
@@ -532,6 +624,7 @@ impl Runtime {
     pub(super) fn forget_device_host(&mut self, device_id: &str) {
         self.close_device_host(device_id, "device removed");
         self.device_hosts.remove(device_id);
+        self.device_host_retries.remove(device_id);
         self.forget_device_catalog(device_id);
         self.device_kit_pending.remove(device_id);
         self.codex_daemon_off_running.remove(device_id);
@@ -558,7 +651,7 @@ impl Runtime {
                 return Ok(Arc::clone(host));
             }
             Some(HostPhase::Ready { .. }) | Some(HostPhase::Unavailable(_)) | None => {
-                self.start_device_host(device_id);
+                self.reconnect_device_host(device_id, now_unix_ms());
             }
             _ => {}
         }

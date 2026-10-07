@@ -1094,6 +1094,8 @@ pub struct Runtime {
     remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
     /// Each device's helper connection and the consent it runs under.
     device_hosts: HashMap<String, hosts::DeviceHost>,
+    /// When each device's lost or failed link is tried again.
+    device_host_retries: HashMap<String, hosts::HostRetry>,
     /// The last helper attempt number, for every device. Never reset, so an
     /// answer from an attempt made before a device was removed and added
     /// again under the same id cannot match the new attempt.
@@ -1833,6 +1835,7 @@ impl Runtime {
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
             device_hosts: HashMap::new(),
+            device_host_retries: HashMap::new(),
             last_host_generation: 0,
             changes_published_key: None,
             device_raw_sessions: HashMap::new(),
