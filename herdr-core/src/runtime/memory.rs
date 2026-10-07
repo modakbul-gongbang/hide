@@ -899,7 +899,10 @@ mod scope_tests {
     #[test]
     fn session_detail_opens_before_memory_database_exists() {
         let temp = tempdir().unwrap();
-        let folder = temp.path().join(hide_session::CLAUDE_SESSIONS).join("-project");
+        let folder = temp
+            .path()
+            .join(hide_session::CLAUDE_SESSIONS)
+            .join("-project");
         fs::create_dir_all(&folder).unwrap();
         let session_path = folder.join("session.jsonl");
         fs::write(
