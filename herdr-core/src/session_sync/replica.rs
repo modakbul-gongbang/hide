@@ -2231,7 +2231,17 @@ pub(crate) struct PaneMove {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum SubscriptionLine {
     Event(ReplicaEvent),
-    Error { code: String, message: String },
+    /// Herdr dropped this subscriber because it fell behind the server's
+    /// retained event history, and closes the connection after this line.
+    /// Herdr is answering; the replica has only missed events, so the cure is
+    /// a fresh subscription and snapshot, not a failure.
+    EventsLost {
+        message: String,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 fn malformed_event(event: &str, detail: &str) -> SessionFetchError {
