@@ -1297,6 +1297,8 @@ pub struct Runtime {
     /// A session update is being applied: the navigator still shows the one
     /// it replaces, so a close waiting in a tab's line starts only after it.
     ingesting_session: bool,
+    /// A tab's line is being pumped; see `pump_geometry_queue`.
+    pumping_geometry: bool,
     /// Herdr's confirmed layout of each tab with a drawn prediction, as the
     /// last session showed it; a new request is predicted on it rather than
     /// on the drawing.
@@ -1954,6 +1956,7 @@ impl Runtime {
             confirmed_layouts: HashMap::new(),
             close_line_places: HashMap::new(),
             ingesting_session: false,
+            pumping_geometry: false,
             provisional_tabs: Vec::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,

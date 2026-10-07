@@ -1253,6 +1253,18 @@ impl Runtime {
     /// Sends the next operation of the tab's line once nothing ahead of it
     /// is still waiting for Herdr.
     pub(super) fn pump_geometry_queue(&mut self, scope_id: &str) -> bool {
+        // An operation the pump starts can end at once and pump again; the
+        // outer pump owns the line, so the inner one leaves it alone.
+        if self.pumping_geometry {
+            return false;
+        }
+        self.pumping_geometry = true;
+        let moved = self.pump_geometry_line(scope_id);
+        self.pumping_geometry = false;
+        moved
+    }
+
+    fn pump_geometry_line(&mut self, scope_id: &str) -> bool {
         let mut moved = false;
         while !self.geometry_in_flight(scope_id) {
             let Some(id) = self
@@ -1265,15 +1277,17 @@ impl Runtime {
                 break;
             };
             let request = self.pane_operations[&id].request.clone();
-            // A close starts only once the close ahead of it has left the
-            // tab entirely, one still recorded there would refuse it, and
-            // from a navigator that shows the session as it now stands.
+            // A close starts once the close ahead of it has settled and left
+            // the tab, which a settling one about to leave would refuse, and
+            // from a navigator that shows the session as it now stands. A
+            // close ahead that failed or is unknown stays until the operator
+            // acts; starting meets its refusal, which drops the line.
             if matches!(request, GeometryRequest::Close { .. })
                 && (self.ingesting_session
                     || self
                         .close_operations
                         .values()
-                        .any(|operation| operation.scope_id == scope_id))
+                        .any(|operation| operation.scope_id == scope_id && operation.settling()))
             {
                 break;
             }

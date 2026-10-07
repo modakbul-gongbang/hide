@@ -610,6 +610,37 @@ fn closing_the_pane_left_drawn_alone_waits_behind_the_close_ahead() {
         [LEFT],
         "the last pane's close waits for it"
     );
+
+    // Herdr removes the right pane: once that session is applied, the close
+    // of the last pane starts from it, as a close of the tab's only pane,
+    // and the same session read again does not cancel it.
+    for operation in runtime.close_operations.values_mut() {
+        operation.phase = "awaiting_topology".to_owned();
+    }
+    let (_, records) =
+        crate::diagnostics::capture(|| runtime.ingest_session(Ok(session(None, false))));
+    assert!(queued_closes(&runtime).is_empty());
+    let last = runtime
+        .close_operations
+        .values()
+        .find(|operation| operation.target_id == LEFT)
+        .expect("the last pane's close started");
+    assert_eq!(last.scope_pane_ids, [LEFT]);
+    assert_eq!(last.leaving_tab(), Some(TAB));
+    runtime.ingest_session(Ok(session(None, false)));
+    assert!(
+        runtime
+            .close_operations
+            .values()
+            .any(|operation| operation.target_id == LEFT && operation.settling()),
+        "the close was not canceled"
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|record| record.to_string().contains("close_canceled")),
+        "{records:?}"
+    );
 }
 
 /// B1, B4, D-05: a new tab is drawn from Herdr's answer, as one pane with
