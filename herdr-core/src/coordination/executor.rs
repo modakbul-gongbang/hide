@@ -175,6 +175,10 @@ pub(crate) fn run(
                     .collect(),
             }))
         }
+        Command::Show { id } if id == super::HERE => {
+            let ledger = state(&client)?;
+            Ok(view(super::here(&ledger, &actor)?, &ledger))
+        }
         Command::Show { id } => {
             let ledger = state(&client)?;
             let record = ledger

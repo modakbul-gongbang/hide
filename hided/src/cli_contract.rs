@@ -77,6 +77,9 @@ pub struct Spec {
     pub rest: Option<&'static str>,
     /// The answer schemas (`answers`) the command can return.
     pub answers: &'static [&'static str],
+    /// The failure codes the command's own rule answers with, beside those
+    /// every command of its topic can (the daemon, the pane, the ledger).
+    pub refusals: &'static [&'static str],
 }
 
 const fn required(name: &'static str, value: Input) -> Opt {
@@ -119,6 +122,7 @@ const fn spec(
         options,
         rest: None,
         answers,
+        refusals: &[],
     }
 }
 
@@ -167,6 +171,23 @@ pub const COMMANDS: &[Spec] = &[
         &[switch("--json")],
         &["agent"],
     ),
+    // The caller's own registration, by its attested pane, device and
+    // session; only a pane-bound credential can ask.
+    Spec {
+        words: &["agent", "show", "here"],
+        arguments: &[],
+        repeats: None,
+        options: &[switch("--json")],
+        rest: None,
+        answers: &["agent"],
+        refusals: &[
+            "pane_capability_required",
+            "participant_unavailable",
+            "participant_ended",
+            "participant_session_changed",
+            "ambiguous_participant",
+        ],
+    },
     spec(
         &["agent", "end"],
         AGENT_ID,
@@ -190,6 +211,7 @@ pub const COMMANDS: &[Spec] = &[
         ],
         rest: Some("the agent's own arguments"),
         answers: &["agent"],
+        refusals: &[],
     },
     spec(
         &["request", "send"],
@@ -224,6 +246,7 @@ pub const COMMANDS: &[Spec] = &[
         options: &[],
         rest: None,
         answers: &["confirmed"],
+        refusals: &[],
     },
     spec(
         &["watch", "start"],
@@ -318,6 +341,7 @@ fn command_json(spec: &Spec) -> Value {
         })).collect::<Vec<_>>(),
         "rest": spec.rest,
         "answers": spec.answers,
+        "refusals": spec.refusals,
     })
 }
 

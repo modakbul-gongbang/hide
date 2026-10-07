@@ -185,6 +185,9 @@ A watch observed by a Factory warns after that Factory's stall window (`stall_mi
 
 `hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.
 `register` records the participant on the caller's own machine, which the pane capability names: `--machine` may be left out, and when given it must name that same machine or the call is refused with `machine_identity_conflict`, so a caller in a connected device's pane registers as that device.
+`hide agent show here` answers the caller's own registration, read only, with no renderer: the one live record whose actor is the caller's attested pane, device and session, the rule `--parent here` uses (`coordination::here`).
+Only a pane-bound credential can ask; a checkout-bound one would name its pane by the caller's `HERDR_PANE_ID` hint alone and is refused `pane_capability_required`, and a pane-bound one whose hint names another pane is refused `caller_identity_conflict`, as every delivery command is.
+A caller with no such record is refused `participant_ended` when its record ended, `participant_session_changed` when its pane's live record belongs to an earlier session (the session moved on, as after a compaction), `ambiguous_participant` when two live records match, and `participant_unavailable` otherwise; a remote participant on a pane of the same name is never the local caller.
 `hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
 It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
 A completed spawn stores a durable receipt for its parent and intent, so retries return the same child and preserve ended registrations and closed watches.

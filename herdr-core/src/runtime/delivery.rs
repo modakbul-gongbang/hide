@@ -242,6 +242,18 @@ impl Runtime {
                 }
                 pane.to_owned()
             }
+            // A checkout-bound credential names a pane only by the caller's
+            // hint, which cannot say who the caller is.
+            Caller::Checkout { .. }
+                if matches!(
+                    &command,
+                    Command::Agents {
+                        command: crate::coordination::Command::Show { id },
+                    } if id == crate::coordination::HERE
+                ) =>
+            {
+                return Err("pane_capability_required".into());
+            }
             Caller::Checkout { .. } => qualify(hint.ok_or("agent_pane_required")?),
         };
         let actor_context = self
@@ -965,6 +977,48 @@ pub(crate) mod tests {
             guard.delivery_bell_verdict(&target.actor, now).err(),
             Some(Hold::Absent)
         );
+    }
+
+    /// `hide agent show here` answers who the caller is, so only a
+    /// pane-bound credential can ask it: a checkout-bound one would name its
+    /// pane by the caller's hint alone, and a pane-bound one cannot borrow
+    /// another pane by hint.
+    #[test]
+    fn only_the_attested_pane_asks_who_it_is() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let mut guard = runtime.lock().unwrap();
+        guard.install_delivery_client(client);
+        let context = authority(&target.actor).context;
+        let show = |id: &str| Command::Agents {
+            command: crate::coordination::Command::Show { id: id.into() },
+        };
+        let checkout =
+            crate::workspace_control::checkout_caller_id(&"a".repeat(32), "/checkouts/fixture");
+        let mut refusal = |caller: &str, hint: Option<&str>, id: &str| {
+            guard
+                .prepare_delivery("local", caller, &context, hint, show(id))
+                .err()
+        };
+        assert_eq!(
+            refusal(&checkout, Some("sender"), "here").as_deref(),
+            Some("pane_capability_required")
+        );
+        // A checkout-bound credential still shows a named agent.
+        assert_eq!(refusal(&checkout, Some("sender"), "agent-1"), None);
+        assert_eq!(
+            refusal("recipient", Some("sender"), "here").as_deref(),
+            Some("caller_identity_conflict")
+        );
+        assert_eq!(refusal("recipient", None, "here"), None);
+        drop(guard);
+        drop(worker);
     }
 
     #[test]
