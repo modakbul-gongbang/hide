@@ -916,6 +916,13 @@ pub struct DeviceTestStageSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub id: String,
+    /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
+    /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
+    /// none or only one Hide made up from its pane (`fork::hide_made_name`).
+    /// `id` falls back to the pane id and a device's row replaces it, so it
+    /// cannot stand in for this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub herdr_name: Option<String>,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.

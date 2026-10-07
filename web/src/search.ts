@@ -184,12 +184,19 @@ function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" 
   return { tone, label: statusText(t, agent.status_code) };
 }
 
+/**
+ * An agent row: titled by the name every surface calls it, with its Herdr
+ * name (`agent start --name`, `agent rename`), its place and its state
+ * sentence under it, so a query finds it by any of them. A Herdr name the
+ * title already reads as is not drawn twice.
+ */
 export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string | null, front: string, t: TFunction<"translation">): SearchEntry {
   const sentence = agent.detail || statusText(t, agent.status_code);
+  const name = agent.herdr_name && agent.herdr_name.toLowerCase() !== agent.identity_label.toLowerCase() ? agent.herdr_name : null;
   return {
     id: `agent:${agent.pane_id}`,
     title: agent.identity_label,
-    subtitle: place ? `${place} · ${sentence}` : sentence,
+    subtitle: [name, place, sentence].filter(Boolean).join(" · "),
     place: place ?? undefined,
     kind: "agent",
     group: AGENTS_GROUP,
