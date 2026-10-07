@@ -93,8 +93,8 @@ LATER_LAYERS = {
     "herdr-core/src/factory.rs": (
         15,
         "2b: the Factory engine main added after layer 2a runs its git, gh and "
-        "check commands, worktree removal, disk and program reads on this "
-        "machine; they move to the core's own node over its link, and its store "
+        "check commands, worktree removal, disk and program reads and its "
+        "done-today clock's time zone read on this machine; they move to the core's own node over its link, and its store "
         "and AI choice stay as core stores",
     ),
     "herdr-core/src/live.rs": (3, "3: the terminal attach child moves to the node's terminal path"),

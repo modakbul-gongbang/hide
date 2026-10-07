@@ -917,7 +917,7 @@ The core's own node is `hide_node::Local`, which answers in hided's process thro
 
 `scripts/check-core-touches-no-machine.py` holds the line: production code under `herdr-core/src` that opens a file, starts a process, opens a socket or reads a session file fails it, unless the file is one of the core's stores, listed with its reason, or something a later layer of the PRD moves out, listed with that layer; each listed file carries how many machine touches it keeps, so a new one in a listed file fails too.
 Until layer 2b the SSH transport (`remote.rs`, `remote/`, `ssh_hosts.rs`) is the core's, until layer 3 the terminal attach child (`live.rs`) and pasted attachments, and until layer 4 the label generator's lock, which is keyed by the Herdr server it labels; an entry that no longer reaches a machine fails the check, so none outlives its layer.
-The Factory host (`factory.rs`) is listed for layer 2b too: its judgments and its worker panes' close go through the core's own node, but its runner (`hide_factory::exec`, which the check bans by name) still runs git, `gh` (issue and pull request creation, merges and reruns, which `gh::allowed` does not cover) and the verify commands under `/bin/sh -c` on the core's machine, it removes a worker's worktree in process with `hide_host::worktrees::remove_worktree` (forced, with `branch -D`, for a discarded Task) rather than through the node's confirmed removal, and it reads free space and its own program folder directly; the `hide-factory` crate reads the project's files itself (guide files, `package.json`, `Makefile`), outside the folder the check scans.
+The Factory host (`factory.rs`) is listed for layer 2b too: its judgments and its worker panes' close go through the core's own node, but its runner (`hide_factory::exec`, which the check bans by name) still runs git, `gh` (issue and pull request creation, merges and reruns, which `gh::allowed` does not cover) and the verify commands under `/bin/sh -c` on the core's machine, it removes a worker's worktree in process with `hide_host::worktrees::remove_worktree` (forced, with `branch -D`, for a discarded Task) rather than through the node's confirmed removal, and it reads free space, its own program folder and the machine's time zone offset (`hide_platform::time`, for the summary's done-today day) directly; the `hide-factory` crate reads the project's files itself (guide files, `package.json`, `Makefile`), outside the folder the check scans.
 Layer 2b moves all of that to the core's own node and removes the entry.
 hided runs both roles in one process, and its core role keeps two readers of its own.
 The Explorer watcher (`watch.rs`) asks a node by id, so a second node serves an Explorer on its machine without the watcher changing.
@@ -992,6 +992,13 @@ No file, SQLite, network or subprocess work happens under the runtime lock, and 
 `hided` routes `hide factory` over the pane-capability socket and refuses a device caller.
 `Core::drop` stops the Factory host first, so its verify runs and external calls end with the daemon.
 [factory.md](factory.md) owns the engine, the store, the roles and the read model.
+
+The Factory screens read two snapshot sections, `factory` (the engine's `FactorySummary` and the answers to the screen's own requests) and `factory_task` (the `TaskDetail` of the one Task page a shell opened), each with its own revision.
+Both are built and compared on the engine thread and handed to the runtime only when they differ from what it last held, so an idle tick takes no lock and publishes nothing, and the delta carries a section only on its own change.
+While a page is open it is read again after every command and tick, since a decision or a running attempt's log tail can change it without moving the summary; an unchanged page is still dropped.
+A screen action is the `factory_action` event, whose `command` is the stage-1 `Command` decoded strictly and limited to the verbs a person may send; the core runs it with the operator role relayed by `screen` and puts the answer in `factory.actions` under the event's request id, newest last and at most 16.
+`factory_task_open` and `factory_task_close` name the page the engine keeps building, and `factory_secretary_set` records the secretary's pane in the core's UI state.
+[UI_BEHAVIOR.md: Factory](UI_BEHAVIOR.md#factory) owns what the screens do.
 
 ### The mobile companion
 

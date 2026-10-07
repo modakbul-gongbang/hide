@@ -566,10 +566,11 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // The complete command set includes the three direct Overview/sidebar commands.
+    // The complete command set includes the three direct Overview/sidebar commands
+    // and Open Factory (software-factory-ui B2).
     // The two numbered families each fold into one row and have no browser chord;
     // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
-    await expect(page.locator("[data-shortcut]")).toHaveCount(43);
+    await expect(page.locator("[data-shortcut]")).toHaveCount(44);
     for (const title of ["Overview", "Projects sidebar", "Agents sidebar"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
     // #349's Agents chord also moves on PC: Chrome reserves Alt+Shift+A.
     // Assert the exact moved commands, including the unchanged platform exceptions.
