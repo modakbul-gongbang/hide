@@ -145,6 +145,7 @@ fn record(
         instance,
         pane: agent.pane_id.clone(),
         parent,
+        origin: None,
         project,
         actor: actor_for(agent, host.machine, host.on_node)?,
         ended: false,
@@ -319,6 +320,7 @@ pub(crate) fn register_code_owned(
         instance: actor.pane_id.clone(),
         pane: actor.pane_id.clone(),
         parent: None,
+        origin: None,
         project: None,
         actor: actor.clone(),
         ended: false,
@@ -353,15 +355,15 @@ fn spawn(
         repo,
         branch,
         path,
-        no_watch: _,
         args,
     } = &command
     else {
         return Err("invalid_spawn".into());
     };
-    if ![parent, name, intent, kind, repo, branch]
-        .into_iter()
-        .all(|s| super::key(s))
+    if parent.as_ref().is_some_and(|parent| !super::key(parent))
+        || ![name, intent, kind, repo, branch]
+            .into_iter()
+            .all(|s| super::key(s))
         || args.len() > 128
         || args.iter().map(String::len).sum::<usize>() > 8192
         || args.iter().any(|arg| arg.contains('\0'))
@@ -372,7 +374,7 @@ fn spawn(
         return Err("invalid_agent_name".into());
     }
     let mut ledger = state(client)?;
-    let parent_id = if parent == super::HERE {
+    let parent_id = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
         if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
         } else {
@@ -418,7 +420,7 @@ fn spawn(
                 .to_owned()
         }
     } else {
-        parent.clone()
+        parent.clone().ok_or("parent_unavailable")?
     };
     ledger = state(client)?;
     if !resolve_actor(&ledger, &parent_id).is_some_and(|parent| parent.same_identity(actor)) {
@@ -512,6 +514,7 @@ fn spawn(
                         &owner,
                         &existing,
                         &label,
+                        false,
                         Default::default(),
                     )
                     .map_err(|error| format!("{error:?}"))?
@@ -582,7 +585,7 @@ fn spawn(
         )?;
     }
     let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
-    let child = record(
+    let mut child = record(
         &native,
         HostIdentity {
             machine: &actor.device_id,
@@ -592,9 +595,10 @@ fn spawn(
         },
         pane.into(),
         name.clone(),
-        Some(parent_id.clone()),
+        reserved.mode.responsibility(&parent_id),
         reserved.path.clone(),
     )?;
+    child.origin = reserved.mode.origin(&parent_id);
     reserved = serde_json::from_value(mutate(
         client,
         authority,
@@ -798,6 +802,7 @@ mod tests {
                 instance: "parent-terminal".into(),
                 pane: "sender".into(),
                 parent: None,
+                origin: None,
                 project: None,
                 ended: false,
                 actor: Actor {
@@ -846,14 +851,13 @@ mod tests {
                 .unwrap()
                 .to_owned();
             let command = Command::Spawn {
-                parent: "here".into(),
+                parent: Some("here".into()),
                 name: "recipient".into(),
                 intent: "one-child".into(),
                 kind: "codex".into(),
                 repo: "/fixture".into(),
                 branch: "topic".into(),
                 path: None,
-                no_watch: false,
                 args: Vec::new(),
             };
             let spawn = super::super::apply(
@@ -891,6 +895,7 @@ mod tests {
                 instance: "child-terminal".into(),
                 pane: "recipient".into(),
                 parent: Some(parent_id.clone()),
+                origin: None,
                 project: Some("/fixture/topic".into()),
                 actor: child_actor.clone(),
                 ended: false,

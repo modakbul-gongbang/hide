@@ -201,14 +201,14 @@ pub const COMMANDS: &[Spec] = &[
         arguments: &[],
         repeats: None,
         options: &[
-            required("--parent", Text),
+            optional("--parent", Text),
             required("--name", Text),
             required("--intent", Text),
             required("--kind", Text),
             required("--repo", Text),
             required("--branch", Text),
             optional("--path", Text),
-            switch("--no-watch"),
+            switch("--help"),
             switch("--json"),
         ],
         rest: Some("the agent's own arguments"),
@@ -461,7 +461,8 @@ mod tests {
             }
         }
         for option in spec.options {
-            if leave_out.contains(&option.name) {
+            // Help exits before delivery and has its own standalone argv.
+            if option.name == "--help" || leave_out.contains(&option.name) {
                 continue;
             }
             argv.push(option.name.to_owned());
@@ -492,6 +493,12 @@ mod tests {
     fn each_command_takes_what_the_contract_names_and_nothing_it_rules_out() {
         for spec in COMMANDS {
             let command = spec.words.join(" ");
+            if spec.options.iter().any(|option| option.name == "--help") {
+                let mut help = vec!["hide".to_owned()];
+                help.extend(spec.words.iter().map(|word| (*word).to_owned()));
+                help.push("--help".to_owned());
+                assert_eq!(parse_args(&help).unwrap(), CommandKind::AgentSpawnHelp);
+            }
             let most = spec.repeats.unwrap_or(1);
             let full = argv(spec, &[], None, most);
             assert!(takes(&full), "hide {command}: {:?}", parse_args(&full));

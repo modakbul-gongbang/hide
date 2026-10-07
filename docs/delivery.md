@@ -200,16 +200,31 @@ A watch observed by a Factory warns after that Factory's stall window (`stall_mi
 `hide agent show here` answers the caller's own registration, read only, with no renderer: the one live record whose actor is the caller's attested pane, device and session, the same match as `--parent here` (`coordination::live_self`), refused when two match (`coordination::here`).
 Only a pane-bound credential can ask, as for every delivery and agent command: a checkout-bound one is refused `agent_pane_required`, and a pane-bound one whose hint names another pane is refused `caller_identity_conflict`.
 A caller with no such record is refused `participant_ended` when its record ended, `participant_session_changed` when its pane's live record belongs to another session (the pane's agent session changed), `ambiguous_participant` when two live records match, and `participant_unavailable` otherwise; a remote participant on a pane of the same name is never the local caller.
-`hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
-It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
-A completed spawn stores a durable receipt for its parent and intent, so retries return the same child and preserve ended registrations and closed watches.
+`hide agent spawn` requires `--name`, `--intent`, `--kind`, `--repo` and `--branch`, with optional `--parent`, `--path` and native arguments after `--`.
+Choose responsibility when creating the agent; it cannot be transferred afterwards.
+With `--parent here` or the caller's own id, the agent is delegated: its parent owns the work, lineage is written immediately and an automatic watch starts.
+Without `--parent`, the work is handed off to the operator: the agent is an independent root, has no lineage edge to the spawner and starts no automatic watch.
+Both modes create a separate tab, in an existing checkout or a new worktree, without changing the current screen or keyboard focus.
+`hide agent spawn --help` explains the modes without contacting a daemon; the removed `--no-watch` flag is refused before any effects.
+
+Every `AgentView` includes `origin`, the spawner id for either mode and null for ordinary roots.
+Delegation derives origin from parent; handoff stores origin separately, and it grants no parent, subtree-close or end authority.
+A handed-off agent can end its own registration; its spawner cannot end it and receives `parent_authority_required`.
+Ordinary letters and explicit watches remain available between independent agents.
+The sidebar, graph, ancestor unread state, descendant badges and waiting-on-descendants rule read only responsibility through parent.
+PR and issue panels retain the handed-off session through its own branch facts and show no delegation line from origin.
+
+A completed spawn stores a durable receipt for its caller and intent, so retries return the same agent and preserve ended registrations and closed watches.
+Changing only responsibility mode on the same intent returns `intent_conflict` before creating anything.
 Only incomplete intents resume their recorded creation and registration steps; starting a new watch after completion requires explicit `hide watch start`.
-Remote starts use Hide's existing device start path.
+Remote starts use Hide's existing device start path with the same caller, modes and focus rules.
+The ledger stays at version 1: older records without mode load as delegation, missing origin defaults to null and legacy `no_watch` data is ignored without changing existing watches.
+Factory work remains explicitly delegated and watched, and dispatch clients using `--parent here` retain that behavior.
 The unsupported reconciliation/resume/session flags and relay, escalate, graph and events commands are absent.
 
-An agent that starts another through Herdr directly (`herdr agent start`, or `herdr pane run`/`send-text` of an agent's program) gets no registered parent, no lineage line and no watch, and nobody is woken when that child stops.
-So the Claude Code and Codex hook has a `PreToolUse` spawn guard that refuses such a call in a pane of a registered checkout and hands back the `hide agent spawn --parent here ...` command to use instead ([agent-hooks.md](agent-hooks.md#the-spawn-guard) owns what it parses, how it decides, and what it does when the daemon is unreachable).
-It changes nothing about the spawn above: the child still opens in its own tab, ties to its parent and starts the watch, and the guard only decides which command starts it.
+An agent started through Herdr directly bypasses Hide's responsibility record.
+The Claude Code and Codex `PreToolUse` spawn guard refuses such a call in a registered checkout and offers two filled commands: delegation with `--parent here`, or operator handoff without it ([agent-hooks.md](agent-hooks.md#the-spawn-guard)).
+The guard remains bypassable guidance; it does not change either mode's authority or execution path.
 A launch chained behind another command is refused whole, and a launch inside `bash -c`, `$(...)`, a script or an alias is not seen, so a child started that way has no parent line, as before the guard.
 A first spawn of a new Codex child can answer `native_identity_unavailable` until that Codex has bound its session after its first turn; running the same `hide agent spawn` again with the same intent converges on the same child.
 

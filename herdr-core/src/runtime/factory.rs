@@ -351,6 +351,7 @@ mod tests {
             instance: pane.into(),
             pane: pane.into(),
             parent: parent.map(str::to_owned),
+            origin: None,
             project: None,
             actor: match pane.strip_prefix("factory:") {
                 Some(factory) => Actor::factory(factory, crate::node::TEST_NODE),

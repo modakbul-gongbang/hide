@@ -1005,13 +1005,14 @@ pub(crate) fn tab_create_with_env_params(
     workspace: &str,
     cwd: &str,
     label: &str,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<Value, String> {
     params(req::TabCreateParams {
         workspace_id: Some(workspace.into()),
         cwd: Some(herdr_param(cwd)),
         label: Some(label.into()),
-        focus: true,
+        focus,
         env: env.into_iter().collect(),
     })
 }

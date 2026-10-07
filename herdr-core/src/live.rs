@@ -627,6 +627,7 @@ fn execute_remote_control(
                     workspace_id,
                     cwd,
                     label,
+                    true,
                     local_create_env(*admission_id),
                 )?,
             )?;
@@ -645,6 +646,7 @@ fn execute_remote_control(
                 owner,
                 cwd,
                 label,
+                true,
                 local_create_env(*admission_id),
             )?;
             (Some(tab.tab_id), Some(tab.pane_id))
@@ -710,6 +712,7 @@ pub(crate) fn open_owner_tab(
     owner: &OwnerOpen,
     cwd: &str,
     label: &str,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<OwnedTab, ControlFailure> {
     let (workspace_id, first_tab) = ensure_owner(connector, owner, env.clone())?;
@@ -739,7 +742,7 @@ pub(crate) fn open_owner_tab(
                 pane_id,
             }
         }
-        None => create_tab_in(connector, &workspace_id, cwd, label, env)?,
+        None => create_tab_in(connector, &workspace_id, cwd, label, focus, env)?,
     };
     crate::diagnostic!(json!({
         "component": "checkout_owner",
@@ -851,12 +854,13 @@ fn create_tab_in(
     workspace_id: &str,
     cwd: &str,
     label: &str,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<OwnedTab, ControlFailure> {
     let result = mutation_request(
         connector,
         "tab.create",
-        wire::tab_create_with_env_params(workspace_id, cwd, label, env)?,
+        wire::tab_create_with_env_params(workspace_id, cwd, label, focus, env)?,
     )?;
     let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
     Ok(OwnedTab {
@@ -4954,45 +4958,49 @@ mod tests {
 
     #[test]
     fn a_second_request_for_an_open_owner_adds_a_tab_there_instead_of_another_workspace() {
-        let herdr = FakeHerdr::start("owner-already-open", |method, _| match method {
-            "worktree.open" => json!({
-                "type": "worktree_opened",
-                "already_open": true,
-                "workspace": {"workspace_id": "w9", "number": 9, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
-                "worktree": {"path": "/repo", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": false, "label": "hide"},
-                "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
-            }),
-            "tab.create" => json!({
-                "type": "tab_created",
-                "tab": {"tab_id": "w9:t2", "workspace_id": "w9", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w9:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w9", "tab_id": "w9:t2", "focused": true, "agent_status": "idle", "revision": 1}
-            }),
-            other => panic!("unexpected {other}"),
-        });
+        for focus in [true, false] {
+            let herdr = FakeHerdr::start("owner-already-open", |method, _| match method {
+                "worktree.open" => json!({
+                    "type": "worktree_opened",
+                    "already_open": true,
+                    "workspace": {"workspace_id": "w9", "number": 9, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
+                    "worktree": {"path": "/repo", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": false, "label": "hide"},
+                    "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                    "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
+                }),
+                "tab.create" => json!({
+                    "type": "tab_created",
+                    "tab": {"tab_id": "w9:t2", "workspace_id": "w9", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                    "root_pane": {"pane_id": "w9:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w9", "tab_id": "w9:t2", "focused": true, "agent_status": "idle", "revision": 1}
+                }),
+                other => panic!("unexpected {other}"),
+            });
 
-        let tab = open_owner_tab(
-            &herdr.connector(),
-            &OwnerOpen::Worktree {
-                path: "/repo".to_owned(),
-                repository_root: "/repo".to_owned(),
-                label: "hide".to_owned(),
-            },
-            "/repo",
-            "Tab 2",
-            Default::default(),
-        )
-        .expect("owner tab");
+            let tab = open_owner_tab(
+                &herdr.connector(),
+                &OwnerOpen::Worktree {
+                    path: "/repo".to_owned(),
+                    repository_root: "/repo".to_owned(),
+                    label: "hide".to_owned(),
+                },
+                "/repo",
+                "Tab 2",
+                focus,
+                Default::default(),
+            )
+            .expect("owner tab");
 
-        assert_eq!(
-            tab,
-            OwnedTab {
-                workspace_id: "w9".to_owned(),
-                tab_id: "w9:t2".to_owned(),
-                pane_id: "w9:p2".to_owned(),
-            }
-        );
-        assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);
+            assert_eq!(
+                tab,
+                OwnedTab {
+                    workspace_id: "w9".to_owned(),
+                    tab_id: "w9:t2".to_owned(),
+                    pane_id: "w9:p2".to_owned(),
+                }
+            );
+            assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);
+            assert_eq!(herdr.calls()[1].1["focus"], focus);
+        }
     }
 
     #[test]
@@ -5011,6 +5019,7 @@ mod tests {
             },
             "/gone",
             "Tab 1",
+            true,
             Default::default(),
         )
         .expect_err("a refused open fails");
@@ -5072,6 +5081,7 @@ mod tests {
             &owner,
             "/notes",
             "Tab 1",
+            true,
             Default::default(),
         )
         .expect("first tab");
@@ -5080,6 +5090,7 @@ mod tests {
             &owner,
             "/notes",
             "Tab 2",
+            true,
             Default::default(),
         )
         .expect("second tab");

@@ -24,6 +24,9 @@ pub struct AgentView {
     pub instance: String,
     pub pane: String,
     pub parent: Option<String>,
+    /// The spawner, independently of responsibility; null for ordinary roots.
+    #[schemars(required)]
+    pub origin: Option<String>,
     pub project: Option<String>,
     pub runtime: Runtime,
     pub connection: Connection,

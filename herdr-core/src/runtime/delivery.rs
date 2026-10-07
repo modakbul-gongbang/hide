@@ -1072,6 +1072,7 @@ pub(crate) mod tests {
                 instance: "terminal-recipient".into(),
                 pane: "recipient".into(),
                 parent: None,
+                origin: None,
                 project: None,
                 actor,
                 ended: false,

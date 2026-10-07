@@ -9,6 +9,7 @@ import { fixtureExecutable, fixtureToolPath, inheritedFixtureEnv } from "../../w
 import { copyFixtureShim } from "../../web/e2e/shims/build";
 
 type SpawnProvider = { script: string; completed: string };
+export type SpawnedAgent = { id: string; pane: string; machine: string; parent: string | null; origin: string | null; watch: string | null; session: string };
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const powershellQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
@@ -81,6 +82,22 @@ try {
 `;
   // Windows PowerShell 5 needs a BOM to read non-ASCII paths and arguments.
   fs.writeFileSync(provider.script, `\uFEFF${script}`);
+}
+
+/** Run one delivery command as the real native caller, observing its reply. */
+export async function nativeSpawnCommand(herdr: HerdrFixture, provider: SpawnProvider, pane: string, binary: string, args: string[], env: NodeJS.ProcessEnv, response: string): Promise<SpawnedAgent> {
+  prepareSpawnCommand(provider, binary, args, env, response);
+  execFileSync(herdr.bin, ["pane", "send-text", pane, "!"], { env: herdr.env, timeout: 20_000 });
+  await expect.poll(() => {
+    if (!fs.existsSync(provider.completed)) return null;
+    const completed = fs.readFileSync(provider.completed, "utf8").trim();
+    if (!completed) return null;
+    if (Number(completed) !== 0) throw new Error(`native spawn fixture command exited ${completed}`);
+    try { return JSON.parse(fs.readFileSync(response, "utf8")) as unknown; } catch { return null; }
+  }).not.toBeNull();
+  const answer = JSON.parse(fs.readFileSync(response, "utf8")) as { ok: boolean; value: SpawnedAgent };
+  expect(answer.ok, JSON.stringify(answer)).toBe(true);
+  return answer.value;
 }
 
 /** A prompt can precede the shell becoming available to agent.start. */

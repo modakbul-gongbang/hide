@@ -182,6 +182,10 @@ fn a_launch_in_a_registered_checkout_is_refused_with_the_command_to_use_instead(
             )),
             "{runtime}: {reason}"
         );
+        assert!(reason.contains(&format!(
+            "hide agent spawn --name set-g --intent <intent> --kind claude --repo {repo} --branch topic -- --model opus"
+        )), "{runtime}: {reason}");
+        assert!(reason.contains("root agent, no automatic watch"));
         assert_eq!(machine.calls(), ["workspace bootstrap"], "{runtime}");
         // B12: the pane, the kind and the shape are logged, the command is not.
         let log = machine.guard_log();
