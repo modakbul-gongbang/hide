@@ -178,6 +178,9 @@ test("the graph draws A to B to C without the A to C arrow, and a node opens its
     await expect(edge(dag.a, dag.d)).toHaveCount(1);
     await expect(edge(dag.a, dag.c)).toHaveCount(0);
     await expect(graph).toHaveAttribute("data-dependency-edges", "3");
+    // The layered layout comes from its worker in a real browser; the columns are only its fallback.
+    await expect(graph).toHaveAttribute("data-dependency-layout", "layered");
+    await expect(edge(dag.a, dag.b)).toHaveCount(1);
     await expect(page.locator(`[data-factory-graph-unrelated] [data-factory-card="${dag.e}"]`)).toBeVisible();
     await graph.locator(`[data-factory-card="${dag.c}"]`).click();
     await expect(page.locator(`[data-factory-task-page="${dag.c}"]`)).toBeVisible();
