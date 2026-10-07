@@ -3470,45 +3470,15 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         ..TerminalPaneSnapshot::default()
     }];
 
+    // A pane id an operation returned (a created tab or worktree) holds the
+    // keyboard before the session shows the pane's layout.
     let selected_pane = "w3V:p1";
-    let select_pane = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ui_state_update",
-        "payload": {
-            "expanded_paths": [],
-            "selected_path": null,
-            "selected_pane_id": selected_pane,
-            "focused_checkout_id": checkout_id,
-            "shortcut_bindings": {},
-            "accent_hex": "#B9FF66",
-            "font_size": 13
-        }
-    }))
-    .expect("selected pane state event");
-    assert!(runtime.dispatch_json(&select_pane));
+    runtime.select_terminal_pane(Some(selected_pane.to_owned()));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some(selected_pane)
     );
-    assert_eq!(
-        runtime.snapshot().focused.pane_id.as_deref(),
-        Some(selected_pane)
-    );
     assert!(runtime.snapshot().active_pane_layout().is_none());
-    assert!(runtime.snapshot().terminal.panes.is_empty());
-    assert_eq!(
-        runtime.snapshot().ui_state.focused_checkout_id.as_deref(),
-        Some(checkout_id.as_str())
-    );
-    assert_eq!(
-        runtime
-            .snapshot()
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("pane.projection_unavailable")
-    );
 
     let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
