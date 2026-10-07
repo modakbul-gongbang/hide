@@ -279,9 +279,17 @@ Lineage, the mailbox identity, labels and sleep all read that session id, so the
 It runs through the machine's own Herdr CLI (`KitTarget::herdr_bin`): the Herdr bundled in the app on this Mac, and the device's own Herdr on a device.
 Every call is one owned child with a deadline and a cleared environment but `HOME` and `PATH`, on the kit worker and never under the runtime lock.
 The integration is put in only when the agent is on, installed and has made its own folder, since Herdr refuses an agent whose configuration folder is missing.
+For Codex the kit also keeps what Herdr's install wrote into `~/.codex/hooks.json`, because Codex asks the operator to review a hook before it runs and Hide records that trust for the entries it installed ([Codex trusts Hide's own hooks](#codex-trusts-hides-own-hooks)); it goes from the record with the `herdr:codex` piece.
 Hide takes out only what it put in: an integration that was already in place when Hide first looked is the operator's and stays, whether the agent is switched on or off or the machine leaves Hide, and an older one of the operator's is not replaced.
 One of Hide's own that is older is replaced, and one the operator removed by hand stays removed until Reinstall, as for every other piece.
 Gemini CLI has no target in the pinned Herdr, so its row carries no integration piece and that is not a failure; a failed install shows on that agent's row alone and the other agents are untouched.
+
+### Which agents ask for a review
+
+Only Codex asks the operator to approve a hook before it runs.
+A survey on 2026-10-07 read each agent's official documentation and the executables installed on the maintainer's machine: Claude Code, Grok, OpenCode and Gemini CLI run a hook or plugin from the user folder with no approval screen, and the check a project folder's hook gets is a folder trust, not a hook review.
+Pi's user extensions and Cursor's current CLI hooks are read from their documentation and were not run, so they are an inference.
+Hide therefore writes no trust for any other agent, and an agent that starts asking for approval of a user-folder hook is a new row for this section and a new trust step beside Codex's, not a change to Codex's.
 
 ### Retired agents
 
@@ -306,19 +314,29 @@ A listing that shows Codex could not use the file Hide wrote is a failure too, n
 Hide computes no hash and writes no `config.toml`, so a change in how Codex hashes is followed, and every other setting in that file stays as Codex wrote it.
 
 The kit runs the check in every pass that finds the Codex hook part in place, whether the pass wrote it or found it current: at launch, when a device connects, and on Reinstall.
+It runs once, after the pass has put in every agent's pieces, because Herdr's integration is only in place then, so one `codex app-server` session trusts Hide's entries and Herdr's together and a first install is trusted before the operator's first Codex start.
 A pass that finds every entry trusted writes nothing, so a repeat leaves `config.toml` as it was.
 An entry another tool's hook displaced is trusted at its new position by the next pass; a Codex started before that pass can still show the screen for Hide's entry.
 A Codex without hook trust (its app-server does not know `hooks/list`, which codex-cli 0.160.0 shows as a `-32600` "unknown variant" error rather than JSON-RPC's `-32601`; both are read as unknown), a Codex that ends before it answers the handshake (no `app-server` command, or a program that is not a Codex) and a machine with no Codex are left alone and show nothing new; a Codex that answers the handshake and then ends, hangs or refuses is a failure.
 Starting the app-server also makes Codex do its own bookkeeping in `~/.codex` (its databases, `installation_id`, `skills/`), which is Codex's and not Hide's.
 
-What is trusted is exactly the entry Hide wrote, and nothing else (`select_targets`):
+What is trusted is exactly the entry Hide wrote, or the entry the kit recorded Herdr writing, and nothing else (`select_targets`, one function for both):
 
 - Codex lists it from this account's `~/.codex/hooks.json` as a user hook that is not managed, so a project's hook, a plugin's and a managed one with the same command are not it;
-- its event is one Hide registers, its `command` is byte for byte the command Hide writes for that event with this kit's helper, and its matcher is the one Hide writes for it (`Bash` for `PreToolUse`, none for the other five; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind);
+- its event, handler type, `command` and matcher are, byte for byte, those of one of Hide's six entries (the command Hide writes for that event with this kit's helper, a command hook, and the matcher Hide writes for it: `Bash` for `PreToolUse`, none for the other five; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind), or of one entry in the kit record's Herdr entries for Codex (below);
 - Codex does not trust it yet (`untrusted`, or `modified` after a change).
 
+The Herdr entries are learned, never written down in Hide: the kit reads `~/.codex/hooks.json` before and after its own `herdr integration install codex` call, under the account lock, and records the entries that call added (event, matcher, handler type, command) as `herdr_hooks.codex` in `~/.hide/kit/installed.json`, once Herdr reports the integration `current`.
+Herdr leaves an entry it already wrote alone when it reinstalls (observed on Herdr 0.9.1: an outdated script is replaced and the entry is not duplicated), so a call that added nothing keeps the recorded entries that are still in the file and drops those that are gone.
+A Herdr that changes its command is followed because the kit reads what Herdr wrote at its next install of the integration, and the same pass trusts the new command; the trust recorded for the old command is not removed, as for Hide's own.
+The recorded entries count only while the record also holds `herdr:codex`, so an integration the operator installed first (the kit never installed it, and the record has neither) and a command that is merely like Herdr's, in another folder or with another argument, are not byte-equal to anything recorded and stay for the review screen.
+An install that adds more than eight entries, or a `hooks.json` the kit cannot read around it, records nothing (the cause goes to the kit's standard error as `herdr_hook_not_learned`) and Codex shows its screen; Hide never vouches for what it did not see Herdr write.
+A machine whose record holds `herdr:codex` from a build that did not keep the entries has none to trust until Herdr's install next changes the file; its first Codex start can show the review screen once for Herdr's hook, and approving it trusts exactly that hash.
+
+One other tool's entries join that list, and only through the kit's record: the entries Herdr's own integration (`herdr integration install codex`) added to `hooks.json` when the kit ran it (PRD codex-herdr-hook-trust).
+Installing Hide installs that integration with it (below), so the operator's agreement to Hide's install covers it, and a Mac or device the kit set up opens Codex with no "Hooks need review" screen for Herdr's hook either, and Herdr knows the Codex session from its first turn.
 Another tool's hook, an entry that carries Hide's marker over a different command, and any entry that is not like this are neither read nor changed: Codex still shows the review screen for them, and lists only them.
-The usual such hook is Herdr's own integration entry (`herdr integration install codex`, which the kit runs in the same pass), so on a Mac or device where that entry is new Codex's first start still shows "Hooks need review" with one hook, Herdr's, while Hide's hooks are already trusted and run; approving that screen once covers Herdr's hook only, and the review screen lists no entry for Hide's spawn guard.
+That includes an integration the operator installed before Hide did, which the kit never installed and never recorded, so on a machine where it is the only hook Codex shows "Hooks need review" with that one hook while Hide's are already trusted and run; approving that screen once covers it only, and the review screen lists no entry for Hide's spawn guard.
 Hide writes `trusted_hash` and never `enabled`, so a hook the operator switched off in Codex's hook list stays off, and switching Hide's hook off there is how the operator opts out of one; switching Codex off in Settings, Agents takes Hide's entries out and Hide asks Codex for nothing.
 Removing Hide's hooks leaves its trust records in `config.toml`; each one matches only the same command and starts nothing by itself.
 Codex's `--dangerously-bypass-hook-trust` and `bypass_hook_trust` skip the review for every hook and are not used.
