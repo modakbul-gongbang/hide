@@ -74,7 +74,7 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --test remote_delivery --run-ignored only
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5

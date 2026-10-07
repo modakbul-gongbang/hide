@@ -212,7 +212,7 @@ class Selection(unittest.TestCase):
 
     def test_nightly_calls_verify_with_every_lane(self):
         # The call plans every lane like a push, and a lane it fails reaches
-        # the nightly issue through the report job's `needs`. The packages are
+        # the nightly report, which waits for it in `needs`. The packages are
         # the nightly's own call, so `verify` leaves them out.
         self.assertEqual(ci.plan("schedule", None, None, ROOT)["lanes"], FULL)
         workflow = (ROOT / ".github/workflows/pr.yml").read_text()
@@ -288,7 +288,7 @@ class NamedPaths(unittest.TestCase):
             "site/index.html", "tools/t1-preflight/README.md", "spikes/web-shell/measure/summarize.py", "agents/prd/x/prd.md",
             ".gitignore", "web/.gitignore", ".github/pull_request_template.md", ".github/dependabot.yml",
             ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml",
-            "scripts/tests/test_ci_plan.py", "scripts/nightly-report.cjs", "scripts/check-harness-ignore-anchor.sh",
+            "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
             "contracts/README.md", "site/README.md",
         ):

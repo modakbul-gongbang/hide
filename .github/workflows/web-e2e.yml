@@ -5,8 +5,9 @@
 # which tests (`grep`) to keep.
 #
 # CI retries a failed test once (web/playwright.config.ts). A test that passes
-# the retry is flaky: the lane passes and `Report flaky tests` files it as an
-# issue (scripts/ci-flaky-report.py); a test that fails twice fails the lane.
+# the retry is flaky: the lane passes and `Report flaky and failed tests` files
+# it as an issue (scripts/ci-flaky-report.py); a test that fails twice fails
+# the lane, and the same step annotates it for the nightly report.
 #
 # Each spec starts its own Herdr, hided and Chromium, so one worker per runner
 # keeps timing assertions honest; the shards are the parallelism. A shard runs
@@ -268,7 +269,7 @@ jobs:
             args+=(--test-list "$shard_file")
           fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
-      - name: Report flaky tests
+      - name: Report flaky and failed tests
         # A test that failed and passed its retry becomes an issue with a
         # seven-day deadline, or a comment on the issue that tracks it. A
         # report that fails to file is a warning, not a failed lane.
