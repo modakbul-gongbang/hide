@@ -218,6 +218,25 @@ pub(super) struct RemoteMutationDescriptor {
     pub(super) baseline_zoomed: Option<bool>,
 }
 
+/// A device's [`Runtime::pane_alone_unzoomed`]: whether `pane_id` is the only
+/// pane of an unzoomed tab in that device's session.
+pub(super) fn remote_pane_alone_unzoomed(session: &RemoteSessionSnapshot, pane_id: &str) -> bool {
+    let Some(tab) = session
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+    else {
+        return false;
+    };
+    tab.panes.len() == 1
+        && !session
+            .pane_layouts
+            .iter()
+            .any(|layout| tab.id.as_deref() == Some(layout.tab_id.as_str()) && layout.zoomed)
+}
+
 pub(super) fn remote_mutation_descriptor(
     session: &RemoteSessionSnapshot,
     request: &RemoteControlRequest,
@@ -779,6 +798,18 @@ impl Runtime {
             .iter()
             .find(|layout| layout.pane_ids().contains(&pane_id))
             .map(|layout| layout.tab_id.clone())
+    }
+
+    /// Whether `pane_id` is the only pane of an unzoomed tab, where zoom has
+    /// nothing to hide. Herdr answers such a zoom unchanged (`single_pane`),
+    /// so no topology would ever confirm it, and the operation left waiting
+    /// would turn away every later split, zoom, resize and close in the tab.
+    pub(super) fn pane_alone_unzoomed(&self, pane_id: &str) -> bool {
+        self.snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.pane_ids().contains(&pane_id))
+            .is_some_and(|layout| !layout.zoomed && layout.pane_ids().len() == 1)
     }
 
     pub(super) fn pane_operation_baseline(&self, pane_id: &str) -> Option<PaneTopologySignature> {
