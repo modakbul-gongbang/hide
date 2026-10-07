@@ -46,10 +46,10 @@ export function readFailureText(failure: ReadFailure, t: TFunction<"translation"
 /** A checkout's stage: only an issue nobody works on is in the backlog. */
 export type GitStage = Exclude<Stage, "backlog">;
 
-/** A checkout's Git stage: merged, then an open pull request, else work in progress. Agents and the issue's state never move it. */
+/** A checkout's Git stage: its work landed or its pull request merged, then an open pull request, else work in progress. Agents and the issue's state never move it. */
 export function stageOf(checkout: Checkout): GitStage {
   const pr = checkout.pull_request;
-  if (checkout.worktree?.merged === true || pr?.badge === "merged") return "done";
+  if (checkout.landed === true || pr?.badge === "merged") return "done";
   if (pr && pr.badge !== "closed") return "review";
   return "working";
 }

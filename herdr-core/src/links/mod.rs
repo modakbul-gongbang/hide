@@ -16,7 +16,7 @@ pub mod store;
 pub mod worker;
 
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The most sessions one panel read returns (D-40).
 pub const PANEL_SESSION_LIMIT: usize = 200;
@@ -65,6 +65,9 @@ pub struct ProjectFacts {
 pub struct WorktreeFact {
     pub path: String,
     pub branch: Option<String>,
+    /// When a linked worktree was added (its `.git/worktrees/<name>`
+    /// entry); none for the main worktree or before Git has been read.
+    pub created_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,6 +176,10 @@ pub struct LinkedSession {
     pub cwd: Option<String>,
     pub file: FileState,
     pub parent: Option<LinkedParent>,
+    /// The line worked on the pull request's branch while it lived (a branch
+    /// span, not only a printed address). Core only: `summary` weighs it.
+    #[serde(skip)]
+    pub on_branch: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -203,11 +210,21 @@ pub struct ProjectLinkSummary {
     /// Session id → the pull requests it made or worked on.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
+    /// The checkouts, by path, whose work landed: the sessions that started
+    /// in each since it was added made, or worked on the branch of, a merged
+    /// pull request and none still open, of the checkout's own branch when it
+    /// is on one. A session belongs to the deepest checkout holding its folder.
+    /// Core only: the runtime carries it onto each checkout's `landed`.
+    #[serde(skip)]
+    pub landed: BTreeSet<String>,
 }
 
 impl ProjectLinkSummary {
     pub fn is_empty(&self) -> bool {
-        self.prs.is_empty() && self.issues.is_empty() && self.sessions.is_empty()
+        self.prs.is_empty()
+            && self.issues.is_empty()
+            && self.sessions.is_empty()
+            && self.landed.is_empty()
     }
 }
 

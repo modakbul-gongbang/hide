@@ -366,17 +366,12 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     await page.locator('[data-sidebar-mode="projects"]').click();
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
-    // The fixture branch has nothing ahead of main, so the core folds its row
-    // under Inactive once it reads that, unless the row is the focused
-    // checkout, which never folds; which checkout the core starts focused on
-    // is not the test's. Focusing main first makes the fold certain, and the
-    // fold is opened after it comes, so the row stays where the menu opens.
-    await page.locator("[data-project]", { hasText: "repo" }).locator('[data-checkout][aria-label^="main"]').click();
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    const inactive = page.locator("[data-inactive-checkouts]");
-    await expect(inactive).toHaveText("Inactive 1", { timeout: 30_000 });
-    await inactive.click();
-    await expect(inactive).toHaveAttribute("aria-expanded", "true");
+    // The fixture branch has nothing ahead of main, yet no work of its own
+    // has landed, so its row stays among the active checkouts rather than
+    // folding under Inactive. Its commit age is drawn once the core has read
+    // the worktree's Git facts, which the deletion dialog is built from.
+    await expect(feature.locator("[data-checkout-age]")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("[data-inactive-checkouts]")).toHaveCount(0);
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click();
 

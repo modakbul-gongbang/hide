@@ -116,6 +116,7 @@ fn project(prs: Vec<PrFact>) -> ProjectFacts {
         worktrees: vec![WorktreeFact {
             path: ROOT.into(),
             branch: Some("main".into()),
+            created_at_unix_ms: None,
         }],
         prs,
         prs_read: true,
@@ -581,7 +582,7 @@ fn the_issue_panel_joins_its_pull_requests_and_names_which_one_a_session_made() 
         (links.sessions[0].pr, links.sessions[0].role),
         (8, SessionRole::Created)
     );
-    let summary = store.summary(PROJECT).unwrap();
+    let summary = store.summary(PROJECT, &[]).unwrap();
     assert_eq!(summary.prs.get(&8), Some(&1));
     assert_eq!(summary.issues.get("github:acme/app#3"), Some(&1));
     assert_eq!(
@@ -590,6 +591,186 @@ fn the_issue_panel_joins_its_pull_requests_and_names_which_one_a_session_made() 
             number: 8,
             created: true
         }])
+    );
+}
+
+/// A checkout's work landed when the pull requests its sessions made or
+/// worked on include a merged one and no open one; a session belongs to the
+/// deepest checkout holding its folder, and a checkout on no branch (one
+/// left on a main commit after its branches merged) still has its sessions.
+/// A pull request a session only printed is not work; a session counts only
+/// if it started after its checkout was added, so a worktree made again at a
+/// used path and branch inherits nothing even from a session still running,
+/// and one whose age is unread has none; and a checkout on a branch weighs
+/// only that branch's pull requests, so a branch switched in place is clean.
+#[test]
+fn a_checkout_landed_when_its_sessions_pull_requests_merged_and_none_is_open() {
+    let home = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let mut store = open(state.path());
+    let merged = |number, branch| pr(number, branch, T0, Some(T0 + 60 * MIN));
+    let open_pr = |number, branch| pr(number, branch, T0, None);
+    let mut dropped = pr(15, "feat/dropped", T0, Some(T0 + 60 * MIN));
+    dropped.merged_at = None;
+    let mut facts = project(vec![
+        merged(10, "feat/done"),
+        merged(13, "feat/nested"),
+        open_pr(14, "feat/root"),
+        dropped,
+        merged(16, "feat/mixed"),
+        pr(17, "feat/mixed", T0 + 70 * MIN, None),
+        merged(18, "feat/gone"),
+        merged(19, "feat/old"),
+        merged(20, "feat/a"),
+    ]);
+    facts.worktrees = [
+        (ROOT, Some("main")),
+        ("/work/app/nested", Some("feat/nested")),
+        ("/work/app-done", Some("feat/done")),
+        ("/work/app-mixed", Some("feat/mixed")),
+        ("/work/app-dropped", Some("feat/dropped")),
+        ("/work/app-detached", None),
+        ("/work/app-untouched", Some("gen-prd/spec")),
+        ("/work/app-looked", None),
+        ("/work/app-reused", Some("feat/old")),
+        ("/work/app-unread", Some("feat/done")),
+        ("/work/app-switched", Some("feat/b")),
+    ]
+    .map(|(path, branch)| WorktreeFact {
+        path: path.into(),
+        branch: branch.map(Into::into),
+        created_at_unix_ms: match path {
+            ROOT | "/work/app-unread" => None,
+            // Added again after its earlier sessions' pull request merged.
+            "/work/app-reused" => Some(T0 + 100 * MIN),
+            _ => Some(T0 - DAY_MS),
+        },
+    })
+    .into();
+    store.apply_project(&facts, T0).unwrap();
+    let turn = |branch| Turn {
+        at: T0 + MIN,
+        branch,
+        text: "작업해 줘",
+    };
+    let files = [
+        claude_file(
+            home.path(),
+            "s-root",
+            ROOT,
+            "cli",
+            &[turn("feat/root")],
+            None,
+        ),
+        claude_file(
+            home.path(),
+            "s-nested",
+            "/work/app/nested",
+            "cli",
+            &[turn("feat/nested")],
+            None,
+        ),
+        claude_file(
+            home.path(),
+            "s-done",
+            "/work/app-done",
+            "cli",
+            &[turn("feat/done")],
+            None,
+        ),
+        claude_file(
+            home.path(),
+            "s-mixed",
+            "/work/app-mixed",
+            "cli",
+            &[
+                turn("feat/mixed"),
+                Turn {
+                    at: T0 + 90 * MIN,
+                    branch: "feat/mixed",
+                    text: "다음 것",
+                },
+            ],
+            None,
+        ),
+        claude_file(
+            home.path(),
+            "s-dropped",
+            "/work/app-dropped",
+            "cli",
+            &[turn("feat/dropped")],
+            None,
+        ),
+        claude_file(
+            home.path(),
+            "s-detached",
+            "/work/app-detached",
+            "cli",
+            &[turn("feat/gone")],
+            Some((18, T0 + 1_000)),
+        ),
+        claude_file(
+            home.path(),
+            "s-untouched",
+            "/work/app-untouched",
+            "cli",
+            &[turn("gen-prd/spec")],
+            None,
+        ),
+        // Printed a merged pull request's address long after it was made.
+        claude_file(
+            home.path(),
+            "s-looked",
+            "/work/app-looked",
+            "cli",
+            &[turn("gen-prd/looked")],
+            Some((10, T0 + 40 * MIN)),
+        ),
+        // Worked on a pull request's branch at this path before the worktree
+        // there now was added, and still ran after it was.
+        claude_file(
+            home.path(),
+            "s-reused",
+            "/work/app-reused",
+            "cli",
+            &[
+                turn("feat/old"),
+                Turn {
+                    at: T0 + 120 * MIN,
+                    branch: "feat/old",
+                    text: "계속",
+                },
+            ],
+            None,
+        ),
+        // Made a pull request on the branch the worktree has since left.
+        claude_file(
+            home.path(),
+            "s-switched",
+            "/work/app-switched",
+            "cli",
+            &[turn("feat/a")],
+            Some((20, T0 + 1_000)),
+        ),
+        claude_file(
+            home.path(),
+            "s-unread",
+            "/work/app-unread",
+            "cli",
+            &[turn("feat/done")],
+            Some((10, T0 + 1_000)),
+        ),
+    ];
+    for file in &files {
+        ingest(&mut store, home.path(), file);
+    }
+
+    let summary = store.summary(PROJECT, &facts.worktrees).unwrap();
+    assert_eq!(
+        summary.landed,
+        BTreeSet::from(
+            ["/work/app-detached", "/work/app-done", "/work/app/nested"].map(String::from)
+        )
     );
 }
 
