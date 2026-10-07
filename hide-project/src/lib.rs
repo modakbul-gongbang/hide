@@ -680,6 +680,22 @@ pub mod git {
             );
         }
 
+        /// A `HEAD` that becomes a link after discovery is read through it,
+        /// as Git reads it, for the branch and its commit alike.
+        #[cfg(unix)]
+        #[test]
+        fn a_head_linked_after_discovery_is_read_through_the_link() {
+            let (temp, repository) = repository("ref: refs/heads/main");
+            fs::write(repository.common_dir.join("refs/heads/topic"), SECOND).unwrap();
+            let target = temp.path().join("linked-HEAD");
+            fs::write(&target, "ref: refs/heads/topic\n").unwrap();
+            let head = repository.git_dir.join("HEAD");
+            fs::remove_file(&head).unwrap();
+            std::os::unix::fs::symlink(&target, &head).unwrap();
+            assert_eq!(repository.branch().as_deref(), Some("topic"));
+            assert_eq!(repository.head_oid().as_deref(), Some(SECOND));
+        }
+
         #[test]
         fn a_detached_head_is_its_own_commit() {
             let (_temp, repository) = repository(FIRST);
