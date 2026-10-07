@@ -1033,8 +1033,9 @@ fn a_recorded_command_is_upgraded_after_its_old_package_is_deleted() {
 }
 /// A `codex` that keeps `daemon_auto_start` in `$CODEX_HOME/daemon` the way
 /// `codex features` reports it, logs every call, and is told by files in
-/// HOME to be an old Codex (`codex-old`), to fail (`codex-fails`) or to have a
-/// daemon answering (`daemon-running`).
+/// HOME to be an old Codex (`codex-old`), to fail (`codex-fails`), to refuse
+/// only the turn-off (`disable-fails`) or to have a daemon answering
+/// (`daemon-running`).
 fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
     let codex = fixture.root.join("bin/codex");
     executable(
@@ -1047,7 +1048,9 @@ fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
             "  'features list')\n",
             "    echo 'apps                 stable  true'\n",
             "    [ -e \"$HOME/codex-old\" ] || echo \"daemon_auto_start    stable  $(cat \"$CODEX_HOME/daemon\" 2>/dev/null || echo true)\" ;;\n",
-            "  'features disable') echo false > \"$CODEX_HOME/daemon\" ;;\n",
+            "  'features disable')\n",
+            "    if [ -e \"$HOME/disable-fails\" ]; then echo 'Error: config.toml is locked' >&2; exit 1; fi\n",
+            "    echo false > \"$CODEX_HOME/daemon\" ;;\n",
             "  'features enable') echo true > \"$CODEX_HOME/daemon\" ;;\n",
             "  'app-server daemon')\n",
             "    case \"$3\" in\n",
@@ -1287,13 +1290,13 @@ fn a_stop_that_does_not_take_effect_is_stop_failed_and_a_retry_only_stops() {
     ));
 }
 
-/// B6: a turn-off Codex refuses stops nothing.
+/// B6: a turn-off Codex refuses stops nothing, though the daemon answers.
 #[test]
 fn a_refused_turn_off_stops_nothing() {
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
-    std::fs::write(fixture.home().join("codex-fails"), "").unwrap();
+    std::fs::write(fixture.home().join("disable-fails"), "").unwrap();
 
     let report = apply(&fixture.target, &Scope::codex_daemon_off());
 
