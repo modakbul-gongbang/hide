@@ -958,9 +958,9 @@ struct HookFiles {
 /// can be for exactly those bytes. A file that could not be read leaves the
 /// record as it was. An install that changed the file in a way an integration
 /// install does not (an entry of someone else's removed or edited, or more
-/// entries added than Herdr's integration adds) teaches nothing and forgets
-/// what was recorded, so the review screen is left to the operator; either
-/// cause goes to the log. True when the record changed.
+/// entries added than Herdr's integration adds) teaches nothing, so the review
+/// screen is left to the operator for what it wrote; either cause goes to the
+/// log. True when the record changed.
 fn learn_herdr_hooks(record: &mut Record, adapter: &AgentAdapter, files: HookFiles) -> bool {
     let event = |kind: &str, detail: &str| {
         eprintln!(
@@ -982,9 +982,11 @@ fn learn_herdr_hooks(record: &mut Record, adapter: &AgentAdapter, files: HookFil
     };
     match learn_herdr_entries(&before, &after, record.herdr_hook_entries(adapter.id)) {
         Ok(entries) => record.set_herdr_hook_entries(adapter.id, entries),
+        // What was recorded stays: it was seen when Herdr wrote it, and only
+        // a byte-equal entry in the file is ever matched against it.
         Err(refused) => {
             event("herdr_hook_not_learned", &refused.to_string());
-            record.set_herdr_hook_entries(adapter.id, Vec::new())
+            false
         }
     }
 }

@@ -573,6 +573,23 @@ fn an_install_that_added_a_pile_of_entries_teaches_nothing() {
 }
 
 #[test]
+fn a_refused_learn_keeps_what_was_recorded_before() {
+    let fixture = with_codex_found();
+    apply(&fixture.target, &Scope::automatic());
+    let command = herdr_command(&fixture);
+    assert_eq!(learned(&fixture), std::slice::from_ref(&command));
+
+    // Herdr calls the integration outdated, the kit reinstalls it, and that
+    // install also removes an entry that is not Herdr's: nothing is learned
+    // from it, and what was recorded from the first install stays.
+    std::fs::write(fixture.home().join("herdr-edits"), "").unwrap();
+    fixture.operator_installed("codex", "outdated");
+    apply(&fixture.target, &Scope::automatic());
+
+    assert_eq!(learned(&fixture), std::slice::from_ref(&command));
+}
+
+#[test]
 fn a_record_the_kit_cannot_read_trusts_only_hides_own_entries() {
     let fixture = with_codex_found();
     apply(&fixture.target, &Scope::automatic());

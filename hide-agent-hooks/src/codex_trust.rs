@@ -243,12 +243,17 @@ fn expected_entries(helper: &Path, herdr: &[HookEntry]) -> Vec<Expected> {
             command: codex_command(helper, event),
             matcher: hook_matcher(AgentRuntime::Codex, event).map(str::to_owned),
         })
-        .chain(herdr.iter().map(|entry| Expected {
-            event: wire_event_name(&entry.event),
-            handler_type: entry.handler_type.clone(),
-            command: entry.command.clone(),
-            matcher: entry.matcher.clone(),
-        }))
+        .chain(
+            herdr
+                .iter()
+                .filter(|entry| entry.handler_type == COMMAND_HANDLER)
+                .map(|entry| Expected {
+                    event: wire_event_name(&entry.event),
+                    handler_type: entry.handler_type.clone(),
+                    command: entry.command.clone(),
+                    matcher: entry.matcher.clone(),
+                }),
+        )
         .collect()
 }
 
@@ -322,7 +327,8 @@ pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
     Ok(found)
 }
 
-/// Why an install teaches the kit nothing about what Herdr wrote.
+/// Why an install teaches the kit nothing about what Herdr wrote. The record
+/// is left as it was in either case.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NotLearned {
     /// The install added more than [`MAX_LEARNED_ENTRIES`] entries.
@@ -342,7 +348,7 @@ impl std::fmt::Display for NotLearned {
             ),
             Self::Changed(count) => write!(
                 formatter,
-                "the install left {count} entries that were there before it changed or gone"
+                "{count} entries that were there before the install changed or are gone"
             ),
         }
     }
@@ -1235,6 +1241,15 @@ mod tests {
         assert_eq!(select_with_herdr(&[herdr_entry()], &[own]), ["own"]);
         let stranger = listed("sessionStart", "echo foreign", "untrusted", "foreign");
         assert!(select_with_herdr(&[herdr_entry()], &[stranger]).is_empty());
+    }
+
+    #[test]
+    fn a_recorded_entry_of_another_handler_type_is_never_expected() {
+        let mut recorded = herdr_entry();
+        recorded.handler_type = "prompt".to_owned();
+        let mut hook = herdr_listed("untrusted", "prompt");
+        hook.handler_type = Some("prompt".to_owned());
+        assert!(select_with_herdr(&[recorded], &[hook]).is_empty());
     }
 
     #[test]
