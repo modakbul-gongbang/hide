@@ -21,7 +21,7 @@ use std::time::Duration;
 use hide_node_link::device::{
     DeviceConnector, DeviceTransport, HOST_CONSENT_CONTRACT, HostConsent,
 };
-use hide_node_link::panes::NodeEvent;
+use hide_node_link::panes::{NodeEvent, ProofAnswer};
 use hide_node_link::protocol::{Call, RootOpened, RootRef};
 use hide_node_link::{NodeLink, call_as};
 use serde_json::{Value, json};
@@ -66,14 +66,60 @@ struct Device {
     events: Arc<Events>,
 }
 
-/// The pane events of the device's link, as hided would receive them.
+/// The pane of the device's Herdr whose shell is this test process, so a
+/// caller from here is one the device's node can prove.
+const PROVED_PANE: &str = "w1:p2";
+/// The credential the core side of these tests issues for a proof.
+const TOKEN: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+
+/// The pane events of the device's link, as hided would receive them. It
+/// answers a proof as the core would: a credential for a lasting caller, and
+/// `pane_changed` for a one-shot one.
 #[derive(Default)]
 struct Events {
+    heard: std::sync::Mutex<Vec<NodeEvent>>,
+    arrived: std::sync::Condvar,
     closed: std::sync::Mutex<Vec<String>>,
 }
 
+impl Events {
+    /// The events heard so far, once `done` holds of them or the bound ends.
+    fn heard_until(&self, done: impl Fn(&[NodeEvent]) -> bool) -> Vec<NodeEvent> {
+        let heard = self.heard.lock().unwrap();
+        let (heard, _) = self
+            .arrived
+            .wait_timeout_while(heard, TIMEOUT, |heard| !done(heard))
+            .unwrap();
+        heard.clone()
+    }
+}
+
 impl hide_node::ssh::PaneEvents for Events {
-    fn event(&self, _node: &str, _link: &hide_node::ssh::RemoteHost, _event: NodeEvent) {}
+    fn event(&self, _node: &str, link: &hide_node::ssh::RemoteHost, event: NodeEvent) {
+        if let NodeEvent::PaneProof {
+            request, one_shot, ..
+        } = &event
+        {
+            let answer = if *one_shot {
+                ProofAnswer::Refused {
+                    reason: "pane_changed".to_owned(),
+                }
+            } else {
+                ProofAnswer::Issued {
+                    token: TOKEN.to_owned(),
+                    issued_new: true,
+                }
+            };
+            let (link, request) = (link.clone(), *request);
+            // The link's reader delivers this; it must never wait on the link.
+            std::thread::spawn(move || {
+                link.call(Call::PaneProofAnswer { request, answer }, TIMEOUT)
+                    .unwrap();
+            });
+        }
+        self.heard.lock().unwrap().push(event);
+        self.arrived.notify_all();
+    }
 
     fn closed(&self, node: &str, _link: &hide_node::ssh::RemoteHost) {
         self.closed.lock().unwrap().push(node.to_owned());
@@ -132,10 +178,15 @@ impl Device {
             &bin.join("herdr"),
             &format!("#!/bin/sh\nprintf '%s\\n' '{status}'\n"),
         );
-        // A Herdr that hangs up at once: a channel to it opens, and asking
-        // it about a pane fails rather than waits.
+        // A Herdr that knows one pane, whose shell is this test process, and
+        // hangs up on anything else: a channel to it opens, and asking it
+        // about another pane fails rather than waits.
         let herdr = UnixListener::bind(&herdr_socket).unwrap();
-        std::thread::spawn(move || for _ in herdr.incoming() {});
+        std::thread::spawn(move || {
+            for connection in herdr.incoming().flatten() {
+                std::thread::spawn(move || answer_herdr(connection));
+            }
+        });
 
         let keys = base.join("k");
         fs::create_dir(&keys).unwrap();
@@ -206,6 +257,31 @@ impl Device {
             events,
         }
     }
+}
+
+/// One request to the fixture Herdr, answered only for [`PROVED_PANE`].
+fn answer_herdr(connection: std::os::unix::net::UnixStream) {
+    use std::io::{BufRead, BufReader, Write};
+    let mut line = String::new();
+    if BufReader::new(&connection).read_line(&mut line).is_err() {
+        return;
+    }
+    let Ok(request) = serde_json::from_str::<Value>(&line) else {
+        return;
+    };
+    if request["params"]["pane_id"] != PROVED_PANE {
+        return;
+    }
+    let result = match request["method"].as_str() {
+        Some("pane.process_info") => json!({"process_info": {"shell_pid": std::process::id()}}),
+        Some("pane.get") => json!({"pane": {"terminal_id": "t-proved"}}),
+        _ => return,
+    };
+    let _ = writeln!(
+        &connection,
+        "{}",
+        json!({"id": request["id"], "result": result})
+    );
 }
 
 fn executable(path: &Path, contents: &str) {
@@ -390,6 +466,39 @@ fn a_device_s_reporting_call_reports_and_stops_when_told() {
     );
 }
 
+/// A draining link (consent withdrawn) stops the reporting call it would
+/// otherwise wait out for its whole bound, and closes once it has.
+#[test]
+fn a_draining_link_stops_its_reporting_call_and_closes() {
+    let device = Device::start();
+    let socket = pane_sockets(&device.state).pop().unwrap();
+    let common = device.project.join("watched");
+    fs::create_dir_all(common.join("refs/heads")).unwrap();
+    let (watching, watched) = std::sync::mpsc::channel();
+    let link = Arc::clone(&device.link);
+    let watch = std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let answer = link.call_with_progress(
+            Call::GitWatch {
+                common_dirs: vec![common.to_string_lossy().into_owned()],
+            },
+            Duration::from_secs(120),
+            &mut |_| {
+                let _ = watching.send(());
+                true
+            },
+        );
+        (answer.is_ok(), started.elapsed())
+    });
+    watched.recv_timeout(TIMEOUT).unwrap();
+    device.link.close_when_idle("consent withdrawn");
+    let (_, took) = watch.join().unwrap();
+    assert!(took < Duration::from_secs(30), "the watch ran {took:?}");
+    gone_within(&socket, TIMEOUT);
+    assert!(device.link.closed_reason().is_some());
+    assert!(!socket.exists(), "the drained link kept its pane socket");
+}
+
 /// Waits until the node removed `path`, which it does once its input ends.
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn gone_within(path: &Path, bound: Duration) {
@@ -445,4 +554,89 @@ fn a_device_s_pane_socket_lives_with_its_link() {
         "the node kept its socket after its link closed"
     );
     assert_eq!(*device.events.closed.lock().unwrap(), ["contract-node"]);
+}
+
+/// One credential request on the device's pane socket and the line it answers.
+fn ask(socket: &Path, pane_id: &str, nonce: char, one_shot: bool) -> Value {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let mut stream = UnixStream::connect(socket).unwrap();
+    let request =
+        json!({"pane_id": pane_id, "nonce": nonce.to_string().repeat(32), "one_shot": one_shot});
+    writeln!(stream, "{request}").unwrap();
+    let mut answer = String::new();
+    BufReader::new(&stream).read_line(&mut answer).unwrap();
+    serde_json::from_str(&answer).unwrap()
+}
+
+/// B18, B19 and B30 over a real link: a caller the device's node proves
+/// reaches the core with the pane's identity and gets the credential the
+/// core issued; a refusal the core answers reaches the caller byte for
+/// byte; a refusal the node makes itself, at its caller cap too, is
+/// reported up the link for the core's record; and closing the link takes
+/// the credential's reference with it.
+#[test]
+fn a_device_pane_s_proof_crosses_the_link_and_its_refusals_are_reported() {
+    use std::os::unix::net::UnixStream;
+    let device = Device::start();
+    let sockets = pane_sockets(&device.state);
+    assert_eq!(sockets.len(), 1, "{sockets:?}");
+    let socket = &sockets[0];
+
+    let issued = ask(socket, PROVED_PANE, 'a', false);
+    assert_eq!(issued["ok"], true, "{issued}");
+    let reference = PathBuf::from(issued["reference"].as_str().unwrap());
+    let written: Value = serde_json::from_slice(&fs::read(&reference).unwrap()).unwrap();
+    assert_eq!(written["token"], TOKEN);
+    assert_eq!(written["socket"], socket.to_str().unwrap());
+    let proofs = device.events.heard.lock().unwrap().clone();
+    let shell = i32::try_from(std::process::id()).unwrap();
+    assert!(
+        matches!(
+            &proofs[..],
+            [NodeEvent::PaneProof { pane_id, identity, .. }]
+                if pane_id == PROVED_PANE
+                    && identity.terminal_id == "t-proved"
+                    && identity.shell_pid == shell
+        ),
+        "{proofs:?}"
+    );
+
+    // Refused by the core: the caller reads its reason, and the node
+    // reports nothing, since the core records what it refused.
+    let changed = ask(socket, PROVED_PANE, 'b', true);
+    assert_eq!(changed, json!({"ok": false, "reason": "pane_changed"}));
+    // Refused by the node: a pane its Herdr does not know.
+    let unknown = ask(socket, "w1:p1", 'c', false);
+    assert_eq!(unknown, json!({"ok": false, "reason": "pane_unavailable"}));
+    // At the cap: sixteen callers that never ask hold every place.
+    let waiting = (0..16)
+        .map(|_| UnixStream::connect(socket).unwrap())
+        .collect::<Vec<_>>();
+    let busy = ask(socket, PROVED_PANE, 'd', false);
+    assert_eq!(busy, json!({"ok": false, "reason": "bridge_busy"}));
+    drop(waiting);
+    let refusals = |heard: &[NodeEvent]| {
+        heard
+            .iter()
+            .filter_map(|event| match event {
+                NodeEvent::Refused { pane_id, reason } => Some((pane_id.clone(), reason.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let heard = device
+        .events
+        .heard_until(|heard| refusals(heard).len() >= 2);
+    assert_eq!(
+        refusals(&heard)[..2],
+        [
+            (Some("w1:p1".to_owned()), "pane_unavailable".to_owned()),
+            (None, "bridge_busy".to_owned()),
+        ]
+    );
+
+    device.link.close("contract");
+    gone_within(&reference, TIMEOUT);
+    assert!(!reference.exists(), "a reference outlived its link");
 }

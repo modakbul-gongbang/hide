@@ -637,6 +637,9 @@ impl RemoteHost {
     /// is taken out again.
     fn send(&self, id: u64, call: Call, timeout: Duration) -> Result<(), LinkError> {
         let inner = &self.inner;
+        // A cancel adds no effect on the device and is how a draining link
+        // ends the reporting calls it waits for.
+        let cancels = matches!(call, Call::Cancel { .. });
         let encoded = serde_json::to_vec(&Request { id, call });
         let mut line = match encoded {
             Ok(line) => line,
@@ -663,7 +666,7 @@ impl RemoteHost {
             };
             // Admitted before the connection began to drain, but not sent:
             // it is refused now rather than sent after consent was withdrawn.
-            if let Some(reason) = inner.gate.stopped() {
+            if let Some(reason) = inner.gate.stopped().filter(|_| !cancels) {
                 return Err(LinkError::NotConnected(reason));
             }
             Ok(tokio::time::timeout_at(deadline, async {
@@ -729,6 +732,16 @@ impl NodeLink for RemoteHost {
         let spawned = std::thread::Builder::new()
             .name("remote-host-drain".into())
             .spawn(move || {
+                // A reporting call (a Git watch) runs until it is told to
+                // stop, so the drain stops it rather than wait out its bound.
+                let reporting = lock_recover(&host.inner.pending)
+                    .iter()
+                    .filter(|(_, waiting)| waiting.reports.is_some())
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>();
+                for request in reporting {
+                    host.cancel(request);
+                }
                 // Admitted requests are bounded by their own timeouts; this
                 // bound only keeps a wedged count from holding the link open.
                 host.inner.gate.wait_idle(Instant::now() + DRAIN_BOUND);
@@ -792,6 +805,9 @@ pub fn establish(
     panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
+    let since = Instant::now();
+    let target = client.host.host_id.as_str();
+    establish_stage(target, "connect", since);
     let session = client
         .runtime
         .block_on(async {
@@ -837,6 +853,7 @@ pub fn establish(
                 packages,
                 &consent.helper_root,
                 retirement_projects,
+                since,
             ),
         )
         .await
@@ -863,6 +880,7 @@ pub fn establish(
         panes.clone(),
         on_close,
     );
+    establish_stage(target, "hello", since);
     let hello: Hello = call_as(&host, Call::Hello, HELLO_TIMEOUT).map_err(|error| {
         EstablishError::Helper(format!("The device helper did not start: {error}"))
     })?;
@@ -871,8 +889,10 @@ pub fn establish(
         return Err(EstablishError::Helper(reason));
     }
     if panes.is_some() {
+        establish_stage(target, "panes", since);
         start_panes(client, &host);
     }
+    establish_stage(target, "ready", since);
     Ok(Established {
         host: Arc::new(host),
         identity,
@@ -881,6 +901,18 @@ pub fn establish(
         helper_path,
         upload,
     })
+}
+
+/// B30: each step a device's connection reaches, so a connection that
+/// stalls names the step it stalled in.
+fn establish_stage(target: &str, stage: &str, since: Instant) {
+    crate::diagnostic!(json!({
+        "component": "remote_host",
+        "kind": "host.establish_stage",
+        "target": target,
+        "stage": stage,
+        "elapsed_ms": since.elapsed().as_millis() as u64,
+    }));
 }
 
 /// Starts the node's pane service for the device's Herdr, so its panes'
@@ -943,8 +975,10 @@ async fn start_helper(
     packages: &HelperPackages,
     helper_root: &str,
     retirement_projects: &[String],
+    since: Instant,
 ) -> Result<Started, EstablishError> {
     let target = client.host.host_id.clone();
+    establish_stage(&target, "platform", since);
     let admit = |operation: &'static str, stage: RemoteStage| async move {
         client
             .session_channel(operation, stage)
@@ -972,6 +1006,7 @@ async fn start_helper(
     let payload = packages.payload(&os, &arch)?;
     // The helper inherits this SSH exec environment. Read its path overrides
     // before uploading any candidate; older helpers need no new operation.
+    establish_stage(&target, "environment", since);
     let permit = admit("remote-retirement-environment", RemoteStage::Sftp).await?;
     let environment = execute_channel(
         session,
@@ -988,6 +1023,7 @@ async fn start_helper(
     drop(permit);
     let locations = retirement::Locations::from_environment(&environment.stdout)?;
 
+    establish_stage(&target, "install", since);
     let permit = admit("remote-host-install", RemoteStage::Sftp).await?;
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Install(format!("The SFTP channel could not be opened: {error}"))
@@ -1007,6 +1043,7 @@ async fn start_helper(
     let installed = installed?;
     let (helper_path, fresh) = (installed.helper_path, installed.fresh);
 
+    establish_stage(&target, "start", since);
     let session_channel = admit("remote-host-start", RemoteStage::Ssh).await?;
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Helper(format!("The helper channel could not be opened: {error}"))

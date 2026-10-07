@@ -296,6 +296,7 @@ impl Panes {
                     if self.clients.fetch_add(1, Ordering::AcqRel) >= MAX_CLIENTS {
                         self.clients.fetch_sub(1, Ordering::AcqRel);
                         let _ = answer_client(&mut stream, Err("bridge_busy".to_owned()));
+                        report_refusal(output, None, "bridge_busy");
                         continue;
                     }
                     scope.spawn(move || {
@@ -341,15 +342,24 @@ impl Panes {
             Ok(request) => self.serve_bootstrap(stream, request, output),
             Err(reason) => {
                 let _ = answer_client(&mut stream, Err(reason.to_owned()));
+                report_refusal(output, None, reason);
             }
         }
     }
 
     fn serve_bootstrap(&self, mut stream: LocalStream, request: Value, output: &Mutex<impl Write>) {
+        // The pane the caller names, as far as a record should carry it.
+        let named = request
+            .get("pane_id")
+            .and_then(Value::as_str)
+            .filter(|pane_id| pane_id.len() <= 256)
+            .map(str::to_owned);
         let Some(started) = self.started.get() else {
             let _ = answer_client(&mut stream, Err("bridge_unavailable".to_owned()));
+            report_refusal(output, named, "bridge_unavailable");
             return;
         };
+        let mut core_refused = false;
         let mut issued_token = None;
         let mut token_new = false;
         let mut reference_new = false;
@@ -398,7 +408,10 @@ impl Panes {
                 .and_then(|()| answer.recv_timeout(CLIENT_TIMEOUT).ok());
             lock(&self.proofs).remove(&id);
             let token = match answer.ok_or("bridge_unavailable")? {
-                ProofAnswer::Refused { reason } => return Err(reason),
+                ProofAnswer::Refused { reason } => {
+                    core_refused = true;
+                    return Err(reason);
+                }
                 ProofAnswer::Issued { token, issued_new } => {
                     if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                         return Err("invalid_response".to_owned());
@@ -443,6 +456,12 @@ impl Panes {
             Ok(path)
         })();
         let delivered = answer_client(&mut stream, result.clone()).is_ok();
+        // The core records the refusals it answered itself.
+        if let Err(reason) = &result
+            && !core_refused
+        {
+            report_refusal(output, named, reason);
+        }
         if !delivered || result.is_err() {
             if reference_new && let Ok(path) = result {
                 let _ = fs::remove_file(&path);
@@ -464,7 +483,12 @@ impl Panes {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         {
             let mut streams = lock(&self.streams);
-            if streams.len() >= MAX_STREAMS || self.stopped.load(Ordering::Acquire) {
+            if self.stopped.load(Ordering::Acquire) {
+                return;
+            }
+            if streams.len() >= MAX_STREAMS {
+                drop(streams);
+                report_refusal(output, None, "streams_full");
                 return;
             }
             streams.insert(
@@ -606,6 +630,18 @@ pub(crate) fn write_event(output: &Mutex<impl Write>, event: &NodeEvent) -> io::
         .map_err(|_| io::Error::other("node output lock poisoned"))?;
     output.write_all(&bytes)?;
     output.flush()
+}
+
+/// Tells the core this node turned a caller away, so the refusal is recorded
+/// with the node it happened on.
+fn report_refusal(output: &Mutex<impl Write>, pane_id: Option<String>, reason: &str) {
+    let _ = write_event(
+        output,
+        &NodeEvent::Refused {
+            pane_id,
+            reason: reason.to_owned(),
+        },
+    );
 }
 
 /// A reference with no wire spelling is not answered at all, so its caller

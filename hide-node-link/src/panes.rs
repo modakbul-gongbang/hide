@@ -48,6 +48,14 @@ pub enum NodeEvent {
     StreamData { stream: u64, data: String },
     /// The command's side of the stream ended.
     StreamClosed { stream: u64 },
+    /// The node turned a caller away on its own, before the core was asked
+    /// or at one of its caps, with the reason the caller read; the core
+    /// records it with the node, since a device's stderr reaches no log.
+    Refused {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane_id: Option<String>,
+        reason: String,
+    },
 }
 
 /// The core's answer to a [`NodeEvent::PaneProof`]: the credential, or why

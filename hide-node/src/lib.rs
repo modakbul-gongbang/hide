@@ -121,8 +121,15 @@ impl NodeLink for Local {
     /// runs on a thread of its own, and a caller that stops waiting reads
     /// the effect as unknown.
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let op = op_name(&call);
         if self.in_flight.fetch_add(1, Ordering::AcqRel) >= MAX_IN_FLIGHT {
             self.in_flight.fetch_sub(1, Ordering::AcqRel);
+            crate::diagnostic!(serde_json::json!({
+                "component": "node",
+                "kind": "node.busy",
+                "op": op,
+                "in_flight": MAX_IN_FLIGHT,
+            }));
             return Err(LinkError::Busy);
         }
         let admitted = Admitted(Arc::clone(&self.in_flight));
@@ -139,10 +146,20 @@ impl NodeLink for Local {
             })?;
         match answer.recv_timeout(timeout) {
             Ok(result) => result.map(LinkAnswer::Parsed).map_err(LinkError::Refused),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(LinkError::Unknown(format!(
-                "This machine's node did not answer within {} ms",
-                timeout.as_millis()
-            ))),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Its thread keeps a place until the work ends; these records
+                // name what holds the places when the node turns busy.
+                crate::diagnostic!(serde_json::json!({
+                    "component": "node",
+                    "kind": "node.call_unanswered",
+                    "op": op,
+                    "timeout_ms": timeout.as_millis() as u64,
+                }));
+                Err(LinkError::Unknown(format!(
+                    "This machine's node did not answer within {} ms",
+                    timeout.as_millis()
+                )))
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(LinkError::Unknown(
                 "This machine's node ended the work without an answer".to_owned(),
             )),
@@ -177,9 +194,58 @@ impl NodeLink for Local {
     }
 }
 
+/// A request's name for a record (`save`, or `factory.verify_poll`), read
+/// from the first bytes of its wire form, so a large request is never
+/// written out whole.
+fn op_name(call: &Call) -> String {
+    const PREFIX: usize = 96;
+    struct Prefix(Vec<u8>);
+    impl std::io::Write for Prefix {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let room = PREFIX - self.0.len();
+            if room == 0 {
+                return Err(std::io::ErrorKind::WriteZero.into());
+            }
+            let taken = room.min(bytes.len());
+            self.0.extend_from_slice(&bytes[..taken]);
+            Ok(taken)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut prefix = Prefix(Vec::with_capacity(PREFIX));
+    let _ = serde_json::to_writer(&mut prefix, call);
+    let text = String::from_utf8_lossy(&prefix.0);
+    let field = |name: &str| {
+        let start = text.find(&format!("\"{name}\":\""))? + name.len() + 4;
+        text[start..].split('"').next().map(str::to_owned)
+    };
+    match (field("op"), field("factory")) {
+        (Some(op), Some(factory)) if op == "factory" => format!("factory.{factory}"),
+        (Some(op), _) => op,
+        (None, _) => "unknown".to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A record names the request without writing it out.
+    #[test]
+    fn a_request_is_named_from_its_first_bytes() {
+        assert_eq!(op_name(&Call::Hello), "hello");
+        let poll = Call::Factory {
+            call: hide_node_link::factory::FactoryCall::VerifyPoll { id: "v".to_owned() },
+        };
+        assert_eq!(op_name(&poll), "factory.verify_poll");
+        let large = Call::GitWatch {
+            common_dirs: vec!["/".repeat(1 << 20)],
+        };
+        assert_eq!(op_name(&large), "git_watch");
+    }
 
     /// A call waits at most its timeout, and past the cap of calls in
     /// flight another is refused as busy, nothing started.

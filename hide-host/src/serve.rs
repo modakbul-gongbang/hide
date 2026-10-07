@@ -24,15 +24,25 @@ use hide_node_link::process::ProcessStart;
 /// many per device, so the helper never queues behind itself.
 pub const CONCURRENCY: usize = 4;
 
+/// Requests waiting for a worker. The core admits at most [`CONCURRENCY`]
+/// at once, so this fills only behind calls the core stopped waiting for; a
+/// request past it is answered busy, and the reader never waits, so a cancel
+/// or the end of input is always read.
+const QUEUED: usize = 32;
+
 /// A request line longer than this is refused without being parsed: a save
 /// carries at most the 16 MiB editable size, as JSON-escaped text.
 const MAX_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
+    serve_in(input, output, Env::of_process())
+}
+
+fn serve_in(input: impl BufRead, output: impl Write + Send, env: Env) -> io::Result<()> {
     let output = Mutex::new(output);
-    let env = Env::of_process();
-    // The reporting calls running now, each with whether it was asked to
-    // stop; at most one per worker.
+    // The calls handed to a worker and not yet answered, each with whether
+    // it was asked to stop; the reader enters one before handing it over, so
+    // a cancel that arrives first still reaches it.
     let running: Mutex<HashMap<u64, bool>> = Mutex::new(HashMap::new());
     let panes = crate::panes::Panes::new();
     // Where a pane's `hide` on this machine finds the node's bootstrap
@@ -40,11 +50,10 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
     let bridges = hide_platform::host::home_dir().map(|home| {
         hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(&home))
     });
-    let (sender, receiver) = mpsc::sync_channel::<Request>(0);
+    let (sender, receiver) = mpsc::sync_channel::<Request>(QUEUED);
     // Only the workers hold the receiver. A worker stops when its answer
     // cannot be written, which means the SSH channel is gone; once the last
-    // one has stopped, the next request's send fails and the helper exits,
-    // rather than waiting on a rendezvous no worker will ever take.
+    // one has stopped, the next request's send fails and the helper exits.
     let receiver = Arc::new(Mutex::new(receiver));
     let result = std::thread::scope(|scope| {
         for _ in 0..CONCURRENCY {
@@ -60,6 +69,7 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                         Ok(Ok(request)) => request,
                         _ => return,
                     };
+                    let id = request.id;
                     let outcome = match request.call {
                         call if !call.answered_by_device() => Err(HostError::new(
                             ErrorCode::Unsupported,
@@ -77,26 +87,21 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                         Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
                         Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
                         Call::StreamClose { stream } => panes.close_stream(stream),
-                        call => {
-                            let id = request.id;
-                            lock(running).insert(id, false);
-                            let answered = handle_with_progress(call, env, &mut |report| {
-                                write_line(
-                                    output,
-                                    &Progress {
-                                        progress: id,
-                                        report,
-                                    },
-                                )
-                                .is_ok()
-                                    && lock(running).get(&id) == Some(&false)
-                            });
-                            lock(running).remove(&id);
-                            answered
-                        }
+                        call => handle_with_progress(call, env, &mut |report| {
+                            write_line(
+                                output,
+                                &Progress {
+                                    progress: id,
+                                    report,
+                                },
+                            )
+                            .is_ok()
+                                && lock(running).get(&id) == Some(&false)
+                        }),
                     };
+                    lock(running).remove(&id);
                     let response = Response {
-                        id: request.id,
+                        id,
                         outcome: match outcome {
                             Ok(value) => Outcome::Ok(value),
                             Err(error) => Outcome::Error(error),
@@ -180,8 +185,24 @@ fn read_requests(
             )?;
             continue;
         }
-        if sender.send(request).is_err() {
-            return Ok(());
+        let id = request.id;
+        lock(running).insert(id, false);
+        match sender.try_send(request) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                lock(running).remove(&id);
+                write_line(
+                    output,
+                    &Response {
+                        id,
+                        outcome: Outcome::Error(HostError::new(
+                            ErrorCode::Busy,
+                            "The device is working on as many requests as it holds",
+                        )),
+                    },
+                )?;
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Ok(()),
         }
     }
 }
@@ -1007,6 +1028,110 @@ mod tests {
 
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
+        }
+    }
+
+    /// Every worker held by a call that reports until stopped: the reader
+    /// still queues, answers past its queue busy, reads each cancel, and
+    /// ends at the end of its input.
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_never_waits_for_a_worker() {
+        use std::os::unix::net::UnixStream;
+        /// Each line the helper writes, as it writes it.
+        struct Lines(mpsc::Sender<Vec<u8>>);
+        impl Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let _ = self.0.send(bytes.to_vec());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let common = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(common.path().join("refs/heads")).unwrap();
+        let line = |id: u64, call: Call| {
+            let mut line = serde_json::to_vec(&Request { id, call }).unwrap();
+            line.push(b'\n');
+            line
+        };
+        let watch = || Call::GitWatch {
+            common_dirs: vec![common.path().to_string_lossy().into_owned()],
+        };
+        let (mut input, theirs) = UnixStream::pair().unwrap();
+        let (written, lines) = mpsc::channel();
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            // A stop of its own: another test's helper ending stops the
+            // process's watches.
+            let env = Env {
+                stop: Arc::default(),
+                ..Env::of_process()
+            };
+            let _ = done.send(serve_in(io::BufReader::new(theirs), Lines(written), env));
+        });
+        let mut text = String::new();
+        let mut next = || {
+            let bytes = lines
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the helper went quiet");
+            text.push_str(std::str::from_utf8(&bytes).unwrap());
+            text.clone()
+        };
+        for id in 1..=CONCURRENCY as u64 {
+            input.write_all(&line(id, watch())).unwrap();
+        }
+        // Every worker holds a watch once each has reported.
+        let mut reported = std::collections::BTreeSet::new();
+        while reported.len() < CONCURRENCY {
+            for progress in next()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Progress>(line).ok())
+            {
+                reported.insert(progress.progress);
+            }
+        }
+        for id in 0..=QUEUED as u64 {
+            input.write_all(&line(100 + id, Call::Hello)).unwrap();
+        }
+        for request in 1..=CONCURRENCY as u64 {
+            input
+                .write_all(&line(200 + request, Call::Cancel { request }))
+                .unwrap();
+        }
+        input.shutdown(std::net::Shutdown::Write).unwrap();
+        let result = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the helper waited behind its workers");
+        assert!(result.is_ok(), "{result:?}");
+        let mut text = String::new();
+        while let Ok(bytes) = lines.try_recv() {
+            text.push_str(std::str::from_utf8(&bytes).unwrap());
+        }
+        let answers: Vec<(u64, Option<ErrorCode>)> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Response>(line).ok())
+            .map(|answer| match answer.outcome {
+                Outcome::Error(error) => (answer.id, Some(error.code)),
+                _ => (answer.id, None),
+            })
+            .collect();
+        let busy = 100 + QUEUED as u64;
+        assert!(
+            answers.contains(&(busy, Some(ErrorCode::Busy))),
+            "{answers:?}"
+        );
+        for id in (1..=CONCURRENCY as u64)
+            .chain(100..busy)
+            .chain(201..=200 + CONCURRENCY as u64)
+        {
+            assert!(
+                answers
+                    .iter()
+                    .any(|(answered, code)| *answered == id && *code != Some(ErrorCode::Busy)),
+                "request {id} was not answered: {answers:?}"
+            );
         }
     }
 

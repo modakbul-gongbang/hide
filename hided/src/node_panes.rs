@@ -82,6 +82,7 @@ impl NodePanes {
     ) {
         if self.proofs.fetch_add(1, Ordering::AcqRel) >= MAX_PROOFS {
             self.proofs.fetch_sub(1, Ordering::AcqRel);
+            record_refusal(node, Some(&pane_id), "bridge_busy", "core");
             answer_proof(link, request, refused("bridge_busy"));
             return;
         }
@@ -91,10 +92,14 @@ impl NodePanes {
         let spawned = std::thread::Builder::new()
             .name("hided-node-proof".to_owned())
             .spawn(move || {
+                let named = pane_id.clone();
                 let answer = match panes.state.get() {
                     Some(state) => issue(state, &node, &link, pane_id, &identity, one_shot),
                     None => refused("hide_unavailable"),
                 };
+                if let ProofAnswer::Refused { reason } = &answer {
+                    record_refusal(&node, Some(&named), reason, "core");
+                }
                 answer_proof(&link, request, answer);
                 panes.proofs.fetch_sub(1, Ordering::AcqRel);
             });
@@ -110,6 +115,7 @@ impl NodePanes {
             stream,
         };
         let Some(state) = self.state.get().cloned() else {
+            record_refusal(node, None, "hide_unavailable", "core");
             close_stream(link, stream);
             return;
         };
@@ -122,6 +128,12 @@ impl NodePanes {
                 .count();
             if open >= MAX_STREAMS || streams.contains_key(&key) {
                 drop(streams);
+                let reason = if open >= MAX_STREAMS {
+                    "streams_full"
+                } else {
+                    "stream_reused"
+                };
+                record_refusal(node, None, reason, "core");
                 close_stream(link, stream);
                 return;
             }
@@ -193,6 +205,11 @@ impl PaneEvents for Events {
             NodeEvent::StreamOpen { stream } => panes.open_stream(node, link, stream),
             NodeEvent::StreamData { stream, data } => panes.stream_data(node, link, stream, &data),
             NodeEvent::StreamClosed { stream } => panes.stream_closed(node, link, stream),
+            NodeEvent::Refused { pane_id, reason } => {
+                // The device chooses both; the record keeps a bounded prefix.
+                let pane_id = pane_id.as_deref().map(|pane_id| prefix(pane_id, 256));
+                record_refusal(node, pane_id, prefix(&reason, 64), "node");
+            }
         }
     }
 
@@ -239,6 +256,25 @@ fn issue(
         Ok((token, issued_new)) => ProofAnswer::Issued { token, issued_new },
         Err(reason) => refused(reason),
     }
+}
+
+/// B30: a caller turned away, by the device's node or by this daemon, is a
+/// record with the node and the pane it named, never a screen state.
+fn record_refusal(node: &str, pane_id: Option<&str>, reason: &str, by: &str) {
+    herdr_core::diagnostic!(json!({
+        "component": "node_panes",
+        "kind": "pane.refused",
+        "node": node,
+        "pane_id": pane_id,
+        "reason": reason,
+        "by": by,
+    }));
+}
+
+fn prefix(text: &str, chars: usize) -> &str {
+    text.char_indices()
+        .nth(chars)
+        .map_or(text, |(end, _)| &text[..end])
 }
 
 fn refused(reason: &str) -> ProofAnswer {
