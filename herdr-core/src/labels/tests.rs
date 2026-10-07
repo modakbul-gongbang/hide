@@ -1522,6 +1522,50 @@ fn a_default_turn_not_yet_ended_in_the_file_waits_for_nothing() {
     assert_eq!(waits(&worker, &done), (Some(Waiting::Nothing), Some(false)));
 }
 
+/// B1, B3: Herdr can read Codex at rest before its session file records the
+/// end of the plan turn. The read for that state is not settled, so the
+/// session is read again shortly, a bounded number of times, and the wait
+/// is found without waiting for Herdr's state to move.
+#[test]
+fn a_plan_turn_the_file_has_not_ended_yet_is_read_again_until_it_settles() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (path, done) = codex_plan_session(&harness, "done", 5);
+    let whole = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = whole.split_inclusive('\n').collect();
+    let (unfinished, end) = lines.split_at(lines.len() - 1);
+    std::fs::write(&path, unfinished.concat()).unwrap();
+    observe(&mut worker, &done);
+    settle(&mut worker, &woken);
+    assert_eq!(waits(&worker, &done), (None, Some(false)));
+
+    // Codex writes the end of the turn; Herdr's state does not move.
+    std::fs::write(&path, [unfinished.concat(), end.concat()].concat()).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        waits(&worker, &done),
+        (Some(Waiting::PlanApproval), Some(true))
+    );
+
+    // A file that never settles is read again only a few times per state.
+    std::fs::write(&path, unfinished.concat()).unwrap();
+    let later = ObservedAgent {
+        state_change_seq: 6,
+        ..done.clone()
+    };
+    observe(&mut worker, &later);
+    settle(&mut worker, &woken);
+    for step in 1..=6 {
+        worker.tick(Instant::now() + Duration::from_secs(4 * step));
+        settle(&mut worker, &woken);
+    }
+    assert_eq!(source.reads.load(Ordering::SeqCst), 2 + 1 + 3);
+    assert_eq!(waits(&worker, &later), (None, Some(false)));
+}
+
 /// B8: a restarted daemon shows the wait it read for the same state without
 /// reading the session again; a record from before turns were read is read
 /// once, and does not claim a wait it could not read.

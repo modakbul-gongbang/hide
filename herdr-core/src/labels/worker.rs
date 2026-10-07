@@ -48,6 +48,9 @@ use super::store::{LabelStore, PaneRecord};
 /// How long after a turn starts a pane whose prompt was not in the
 /// transcript yet is read once more.
 const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
+/// How many times a resting agent's session is read again, per Herdr state,
+/// while what its last turn waits for is not settled.
+const UNSETTLED_TURN_READS: u8 = 3;
 /// How long a read the machine could not answer (a device whose helper is
 /// not connected) waits before it is tried again, so the pane catches up
 /// after a reconnect without waiting for its next state change (B14).
@@ -183,6 +186,9 @@ struct PaneState {
     next_analysis_at: Option<Instant>,
     follow_up_at: Option<Instant>,
     follow_up_armed: bool,
+    /// Reads asked in this Herdr state because the turn's wait was not
+    /// settled (`UNSETTLED_TURN_READS`).
+    unsettled_reads: u8,
     /// The last failure logged, so a repeating one is logged once.
     last_failure: Option<String>,
     /// When this worker began seeing the pane, and so its input (D-19).
@@ -364,6 +370,7 @@ impl LabelWorker {
                             next_analysis_at: None,
                             follow_up_at: None,
                             follow_up_armed: status_moved,
+                            unsettled_reads: 0,
                             last_failure: None,
                             input_observed_since_unix_ms: now_unix_ms,
                             claimed_submit: None,
@@ -397,6 +404,7 @@ impl LabelWorker {
                     if seq_moved || status_moved {
                         pane.needs_read |= reference_token.is_some();
                         pane.follow_up_armed = status == "working";
+                        pane.unsettled_reads = 0;
                     }
                     pane.agent = agent;
                     pane.status = status;
@@ -879,6 +887,22 @@ impl LabelWorker {
             if start_owed {
                 pane.follow_up_at = Some(now + FOLLOW_UP_READ);
             }
+        }
+        // Herdr can read the agent at rest before its session file records
+        // how the turn ended; the wait is then not known and the bell holds.
+        // Read again shortly, a few times per state, instead of until the
+        // state moves.
+        if let Some(pane) = self.panes.get_mut(pane_id)
+            && pane.agent.reports_turns()
+            && pane.status != "working"
+            && pane.follow_up_at.is_none()
+            && pane.unsettled_reads < UNSETTLED_TURN_READS
+            && self.records[pane_id]
+                .turn_read()
+                .is_some_and(|(_, waiting)| waiting.is_none())
+        {
+            pane.unsettled_reads += 1;
+            pane.follow_up_at = Some(now + FOLLOW_UP_READ);
         }
         changed
     }
