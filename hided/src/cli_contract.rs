@@ -77,6 +77,10 @@ pub struct Spec {
     pub rest: Option<&'static str>,
     /// The answer schemas (`answers`) the command can return.
     pub answers: &'static [&'static str],
+    /// The failure codes the contract declares for the command's own rule,
+    /// beside those every command of its topic can answer (the daemon, the
+    /// pane, the ledger). Not exhaustive; written only where declared.
+    pub refusals: &'static [&'static str],
 }
 
 const fn required(name: &'static str, value: Input) -> Opt {
@@ -119,6 +123,7 @@ const fn spec(
         options,
         rest: None,
         answers,
+        refusals: &[],
     }
 }
 
@@ -167,6 +172,24 @@ pub const COMMANDS: &[Spec] = &[
         &[switch("--json")],
         &["agent"],
     ),
+    // The caller's own registration, by its attested pane, device and
+    // session; only a pane-bound credential can ask.
+    Spec {
+        words: &["agent", "show", "here"],
+        arguments: &[],
+        repeats: None,
+        options: &[switch("--json")],
+        rest: None,
+        answers: &["agent"],
+        refusals: &[
+            "pane_capability_required",
+            "caller_identity_conflict",
+            "participant_unavailable",
+            "participant_ended",
+            "participant_session_changed",
+            "ambiguous_participant",
+        ],
+    },
     spec(
         &["agent", "end"],
         AGENT_ID,
@@ -190,6 +213,7 @@ pub const COMMANDS: &[Spec] = &[
         ],
         rest: Some("the agent's own arguments"),
         answers: &["agent"],
+        refusals: &[],
     },
     spec(
         &["request", "send"],
@@ -224,6 +248,7 @@ pub const COMMANDS: &[Spec] = &[
         options: &[],
         rest: None,
         answers: &["confirmed"],
+        refusals: &[],
     },
     spec(
         &["watch", "start"],
@@ -303,7 +328,7 @@ fn value_json(value: Input) -> Value {
 }
 
 fn command_json(spec: &Spec) -> Value {
-    json!({
+    let mut command = json!({
         "command": spec.words.join(" "),
         "arguments": spec.arguments.iter().map(|argument| json!({
             "name": argument.name,
@@ -318,7 +343,11 @@ fn command_json(spec: &Spec) -> Value {
         })).collect::<Vec<_>>(),
         "rest": spec.rest,
         "answers": spec.answers,
-    })
+    });
+    if !spec.refusals.is_empty() {
+        command["refusals"] = json!(spec.refusals);
+    }
+    command
 }
 
 /// The contract without its digest.
