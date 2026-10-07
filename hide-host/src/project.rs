@@ -69,8 +69,7 @@ pub fn create(
         .map_err(|_| format!("Workspace path does not exist: {}", path.display()))?;
     let git_error = (initialize_git && hide_project::git::discover(&real).is_none())
         .then(|| crate::worktrees::git(&real, &["init"]).err())
-        .flatten()
-        .map(|reason| format!("git init: {reason}"));
+        .flatten();
     Ok(ProjectCreated {
         path: hide_platform::path::to_wire_lossy(&real),
         git_error,
@@ -102,7 +101,7 @@ fn make_folder(path: &Path) -> Result<(), String> {
         .map(|_| ())
         .map_err(|reason| {
             format!(
-                "git init: {reason}; the folder {} was kept, and creating it again continues there",
+                "{reason}; the folder {} was kept, and creating it again continues there",
                 path.display()
             )
         })
