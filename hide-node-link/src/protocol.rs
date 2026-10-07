@@ -520,6 +520,13 @@ pub enum Call {
 }
 
 impl Call {
+    /// Whether this request reports until it is told to stop rather than
+    /// finish (the Git watch). A link that drains stops these; any other
+    /// call, a clone included, settles to its own result.
+    pub fn runs_until_stopped(&self) -> bool {
+        matches!(self, Self::GitWatch { .. })
+    }
+
     /// Whether a device's node answers this request. A device answers the
     /// work on its own files, repositories, sessions, processes, kit and
     /// panes; what acts with the operator's own logins (GitHub, the AI

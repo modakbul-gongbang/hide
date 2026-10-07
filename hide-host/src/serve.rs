@@ -186,6 +186,21 @@ fn read_requests(
             continue;
         }
         let id = request.id;
+        // An id still in flight would share its entry, and one ending would
+        // take the other's cancel with it.
+        if lock(running).contains_key(&id) {
+            write_line(
+                output,
+                &Response {
+                    id,
+                    outcome: Outcome::Error(HostError::new(
+                        ErrorCode::InvalidRequest,
+                        "A request with this id is still running",
+                    )),
+                },
+            )?;
+            continue;
+        }
         lock(running).insert(id, false);
         match sender.try_send(request) {
             Ok(()) => {}
@@ -1147,6 +1162,59 @@ mod tests {
                 "request {id} was not answered: {answers:?}"
             );
         }
+    }
+
+    /// A request whose id is still running is refused, and the running one
+    /// keeps its own cancel.
+    #[cfg(unix)]
+    #[test]
+    fn a_repeated_id_is_refused_and_leaves_the_running_call_alone() {
+        use std::os::unix::net::UnixStream;
+        let common = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(common.path().join("refs/heads")).unwrap();
+        let line = |id: u64, call: Call| {
+            let mut line = serde_json::to_vec(&Request { id, call }).unwrap();
+            line.push(b'\n');
+            line
+        };
+        let watch = || Call::GitWatch {
+            common_dirs: vec![common.path().to_string_lossy().into_owned()],
+        };
+        let (mut input, theirs) = UnixStream::pair().unwrap();
+        let kept = Kept::default();
+        let output = kept.clone();
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            let env = Env {
+                stop: Arc::default(),
+                ..Env::of_process()
+            };
+            let _ = done.send(serve_in(io::BufReader::new(theirs), output, env));
+        });
+        input.write_all(&line(7, watch())).unwrap();
+        input.write_all(&line(7, watch())).unwrap();
+        input
+            .write_all(&line(8, Call::Cancel { request: 7 }))
+            .unwrap();
+        input.shutdown(std::net::Shutdown::Write).unwrap();
+        let result = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the cancelled watch kept the helper running");
+        assert!(result.is_ok(), "{result:?}");
+        let written = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+        let mut answers: Vec<(u64, Option<ErrorCode>)> = written
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Response>(line).ok())
+            .map(|answer| match answer.outcome {
+                Outcome::Error(error) => (answer.id, Some(error.code)),
+                _ => (answer.id, None),
+            })
+            .collect();
+        answers.sort_by_key(|(id, code)| (*id, code.is_none()));
+        assert_eq!(
+            answers,
+            [(7, Some(ErrorCode::InvalidRequest)), (7, None), (8, None)]
+        );
     }
 
     /// A device refuses, unrun, what acts with the operator's logins or is

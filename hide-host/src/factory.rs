@@ -633,10 +633,12 @@ fn worktree_root(checkout: &Path) -> HostResult<Option<String>> {
 /// only a discarded one is forced, and only its branch is deleted (D-58).
 fn remove_worktree(root: &Path, checkout: &Path, branch: &str, discard: bool) -> HostResult<()> {
     let io = |reason: String| HostError::new(ErrorCode::Io, reason);
-    // Refused before anything is removed, never after.
-    let branch = branch_name(branch).map_err(invalid)?;
+    // A branch the removal deletes is refused before anything goes.
+    let branch = discard
+        .then(|| branch_name(branch).map_err(invalid))
+        .transpose()?;
     crate::worktrees::remove_worktree(root, checkout, discard).map_err(io)?;
-    if discard {
+    if let Some(branch) = branch {
         crate::worktrees::git(root, &["branch", "-D", "--", branch]).map_err(io)?;
     }
     Ok(())

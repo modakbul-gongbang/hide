@@ -78,6 +78,9 @@ enum Delivery {
 struct Waiting {
     sender: mpsc::Sender<Delivery>,
     reports: Option<Arc<AtomicUsize>>,
+    /// The call reports until told to stop (`Call::runs_until_stopped`), so
+    /// a draining link stops it rather than wait for its answer.
+    until_stopped: bool,
 }
 
 fn present<'de, D: serde::Deserializer<'de>>(
@@ -552,6 +555,7 @@ impl RemoteHost {
             Waiting {
                 sender,
                 reports: reports.clone(),
+                until_stopped: call.runs_until_stopped(),
             },
         );
         self.send(id, call, timeout)?;
@@ -581,6 +585,13 @@ impl RemoteHost {
                     }
                 }
                 Ok(Delivery::Answer(Ok(raw))) => return Ok(LinkAnswer::Raw(raw)),
+                // The node had no worker or queue place for it: nothing
+                // started, as a full gate here, so a caller asks again alike.
+                Ok(Delivery::Answer(Err(error)))
+                    if error.code == hide_node_link::ErrorCode::Busy =>
+                {
+                    return Err(LinkError::Busy);
+                }
                 Ok(Delivery::Answer(Err(error))) => return Err(LinkError::Refused(error)),
                 Ok(Delivery::Overflow) => {
                     self.cancel(id);
@@ -620,6 +631,7 @@ impl RemoteHost {
             Waiting {
                 sender,
                 reports: None,
+                until_stopped: false,
             },
         );
         if let Err(error) = self.send(id, Call::Cancel { request }, CANCEL_TIMEOUT) {
@@ -732,11 +744,12 @@ impl NodeLink for RemoteHost {
         let spawned = std::thread::Builder::new()
             .name("remote-host-drain".into())
             .spawn(move || {
-                // A reporting call (a Git watch) runs until it is told to
-                // stop, so the drain stops it rather than wait out its bound.
+                // A Git watch runs until it is told to stop, so the drain
+                // stops it rather than wait out its bound; a clone or any
+                // other call with an effect settles to its own result.
                 let reporting = lock_recover(&host.inner.pending)
                     .iter()
-                    .filter(|(_, waiting)| waiting.reports.is_some())
+                    .filter(|(_, waiting)| waiting.until_stopped)
                     .map(|(id, _)| *id)
                     .collect::<Vec<_>>();
                 for request in reporting {
@@ -1863,6 +1876,7 @@ mod tests {
             Waiting {
                 sender,
                 reports: Some(Arc::clone(&unread)),
+                until_stopped: false,
             },
         );
         let line = br#"{"progress":7,"report":{"n":1}}"#;
@@ -1880,6 +1894,7 @@ mod tests {
             Waiting {
                 sender,
                 reports: None,
+                until_stopped: false,
             },
         );
         deliver_report(&link.inner, br#"{"progress":8,"report":null}"#);
