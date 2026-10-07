@@ -11,10 +11,10 @@ import { useShellStore } from "../store";
 const AGENTS: [string, string, KitAgent["availability"]][] = [
   ["claude-code", "Claude Code", "available"],
   ["codex", "Codex", "available"],
-  ["gemini-cli", "Gemini CLI", "available"],
   ["grok", "Grok", "not_installed"],
   ["opencode", "OpenCode", "available"],
   ["pi", "Pi", "not_installed"],
+  ["omp", "omp", "available"],
   ["cursor", "Cursor", "available"],
 ];
 
