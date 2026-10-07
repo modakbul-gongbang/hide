@@ -41,14 +41,12 @@ impl RusshRemoteClient {
             return;
         }
         let result = self.runtime.block_on(async {
-            let session = tokio::time::timeout(
-                SSH_OPERATION_TIMEOUT,
-                self.connect(KnownHostHandler::new(&self.host)),
-            )
-            .await
-            .map_err(|_| "Cleanup connection timed out".to_owned())?
-            .map_err(transport_failure)?;
-            let result = tokio::time::timeout(Duration::from_secs(20), async {
+            let _permit = self
+                .session_channel("attachment-cleanup", RemoteStage::Sftp)
+                .await
+                .map_err(transport_failure)?;
+            let session = self.shared_session().await.map_err(transport_failure)?;
+            tokio::time::timeout(Duration::from_secs(20), async {
                 let channel = session
                     .channel_open_session()
                     .await
@@ -105,13 +103,7 @@ impl RusshRemoteClient {
             })
             .await
             .map_err(|_| "Cleanup timed out".to_owned())
-            .and_then(|result| result);
-            let _ = tokio::time::timeout(
-                Duration::from_secs(3),
-                session.disconnect(Disconnect::ByApplication, "Attachment cleanup", "en"),
-            )
-            .await;
-            result
+            .and_then(|result| result)
         });
         if let Err(error) = result {
             crate::diagnostic!(
@@ -131,21 +123,19 @@ impl RusshRemoteClient {
         }
         check_cancelled(cancelled)?;
         self.runtime.block_on(async {
-            let mut session = tokio::time::timeout(SSH_OPERATION_TIMEOUT, self.connect(KnownHostHandler::new(&self.host)))
-                .await.map_err(|_| "Attachment connection timed out. Check the device and retry.".to_owned())?
+            let _permit = self
+                .session_channel("attachment-stage", RemoteStage::Sftp)
+                .await
                 .map_err(transport_failure)?;
-            let result = self.stage_on_session(&mut session, request_id, files, cancelled).await;
-            let disconnected = tokio::time::timeout(Duration::from_secs(3), session.disconnect(Disconnect::ByApplication, "Attachment transfer complete", "en")).await;
-            if !matches!(disconnected, Ok(Ok(()))) {
-                crate::diagnostic!(json!({"kind":"terminal.attachment.disconnect_failed", "request_id":request_id, "host_id":self.host.host_id}));
-            }
-            result
+            let session = self.shared_session().await.map_err(transport_failure)?;
+            self.stage_on_session(&session, request_id, files, cancelled)
+                .await
         })
     }
 
     async fn stage_on_session(
         &self,
-        session: &mut Handle<KnownHostHandler>,
+        session: &Handle<KnownHostHandler>,
         request_id: &str,
         files: &[AttachmentFile],
         cancelled: &AtomicBool,

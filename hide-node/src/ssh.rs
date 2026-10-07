@@ -47,6 +47,11 @@ use hide_node_link::device::{
     RemoteResult, RemoteStage, SnapshotCheck, valid_remote_socket_path,
 };
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
+/// Session channels (an exec, a shell or a subsystem) a device's connection
+/// keeps open at once. OpenSSH's sshd allows ten per connection
+/// (`MaxSessions`), and the node's link holds one for as long as it lives; a
+/// forward's channels are not sessions and are not counted.
+const MAX_SESSION_CHANNELS: usize = 8;
 
 // Russh spawns its session task after receiving the server's SSH banner but
 // before returning a Handle. If the caller cancels during key exchange, its
@@ -715,6 +720,33 @@ pub struct RusshRemoteClient {
     /// The Herdr socket the device registration names, for a host whose
     /// server does not listen at its default path.
     herdr_socket: Option<String>,
+    /// The device's one SSH connection, shared by every clone.
+    connection: Arc<Connection>,
+}
+
+/// The device's one SSH connection (PRD core-host-node b4): the node's link,
+/// the Herdr API channels, attachment SFTP, the Herdr status read and the
+/// browser forwards all open their channels on it. The first use dials it,
+/// and a use after it closed dials it again; the last clone of the device's
+/// client ends it. Terminals and the capability test still dial their own.
+struct Connection {
+    runtime: Arc<RemoteRuntime>,
+    session: tokio::sync::Mutex<Option<Arc<Handle<KnownHostHandler>>>>,
+    /// The host key the last dial accepted, the identity consent binds.
+    observed_key: Arc<Mutex<Option<String>>>,
+    sessions: Arc<Semaphore>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.get_mut().take() {
+            self.runtime.spawn(async move {
+                let _ = session
+                    .disconnect(Disconnect::ByApplication, "device closed", "en")
+                    .await;
+            });
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -733,35 +765,6 @@ impl fmt::Debug for RusshApiConnector {
 
 struct RusshApiConnection {
     client: RusshRemoteClient,
-    session: Mutex<Option<Handle<KnownHostHandler>>>,
-}
-
-// Bound both contention and protocol waits: a coordinator joins its process reader
-// on shutdown, so an unresponsive host must not keep that owner alive forever.
-#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-fn lock_api_session<T>(
-    state: &Mutex<T>,
-    timeout: Duration,
-) -> Result<std::sync::MutexGuard<'_, T>, ApiError> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        match state.try_lock() {
-            Ok(guard) => return Ok(guard),
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(ApiError::Transport(
-                    "remote Herdr SSH session state is poisoned".into(),
-                ));
-            }
-            Err(std::sync::TryLockError::WouldBlock) => {
-                if std::time::Instant::now() >= deadline {
-                    return Err(ApiError::Transport(
-                        "remote Herdr SSH session is busy".into(),
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
-    }
 }
 
 async fn bounded_ssh_operation<T>(
@@ -775,72 +778,28 @@ async fn bounded_ssh_operation<T>(
 
 impl RusshApiConnection {
     fn open_stream(&self, socket_path: &str) -> Result<russh::ChannelStream<Msg>, ApiError> {
-        let mut session = lock_api_session(&self.session, SSH_OPERATION_TIMEOUT)?;
-        if session.is_none() {
-            *session = Some(
-                self.client
-                    .runtime
-                    .block_on(
-                        self.client
-                            .connect(KnownHostHandler::new(&self.client.host)),
-                    )
-                    .map_err(|error| ApiError::Transport(error.to_string()))?,
-            );
-        }
-        let channel = self
-            .client
-            .runtime
-            .block_on(bounded_ssh_operation(
-                session
-                    .as_ref()
-                    .expect("remote Herdr SSH session was initialized")
-                    .channel_open_direct_streamlocal(socket_path.to_owned()),
-            ))
-            .map_err(|error| {
-                let stale = session.take();
-                if let Some(stale) = stale {
-                    let _ = self
-                        .client
-                        .runtime
-                        .block_on(bounded_ssh_operation(stale.disconnect(
-                            Disconnect::ByApplication,
-                            "Herdr socket open failed",
-                            "en",
-                        )));
+        let client = &self.client;
+        client.runtime.block_on(async {
+            let session = client
+                .shared_session()
+                .await
+                .map_err(|error| ApiError::Transport(error.to_string()))?;
+            match bounded_ssh_operation(
+                session.channel_open_direct_streamlocal(socket_path.to_owned()),
+            )
+            .await
+            {
+                Ok(channel) => Ok(channel.into_stream()),
+                Err(error) => {
+                    client.forget_session(&session).await;
+                    client.forget_herdr_socket();
+                    Err(ApiError::Transport(format!(
+                        "remote Herdr socket open failed for {}: {error}",
+                        client.host.host_id
+                    )))
                 }
-                self.client.forget_herdr_socket();
-                ApiError::Transport(format!(
-                    "remote Herdr socket open failed for {}: {error}",
-                    self.client.host.host_id
-                ))
-            })?;
-        Ok(channel.into_stream())
-    }
-}
-
-impl Drop for RusshApiConnection {
-    fn drop(&mut self) {
-        let session = match self.session.get_mut() {
-            Ok(session) => session.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        let Some(session) = session else { return };
-        if let Err(error) = self
-            .client
-            .runtime
-            .block_on(bounded_ssh_operation(session.disconnect(
-                Disconnect::ByApplication,
-                "Herdr socket connection complete",
-                "en",
-            )))
-        {
-            crate::diagnostic!(serde_json::json!({
-                "component": "remote_herdr_api",
-                "kind": "disconnect.failed",
-                "target": self.client.host.host_id,
-                "message": error.to_string(),
-            }));
-        }
+            }
+        })
     }
 }
 
@@ -1071,12 +1030,92 @@ impl RusshRemoteClient {
                     true,
                 )
             })?;
+        let runtime = Arc::new(RemoteRuntime(Some(runtime)));
         Ok(Self {
             host,
-            runtime: Arc::new(RemoteRuntime(Some(runtime))),
+            connection: Arc::new(Connection {
+                runtime: Arc::clone(&runtime),
+                session: tokio::sync::Mutex::new(None),
+                observed_key: Arc::new(Mutex::new(None)),
+                sessions: Arc::new(Semaphore::new(MAX_SESSION_CHANNELS)),
+            }),
+            runtime,
             herdr_status: Arc::new(Mutex::new(None)),
             herdr_socket: None,
         })
+    }
+
+    /// The device's connection, dialed when there is none or the last one
+    /// closed.
+    async fn shared_session(&self) -> RemoteResult<Arc<Handle<KnownHostHandler>>> {
+        let mut slot = self.connection.session.lock().await;
+        if let Some(session) = slot.as_ref().filter(|session| !session.is_closed()) {
+            return Ok(Arc::clone(session));
+        }
+        let handler = KnownHostHandler::new(&self.host)
+            .with_observed_key(Arc::clone(&self.connection.observed_key));
+        let session = Arc::new(self.connect(handler).await?);
+        *slot = Some(Arc::clone(&session));
+        Ok(session)
+    }
+
+    /// Drops `session` as the device's connection when a channel could not
+    /// be opened on it, so the next use dials again; a newer connection
+    /// another use already made is kept.
+    async fn forget_session(&self, session: &Arc<Handle<KnownHostHandler>>) {
+        let mut slot = self.connection.session.lock().await;
+        if slot.as_ref().is_some_and(|held| Arc::ptr_eq(held, session)) {
+            *slot = None;
+            drop(slot);
+            let _ = bounded_ssh_operation(session.disconnect(
+                Disconnect::ByApplication,
+                "channel open failed",
+                "en",
+            ))
+            .await;
+        }
+    }
+
+    /// The host key the connection's last dial accepted.
+    fn observed_host_key(&self) -> Option<String> {
+        lock_recover(&self.connection.observed_key).clone()
+    }
+
+    /// Admission for one session channel on the device's connection, held
+    /// while the channel is open. Past [`MAX_SESSION_CHANNELS`] a use waits
+    /// for one to close, at most the SSH operation bound, and then fails.
+    async fn session_channel(
+        &self,
+        operation_id: &str,
+        stage: RemoteStage,
+    ) -> RemoteResult<tokio::sync::OwnedSemaphorePermit> {
+        match tokio::time::timeout(
+            SSH_OPERATION_TIMEOUT,
+            Arc::clone(&self.connection.sessions).acquire_owned(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => Ok(permit),
+            _ => {
+                crate::diagnostic!(json!({
+                    "component": "remote",
+                    "kind": "connection.sessions_full",
+                    "target": self.host.host_id,
+                    "operation": operation_id,
+                    "limit": MAX_SESSION_CHANNELS,
+                }));
+                Err(remote_error(
+                    operation_id,
+                    &self.host.host_id,
+                    stage,
+                    format!(
+                        "the device's SSH connection already has {MAX_SESSION_CHANNELS} sessions open"
+                    ),
+                    true,
+                    false,
+                ))
+            }
+        }
     }
 
     /// Talks to the Herdr server at `socket` on the host instead of the one
@@ -1119,7 +1158,6 @@ impl RusshRemoteClient {
         RusshApiConnector {
             connection: Arc::new(RusshApiConnection {
                 client: self.clone(),
-                session: Mutex::new(None),
             }),
         }
     }
@@ -1443,14 +1481,13 @@ impl RusshRemoteClient {
         let operation_id = command.operation_id();
         let stage = command.stage();
         let command_line = command.command_line()?;
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host)))?;
-        let output = self.runtime.block_on(async {
+        self.runtime.block_on(async {
+            let _permit = self.session_channel(operation_id, stage).await?;
+            let session = self.shared_session().await?;
             tokio::time::timeout(
                 SSH_OPERATION_TIMEOUT,
                 execute_channel(
-                    &mut session,
+                    &session,
                     &command_line,
                     operation_id,
                     &self.host.host_id,
@@ -1468,34 +1505,7 @@ impl RusshRemoteClient {
                     false,
                 )
             })?
-        });
-        let disconnect = self
-            .runtime
-            .block_on(bounded_ssh_operation(session.disconnect(
-                Disconnect::ByApplication,
-                "read-only operation complete",
-                "en",
-            )));
-        match (output, disconnect) {
-            (Ok(output), Ok(())) => Ok(output),
-            (Err(primary), Ok(())) => Err(primary),
-            (Ok(_), Err(error)) => Err(remote_error(
-                operation_id,
-                &self.host.host_id,
-                RemoteStage::Cleanup,
-                error,
-                true,
-                false,
-            )),
-            (Err(primary), Err(cleanup)) => Err(remote_error(
-                operation_id,
-                &self.host.host_id,
-                primary.stage(),
-                format!("{}; cleanup failed: {cleanup}", primary.diagnostic().reason),
-                primary.diagnostic().retryable,
-                primary.diagnostic().action_required,
-            )),
-        }
+        })
     }
 
     /// Asks the device's Herdr for its snapshot and hands it to `check`,
@@ -1742,26 +1752,21 @@ impl RusshRemoteClient {
         };
         // A pending route must not reserve a local port before SSH connects:
         // its View can close while the remote handshake is still waiting.
-        let session = Arc::new(self.runtime.block_on(async {
+        // The route's channels open on the device's one connection, which
+        // the route never ends.
+        let session = self.runtime.block_on(async {
             tokio::select! {
                 _ = &mut canceled => Err(remote_error(
                     "workspace-browser-forward", &self.host.host_id, RemoteStage::Tunnel,
                     "browser route was canceled", true, false,
                 )),
-                result = self.connect(KnownHostHandler::new(&self.host)) => result,
+                result = self.shared_session() => result,
             }
-        })?);
+        })?;
         if !matches!(
             canceled.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
         ) {
-            let _ = self.runtime.block_on(async {
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    session.disconnect(Disconnect::ByApplication, "browser route canceled", "en"),
-                )
-                .await
-            });
             return Err(remote_error(
                 "workspace-browser-forward",
                 &self.host.host_id,
@@ -1795,17 +1800,6 @@ impl RusshRemoteClient {
             ))
         });
         let (listener, ipv6_listener, local_addr) = listeners.map_err(|error| {
-            let _ = self.runtime.block_on(async {
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    session.disconnect(
-                        Disconnect::ByApplication,
-                        "browser forward bind failed",
-                        "en",
-                    ),
-                )
-                .await
-            });
             remote_error(
                 "workspace-browser-forward",
                 &self.host.host_id,
@@ -1896,14 +1890,10 @@ impl RusshRemoteClient {
                 }
             }
             transfers.abort_all();
-            let _ = session_task
-                .disconnect(Disconnect::ByApplication, "browser forward closed", "en")
-                .await;
         });
         Ok(RemoteLocalForward {
             runtime: Arc::clone(&self.runtime),
             local_addr,
-            session,
             task: Mutex::new(Some(task)),
             failure,
         })
@@ -2275,7 +2265,7 @@ async fn authenticate(session: &mut Handle<KnownHostHandler>, host: &SshAlias) -
 }
 
 async fn execute_channel(
-    session: &mut Handle<KnownHostHandler>,
+    session: &Handle<KnownHostHandler>,
     command: &str,
     operation_id: &str,
     target: &str,
@@ -2393,7 +2383,6 @@ impl Handler for KnownHostHandler {
 pub struct RemoteLocalForward {
     runtime: Arc<RemoteRuntime>,
     local_addr: SocketAddr,
-    session: Arc<Handle<KnownHostHandler>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     failure: Arc<Mutex<Option<String>>>,
 }
@@ -2413,9 +2402,9 @@ impl RemoteLocalForward {
             return;
         };
         // The accept task can be awaiting SSH channel confirmation rather
-        // than the listener. Abort it and its owned transfer set immediately.
+        // than the listener. Abort it and its owned transfer set immediately;
+        // each transfer's channel closes as it is dropped.
         task.abort();
-        let session = Arc::clone(&self.session);
         let local_addr = self.local_addr;
         let cleanup = async move {
             if tokio::time::timeout(Duration::from_secs(5), task)
@@ -2425,19 +2414,6 @@ impl RemoteLocalForward {
                 eprintln!(
                     "{}",
                     json!({"component":"remote","kind":"workspace_forward.task_close_timeout","local_addr":local_addr.to_string()})
-                );
-            }
-            if !matches!(
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    session.disconnect(Disconnect::ByApplication, "browser forward closed", "en")
-                )
-                .await,
-                Ok(Ok(()))
-            ) {
-                eprintln!(
-                    "{}",
-                    json!({"component":"remote","kind":"workspace_forward.session_close_failed","local_addr":local_addr.to_string()})
                 );
             }
         };
@@ -2496,18 +2472,6 @@ fn combine_cleanup<T>(
 mod tests {
     use super::*;
     use hide_node_link::device::connection_problem;
-
-    #[test]
-    fn api_session_contention_has_a_deadline() {
-        let state = Mutex::new(());
-        let held = state.lock().unwrap();
-        assert!(
-            matches!(lock_api_session(&state, Duration::from_millis(20)),
-            Err(ApiError::Transport(message)) if message.contains("busy"))
-        );
-        drop(held);
-        assert!(lock_api_session(&state, Duration::from_millis(20)).is_ok());
-    }
 
     #[test]
     fn ssh_protocol_wait_has_an_absolute_deadline() {

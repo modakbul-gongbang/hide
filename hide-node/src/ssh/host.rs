@@ -403,7 +403,12 @@ impl Gate {
 struct Inner {
     target: String,
     runtime: Arc<RemoteRuntime>,
-    session: Mutex<Option<Handle<KnownHostHandler>>>,
+    /// Wakes the reader to end the helper's channel: on [`RemoteHost::close`]
+    /// and when the last clone is dropped. The device's connection stays,
+    /// since other channels share it.
+    closing: Arc<tokio::sync::Notify>,
+    /// The link's place among the connection's session channels.
+    _session_channel: tokio::sync::OwnedSemaphorePermit,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Answered>>>,
     closed: Mutex<Option<String>>,
@@ -416,13 +421,7 @@ struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        if let Some(session) = lock_recover(&self.session).take() {
-            self.runtime.spawn(async move {
-                let _ = session
-                    .disconnect(Disconnect::ByApplication, "helper closed", "en")
-                    .await;
-            });
-        }
+        self.closing.notify_one();
     }
 }
 
@@ -448,18 +447,11 @@ impl RemoteHost {
         lock_recover(&self.inner.closed).clone()
     }
 
-    /// Ends the connection; the helper exits when its input closes. Requests
+    /// Ends the link; the helper exits when its channel closes. Requests
     /// still waiting for an answer become `Unknown`.
     pub fn close(&self, reason: &str) {
         mark_closed(&self.inner, reason.to_owned());
-        if let Some(session) = lock_recover(&self.inner.session).take() {
-            let reason = reason.to_owned();
-            self.inner.runtime.spawn(async move {
-                let _ = session
-                    .disconnect(Disconnect::ByApplication, &reason, "en")
-                    .await;
-            });
-        }
+        self.inner.closing.notify_one();
     }
 
     /// Sends one request and waits at most `timeout` for its answer. Must
@@ -630,12 +622,10 @@ pub fn establish(
     panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
-    let observed_key = Arc::new(Mutex::new(None));
-    let handler = KnownHostHandler::new(&client.host).with_observed_key(Arc::clone(&observed_key));
     let session = client
         .runtime
         .block_on(async {
-            tokio::time::timeout(SSH_OPERATION_TIMEOUT, client.connect(handler))
+            tokio::time::timeout(SSH_OPERATION_TIMEOUT, client.shared_session())
                 .await
                 .unwrap_or_else(|_| {
                     Err(remote_error(
@@ -653,7 +643,7 @@ pub fn establish(
         user: client.host.user.clone(),
         hostname: client.host.hostname.clone(),
         port: client.host.port,
-        host_key_sha256: lock_recover(&observed_key).clone().unwrap_or_default(),
+        host_key_sha256: client.observed_host_key().unwrap_or_default(),
     };
     if identity.host_key_sha256.is_empty() {
         return Err(EstablishError::Helper(
@@ -668,12 +658,11 @@ pub fn establish(
             observed: Box::new(identity),
         });
     }
-    let mut session = session;
     let result = client.runtime.block_on(async {
         tokio::time::timeout(
             INSTALL_TIMEOUT,
             start_helper(
-                &mut session,
+                &session,
                 client,
                 packages,
                 &consent.helper_root,
@@ -687,18 +676,16 @@ pub fn establish(
             ))
         })
     });
-    let (channel, installed, helper_path, upload) = match result {
-        Ok(parts) => parts,
-        Err(error) => {
-            let _ = client.runtime.block_on(session.disconnect(
-                Disconnect::ByApplication,
-                "helper setup failed",
-                "en",
-            ));
-            return Err(error);
-        }
-    };
-    let host = spawn_host(client, session, channel, panes.clone(), on_close);
+    // A failed setup leaves the device's connection to the channels that
+    // share it; what it opened closed with it.
+    let Started {
+        channel,
+        session_channel,
+        installed,
+        helper_path,
+        upload,
+    } = result?;
+    let host = spawn_host(client, channel, session_channel, panes.clone(), on_close);
     let hello: Hello = call_as(&host, Call::Hello, HELLO_TIMEOUT).map_err(|error| {
         EstablishError::Helper(format!("The device helper did not start: {error}"))
     })?;
@@ -763,14 +750,31 @@ fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
     })
 }
 
+/// A started helper: its channel and that channel's place among the
+/// connection's sessions, and what the install did.
+struct Started {
+    channel: Channel<Msg>,
+    session_channel: tokio::sync::OwnedSemaphorePermit,
+    installed: bool,
+    helper_path: String,
+    upload: Upload,
+}
+
 async fn start_helper(
-    session: &mut Handle<KnownHostHandler>,
+    session: &Handle<KnownHostHandler>,
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     helper_root: &str,
     retirement_projects: &[String],
-) -> Result<(Channel<Msg>, bool, String, Upload), EstablishError> {
+) -> Result<Started, EstablishError> {
     let target = client.host.host_id.clone();
+    let admit = |operation: &'static str, stage: RemoteStage| async move {
+        client
+            .session_channel(operation, stage)
+            .await
+            .map_err(EstablishError::Connect)
+    };
+    let permit = admit("remote-host-platform", RemoteStage::Sftp).await?;
     let uname = execute_channel(
         session,
         "uname -s -m",
@@ -786,10 +790,12 @@ async fn start_helper(
             uname.stderr.trim()
         )));
     }
+    drop(permit);
     let (os, arch) = platform_of(uname.stdout.trim()).map_err(EstablishError::Unsupported)?;
     let payload = packages.payload(&os, &arch)?;
     // The helper inherits this SSH exec environment. Read its path overrides
     // before uploading any candidate; older helpers need no new operation.
+    let permit = admit("remote-retirement-environment", RemoteStage::Sftp).await?;
     let environment = execute_channel(
         session,
         r#"[ "${#HCOORD_HOME}" -le 4096 ] && [ "${#HIDE_STATE_DIR}" -le 4096 ] && [ "${#XDG_STATE_HOME}" -le 4096 ] || exit 65; printf '%s\n' "${HCOORD_HOME-}" "${HIDE_STATE_DIR-}" "${XDG_STATE_HOME-}""#,
@@ -802,8 +808,10 @@ async fn start_helper(
     if environment.exit_status != 0 {
         return Err(EstablishError::Install("The device retirement paths could not be inspected; check its SSH environment and retry; no helper was uploaded".into()));
     }
+    drop(permit);
     let locations = retirement::Locations::from_environment(&environment.stdout)?;
 
+    let permit = admit("remote-host-install", RemoteStage::Sftp).await?;
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Install(format!("The SFTP channel could not be opened: {error}"))
     })?;
@@ -817,9 +825,12 @@ async fn start_helper(
     raw.set_timeout(30);
     let installed = install(&raw, helper_root, &payload, retirement_projects, &locations).await;
     let _ = raw.close_session();
+    drop(raw);
+    drop(permit);
     let installed = installed?;
     let (helper_path, fresh) = (installed.helper_path, installed.fresh);
 
+    let session_channel = admit("remote-host-start", RemoteStage::Ssh).await?;
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Helper(format!("The helper channel could not be opened: {error}"))
     })?;
@@ -829,7 +840,13 @@ async fn start_helper(
         .map_err(|error| {
             EstablishError::Helper(format!("The helper could not be started: {error}"))
         })?;
-    Ok((channel, fresh, helper_path, installed.upload))
+    Ok(Started {
+        channel,
+        session_channel,
+        installed: fresh,
+        helper_path,
+        upload: installed.upload,
+    })
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -1383,16 +1400,18 @@ async fn remote_digest(
 
 fn spawn_host(
     client: &RusshRemoteClient,
-    session: Handle<KnownHostHandler>,
     channel: Channel<Msg>,
+    session_channel: tokio::sync::OwnedSemaphorePermit,
     panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> RemoteHost {
     let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(channel.make_writer());
+    let closing = Arc::new(tokio::sync::Notify::new());
     let inner = Arc::new(Inner {
         target: client.host.host_id.clone(),
         runtime: Arc::clone(&client.runtime),
-        session: Mutex::new(Some(session)),
+        closing: Arc::clone(&closing),
+        _session_channel: session_channel,
         writer: tokio::sync::Mutex::new(writer),
         pending: Mutex::new(HashMap::new()),
         closed: Mutex::new(None),
@@ -1409,7 +1428,11 @@ fn spawn_host(
         let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
         let reason = loop {
-            match channel.wait().await {
+            let message = tokio::select! {
+                message = channel.wait() => message,
+                () = closing.notified() => break "this Hide closed the link".to_owned(),
+            };
+            match message {
                 Some(ChannelMsg::Data { data }) => {
                     buffer.extend_from_slice(&data);
                     while let Some(offset) = buffer[scanned..].iter().position(|byte| *byte == b'\n') {
@@ -1485,6 +1508,10 @@ fn spawn_host(
                 Some(_) => {}
             }
         };
+        // Whatever ended the loop, the helper's channel ends with it, so the
+        // helper reads the end of its input and exits.
+        let _ = channel.eof().await;
+        let _ = channel.close().await;
         if let Some(inner) = reader.upgrade() {
             crate::diagnostic!(json!({
                 "component": "remote_host",
