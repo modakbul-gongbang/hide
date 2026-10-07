@@ -279,3 +279,31 @@ test("reattach: a daemon that dies shows the shell's disconnected state, and the
   await shellShown(page);
   await expect(page.locator("[data-connection]")).toHaveCount(0);
 });
+
+test("uncaught: an exception and a rejection nothing in the host caught go to its log without a dialog, the app keeps running, and quit finishes", async () => {
+  ({ app } = await launch(run.env));
+  await shellShown(await app.firstWindow());
+  run.allowHostUncaught("planted");
+  // A message can quote the daemon URL's token or a page's address; neither reaches the log.
+  const secret = "0123456789abcdef0123456789abcdef";
+  await app.evaluate((_electron, token) => {
+    setTimeout(() => { throw new Error(`planted exception token=${token} at https://example.test/inbox?id=1`); }, 0);
+    void Promise.reject(new Error("planted rejection"));
+  }, secret);
+  const uncaught = () => hostLog(run.env).filter((line) => line.event === "host.uncaught");
+  await expect.poll(() => uncaught().map((line) => line.kind).sort()).toEqual(["uncaughtException", "unhandledRejection"]);
+  const exception = uncaught().find((line) => line.kind === "uncaughtException")!;
+  expect(exception.message).toBe("planted exception token=[redacted] at https://[address]");
+  expect(String(exception.stack)).toContain("planted exception token=[redacted]");
+  expect(uncaught().find((line) => line.kind === "unhandledRejection")?.message).toBe("planted rejection");
+  const logged = JSON.stringify(hostLog(run.env));
+  expect(logged).not.toContain(secret);
+  expect(logged).not.toContain("example.test");
+  // As with Electron's default, the app keeps running after either.
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  // Electron's dialog would hold the quit until someone answered it (issue 675).
+  const host = app.process();
+  await app.close();
+  app = null;
+  expect(host.exitCode).toBe(0);
+});

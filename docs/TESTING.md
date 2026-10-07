@@ -109,6 +109,7 @@ When the behavior depends on the order of two events, the test fixes that order;
   Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided and deleting the home.
   An unconfirmed candidate exit, stop or cleanup failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
   When candidate exit is unconfirmed, close only the recorded owned candidate, confirm its exit, then call that fixture's `cleanup()` again.
+  After a confirmed exit, cleanup reads the host log: a `host.uncaught` line the test did not expect with `allowHostUncaught` fails the test with its stack once the home is deleted, so an exception the host caught nothing for names itself instead of passing unseen (issue 675).
   `desktop/e2e/fixture-cleanup.unit.ts` injects Electron close failures at the external boundary and checks real home retention, confirmed-exit deletion and recovery without starting native processes.
   On Windows `endWindowsProcesses` also ends what the owned processes started, found from their pid and start time after they are gone: an owner killed while it starts a child leaves that child out of the tree listed before the kill, and a child hided started suspended and had not yet put in its job stays suspended, keeping its executable locked.
   `desktop/e2e/windows-processes.unit.ts` checks that against real processes in the Windows check lane.

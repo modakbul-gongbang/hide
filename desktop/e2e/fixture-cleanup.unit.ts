@@ -203,3 +203,22 @@ test("a Herdr that is still running removes the root after it stops on Windows, 
   for (const remove of queued) remove();
   expect(fs.existsSync(run.root)).toBe(false);
 });
+
+test("an exception the host caught nothing for fails cleanup with its stack once the home is gone, unless the test caused it", () => {
+  const record = (run: Isolated, message: string) => {
+    const logs = path.join(run.env.HIDE_DESKTOP_USER_DATA_DIR!, "logs");
+    fs.mkdirSync(logs, { recursive: true });
+    fs.appendFileSync(path.join(logs, "desktop.log"), `${JSON.stringify({ event: "host.uncaught", kind: "uncaughtException", message, stack: `Error: ${message}\n    at quit (main.js:1:1)` })}\n`);
+  };
+  const run = privateHome("uncaught");
+  record(run, "unexpected failure");
+  expect(() => run.cleanup()).toThrow("uncaughtException: Error: unexpected failure\n    at quit (main.js:1:1)");
+  expect(fs.existsSync(run.root)).toBe(false);
+  // Reported once: the worker-exit cleanup does not report it again.
+  expect(() => run.cleanup()).not.toThrow();
+  const planted = privateHome("planted");
+  planted.allowHostUncaught("planted");
+  record(planted, "planted failure");
+  expect(() => planted.cleanup()).not.toThrow();
+  expect(fs.existsSync(planted.root)).toBe(false);
+});

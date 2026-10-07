@@ -9,6 +9,7 @@ import { SHOW_INACTIVE_SWITCH } from "./launchSwitches";
 import { keySystemOf, systemRegistry, type Command } from "../../../web/src/shortcuts";
 import { menuBindings, menuTemplate } from "./menu";
 import { HostLanguage, languageFile } from "./language";
+import { recordUncaught } from "./uncaught";
 
 const env = loadEnv(process.env);
 // Pinned before anything reads it: the single-instance lock, web storage and
@@ -21,6 +22,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   const log = new HostLog(app.getPath("logs"));
+  recordUncaught(log);
   const showInactive = app.commandLine.hasSwitch(SHOW_INACTIVE_SWITCH);
   // The system's language is asked when a word is drawn: the app must be ready first.
   const language = new HostLanguage(
