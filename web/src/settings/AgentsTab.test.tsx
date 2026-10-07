@@ -16,7 +16,7 @@ vi.hoisted(() => {
 });
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
-const LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "gemini-cli": "Gemini CLI", grok: "Grok", opencode: "OpenCode", pi: "Pi", cursor: "Cursor" };
+const LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", opencode: "OpenCode", pi: "Pi", omp: "omp", cursor: "Cursor" };
 const FEATURES: KitFeatureId[] = ["skill", "guidance", "letters", "bell", "memory", "subagents", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"];
 
 const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
@@ -31,16 +31,16 @@ const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   doc_url: `https://docs.example.test/${id}`,
   ...over,
 });
-// What a Partial agent does in the fixture: the skill and the subagent count, and Herdr's own status where it has an integration.
-const supports = (id: string, feature: KitFeatureId) => ["skill", "subagents"].includes(feature) || (feature === "herdr_integration" && id !== "gemini-cli");
+// What a Partial agent does in the fixture: the skill, the subagent count and Herdr's own status.
+const supports = (feature: KitFeatureId) => ["skill", "subagents", "herdr_integration"].includes(feature);
 const partial = (id: string, over: Partial<KitAgent> = {}): KitAgent =>
   agent(id, {
     enabled: false,
     skill: piece("off"),
     hook: null,
-    herdr: id === "gemini-cli" ? null : piece("off"),
+    herdr: piece("off"),
     partial: true,
-    features: FEATURES.map((feature) => ({ id: feature, supported: supports(id, feature) })),
+    features: FEATURES.map((feature) => ({ id: feature, supported: supports(feature) })),
     sessions: null,
     ...over,
   });
@@ -48,10 +48,10 @@ const partial = (id: string, over: Partial<KitAgent> = {}): KitAgent =>
 const SEVEN = [
   agent("claude-code", { sessions: 2 }),
   agent("codex", { sessions: 0 }),
-  partial("gemini-cli"),
   partial("grok"),
-  partial("opencode", { availability: "not_installed" }),
+  partial("opencode"),
   partial("pi", { availability: "not_installed" }),
+  partial("omp", { availability: "not_installed" }),
   partial("cursor", { availability: "not_installed" }),
 ];
 
@@ -93,10 +93,10 @@ it("lists the installed agents in the supported order with a switch each, and fo
   expect(all("[data-agent-row]").map((row) => row.getAttribute("data-agent-row"))).toEqual([
     "local:claude-code:on",
     "local:codex:on",
-    "local:gemini-cli:off",
     "local:grok:off",
-    "opencode:not-installed",
+    "local:opencode:off",
     "pi:not-installed",
+    "omp:not-installed",
     "cursor:not-installed",
   ]);
   expect(text()).toContain("Installed 4");
@@ -105,22 +105,27 @@ it("lists the installed agents in the supported order with a switch each, and fo
   expect(q("[data-agents-not-installed]")?.hasAttribute("open")).toBe(false);
   expect(text()).not.toMatch(/Skill and session hook|Skill only/);
   expect(all("[data-agent-install]").map((link) => link.getAttribute("href"))).toEqual([
-    "https://opencode.ai/docs/",
     "https://pi.dev/",
+    "https://omp.sh/docs/quickstart",
     "https://cursor.com/docs/cli/installation",
   ]);
   // Docs is on each installed row (shown on hover or focus) and points at this build's page for the agent, never the kit's `doc_url`.
   expect(q('[data-agent-docs="codex"]')?.getAttribute("href")).toBe("https://learn.chatgpt.com/docs/build-skills");
   // One machine: no switch at the top.
   expect(q("[data-agents-machines]")).toBeNull();
+  // Gemini CLI is not supported: a row an older helper still reports is not drawn (B1, B9).
   await unmount();
+  const older = await mount(state([device("local", { kit: kit([...SEVEN, partial("gemini-cli", { label: "Gemini CLI", herdr: null })]) })]));
+  expect(older.all("[data-agent-row]")).toHaveLength(7);
+  expect(older.text()).not.toContain("Gemini");
+  await older.unmount();
 });
 
 it("shows a status only for an agent that is on: Ready, how many sessions run, and nothing for Partial agents (B16, B19)", async () => {
   const set = [
     agent("claude-code", { sessions: 2 }),
     agent("codex", { sessions: 0 }),
-    partial("gemini-cli", { enabled: true, sessions: null }),
+    partial("omp", { enabled: true, sessions: null }),
     partial("grok", { sessions: 3 }),
   ];
   const { q, text, unmount } = await mount(state([device("local", { kit: kit(set) })]));
@@ -130,10 +135,10 @@ it("shows a status only for an agent that is on: Ready, how many sessions run, a
   expect(q('[data-agent-row="local:claude-code:on"] button:not([role="switch"])')).toBeNull();
   expect(text()).not.toContain("connected");
   // Partial: the chip only, on or off, never a count.
-  expect(q('[data-agent-partial="gemini-cli"]')).not.toBeNull();
+  expect(q('[data-agent-partial="omp"]')).not.toBeNull();
   expect(q('[data-agent-partial="grok"]')).not.toBeNull();
   expect(q('[data-agent-row="local:grok:off"] [data-agent-status]')).toBeNull();
-  expect(q('[data-agent-row="local:gemini-cli:on"] [data-agent-status]')).toBeNull();
+  expect(q('[data-agent-row="local:omp:on"] [data-agent-status]')).toBeNull();
   // A Full agent never wears the chip.
   expect(q('[data-agent-partial="codex"]')).toBeNull();
   await unmount();
@@ -153,12 +158,12 @@ it("shows a failed or removed part on its own row with Reinstall, and nowhere el
 
 it("turns an agent on or off on the machine the list is for, and not while the machine installs (B13, B67)", async () => {
   const { q, click, events, unmount } = await mount(state([device("local"), device("studio")]));
-  await click(q('[data-agent-switch="local:gemini-cli:off"]'));
-  expect(sent(events, "kit_agent_set")[0]?.payload).toEqual({ device_id: "local", agent: "gemini-cli", enabled: true });
+  await click(q('[data-agent-switch="local:grok:off"]'));
+  expect(sent(events, "kit_agent_set")[0]?.payload).toEqual({ device_id: "local", agent: "grok", enabled: true });
   await unmount();
 
   const busy = await mount(state([device("local", { kit: kit(SEVEN, { busy: true }) })]));
-  expect(busy.q('[data-agent-switch="local:gemini-cli:off"]')?.hasAttribute("disabled")).toBe(true);
+  expect(busy.q('[data-agent-switch="local:grok:off"]')?.hasAttribute("disabled")).toBe(true);
   await busy.unmount();
 });
 
@@ -270,20 +275,15 @@ it("keeps a recorded-on agent with no program under Installed with its switch, f
   await unmount();
 });
 
-it("opens the Partial popover from the chip, lists every feature with a mark and a word, and says how Gemini CLI's status is judged (B15, B18)", async () => {
+it("opens the Partial popover from the chip and lists every feature with a mark and a word, and no screen-only line (B18, B8)", async () => {
   const { q, click, unmount } = await mount(state([device("local")]));
-  await click(q('[data-agent-partial="gemini-cli"]'));
-  const popover = document.body.querySelector('[data-agent-partial-popover="gemini-cli"]')!;
+  await click(q('[data-agent-partial="grok"]'));
+  const popover = document.body.querySelector('[data-agent-partial-popover="grok"]')!;
   const lines = [...popover.querySelectorAll("[data-agent-feature]")].map((line) => line.getAttribute("data-agent-feature"));
-  expect(lines).toEqual(FEATURES.map((feature) => `${feature}:${supports("gemini-cli", feature) ? "yes" : "no"}`));
+  expect(lines).toEqual(FEATURES.map((feature) => `${feature}:${supports(feature) ? "yes" : "no"}`));
   expect(popover.querySelector('[data-agent-feature="letters:no"]')?.textContent).toContain("–Not available: Letters and Observer warnings");
   expect(popover.querySelector('[data-agent-feature="skill:yes"]')?.textContent).toContain("✓Works: Hide skill");
-  expect(popover.textContent).toContain("Herdr has no integration for Gemini CLI, so Hide judges its status from the screen.");
+  // Every supported agent has Herdr's integration, so no row says its status is judged from the screen.
+  expect(popover.textContent).not.toContain("from the screen");
   await unmount();
-
-  // An agent with a Herdr integration does not carry that sentence.
-  const grok = await mount(state([device("local")]));
-  await grok.click(grok.q('[data-agent-partial="grok"]'));
-  expect(document.body.querySelector('[data-agent-partial-popover="grok"]')?.textContent).not.toContain("judges its status from the screen");
-  await grok.unmount();
 });

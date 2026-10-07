@@ -22,10 +22,10 @@ import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, req
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { work: {}, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { overview_needs_you: 0, work: {}, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
-export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent)): AgentScope {
+export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent), workers: ReadonlySet<string> = new Set()): AgentScope {
   const scope = emptyScope();
   scope.members = lens.map(({ agent, project, checkout }) => ({ pane_id: agent.pane_id, project_id: project.id, checkout_id: checkout.id }));
   scope.overview_total = lens.length;
@@ -37,6 +37,7 @@ export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[]
     if (agent.group === "done") scope.turns.done++;
     if (agent.group === "needs_you" && ["question", "approval", "error"].includes(agent.demand ?? "")) scope.turns[agent.demand as "question" | "approval" | "error"]++;
     if (agent.delegated && agent.lineage_parent_pane_id && inScope.has(agent.lineage_parent_pane_id)) return;
+    if (workers.has(agent.pane_id)) return;
     scope.requests.rows.push({ member, children: (agent.close_descendant_pane_ids ?? []).filter((id) => byPane.has(id)).reverse() });
   });
   const agentAt = (index: number) => lens[scope.requests.rows[index]!.member]!.agent;
@@ -94,6 +95,7 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
 function physicalScope(scope: AgentScope, agents: readonly AgentRow[]) {
   scope.rows = legacyRefs(agents, agents);
   scope.total = agents.length;
+  scope.overview_needs_you = agents.filter(a => a.group === "needs_you").length;
   scope.roots = legacyRefs(agents.filter((a) => !a.delegated), agents);
   for (const agent of agents) if (agent.group in scope.groups) scope.groups[agent.group as keyof AgentScope["groups"]]++;
   const byPane = new Map(agents.map((a) => [a.pane_id, a]));
@@ -134,8 +136,8 @@ export function agentsTile(agents: readonly LensAgent[], ...args: Parameters<typ
   return drawAgentsTile(legacyScope(agents), ...args);
 }
 const scopeOfRows = new WeakMap<readonly RequestRow[], AgentScope>();
-export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[]): RequestRow[] {
-  const scope = legacyScope(agents, all);
+export function requestRows(agents: readonly LensAgent[], all: readonly AgentRow[], workers: ReadonlySet<string> = new Set()): RequestRow[] {
+  const scope = legacyScope(agents, all, workers);
   const rows = drawRequestRows(agents, all, scope);
   scopeOfRows.set(rows, scope);
   return rows;

@@ -69,6 +69,10 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
   A pane that entered `working` was submitted to as well, which is how an answered menu or a custom slash command that starts a turn clears the hold.
   A key after both is an unsent draft, an Esc-restored prompt or a recalled input; a pane held by one stays held until the next real prompt.
 - The pane still hosts the native session the letter was written for, and the agent kind is one the bell targets.
+- Herdr does not report the agent as starting or not ready.
+  Herdr reports readiness only for an agent it launched itself (`herdr agent start`, which `hide agent spawn` uses): `launch_pending: true` while that start settles or is blocked, then `interactive_ready: true`.
+  An agent the operator started by typing its program in a Herdr shell, the usual way a lead is started, carries neither flag; its readiness is unreported, not refused, and the facts above decide it.
+  Only `launch_pending: true` or an explicit `interactive_ready: false` holds the letter.
 
 Herdr's `blocked` status is the only menu guard, so only kinds whose permission and selection menus were observed to read `blocked` are bell targets.
 Today those are Claude Code and Codex.
@@ -77,11 +81,17 @@ Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
 Three residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, a prompt queued while the pane works leaves it held after its turn until the next prompt submitted from rest (its hook runs while `working` and clears nothing), and a pane restarted with hided or whose observation is dropped from a snapshot starts with no draft known.
-A letter that cannot be belled waits, and the reason (`working`, `blocked`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable`, `status_not_at_rest`, `changed_before_input`) is logged once per change with the letter and pane ids, never with its body and never on screen.
+A letter that cannot be belled waits, and the reason is logged as `doorbell.held` once per change with the letter and pane ids, never with its body and never on screen.
+The verdict's reasons are `working`, `blocked`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable` and `status_not_at_rest`.
+Between the verdict and the input the doorbell asks Herdr again and checks its own memory last, and each refusal there has its own reason: `launch_pending` and `not_ready` (Herdr's readiness), `identity_changed` (Herdr's agent in the pane has another name, kind or native session), `sequence_moved` (Herdr's status or state sequence moved), `input_after_verdict` (hide routed input to the pane) and `letter_changed` (the letter was confirmed, cancelled, expired or reserved meanwhile).
+A letter refused there is tried again in the same pane episode after 5 seconds, then 10, 20, 40 and 80, then every two minutes, because readiness and the letter are facts the pane episode does not carry; a change of the pane's status, sequence, input or session tries it at once.
+A failed Herdr call is not retried on that schedule, since the bell may already have been typed; it waits for the pane to move.
+A letter still held when its deadline passes is logged once as `doorbell.expired` with the reason it last waited for.
 After a hided restart every pane starts with no key known and a 30 second grace; a draft typed before the restart cannot be known.
 The adapter never copies, clears or restores a draft.
 Each letter has at most three durable doorbell reservations, including successful input and attempts interrupted before confirmation.
-The reservation is persisted before input, and the adapter repeats the native inspection (`agent.get`: kind, session, status, sequence) after the persistence wait.
+The reservation is persisted before input, and the adapter repeats the native inspection (`agent.get`: readiness, kind, session, status, sequence) after the persistence wait.
+A refusal before the reservation spends none, so a letter Herdr keeps refusing is never charged an attempt.
 A crash or changed pane after reservation may consume an attempt while leaving the letter pending.
 Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 

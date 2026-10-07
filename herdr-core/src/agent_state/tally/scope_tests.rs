@@ -72,6 +72,7 @@ fn physical_groups_root_headings_and_requests_keep_the_frozen_screen_values() {
         membership(&rows, "all"),
         &rows,
         MarkCountsSnapshot::default(),
+        &Default::default(),
     );
     assert_eq!(
         value.groups,
@@ -134,6 +135,7 @@ fn physical_groups_root_headings_and_requests_keep_the_frozen_screen_values() {
         membership(&child, "child-project"),
         &rows,
         MarkCountsSnapshot::default(),
+        &Default::default(),
     );
     assert_eq!(
         (child_scope.requests.todo, child_scope.requests.answer),
@@ -154,6 +156,7 @@ fn defaults_publish_known_zero_request_counts_and_unknown_groups_keep_their_head
         membership(&rows, "one"),
         &rows,
         MarkCountsSnapshot::default(),
+        &Default::default(),
     );
     assert_eq!(value.total, 1);
     assert_eq!(value.groups, GroupCounts::default());

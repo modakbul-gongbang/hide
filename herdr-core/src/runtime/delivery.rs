@@ -525,35 +525,46 @@ impl Runtime {
     }
 
     /// The final memory guard immediately before the off-lock pane write.
+    /// The refusal names what moved since the verdict, for the diagnostic
+    /// log.
     pub(crate) fn delivery_bell_current(
         &self,
         id: &str,
         observed: &Observation,
         reserved: Option<u8>,
-    ) -> bool {
-        let Some(current) = self.delivery_observations.get(&observed.actor.pane_id) else {
-            return false;
-        };
-        current.actor.same_identity(&observed.actor)
-            && current.status == observed.status
-            && current.state_change_seq == observed.state_change_seq
-            && current.last_input_at_unix_ms == observed.last_input_at_unix_ms
-            && crate::delivery::doorbell::judge(current, unix_milliseconds()).is_ok()
-            && self.delivery_ledger.as_ref().is_ok_and(|ledger| {
-                ledger.letters.iter().any(|letter| {
-                    letter.id == id
-                        && letter.recipient.same_identity(&observed.actor)
-                        && letter.state == crate::delivery::ledger::State::Pending
-                        && match reserved {
-                            Some(attempt) => {
-                                (1..=3).contains(&attempt) && letter.attempts() == attempt
-                            }
-                            None => letter.attempts() < 3,
-                        }
-                        && unix_milliseconds().saturating_sub(letter.created_at_unix_ms)
-                            < crate::delivery::DELIVERY_EXPIRY_MS
-                })
+    ) -> Result<(), crate::delivery::doorbell::Hold> {
+        use crate::delivery::doorbell::Hold;
+        let current = self
+            .delivery_observations
+            .get(&observed.actor.pane_id)
+            .ok_or(Hold::Absent)?;
+        if !current.actor.same_identity(&observed.actor) {
+            return Err(Hold::Session);
+        }
+        if current.status != observed.status
+            || current.state_change_seq != observed.state_change_seq
+        {
+            return Err(Hold::Moved);
+        }
+        if current.last_input_at_unix_ms != observed.last_input_at_unix_ms {
+            return Err(Hold::Input);
+        }
+        let now = unix_milliseconds();
+        crate::delivery::doorbell::judge(current, now)?;
+        let letter_current = self.delivery_ledger.as_ref().is_ok_and(|ledger| {
+            ledger.letters.iter().any(|letter| {
+                letter.id == id
+                    && letter.recipient.same_identity(&observed.actor)
+                    && letter.state == crate::delivery::ledger::State::Pending
+                    && match reserved {
+                        Some(attempt) => (1..=3).contains(&attempt) && letter.attempts() == attempt,
+                        None => letter.attempts() < 3,
+                    }
+                    && now.saturating_sub(letter.created_at_unix_ms)
+                        < crate::delivery::DELIVERY_EXPIRY_MS
             })
+        });
+        letter_current.then_some(()).ok_or(Hold::Letter)
     }
 
     pub(crate) fn delivery_watch_work(&mut self) -> Vec<crate::delivery::worker::WatchWork> {
@@ -818,6 +829,37 @@ pub(crate) mod tests {
                 checkout_path: "/checkouts/fixture".into(),
             },
         }
+    }
+
+    /// Puts the fixture's recipient at rest in native session `native`, idle
+    /// with no key and no change of status for long past the quiet period,
+    /// and makes `herdr` the Herdr this machine's panes are reached through.
+    pub(crate) fn recipient_at_rest(
+        runtime: &mut Runtime,
+        native: &str,
+        herdr: &crate::fake_herdr::FakeHerdr,
+    ) -> Observation {
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,
+             "lineage_session":crate::wire::session_digest(native)},
+        ]})).unwrap();
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
+        let observation = runtime.delivery_observations.get_mut("recipient").unwrap();
+        observation.status_changed_at_unix_ms = 0;
+        observation.last_input_at_unix_ms = 0;
+        observation.last_submit_at_unix_ms = 0;
+        observation.entered_working_at_unix_ms = 0;
+        let observation = observation.clone();
+        runtime.live = Some(crate::live::LiveContext {
+            socket_path: herdr.socket_path().to_path_buf(),
+            herdr_bin: None,
+            runtime: std::sync::Weak::new(),
+            notifier: ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr.connector()),
+            node: Arc::new(hide_node::Local::of_process()),
+        });
+        observation
     }
 
     fn key_event(pane: &str, bytes: &[u8]) -> Vec<u8> {

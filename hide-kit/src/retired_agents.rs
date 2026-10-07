@@ -1,8 +1,9 @@
-//! The thirteen agents Hide stopped supporting (PRD settings-cleanup D-06):
-//! the one-time pass that takes out what an earlier build put on a machine
-//! for them.
+//! The fourteen agents Hide stopped supporting (PRD settings-cleanup D-06,
+//! and Gemini CLI once Hide's support list became the agents the pinned
+//! Herdr ships an integration for): the one-time pass that takes out what an
+//! earlier build put on a machine for them.
 //!
-//! An earlier kit wrote a skill stub and, for six of them, a SessionStart
+//! An earlier kit wrote a skill stub and, for seven of them, a SessionStart
 //! guidance hook, and recorded each in `~/.hide/kit/installed.json`. This pass
 //! reads that record for ownership: only a piece the record names is looked
 //! at, and then only what carries Hide's own marker is taken (the stub's
@@ -13,7 +14,9 @@
 //! taken out stays in the record and the next pass tries again.
 //!
 //! A transition path: it goes with the release after the one that ships it,
-//! together with the layouts of the six hooks in `hide_agent_hooks::guidance`.
+//! together with the layouts of the seven hooks in `hide_agent_hooks::guidance`.
+//! Gemini CLI joined later than the other thirteen, so the release that ships
+//! its retirement is the one the whole path waits for.
 
 use std::path::PathBuf;
 
@@ -54,7 +57,7 @@ const fn retired(
     }
 }
 
-const RETIRED: [Retired; 13] = [
+const RETIRED: [Retired; 14] = [
     retired(
         "copilot-cli",
         "GitHub Copilot CLI",
@@ -93,6 +96,12 @@ const RETIRED: [Retired; 13] = [
     ),
     retired("kimi-code", "Kimi Code", Skills::Shared, None),
     retired("mistral-vibe", "Mistral Vibe", Skills::Shared, None),
+    retired(
+        "gemini-cli",
+        "Gemini CLI",
+        Skills::Shared,
+        Some(GuidanceAgent::Gemini),
+    ),
 ];
 
 fn own_skill_code(folder: &str) -> String {

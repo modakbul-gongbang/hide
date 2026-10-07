@@ -133,7 +133,7 @@ export function relationRows(relations: Relations): SearchEntry[] {
  */
 export function frontTarget(
   rest: SnapshotRest | null,
-  screen: "main" | "overview" | "workspace" | null,
+  screen: "main" | "overview" | "workspace" | "factory" | null,
   over: boolean,
   focusedPaneId: string | null,
   fromAgent: boolean,

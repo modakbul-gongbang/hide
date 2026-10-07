@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use crate::runtime::Runtime;
 use crate::runtime::delivery::Observation;
-use crate::wire;
+use crate::wire::{self, Readiness};
 
 use super::ledger::State;
 use super::worker::{Client, Effect, now};
@@ -23,6 +23,13 @@ use super::worker::{Client, Effect, now};
 const QUIET_MS: u64 = 30_000;
 const WORK_PER_PASS: usize = 8;
 const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+/// A letter refused between its verdict and the input is tried again in the
+/// same pane episode after this long, doubling up to `RETRY_LIMIT_MS`. The
+/// refusal can come from a fact the episode does not carry, such as Herdr's
+/// readiness or the letter itself, so waiting for the episode to move could
+/// wait until the letter expires.
+const RETRY_FIRST_MS: u64 = 5_000;
+const RETRY_LIMIT_MS: u64 = 120_000;
 
 /// Why a pending letter was not belled. Each is an expected wait, so it goes
 /// to the diagnostic log and never to the screen.
@@ -45,8 +52,21 @@ pub(crate) enum Hold {
     /// Less than the quiet period since the last input or the last change of
     /// status.
     Quiet,
-    /// The pane changed between the verdict and the input.
-    Changed,
+    /// Herdr reports the agent not ready for input (`interactive_ready:
+    /// false`).
+    NotReady,
+    /// Herdr is still starting the agent it launched (`launch_pending`).
+    Launching,
+    /// Herdr's agent in the pane has another name, kind or native session
+    /// than the one the verdict was read for.
+    Identity,
+    /// Herdr's status or state sequence moved after the verdict.
+    Moved,
+    /// Hide routed input to the pane after the verdict.
+    Input,
+    /// The letter was confirmed, cancelled, expired or reserved after the
+    /// verdict.
+    Letter,
 }
 
 impl Hold {
@@ -60,7 +80,12 @@ impl Hold {
             Self::Status => "status_not_at_rest",
             Self::Draft => "draft",
             Self::Quiet => "quiet_period",
-            Self::Changed => "changed_before_input",
+            Self::NotReady => "not_ready",
+            Self::Launching => "launch_pending",
+            Self::Identity => "identity_changed",
+            Self::Moved => "sequence_moved",
+            Self::Input => "input_after_verdict",
+            Self::Letter => "letter_changed",
         }
     }
 }
@@ -126,117 +151,193 @@ impl From<&Observation> for Episode {
     }
 }
 
+/// A letter's last attempt that did not ring: the pane episode it was made
+/// in, and when the letter may be tried again in that same episode.
+struct Tried {
+    episode: Episode,
+    retry_at: u64,
+    delay: u64,
+}
+
+/// What the doorbell keeps between passes. Each map is keyed by a letter or
+/// pane of the current pass and pruned to them, so it is bounded by the
+/// <=1024 open letters.
+#[derive(Default)]
+pub(crate) struct Doorbell {
+    tried: HashMap<String, Tried>,
+    /// The episode each pane was belled in. The bell's own turn moves the
+    /// pane, so a pane is not belled again until it has.
+    rung: HashMap<String, Episode>,
+    /// Why each letter waits, logged once per change.
+    held: HashMap<String, Hold>,
+}
+
+/// How one attempt ended without failing.
+enum Outcome {
+    Rung,
+    Held(Hold),
+    Stopped,
+}
+
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
-    // The maps are bounded by the <=1024 pending letters in this pass.
-    // A refusal is retried only after state/input changes.
-    let mut tried = HashMap::<String, Episode>::new();
-    let mut rung = HashMap::<String, Episode>::new();
-    let mut held = HashMap::<String, Hold>::new();
+    let mut doorbell = Doorbell::default();
     while !stop.load(Ordering::Acquire) {
         let Some(owner) = runtime.upgrade() else {
             break;
         };
-        let context = owner
-            .lock()
-            .ok()
-            .and_then(|guard| guard.delivery_state().ok());
-        if let Some(ledger) = context {
-            let mut targets = HashSet::new();
-            let pending: Vec<_> = ledger
-                .letters
-                .iter()
-                .filter(|letter| {
-                    letter.state == State::Pending
-                        && letter.attempts() < 3
-                        && now().saturating_sub(letter.created_at_unix_ms)
-                            < super::DELIVERY_EXPIRY_MS
-                })
-                .filter(|letter| targets.insert(letter.recipient.pane_id.clone()))
-                .collect();
-            let ids: HashSet<_> = pending.iter().map(|letter| letter.id.as_str()).collect();
-            tried.retain(|id, _| ids.contains(id.as_str()));
-            held.retain(|id, _| ids.contains(id.as_str()));
-            rung.retain(|pane, _| targets.contains(pane));
-            let mut count = 0;
-            for letter in pending {
-                if stop.load(Ordering::Acquire) || count >= WORK_PER_PASS {
-                    break;
-                }
-                let verdict = owner
-                    .lock()
-                    .map(|guard| guard.delivery_bell_verdict(&letter.recipient, now()))
-                    .unwrap_or(Err(Hold::Absent));
-                let observed = match verdict {
-                    Ok(observed) => observed,
-                    Err(reason) => {
-                        hold(&mut held, &letter.id, &letter.recipient.pane_id, reason);
-                        continue;
-                    }
-                };
-                let Some(connector) = owner
-                    .lock()
-                    .ok()
-                    .and_then(|guard| guard.delivery_connector(&letter.recipient.device_id))
-                else {
-                    hold(
-                        &mut held,
-                        &letter.id,
-                        &letter.recipient.pane_id,
-                        Hold::Absent,
-                    );
-                    continue;
-                };
-                let episode = Episode::from(&observed);
-                if tried.get(&letter.id) == Some(&episode)
-                    || rung.get(&letter.recipient.pane_id) == Some(&episode)
-                {
-                    // Nothing holds it, so a later hold for the same reason
-                    // is a change and is logged again.
-                    held.remove(&letter.id);
-                    continue;
-                }
-                count += 1;
-                tried.insert(letter.id.clone(), episode.clone());
-                match deliver(
-                    &owner,
-                    &client,
-                    connector.as_ref(),
-                    &letter.id,
-                    &observed,
-                    &stop,
-                ) {
-                    Ok(true) => {
-                        held.remove(&letter.id);
-                        rung.insert(letter.recipient.pane_id.clone(), episode);
-                        record(&client, &letter.id, &observed, true);
-                    }
-                    Ok(false) => {
-                        hold(
-                            &mut held,
-                            &letter.id,
-                            &letter.recipient.pane_id,
-                            Hold::Changed,
-                        );
-                    }
-                    Err(code) => {
-                        crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.failed",
-                            "letter_id":letter.id,"pane_id":letter.recipient.pane_id,"code":code}));
-                        record(&client, &letter.id, &observed, false);
-                    }
-                }
-            }
-        }
+        doorbell.pass(&owner, &client, &stop, now());
+        drop(owner);
         thread::sleep(Duration::from_millis(250));
     }
 }
 
-/// Logs a letter's reason for waiting once per change of reason, with its id
-/// and pane and never its body.
-fn hold(held: &mut HashMap<String, Hold>, id: &str, pane_id: &str, reason: Hold) {
-    if held.insert(id.to_owned(), reason) != Some(reason) {
-        crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.held",
-            "letter_id":id,"pane_id":pane_id,"reason":reason.code()}));
+impl Doorbell {
+    /// One look at every pane with a pending letter, at most
+    /// `WORK_PER_PASS` of which reach Herdr. The verdict is memory only;
+    /// Herdr calls, the reservation and the input run off the lock.
+    pub(crate) fn pass(
+        &mut self,
+        owner: &Mutex<Runtime>,
+        client: &Client,
+        stop: &AtomicBool,
+        now: u64,
+    ) {
+        let Some(ledger) = owner
+            .lock()
+            .ok()
+            .and_then(|guard| guard.delivery_state().ok())
+        else {
+            return;
+        };
+        let mut targets = HashSet::new();
+        let pending: Vec<_> = ledger
+            .letters
+            .iter()
+            .filter(|letter| {
+                letter.state == State::Pending
+                    && letter.attempts() < 3
+                    && now.saturating_sub(letter.created_at_unix_ms) < super::DELIVERY_EXPIRY_MS
+            })
+            .filter(|letter| targets.insert(letter.recipient.pane_id.clone()))
+            .collect();
+        let ids: HashSet<_> = pending.iter().map(|letter| letter.id.as_str()).collect();
+        self.forget(&ledger.letters, &ids, now);
+        self.rung.retain(|pane, _| targets.contains(pane));
+        let mut count = 0;
+        for letter in pending {
+            if stop.load(Ordering::Acquire) || count >= WORK_PER_PASS {
+                break;
+            }
+            let pane = &letter.recipient.pane_id;
+            let verdict = owner
+                .lock()
+                .map(|guard| guard.delivery_bell_verdict(&letter.recipient, now))
+                .unwrap_or(Err(Hold::Absent));
+            let observed = match verdict {
+                Ok(observed) => observed,
+                Err(reason) => {
+                    self.hold(&letter.id, pane, reason);
+                    continue;
+                }
+            };
+            let Some(connector) = owner
+                .lock()
+                .ok()
+                .and_then(|guard| guard.delivery_connector(&letter.recipient.device_id))
+            else {
+                self.hold(&letter.id, pane, Hold::Absent);
+                continue;
+            };
+            let episode = Episode::from(&observed);
+            if self.rung.get(pane) == Some(&episode) {
+                // Nothing holds it, so a later hold for the same reason
+                // is a change and is logged again.
+                self.held.remove(&letter.id);
+                continue;
+            }
+            let delay = match self.tried.get(&letter.id) {
+                // Still held by its last reason, which stays logged.
+                Some(last) if last.episode == episode && now < last.retry_at => continue,
+                Some(last) if last.episode == episode => {
+                    last.delay.saturating_mul(2).min(RETRY_LIMIT_MS)
+                }
+                _ => RETRY_FIRST_MS,
+            };
+            count += 1;
+            match deliver(
+                owner,
+                client,
+                connector.as_ref(),
+                &letter.id,
+                &observed,
+                stop,
+            ) {
+                Ok(Outcome::Rung) => {
+                    self.held.remove(&letter.id);
+                    self.tried.remove(&letter.id);
+                    self.rung.insert(pane.clone(), episode);
+                    record(client, &letter.id, &observed, true);
+                }
+                Ok(Outcome::Held(reason)) => {
+                    self.hold(&letter.id, pane, reason);
+                    self.tried.insert(
+                        letter.id.clone(),
+                        Tried {
+                            episode,
+                            retry_at: now.saturating_add(delay),
+                            delay,
+                        },
+                    );
+                }
+                Ok(Outcome::Stopped) => break,
+                Err(code) => {
+                    crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.failed",
+                        "letter_id":letter.id,"pane_id":pane,"code":code}));
+                    record(client, &letter.id, &observed, false);
+                    // A failed Herdr call may still have typed the bell, so
+                    // a failure waits for the pane to move rather than for a
+                    // timer that could type it twice.
+                    self.tried.insert(
+                        letter.id.clone(),
+                        Tried {
+                            episode,
+                            retry_at: u64::MAX,
+                            delay,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Drops what the doorbell kept for letters that left the pass. A letter
+    /// that reached its deadline while held is logged with the reason it last
+    /// waited for, so an undelivered letter names its cause.
+    fn forget(&mut self, letters: &[super::ledger::Letter], ids: &HashSet<&str>, now: u64) {
+        for (id, reason) in &self.held {
+            if ids.contains(id.as_str()) {
+                continue;
+            }
+            if let Some(letter) = letters.iter().find(|letter| &letter.id == id)
+                && matches!(letter.state, State::Pending | State::Undelivered)
+                && now.saturating_sub(letter.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
+            {
+                crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.expired",
+                    "letter_id":id,"pane_id":letter.recipient.pane_id,"reason":reason.code()}));
+            }
+        }
+        self.held.retain(|id, _| ids.contains(id.as_str()));
+        self.tried.retain(|id, _| ids.contains(id.as_str()));
+    }
+
+    /// Logs a letter's reason for waiting once per change of reason, with
+    /// its id and pane and never its body.
+    fn hold(&mut self, id: &str, pane_id: &str, reason: Hold) {
+        if self.held.insert(id.to_owned(), reason) != Some(reason) {
+            crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.held",
+                "letter_id":id,"pane_id":pane_id,"reason":reason.code()}));
+        }
     }
 }
 
@@ -260,24 +361,42 @@ fn rpc(connector: &dyn ApiConnector, method: &str, params: Value) -> Result<Valu
     request_small_response(connector, method, params, RPC_TIMEOUT).map_err(|_| "herdr_call_failed")
 }
 
-fn native_matches(
+/// Whether Herdr still reports the agent the verdict was read for, at the
+/// same status and sequence, and ready for input. Herdr reports readiness
+/// only for an agent it started itself; an agent typed into a shell reports
+/// none, and the verdict's own facts decide it: Herdr has seen it at rest for
+/// the quiet period, it is the same agent and native session, and hide holds
+/// no draft or recent key for it.
+fn native_current(
     connector: &dyn ApiConnector,
     observed: &Observation,
-) -> Result<bool, &'static str> {
+) -> Result<Result<(), Hold>, &'static str> {
     if observed.actor.require_native_identity().is_err() {
-        return Ok(false);
+        return Ok(Err(Hold::Session));
     }
     let parameters =
         wire::agent_target_params(&observed.raw_pane_id).map_err(|_| "herdr_parameters")?;
     let agent = wire::delivery_agent(rpc(connector, "agent.get", parameters)?)
         .map_err(|_| "herdr_format")?;
-    Ok(agent.ready
-        && agent.pane_id == observed.raw_pane_id
-        && agent.name == observed.actor.name
-        && agent.kind.as_ref() == Some(&observed.actor.kind)
-        && agent.session == observed.actor.session
-        && agent.status == observed.status
-        && Some(agent.state_change_seq) == observed.state_change_seq)
+    Ok(match agent.readiness {
+        Readiness::Launching => Err(Hold::Launching),
+        Readiness::NotReady => Err(Hold::NotReady),
+        Readiness::Ready | Readiness::Unreported
+            if agent.pane_id != observed.raw_pane_id
+                || agent.name != observed.actor.name
+                || agent.kind.as_ref() != Some(&observed.actor.kind)
+                || agent.session != observed.actor.session =>
+        {
+            Err(Hold::Identity)
+        }
+        Readiness::Ready | Readiness::Unreported
+            if agent.status != observed.status
+                || Some(agent.state_change_seq) != observed.state_change_seq =>
+        {
+            Err(Hold::Moved)
+        }
+        Readiness::Ready | Readiness::Unreported => Ok(()),
+    })
 }
 
 /// All delivery pane writes go through this function. The last memory check
@@ -289,9 +408,12 @@ fn deliver(
     id: &str,
     observed: &Observation,
     stop: &AtomicBool,
-) -> Result<bool, &'static str> {
-    if stop.load(Ordering::Acquire) || !native_matches(connector, observed)? {
-        return Ok(false);
+) -> Result<Outcome, &'static str> {
+    if stop.load(Ordering::Acquire) {
+        return Ok(Outcome::Stopped);
+    }
+    if let Err(reason) = native_current(connector, observed)? {
+        return Ok(Outcome::Held(reason));
     }
     let reservation = client
         .submit(
@@ -308,16 +430,21 @@ fn deliver(
         .ok_or("doorbell_reservation_format")? as u8;
     // The durable save may wait. Reinspect the native owner afterwards
     // instead of treating the pre-save answer as current evidence.
-    if stop.load(Ordering::Acquire) || !native_matches(connector, observed)? {
-        return Ok(false);
+    if stop.load(Ordering::Acquire) {
+        return Ok(Outcome::Stopped);
     }
-    if stop.load(Ordering::Acquire)
-        || !owner
-            .lock()
-            .map_err(|_| "runtime_unavailable")?
-            .delivery_bell_current(id, observed, Some(attempt))
+    if let Err(reason) = native_current(connector, observed)? {
+        return Ok(Outcome::Held(reason));
+    }
+    if stop.load(Ordering::Acquire) {
+        return Ok(Outcome::Stopped);
+    }
+    if let Err(reason) = owner
+        .lock()
+        .map_err(|_| "runtime_unavailable")?
+        .delivery_bell_current(id, observed, Some(attempt))
     {
-        return Ok(false);
+        return Ok(Outcome::Held(reason));
     }
     let parameters = wire::delivery_input_params(
         &observed.raw_pane_id,
@@ -326,7 +453,7 @@ fn deliver(
     .map_err(|_| "herdr_parameters")?;
     rpc(connector, "pane.send_input", parameters)?;
     // Arrival is not intake. Only a flushed prompt-hook confirmation clears it.
-    Ok(true)
+    Ok(Outcome::Rung)
 }
 
 #[cfg(test)]
@@ -436,6 +563,215 @@ mod tests {
         // Submitting it ends the draft.
         pane.last_submit_at_unix_ms = NOW - 69_000;
         assert_eq!(judge(&pane, NOW), Ok(()));
+    }
+
+    /// A recipient pane at rest on a Herdr whose `agent.get` answer carries
+    /// the readiness flags the test sets, with one letter pending for it.
+    struct Bell {
+        runtime: Arc<Mutex<Runtime>>,
+        client: Client,
+        herdr: crate::fake_herdr::FakeHerdr,
+        flags: Arc<Mutex<Value>>,
+        letter: String,
+        _worker: crate::delivery::worker::Worker,
+        _root: tempfile::TempDir,
+    }
+
+    impl Bell {
+        fn start(flags: Value) -> Self {
+            use crate::delivery::Command;
+            use crate::runtime::delivery::tests::{authority, fixture, recipient_at_rest};
+            let root = tempfile::tempdir().unwrap();
+            let (runtime, sender, _, path) = fixture(root.path());
+            let flags = Arc::new(Mutex::new(flags));
+            let answer = Arc::clone(&flags);
+            let herdr =
+                crate::fake_herdr::FakeHerdr::start("doorbell", move |method, _| match method {
+                    "agent.get" => {
+                        let mut agent = json!({
+                            "pane_id": "recipient", "terminal_id": "terminal",
+                            "workspace_id": "w1", "tab_id": "w1:t1", "focused": false,
+                            "revision": 1, "name": "recipient", "agent": "codex",
+                            "agent_status": "idle", "state_change_seq": 2,
+                            "agent_session": {"source": "hook", "agent": "codex",
+                                "kind": "id", "value": "recipient-native"},
+                        });
+                        for (key, value) in answer.lock().unwrap().as_object().unwrap() {
+                            agent[key] = value.clone();
+                        }
+                        json!({"type": "agent_info", "agent": agent})
+                    }
+                    "pane.send_input" => json!({"type": "ok"}),
+                    other => panic!("unexpected {other}"),
+                });
+            let recipient =
+                recipient_at_rest(&mut runtime.lock().unwrap(), "recipient-native", &herdr);
+            let (worker, client) = crate::delivery::worker::Worker::spawn(
+                Arc::downgrade(&runtime),
+                crate::handle::ChangeNotifier::noop(),
+                path,
+            )
+            .unwrap();
+            let sent = client
+                .submit(
+                    Effect::Command {
+                        authority: authority(&sender),
+                        actor: sender.clone(),
+                        target: Some(Box::new(recipient)),
+                        command: Command::Send {
+                            target: "recipient".into(),
+                            intent: "report".into(),
+                            body: "private".into(),
+                            kind: "report".into(),
+                        },
+                    },
+                    Duration::from_secs(5),
+                )
+                .unwrap();
+            Self {
+                runtime,
+                client,
+                herdr,
+                flags,
+                letter: sent["id"].as_str().unwrap().to_owned(),
+                _worker: worker,
+                _root: root,
+            }
+        }
+
+        /// One doorbell pass at `at`, and the reasons it logged.
+        fn pass(&self, doorbell: &mut Doorbell, at: u64) -> Vec<Value> {
+            let stop = AtomicBool::new(false);
+            let ((), records) = crate::diagnostics::capture(|| {
+                doorbell.pass(&self.runtime, &self.client, &stop, at)
+            });
+            records
+                .into_iter()
+                .filter(|record| record["letter_id"] == self.letter.as_str())
+                .collect()
+        }
+
+        /// What the pane was typed, in order.
+        fn typed(&self) -> Vec<Value> {
+            self.herdr
+                .calls()
+                .into_iter()
+                .filter(|(method, _)| method == "pane.send_input")
+                .map(|(_, params)| params)
+                .collect()
+        }
+
+        fn asked(&self) -> usize {
+            self.herdr
+                .methods()
+                .iter()
+                .filter(|method| *method == "agent.get")
+                .count()
+        }
+
+        fn attempts(&self) -> u8 {
+            let guard = self.runtime.lock().unwrap();
+            let ledger = guard.delivery_state().unwrap();
+            ledger
+                .letters
+                .iter()
+                .find(|letter| letter.id == self.letter)
+                .unwrap()
+                .attempts()
+        }
+    }
+
+    fn held(records: &[Value]) -> Vec<&str> {
+        records
+            .iter()
+            .filter(|record| record["kind"] == "doorbell.held")
+            .filter_map(|record| record["reason"].as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_pane_herdr_reports_no_readiness_for_is_belled_at_rest_like_a_started_one() {
+        // A pane the operator started by typing `codex` carries neither flag;
+        // one `herdr agent start` launched reports itself ready.
+        for flags in [json!({}), json!({"interactive_ready": true})] {
+            let bell = Bell::start(flags.clone());
+            let records = bell.pass(&mut Doorbell::default(), now());
+            assert_eq!(held(&records), Vec::<&str>::new(), "{flags}");
+            let typed = bell.typed();
+            assert_eq!(typed.len(), 1, "{flags}");
+            assert_eq!(typed[0]["pane_id"], "recipient");
+            assert_eq!(
+                typed[0]["text"],
+                hide_agent_hooks::delivery::BELL_PROMPT,
+                "{flags}"
+            );
+            assert_eq!(typed[0]["keys"], json!(["enter"]));
+            assert_eq!(bell.attempts(), 1, "{flags}");
+        }
+    }
+
+    #[test]
+    fn herdr_reporting_an_agent_not_ready_holds_the_letter_for_that_reason_and_reserves_nothing() {
+        for (flags, reason) in [
+            (json!({"interactive_ready": false}), "not_ready"),
+            (json!({"launch_pending": true}), "launch_pending"),
+            (
+                json!({"interactive_ready": true, "launch_pending": true}),
+                "launch_pending",
+            ),
+        ] {
+            let bell = Bell::start(flags.clone());
+            let mut doorbell = Doorbell::default();
+            let records = bell.pass(&mut doorbell, now());
+            assert_eq!(held(&records), [reason], "{flags}");
+            assert!(bell.typed().is_empty(), "{flags}");
+            assert_eq!(bell.attempts(), 0, "{flags}");
+            // Held until its deadline, it is logged with that reason.
+            let records = bell.pass(&mut doorbell, now() + super::super::DELIVERY_EXPIRY_MS);
+            let expired: Vec<_> = records
+                .iter()
+                .filter(|record| record["kind"] == "doorbell.expired")
+                .collect();
+            assert_eq!(expired.len(), 1, "{flags}");
+            assert_eq!(expired[0]["reason"], reason);
+            assert!(bell.typed().is_empty(), "{flags}");
+        }
+    }
+
+    #[test]
+    fn a_letter_held_by_herdr_is_belled_once_the_cause_clears_while_the_pane_stays_put() {
+        let bell = Bell::start(json!({"launch_pending": true}));
+        let mut doorbell = Doorbell::default();
+        let start = now();
+        assert_eq!(held(&bell.pass(&mut doorbell, start)), ["launch_pending"]);
+        // The launch settles without the pane changing status or sequence.
+        *bell.flags.lock().unwrap() = json!({"interactive_ready": true});
+        // Before the retry is due Herdr is not asked again.
+        bell.pass(&mut doorbell, start + RETRY_FIRST_MS - 1);
+        assert_eq!(bell.asked(), 1);
+        assert!(bell.typed().is_empty());
+        bell.pass(&mut doorbell, start + RETRY_FIRST_MS);
+        assert_eq!(bell.typed().len(), 1);
+        assert_eq!(bell.attempts(), 1);
+    }
+
+    #[test]
+    fn a_letter_herdr_keeps_refusing_is_asked_about_less_often_and_never_reserves() {
+        let bell = Bell::start(json!({"interactive_ready": false}));
+        let mut doorbell = Doorbell::default();
+        let start = now();
+        let mut at = start;
+        let mut logged = Vec::new();
+        // Twenty minutes of passes, four a second would be 4800 questions.
+        while at < start + 20 * 60_000 {
+            logged.extend(bell.pass(&mut doorbell, at));
+            at += 250;
+        }
+        // At 0, 5, 15, 35, 75 and 155 s, then every two minutes.
+        assert_eq!(bell.asked(), 14);
+        assert_eq!(held(&logged), ["not_ready"], "logged once, not per retry");
+        assert!(bell.typed().is_empty());
+        assert_eq!(bell.attempts(), 0);
     }
 
     #[test]

@@ -30,6 +30,8 @@ It is excluded from the production build `hided` serves.
 The gallery also renders production screens on synthetic scenes, one document per scene because a scene seeds the app's own stores.
 `/gallery?scene=projects-sidebar` is the shell's real `Sidebar` and `createActions` over `web/src/gallery/sceneData.ts`, a snapshot with the content `Screen / Projects Sidebar` draws; its folds go through the real actions and the scene answers them as the core would.
 Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, seeded as the core's `ui_state.sidebar_width`), `scale` (the interface text scale, which reaches only what lies outside the sidebar, since the sidebar keeps its sizes at every scale) and `content` (`reference`, or `long` for long Korean titles).
+`/gallery?scene=factory` is the shell's real `Sidebar` beside the real `FactoryScreen` over `web/src/gallery/factorySceneData.ts`, a `FactorySummary` of two Factories with the content `Screen / Factory` draws; the scene answers the screen's requests as the engine does (the settings tab's `config` read, and an answer, merge, retry or cancel taking its item off 내 차례).
+Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
 
 ## The flow: scratch to one PR
@@ -84,7 +86,9 @@ A design change is judged against the design that was chosen, not against whatev
 The `workspace-servers` and `session-search` gallery scenes render the production Workspace toolbar and Sessions screen with invented local history and reachable-address fixtures.
 A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
-Targets exist for `projects-sidebar`, `workspace-servers`, `session-search` and `area-focus`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
+Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus` and `factory`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
+`factory` pairs the Light and Dark `Screen / Factory` windows with the Factory scene's `내 차례`, graph and Task page states, takes the delegated proposal's Light pictures e1, e2 and e3 as the reference of both themes, and measures the screen with `web/e2e/factory-geometry.mjs` (no overlapping parts, no sideways overflow).
+Its selector is the scene root, not `[data-factory-screen]`, because the Pen frame is the whole window and a comparison image has to be as wide as its frame.
 `area-focus` measures the production shared area renderer and View tabs with read-only Korean content, enforcing one keyboard area, retained selections, stable geometry and unfiltered content; real terminal and native browser behavior still requires an isolated app capture.
 
 ### Keep the chosen design: `baseline`
@@ -95,6 +99,7 @@ node scripts/design-review.mjs baseline <slug> --target projects-sidebar --appro
 
 - It copies the target's Pen file (or `--from`, such as a scratch proposal), every library it imports and every image it uses into `agents/runs/<slug>/design/baseline/<name>/`, rewriting the references so the bundle opens in Pen from any directory or machine (two different files that would share one name in the bundle are refused), and exports the target's nodes from that copy, so the images prove the copy is whole.
 - `manifest.json` records when, from which file and commit, with which Pen version, each frame's conditions and image, the layout rules, and a hash of every file.
+- `--from` has to name a file inside this checkout, because the bundle records whether it has uncommitted changes with `git status`; a proposal made in another worktree is copied under `agents/runs/<slug>/design/` first, where the library paths it imports keep resolving.
 - `--approval` separates the operator's choice from a delegated proposal, and `--reference` points at the decision in the PRD instead of restating it.
 - A bundle is never overwritten: a rerun with the same name is refused, and a failed export publishes nothing.
 - `node scripts/design-review.mjs show <bundle>` prints the approval, frames and rules and checks every hash, with neither Pen nor a browser, so an implementor on a machine without Pen still reads the numbers and opens the PNGs.
@@ -235,6 +240,17 @@ Disk Cleanup is `Screen / Disk Cleanup`.
 It draws the Overview facts line with the disk number's breakdown tooltip and the low-disk cell, the cleanup sheet as a checkout x layer table with every checkbox scope (cell, row, column, top-left, the fold of small checkouts) and the Checkbox's Indeterminate, the states the table carries (measuring, not measured, in use with its reason, usage unreadable, another cleanup running, no row for the filter), the confirm step a worktree pick adds, the running step and the result.
 The library Checkbox and Button are refs; the table is a screen-local grid drawn in `scripts/pen-screens-disk.mjs`, with no `System / Table` behind it.
 Its web files are `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts` and `web/src/ProjectOverview.tsx`.
+
+Factory is `Screen / Factory`.
+It draws the Factory place in the window, from one invented data set so the flow counts, the 내 차례 number and the sidebar badge agree.
+The sidebar carries the Factory row under Overview with the 내 차례 number in warning and ⇧⌘F, and the 비서 row beneath it once a Factory exists.
+The header is Factory, the project filter, `+ Factory 만들기` and `비서에게 묻기`, and under it the flow bar `정리 중 · 대기 · 실행 중 · 완료 오늘` with the last GitHub read at its end and no person-turn cell, then the tabs `내 차례 · 보드 · 그래프 · 설정`.
+내 차례 is one column grouped `답할 것`, `머지 대기`, `멈춤` and `알림`: the top item is open with numbered choices, the suggestion picked, a send button that names the answer, the result beside it, the default line and `자세히`, the other items are one line each, and `Factory 밖 에이전트 요청 N → 요청` closes the list.
+보드 has the four columns with the person-turn cards in the warning border on top, a state mark on every card and old completions folded into one line; 그래프 lays the Tasks out in layers with arrows, draws none for a dependency a longer path implies, dims finished work and puts the unrelated Tasks below.
+The Task page is full width: the chain, the card fields on the left, the progress and the decision record on the right, and only the buttons the state allows.
+The create sheet is drawn detecting, with the required checks, with verify command candidates and with nothing detected (auto unavailable, manual), each listing what it writes on GitHub; the empty states are no Factory (only `+ Factory 만들기`) and no Tasks (the intake line).
+The cards, rows and sheet are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/factory/`) rather than a composite under `web/src/components`.
+Its builder is `scripts/pen-screens-factory.mjs`, and its web files are `web/src/factory/FactoryScreen.tsx`, `MyTurn.tsx`, `FactoryBoard.tsx`, `FactoryGraph.tsx`, `FactoryCard.tsx`, `TaskPage.tsx`, `CreateSheet.tsx` and `web/src/components/sidebar-header.tsx`.
 
 ## How to add a token
 

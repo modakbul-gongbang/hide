@@ -16,6 +16,18 @@ pub(super) struct KeyPayload {
     pub(super) bytes_base64: String,
 }
 
+/// A `key` event as the shell sends it: for a pane, or, right after the
+/// operator asked for a new tab or split, for that creation request (PRD
+/// instant-pane-topology D-11), whose pane only Herdr's answer names.
+#[derive(Debug, Deserialize)]
+pub(super) struct KeyEventPayload {
+    #[serde(default)]
+    pub(super) pane_id: Option<String>,
+    #[serde(default)]
+    pub(super) pending_request: Option<String>,
+    pub(super) bytes_base64: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct AttachmentPayload {
     pub request_id: String,
@@ -164,6 +176,9 @@ pub(super) struct CreateTabPayload {
     #[serde(default)]
     pub(super) checkout_id: Option<String>,
     pub(super) label: String,
+    /// The shell's id for keys typed while this tab is being created.
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,6 +324,9 @@ pub(super) struct CreatePanePayload {
     pub(super) cwd: String,
     pub(super) command: Option<String>,
     pub(super) direction: PaneSplitDirection,
+    /// The shell's id for keys typed while this split is being made.
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1209,7 +1227,7 @@ pub(super) enum Event {
     AgentLayout(AgentLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
     BrowserState(BrowserStatePayload),
-    Key(KeyPayload),
+    Key(KeyEventPayload),
     Attachment(AttachmentPayload),
     AttachmentReady(AttachmentCompletionPayload),
     AttachmentAction(AttachmentActionPayload),
@@ -1280,6 +1298,10 @@ pub(super) enum Event {
     SessionSearch(super::session_search::SearchPayload),
     LinksOpen(super::links::LinksOpenPayload),
     LinksClose,
+    FactoryAction(Box<super::factory::FactoryActionPayload>),
+    FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
+    FactoryTaskClose,
+    FactorySecretarySet(PaneTargetPayload),
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
@@ -1410,7 +1432,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
     }
 
     match kind.as_str() {
-        "key" => decode!(KeyPayload, Key),
+        "key" => decode!(KeyEventPayload, Key),
         "terminal_attachment" => decode!(AttachmentPayload, Attachment),
         "terminal_attachment_ready" => decode!(AttachmentCompletionPayload, AttachmentReady),
         "terminal_attachment_action" => decode!(AttachmentActionPayload, AttachmentAction),
@@ -1494,6 +1516,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
+        "factory_action" => serde_json::from_value::<super::factory::FactoryActionPayload>(payload)
+            .map(|payload| Event::FactoryAction(Box::new(payload)))
+            .map_err(|_| invalid_payload(&kind)),
+        "factory_task_open" => decode!(super::factory::FactoryTaskOpenPayload, FactoryTaskOpen),
+        "factory_task_close" => Ok(Event::FactoryTaskClose),
+        "factory_secretary_set" => decode!(PaneTargetPayload, FactorySecretarySet),
         "links_close" => Ok(Event::LinksClose),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
@@ -1575,6 +1603,25 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 
 impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
+        // A creation that carries the shell's key request id must leave that
+        // request with an answer: one the core refused before it reached
+        // Herdr is recorded as discarded here, so keys typed for it are
+        // dropped and the shell stops sending them (PRD instant-pane-topology
+        // D-11).
+        let creation_request = match &event {
+            Event::CreateTab(payload) => payload.request_id.clone(),
+            Event::CreatePane(payload) => payload.request_id.clone(),
+            Event::AgentStartInCheckout(payload) => payload.request_id.clone(),
+            _ => None,
+        };
+        let mut changed = self.apply_event(event);
+        if let Some(request_id) = creation_request {
+            changed |= self.settle_creation_request(&request_id);
+        }
+        changed
+    }
+
+    fn apply_event(&mut self, event: Event) -> bool {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::AgentLayout(payload) => self.apply_agent_layout(payload),
@@ -1589,6 +1636,10 @@ impl Runtime {
             },
             Event::SessionSearch(payload) => self.request_session_search(payload),
             Event::LinksOpen(payload) => self.open_links(payload),
+            Event::FactoryAction(payload) => self.factory_action(*payload),
+            Event::FactoryTaskOpen(payload) => self.factory_task_open(payload),
+            Event::FactoryTaskClose => self.factory_task_close(),
+            Event::FactorySecretarySet(payload) => self.factory_secretary_set(payload.pane_id),
             Event::LinksClose => self.close_links(),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
@@ -1605,37 +1656,10 @@ impl Runtime {
             Event::Attachment(payload) => self.begin_attachment(payload),
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
-            Event::Key(payload) => {
-                let submits = crate::labels::input::key_submits(&payload.bytes_base64);
-                self.note_delivery_key(&payload.pane_id);
-                if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
-                    return changed;
-                }
-                if let Some(changed) = self.hold_attachment_input(&payload) {
-                    return changed;
-                }
-                self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
-                self.snapshot.focused.surface = Surface::Terminal;
-                self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
-                self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
-                self.ensure_terminal_pane(&payload.pane_id);
-                self.sync_focused_terminal_projection();
-                if submits {
-                    self.record_operator_submit(&payload.pane_id);
-                }
-                if self.live.is_some()
-                    || self.remote_terminals.keys().any(|target_id| {
-                        remote_pane_source_id(target_id, &payload.pane_id).is_some()
-                    })
-                {
-                    self.write_terminal_control(&payload.pane_id, &payload.bytes_base64);
-                } else {
-                    // Fixture mode has no PTY behind the pane; the loopback
-                    // echo is the whole byte bridge.
-                    self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
-                }
-                true
-            }
+            Event::Key(payload) => match self.route_key(payload) {
+                Ok(payload) => self.deliver_key(payload),
+                Err(changed) => changed,
+            },
             Event::TerminalOutput(payload) => {
                 if self.snapshot.terminal.pane_id.is_none() {
                     self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
@@ -1962,6 +1986,19 @@ impl Runtime {
                     .saturating_add(1)
                     .max(unix_milliseconds());
                 let admission_id = self.next_async_operation_id;
+                self.begin_op_timing(
+                    &super::op_timing::tab_create_op_id(admission_id),
+                    "tab.create",
+                    None,
+                    &[],
+                );
+                if let Some(request_id) = payload.request_id.as_deref() {
+                    self.input_requests.open(
+                        request_id,
+                        super::terminal_input::InputOrigin::TabCreate(admission_id),
+                    );
+                    self.sync_input_requests();
+                }
                 if let Some(store) = self.workspace_views.as_mut() {
                     store
                         .agent_admissions
@@ -1992,6 +2029,12 @@ impl Runtime {
                 );
                 if let Err(message) = self.submit_local_control(action) {
                     self.finish_agent_admission(&admission_path, admission_id);
+                    self.op_timings
+                        .finish(&super::op_timing::tab_create_op_id(admission_id), "failed");
+                    self.discard_input_request(
+                        &super::terminal_input::InputOrigin::TabCreate(admission_id),
+                        "not_sent",
+                    );
                     self.set_error("tab.create_worker_failed", message, true);
                 }
                 true
@@ -2506,15 +2549,14 @@ impl Runtime {
                     return true;
                 };
                 let _ = payload.tab_id;
-                let context = self.live.as_ref().cloned();
-                let Some(context) = context else {
+                if self.live.is_none() {
                     self.set_error(
                         "pane.control_unavailable",
                         "Pane split requires a live Herdr connection",
                         true,
                     );
                     return true;
-                };
+                }
                 let direction = payload.direction;
                 let action = PaneControlAction::Split {
                     pane_id: pane_id.clone(),
@@ -2525,7 +2567,7 @@ impl Runtime {
                     format!("pane.split.{}.requested", direction.as_str()),
                     format!("Splitting pane {pane_id} {}", direction.as_str()),
                 );
-                self.begin_pane_operation(context, action);
+                self.begin_pane_operation(action, payload.request_id.as_deref());
                 true
             }
             Event::ResizePane(payload) => {
@@ -2537,14 +2579,14 @@ impl Runtime {
                     );
                     return true;
                 }
-                let Some(context) = self.live.as_ref().cloned() else {
+                if self.live.is_none() {
                     self.set_error(
                         "pane.control_unavailable",
                         "Pane resize requires a live Herdr connection",
                         true,
                     );
                     return true;
-                };
+                }
                 let pane_id = payload.pane_id;
                 let direction = payload.direction;
                 self.push_diagnostic(
@@ -2552,25 +2594,24 @@ impl Runtime {
                     format!("Resizing pane {pane_id} {}", direction.as_str()),
                 );
                 self.begin_pane_operation(
-                    context,
                     PaneControlAction::Resize {
                         pane_id,
                         direction,
                         amount: payload.amount,
                     },
+                    None,
                 );
                 true
             }
             Event::ToggleZoom(payload) => {
-                let context = self.live.as_ref().cloned();
-                let Some(context) = context else {
+                if self.live.is_none() {
                     self.set_error(
                         "pane.control_unavailable",
                         "Pane zoom requires a live Herdr connection",
                         true,
                     );
                     return true;
-                };
+                }
                 let pane_id = payload.pane_id;
                 if self.pane_alone_unzoomed(&pane_id) {
                     self.push_diagnostic(
@@ -2583,7 +2624,7 @@ impl Runtime {
                     "pane.zoom.requested",
                     format!("Toggling zoom for pane {pane_id}"),
                 );
-                self.begin_pane_operation(context, PaneControlAction::ToggleZoom { pane_id });
+                self.begin_pane_operation(PaneControlAction::ToggleZoom { pane_id }, None);
                 true
             }
             Event::ToggleConversation(payload) => {
@@ -2612,7 +2653,9 @@ impl Runtime {
                 false
             }
             Event::CloseTab(payload) => self.close_local_tab(payload.tab_id, payload.confirmed),
-            Event::ClosePane(payload) => self.close_local_pane(payload.pane_id, payload.confirmed),
+            Event::ClosePane(payload) => {
+                self.close_local_pane(payload.pane_id, payload.confirmed, true)
+            }
             Event::CloseTree(payload) => self.start_tree_close(payload),
             Event::CheckCloseStatus(payload) => self.check_close_status(&payload.key),
             Event::RetryAgentClose(payload) => self.retry_agent_close(&payload.key),
@@ -2996,6 +3039,7 @@ impl Runtime {
                     self.write_terminal_control(
                         &payload.pane_id,
                         &live::encode_base64(bytes.as_bytes()),
+                        Instant::now(),
                     );
                     return self.snapshot.status.last_error.is_some();
                 }
@@ -3066,37 +3110,18 @@ impl Runtime {
                     self.request_terminal_control(&payload.pane_id);
                     return true;
                 }
-                if previous == Some(size)
-                    && !self.terminal_frames_need_full.contains(&payload.pane_id)
+                // A pane whose tab is drawn ahead of Herdr keeps its PTY size
+                // until Herdr confirms the layout; the size is sent then
+                // (PRD instant-pane-topology D-08).
+                if self.grid_held_panes.contains(&payload.pane_id)
+                    && self.terminal_sessions.contains_key(&payload.pane_id)
                 {
+                    if previous != Some(size) {
+                        self.held_resizes.insert(payload.pane_id);
+                    }
                     return false;
                 }
-                crate::diagnostic!(
-                    serde_json::json!({"kind":"terminal.resize_settled", "pane_id":payload.pane_id, "rows":payload.rows, "cols":payload.cols})
-                );
-                let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id) else {
-                    return false;
-                };
-                match session.mode {
-                    TerminalSessionMode::Control => {
-                        if let Err(message) = session.resize(payload.rows, payload.cols) {
-                            self.set_error("terminal.resize_failed", message, true);
-                            return true;
-                        }
-                        false
-                    }
-                    // An observer cannot resize and Herdr keeps drawing it at
-                    // the grid it attached with; an idle pane sends no frame
-                    // that would show the change, so the view would keep the
-                    // old frame reflowed. It attaches again at the new grid
-                    // once the size settles (`reattach_resized_observers`).
-                    TerminalSessionMode::Observe if previous != Some(size) => {
-                        self.observers_resized
-                            .insert(payload.pane_id, unix_milliseconds());
-                        false
-                    }
-                    TerminalSessionMode::Observe => false,
-                }
+                self.send_terminal_size(&payload.pane_id, previous)
             }
             Event::PaneFind(payload) => {
                 if payload.term.is_empty() {
@@ -3493,6 +3518,8 @@ impl Runtime {
                         .and_then(RightPanelSection::parse)
                         .unwrap_or(current.right_panel_section),
                     sessions_mode_by_project: current.sessions_mode_by_project,
+                    // The secretary belongs to `factory_secretary_set`.
+                    factory_secretary_pane: current.factory_secretary_pane,
                     expanded_paths: payload.expanded_paths,
                     device_expanded_paths: payload
                         .device_expanded_paths
@@ -3668,5 +3695,142 @@ impl Event {
                 | Event::AttachmentReady(_)
                 | Event::AttachmentAction(_)
         )
+    }
+}
+
+impl Runtime {
+    /// Resolves who a `key` event is for: its pane, or the pane Herdr's
+    /// answer named for the creation request it was sent against. Keys for a
+    /// request still waiting are kept, and keys for a refused or unknown one
+    /// are dropped; `Err` carries whether the snapshot changed.
+    fn route_key(&mut self, payload: KeyEventPayload) -> Result<KeyPayload, bool> {
+        let KeyEventPayload {
+            pane_id,
+            pending_request,
+            bytes_base64,
+        } = payload;
+        let Some(request_id) = pending_request else {
+            let Some(pane_id) = pane_id else {
+                self.set_error("terminal.invalid_input", "A key names no pane", false);
+                return Err(true);
+            };
+            return Ok(KeyPayload {
+                pane_id,
+                bytes_base64,
+            });
+        };
+        let bytes = match live::decode_base64(&bytes_base64) {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.set_error("terminal.invalid_input", message, false);
+                return Err(true);
+            }
+        };
+        match self
+            .input_requests
+            .route(&request_id, &bytes, Instant::now())
+        {
+            (super::terminal_input::KeyRoute::Pane(pane_id), _) => Ok(KeyPayload {
+                pane_id,
+                bytes_base64,
+            }),
+            (_, changed) => {
+                if changed {
+                    self.sync_input_requests();
+                }
+                Err(changed)
+            }
+        }
+    }
+
+    /// Writes typed bytes to `payload.pane_id`, the one path every key takes.
+    /// Sends the size the pane's view last reported to its session. With
+    /// `previous`, the size the view reported before, an unchanged size sends
+    /// nothing; without it the size is sent as a held pane's release.
+    pub(super) fn send_terminal_size(
+        &mut self,
+        pane_id: &str,
+        previous: Option<(u16, u16)>,
+    ) -> bool {
+        let Some(&size) = self.terminal_sizes.get(pane_id) else {
+            return false;
+        };
+        let (rows, cols) = size;
+        if previous == Some(size) && !self.terminal_frames_need_full.contains(pane_id) {
+            return false;
+        }
+        crate::diagnostic!(
+            serde_json::json!({"kind":"terminal.resize_settled", "pane_id":pane_id, "rows":rows, "cols":cols})
+        );
+        let Some(session) = self.terminal_sessions.get_mut(pane_id) else {
+            return false;
+        };
+        match session.mode {
+            TerminalSessionMode::Control => {
+                if let Err(message) = session.resize(rows, cols) {
+                    self.set_error("terminal.resize_failed", message, true);
+                    return true;
+                }
+                false
+            }
+            // An observer cannot resize and Herdr keeps drawing it at
+            // the grid it attached with; an idle pane sends no frame
+            // that would show the change, so the view would keep the
+            // old frame reflowed. It attaches again at the new grid
+            // once the size settles (`reattach_resized_observers`).
+            TerminalSessionMode::Observe if previous != Some(size) => {
+                self.observers_resized
+                    .insert(pane_id.to_owned(), unix_milliseconds());
+                false
+            }
+            TerminalSessionMode::Observe => false,
+        }
+    }
+
+    pub(super) fn deliver_key(&mut self, payload: KeyPayload) -> bool {
+        self.write_key(payload, true, Instant::now())
+    }
+
+    /// Writes one key, typed at `typed_at`, to its pane; `takes_focus` is
+    /// false for keys held for a creation, which reach the new pane without
+    /// moving the keyboard.
+    pub(super) fn write_key(
+        &mut self,
+        payload: KeyPayload,
+        takes_focus: bool,
+        typed_at: Instant,
+    ) -> bool {
+        let submits = crate::labels::input::key_submits(&payload.bytes_base64);
+        self.note_delivery_key(&payload.pane_id);
+        if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
+            return changed;
+        }
+        if let Some(changed) = self.hold_attachment_input(&payload) {
+            return changed;
+        }
+        if takes_focus {
+            self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
+            self.snapshot.focused.surface = Surface::Terminal;
+            self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
+            self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
+            self.ensure_terminal_pane(&payload.pane_id);
+            self.sync_focused_terminal_projection();
+        }
+        if submits {
+            self.record_operator_submit(&payload.pane_id);
+        }
+        if self.live.is_some()
+            || self
+                .remote_terminals
+                .keys()
+                .any(|target_id| remote_pane_source_id(target_id, &payload.pane_id).is_some())
+        {
+            self.write_terminal_control(&payload.pane_id, &payload.bytes_base64, typed_at);
+        } else {
+            // Fixture mode has no PTY behind the pane; the loopback
+            // echo is the whole byte bridge.
+            self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
+        }
+        true
     }
 }

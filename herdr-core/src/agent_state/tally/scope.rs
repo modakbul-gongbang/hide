@@ -115,6 +115,7 @@ pub struct Raised {
 /// former web scope did; the checkout badge still uses its last-owner tally.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
+    pub overview_needs_you: usize,
     pub work: BTreeMap<String, crate::agent_state::work::RowWork>,
     pub has_working: bool,
     pub relations: BTreeMap<String, Vec<super::relations::Group>>,
@@ -317,6 +318,7 @@ pub(super) fn scope(
     members: Vec<Member>,
     all: &[&SidebarAgentSnapshot],
     marks: MarkCountsSnapshot,
+    factory_workers: &HashSet<String>,
 ) -> Scope {
     let by_pane: HashMap<_, _> = all.iter().map(|row| (row.pane_id.as_str(), *row)).collect();
     let in_scope: HashSet<_> = members
@@ -332,6 +334,9 @@ pub(super) fn scope(
     for row in physical {
         value.rows.push(references[&(*row as *const _)].clone());
         value.groups.add(&row.group);
+        if row.state.needs_you && !factory_workers.contains(&row.pane_id) {
+            value.overview_needs_you += 1;
+        }
         if row.state.root {
             value.roots.push(references[&(*row as *const _)].clone());
         }
@@ -412,6 +417,9 @@ pub(super) fn scope(
                 .as_deref()
                 .is_some_and(|parent| in_scope.contains(parent))
         {
+            continue;
+        }
+        if factory_workers.contains(&row.pane_id) {
             continue;
         }
         value.requests.rows.push(RequestRow {
@@ -514,6 +522,7 @@ struct DeviceInput {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Input {
+    factory_workers: HashSet<String>,
     places: Vec<PlaceInput>,
     devices: Vec<DeviceInput>,
 }
@@ -581,7 +590,14 @@ fn device_rows(snapshot: &crate::model::Snapshot) -> Vec<DeviceRows<'_>> {
 impl Cache {
     pub(crate) fn refresh(&mut self, snapshot: &mut crate::model::Snapshot) -> bool {
         let devices = device_rows(snapshot);
+        let factory_workers = worker_panes(
+            snapshot
+                .factory
+                .as_deref()
+                .and_then(|f| f.summary.as_deref()),
+        );
         let input = Input {
+            factory_workers,
             devices: devices
                 .iter()
                 .map(|d| DeviceInput {
@@ -716,6 +732,7 @@ impl Cache {
                         members(&[project], &device.agents),
                         &device.agents,
                         project_marks(&[project]),
+                        &input.factory_workers,
                     ),
                 );
                 let projected = projects
@@ -779,6 +796,7 @@ impl Cache {
                             members,
                             &device.agents,
                             checkout.agent_summary.marks,
+                            &input.factory_workers,
                         ),
                     );
                     let value = checkouts
@@ -816,6 +834,7 @@ impl Cache {
                     scoped_members,
                     &device.agents,
                     project_marks(&device.projects),
+                    &input.factory_workers,
                 ),
             );
             let mut owners = BTreeMap::new();
@@ -918,6 +937,7 @@ impl Cache {
             overall_members,
             &all,
             project_marks(&overall_projects),
+            &input.factory_workers,
         );
         overall.folded = super::lineage::folded(&live, &live_projects, &places);
         overall.listed = overall_listed;
@@ -1032,5 +1052,16 @@ pub(crate) fn row_references(
             *count += 1;
             (*agent as *const _, value)
         })
+        .collect()
+}
+
+/// Current Factory cards own their workers' requests; cancelled cards are not columns.
+fn worker_panes(summary: Option<&hide_factory::FactorySummary>) -> HashSet<String> {
+    summary
+        .into_iter()
+        .flat_map(|s| &s.factories)
+        .flat_map(|f| &f.columns)
+        .flat_map(|c| &c.cards)
+        .filter_map(|c| c.worker_pane.clone().filter(|pane| !pane.is_empty()))
         .collect()
 }

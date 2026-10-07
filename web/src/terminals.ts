@@ -29,9 +29,11 @@ import { keySystem } from "./host";
 import { terminalKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
 import { remoteControl, remoteTargetOfPane } from "./remote";
+import { keyPayload, noteTerminalFocus } from "./keyTarget";
 import { bufferRow, selectionToText, type CellRow } from "./selection";
 import { osc8Handler, registerTerminalLinks, type LinkState, type TerminalLinkActions } from "./terminalLinkProvider";
 import { pointerModifiers, wheelRows } from "./wheel";
+import type { TerminalPane } from "./snapshot";
 import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -218,8 +220,29 @@ function disposeInstance(paneId: string, instance: Instance) {
   instances.delete(paneId);
 }
 
+/**
+ * Panes whose tab has a geometry change Herdr has not confirmed (PRD
+ * instant-pane-topology D-08). Their grid stays at the size the PTY runs at:
+ * the view clips or leaves a margin rather than refitting, and the new fit
+ * goes out once the hold ends (`applyGridHolds`).
+ */
+const heldGrids = new Set<string>();
+
 function sendGrid(paneId: string, instance: Instance, newView: boolean, onlyChanged = false) {
   if (!instance.host) return;
+  // A held pane keeps its grid. One that never had a grid still sends its
+  // first, because there is no PTY size of this view's to keep. A new view of
+  // a held pane still asks for a whole frame, at the grid it keeps.
+  if (heldGrids.has(paneId) && instance.grid) {
+    if (newView) {
+      instance.dispatch({
+        schema_version: 2,
+        kind: "terminal_viewport",
+        payload: { pane_id: paneId, cols: instance.grid.cols, rows: instance.grid.rows, new_view: true },
+      });
+    }
+    return;
+  }
   instance.fit.fit();
   const { term } = instance;
   if (term.cols < 2 || term.rows < 2) {
@@ -239,6 +262,18 @@ function sendGrid(paneId: string, instance: Instance, newView: boolean, onlyChan
     kind: "terminal_resize",
     payload: { pane_id: paneId, cols: term.cols, rows: term.rows },
   });
+}
+
+/** Follows the core's grid holds; a pane whose hold ended sends its current fit once. */
+export function applyGridHolds(panes: TerminalPane[] | undefined) {
+  const held = new Set((panes ?? []).filter((pane) => pane.grid_held).map((pane) => pane.pane_id));
+  const released = [...heldGrids].filter((paneId) => !held.has(paneId));
+  heldGrids.clear();
+  for (const paneId of held) heldGrids.add(paneId);
+  for (const paneId of released) {
+    const instance = instances.get(paneId);
+    if (instance) sendGrid(paneId, instance, false, true);
+  }
 }
 
 /** Asks the core for a full frame of the pane; used after every self-contained snapshot. */
@@ -484,11 +519,13 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     press: null,
     disposeHandlers: () => {},
   };
+  // Right after a new tab or split was asked for, keys go to that request's
+  // pane rather than this one (`keyTarget.ts`).
   const send = (bytes: Uint8Array) =>
     dispatch({
       schema_version: 2,
       kind: "key",
-      payload: { pane_id: paneId, bytes_base64: bytesBase64(bytes) },
+      payload: keyPayload(paneId, bytesBase64(bytes)),
     });
   const system = keySystem();
   term.attachCustomKeyEventHandler((event) => {
@@ -566,6 +603,7 @@ export function attachTerminal(
     // owns the focus pane, so the click is an event and the header follows
     // the snapshot, not the click.
     shown.term.textarea?.addEventListener("focus", () => {
+      noteTerminalFocus(paneId);
       if (followingSnapshot) return;
       // A snapshot can lag a newer intent. Core owns focus idempotence and
       // coalescing, so every operator focus must reach it.

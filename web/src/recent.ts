@@ -55,7 +55,7 @@ export function displaySurface(checkout: Checkout, display: ViewDisplaySnapshot,
 }
 
 /** A screen of the page's own: a device's Home Overview, or one Project's Overview. */
-export type PageScreen = Exclude<Screen, { kind: "workspace" }>;
+export type PageScreen = Extract<Screen, { kind: "main" }>;
 
 /**
  * A page screen in the recent order. It joins the order when the page shows
@@ -145,7 +145,9 @@ export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): S
  * the device in front.
  */
 export function currentEntry(screen: Screen | null, rest: SnapshotRest | null, viewInUse: boolean): RecentEntry | null {
-  if (screen && screen.kind !== "workspace") return screenVisit(screen, frontDeviceId(rest));
+  if (screen?.kind === "main") return screenVisit(screen, frontDeviceId(rest));
+  // The Factory screen is reached by its own row and shortcut, not the recent order.
+  if (screen?.kind === "factory") return null;
   return currentSurface(rest, viewInUse);
 }
 

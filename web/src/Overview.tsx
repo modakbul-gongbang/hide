@@ -16,9 +16,9 @@ import { Hint } from "./components/ui/tooltip";
 import { commandLabel } from "./shortcutLabels";
 import { projectEntryLens } from "./navigation";
 
-/** The same selected-device group that the Agents sidebar draws. */
+/** The same selected-device group that the Agents sidebar draws, less the Factory's workers, which 내 차례 counts (PRD software-factory-ui B13). */
 export function useOverviewCount() {
-  return useShellStore((s) => deviceScope(s.rest, frontDeviceId(s.rest))?.groups.needs_you ?? 0);
+  return useShellStore((s) => deviceScope(s.rest, frontDeviceId(s.rest))?.overview_needs_you ?? 0);
 }
 
 export function OverviewButton({ actions }: { actions: Actions }) {

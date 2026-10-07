@@ -592,6 +592,8 @@ The projection and push regression tests remain in `hided/src/mobile/{projection
 `agent_state/tally/scope.rs` publishes `agent_scope` on the navigator, each device, each project and each checkout.
 Physical group totals preserve every reported row; Overview members use the first checkout owner and deduplicate a pane within each project, while checkout marks retain the existing last-owner rule.
 Physical row references include an occurrence index so duplicate pane IDs keep their distinct labels and states; Overview and graph membership retain the first source occurrence.
+The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from requests and the Overview attention count, and keeps them in physical agent lists.
+A changed Factory summary refreshes the scope in the same publication; unchanged worker membership reuses the cache.
 Requests exclude a delegated row only when its parent belongs to that scope, and publish their ordered groups and counts separately from physical and Overview totals.
 Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
 The scope cache compares owned agent rows, device connection facts and checkout membership and summaries; it restores cached values after a catalog rebuild and recomputes only when those inputs change.

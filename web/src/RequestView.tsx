@@ -1,7 +1,8 @@
 import type { AgentScope } from "./agentScope";
-import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, LinkIcon, SquareArrowOutUpRightIcon, SquareTerminalIcon } from "lucide-react";
+import { ArrowRightIcon, ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, LinkIcon, SquareArrowOutUpRightIcon, SquareTerminalIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Actions } from "./actions";
+import { useFactoryTurnCount } from "./factory/hooks";
 import { AgentMark } from "./AgentMark";
 import { markTone } from "./agentRow";
 import { Elapsed } from "./components/elapsed";
@@ -64,6 +65,22 @@ export type RequestViewProps = {
   onNewAgent?: () => void;
 };
 
+/** The one line to the Factory's 내 차례, when it has items: the Factory's work is answered there, not here (PRD software-factory-ui D-06, B13). */
+function FactoryTurnLine({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const count = useFactoryTurnCount();
+  if (count === 0) return null;
+  return (
+    <p className="flex items-center gap-xs text-caption text-muted-foreground" data-requests-factory-line={count}>
+      {t("factory.overviewLine", { count })}
+      <Button variant="ghost" size="sm" onClick={() => actions.openFactory()}>
+        <ArrowRightIcon aria-hidden="true" />
+        {t("factory.title")}
+      </Button>
+    </p>
+  );
+}
+
 export const RequestView = memo(function RequestView({ rows, agentScope, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
   const { t } = useInterfaceTranslation();
   const groups = useMemo(() => agentScope ? requestGroups(rows, agentScope) : [], [rows, agentScope]);
@@ -85,6 +102,7 @@ export const RequestView = memo(function RequestView({ rows, agentScope, scope, 
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-requests-empty="true">
+        <FactoryTurnLine actions={actions} />
         <p>{t("requests.noAgents")}</p>
         {onNewAgent ? (
           <Button variant="secondary" onClick={onNewAgent} data-requests-new-agent="true">
@@ -104,6 +122,7 @@ export const RequestView = memo(function RequestView({ rows, agentScope, scope, 
   const nothingToDo = groups.every((group) => group.verb === "idle");
   return (
     <div className="flex min-w-0 flex-col gap-md px-lg pb-xl" data-requests={scope} onKeyDown={moveFocus}>
+      <FactoryTurnLine actions={actions} />
       {nothingToDo ? (
         <p className="text-caption text-muted-foreground" data-requests-nothing="true">
           {t("requests.nothingToDo")}

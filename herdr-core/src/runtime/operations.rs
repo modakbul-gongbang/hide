@@ -83,58 +83,31 @@ pub(super) struct PendingPaneOperation {
     pub(super) message: Option<String>,
     pub(super) retryable: bool,
     pub(super) created_pane_id: Option<String>,
-    pub(super) queued_resize: Option<QueuedResize>,
     pub(super) baseline_signature: PaneTopologySignature,
+    /// What this record asks Herdr for. It waits in its tab's line in phase
+    /// `queued` and is sent when every operation ahead of it has answered
+    /// (PRD instant-pane-topology D-10).
+    pub(super) request: GeometryRequest,
+    /// Its place in its tab's line.
+    pub(super) sequence: u64,
+    /// What the canvas draws for it ahead of Herdr (D-07): set at the request
+    /// for a close, zoom or resize and at the answer for a split, and cleared
+    /// when it settles, fails, or its result becomes unknown.
+    pub(super) prediction: Option<super::pane_prediction::Prediction>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ResizeAxis {
-    Horizontal,
-    Vertical,
-}
+/// How many operations may wait in one tab's line behind the one Herdr is
+/// answering; the next is refused and logged (D-10, engineering 15).
+pub(super) const GEOMETRY_QUEUE_LIMIT: usize = 8;
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct QueuedResize {
-    pub(super) axis: ResizeAxis,
-    pub(super) delta: f32,
-}
-
-impl QueuedResize {
-    pub(super) fn from_action(action: &PaneControlAction) -> Option<Self> {
-        let PaneControlAction::Resize {
-            direction, amount, ..
-        } = action
-        else {
-            return None;
-        };
-        let (axis, sign) = match direction {
-            PaneResizeDirection::Left => (ResizeAxis::Horizontal, -1.0),
-            PaneResizeDirection::Right => (ResizeAxis::Horizontal, 1.0),
-            PaneResizeDirection::Up => (ResizeAxis::Vertical, -1.0),
-            PaneResizeDirection::Down => (ResizeAxis::Vertical, 1.0),
-        };
-        Some(Self {
-            axis,
-            delta: sign * *amount,
-        })
-    }
-
-    pub(super) fn into_action(self, pane_id: String) -> Option<PaneControlAction> {
-        if self.delta.abs() < 0.001 {
-            return None;
-        }
-        let (direction, amount) = match (self.axis, self.delta.is_sign_positive()) {
-            (ResizeAxis::Horizontal, true) => (PaneResizeDirection::Right, self.delta.abs()),
-            (ResizeAxis::Horizontal, false) => (PaneResizeDirection::Left, self.delta.abs()),
-            (ResizeAxis::Vertical, true) => (PaneResizeDirection::Down, self.delta.abs()),
-            (ResizeAxis::Vertical, false) => (PaneResizeDirection::Up, self.delta.abs()),
-        };
-        Some(PaneControlAction::Resize {
-            pane_id,
-            direction,
-            amount: amount.min(0.5),
-        })
-    }
+#[derive(Clone, Debug)]
+pub(super) enum GeometryRequest {
+    /// A split, zoom or resize, sent as this action.
+    Pane(PaneControlAction),
+    /// The operator's close of one pane, started through the ordinary close
+    /// (`close_local_pane`) when its turn comes; from then on the close keeps
+    /// its own record and this one is gone.
+    Close { pane_id: String, confirmed: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -363,11 +336,17 @@ impl Runtime {
     /// idle Herdr session must still turn an expired acknowledgement into an
     /// explicit unknown result at its deadline.
     pub(crate) fn tick_async_operations(&mut self, now_unix_ms: u64) -> bool {
+        self.with_close_geometry(|runtime| runtime.tick_operations(now_unix_ms))
+    }
+
+    fn tick_operations(&mut self, now_unix_ms: u64) -> bool {
+        self.op_timings.expire(std::time::Instant::now());
         let mut changed = false;
         changed |= self.expire_pending_view_focus(now_unix_ms);
         changed |= self.expire_tab_moves(now_unix_ms);
         changed |= self.expire_close_operations(now_unix_ms);
         changed |= self.expire_pane_operations(now_unix_ms);
+        changed |= self.expire_provisional_tabs(now_unix_ms);
         changed |= self.expire_remote_operations(now_unix_ms);
         changed |= self.advance_tree_closes();
         changed |= self.expire_attachment_wait(now_unix_ms);
@@ -375,6 +354,9 @@ impl Runtime {
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);
         changed |= self.reattach_resized_observers(now_unix_ms);
+        // A close ahead in a tab's line ends on paths of its own; its turn
+        // passes on here at the latest.
+        changed |= self.pump_geometry_queues();
         if changed {
             self.sync_recent_closed_snapshot();
             self.sync_async_operations();
@@ -826,10 +808,14 @@ impl Runtime {
             })
     }
 
+    /// Admits a split, zoom or resize into its tab's line and sends it when
+    /// nothing ahead of it is still waiting for Herdr (D-10). A zoom or resize
+    /// is drawn at once on top of what the operations ahead of it will leave
+    /// (D-07); a split is drawn when Herdr names the pane it made.
     pub(super) fn begin_pane_operation(
         &mut self,
-        context: LiveContext,
         action: PaneControlAction,
+        input_request: Option<&str>,
     ) -> bool {
         let kind = action.kind();
         let target_id = action.pane_id().to_owned();
@@ -853,69 +839,115 @@ impl Runtime {
             !(operation.scope_id == scope_id
                 && matches!(operation.phase.as_str(), "failed" | "refused"))
         });
-        if kind == "pane.resize"
-            && let Some(existing) = self
-                .pane_operations
-                .values_mut()
-                .find(|operation| operation.scope_id == scope_id)
-            && existing.kind == "pane.resize"
-            && existing.target_id == target_id
-            && matches!(
-                existing.phase.as_str(),
-                "transmitting" | "awaiting_topology"
-            )
-        {
-            let Some(next) = QueuedResize::from_action(&action) else {
-                return true;
-            };
-            if let Some(queued) = existing.queued_resize.as_mut() {
-                if queued.axis != next.axis {
-                    self.set_error(
-                        "pane.operation_in_progress",
-                        format!(
-                            "A resize is already running for pane {}; the new axis was not sent",
-                            target_id
-                        ),
-                        false,
-                    );
-                    return true;
-                }
-                queued.delta = (queued.delta + next.delta).clamp(-0.5, 0.5);
-            } else {
-                existing.queued_resize = Some(next);
-            }
-            existing.message = Some(
-                "The latest resize position will be sent after Herdr confirms this one".to_owned(),
-            );
+        // A resize behind an unsent resize of the same pane and axis moves
+        // that one further instead, so a drag cannot fill the line.
+        if self.fold_queued_resize(&scope_id, &action) {
+            self.request_republish();
             self.sync_recent_closed_snapshot();
             return true;
         }
-        if self
-            .pane_operations
-            .values()
-            .any(|operation| operation.scope_id == scope_id)
-            || self
-                .close_operations
-                .values()
-                .any(|operation| operation.scope_id == scope_id)
-        {
-            self.set_error(
-                "pane.operation_in_progress",
-                format!(
-                    "{} is already running for tab {}; the new request was not queued",
-                    kind, scope_id
-                ),
-                false,
-            );
+        if !self.admit_to_geometry_queue(&scope_id, kind, &target_id) {
             return true;
         }
-        self.next_async_operation_id = self.next_async_operation_id.saturating_add(1).max(1);
-        let id = format!(
-            "pane-op-{}-{}",
-            unix_milliseconds(),
-            self.next_async_operation_id
+        let prediction = self.request_prediction(&scope_id, &action);
+        let id = self.insert_queued_geometry(
+            kind,
+            target_id.clone(),
+            scope_id.clone(),
+            baseline_signature,
+            GeometryRequest::Pane(action),
+            prediction,
         );
+        self.begin_op_timing(&id, kind, Some(&scope_id), &[&target_id]);
+        if let Some(request_id) = input_request {
+            self.input_requests.open(
+                request_id,
+                super::terminal_input::InputOrigin::Split(id.clone()),
+            );
+            self.sync_input_requests();
+        }
+        if self.pane_operations[&id].prediction.is_some() {
+            self.request_republish();
+        }
+        self.sync_recent_closed_snapshot();
+        self.pump_geometry_queue(&scope_id);
+        true
+    }
+
+    /// Admits the operator's close of one pane among several into its tab's
+    /// line when the tab is busy; returns false when the tab is idle and the
+    /// close should start now. A close that removes the whole tab, a pane on
+    /// a busy tab past the line's limit, and every tree close start as they
+    /// always did.
+    ///
+    /// Whether the close removes the whole tab is Herdr's layout's answer,
+    /// not the drawing's: a pane drawn alone because a close ahead took its
+    /// sibling still has that sibling in Herdr's tab, so its close waits its
+    /// turn instead of meeting the close in progress. It is drawn gone only
+    /// while the line leaves another pane; the tab's last pane leaves with
+    /// its tab when the close runs.
+    pub(super) fn queue_pane_close(&mut self, pane_id: &str, confirmed: bool) -> bool {
+        let Some(scope_id) = self.pane_operation_scope(pane_id) else {
+            return false;
+        };
+        let several = self
+            .confirmed_layouts
+            .get(&scope_id)
+            .or_else(|| {
+                self.snapshot
+                    .pane_layouts
+                    .iter()
+                    .find(|layout| layout.tab_id == scope_id)
+            })
+            .is_some_and(|layout| layout.pane_ids().len() > 1);
+        if !several || !self.geometry_tab_busy(&scope_id) {
+            return false;
+        }
+        let keeps_a_pane = self
+            .predicted_tab_layout(&scope_id)
+            .is_some_and(|layout| layout.pane_ids().into_iter().any(|id| id != pane_id));
+        let Some(baseline_signature) = self.pane_operation_baseline(pane_id) else {
+            return false;
+        };
+        if !self.admit_to_geometry_queue(&scope_id, "pane.close", pane_id) {
+            return true;
+        }
+        let prediction = keeps_a_pane.then(|| super::pane_prediction::Prediction::Close {
+            pane: pane_id.to_owned(),
+        });
+        self.insert_queued_geometry(
+            "pane.close",
+            pane_id.to_owned(),
+            scope_id,
+            baseline_signature,
+            GeometryRequest::Close {
+                pane_id: pane_id.to_owned(),
+                confirmed,
+            },
+            prediction,
+        );
+        self.push_diagnostic(
+            "pane.close.queued",
+            format!("Closing pane {pane_id} after the operations ahead of it"),
+        );
+        self.request_republish();
+        self.sync_recent_closed_snapshot();
+        true
+    }
+
+    fn insert_queued_geometry(
+        &mut self,
+        kind: &str,
+        target_id: String,
+        scope_id: String,
+        baseline_signature: PaneTopologySignature,
+        request: GeometryRequest,
+        prediction: Option<super::pane_prediction::Prediction>,
+    ) -> String {
+        self.next_async_operation_id = self.next_async_operation_id.saturating_add(1).max(1);
+        let sequence = self.next_async_operation_id;
         let now = unix_milliseconds();
+        let id = format!("pane-op-{now}-{sequence}");
         self.pane_operations.insert(
             id.clone(),
             PendingPaneOperation {
@@ -924,30 +956,470 @@ impl Runtime {
                 target_id,
                 scope_id,
                 connection_generation: self.live_generation,
-                phase: "transmitting".to_owned(),
-                stage: "request".to_owned(),
+                phase: "queued".to_owned(),
+                stage: "queue".to_owned(),
                 started_at_unix_ms: now,
-                deadline_at_unix_ms: Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
+                deadline_at_unix_ms: None,
                 message: None,
                 retryable: false,
                 created_pane_id: None,
-                queued_resize: None,
                 baseline_signature,
+                request,
+                sequence,
+                prediction,
             },
         );
-        self.sync_recent_closed_snapshot();
+        id
+    }
+
+    /// Whether the tab has room in its line, refusing and logging the
+    /// request when it does not.
+    fn admit_to_geometry_queue(&mut self, scope_id: &str, kind: &str, target_id: &str) -> bool {
+        let waiting = self
+            .pane_operations
+            .values()
+            .filter(|operation| operation.scope_id == scope_id && operation.phase == "queued")
+            .count();
+        if waiting < GEOMETRY_QUEUE_LIMIT {
+            return true;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "pane_operation",
+            "kind": "pane.operation.queue_full",
+            "operation": kind,
+            "tab_id": scope_id,
+            "pane_id": target_id,
+            "limit": GEOMETRY_QUEUE_LIMIT,
+        }));
+        self.push_diagnostic(
+            "pane.operation.queue_full",
+            format!(
+                "{kind} for {target_id} was refused: {GEOMETRY_QUEUE_LIMIT} operations already wait in tab {scope_id}"
+            ),
+        );
+        false
+    }
+
+    /// Whether an operation of the tab is still waiting for Herdr, so the
+    /// next one has to wait its turn. A result that became unknown does not
+    /// hold the line (D-09, D-12).
+    fn geometry_in_flight(&self, scope_id: &str) -> bool {
+        self.pane_operations.values().any(|operation| {
+            operation.scope_id == scope_id
+                && matches!(
+                    operation.phase.as_str(),
+                    "transmitting" | "awaiting_topology"
+                )
+        }) || self.close_operations.values().any(|operation| {
+            operation.scope_id == scope_id
+                && matches!(
+                    operation.phase.as_str(),
+                    "preparing" | "transmitting" | "awaiting_topology"
+                )
+        })
+    }
+
+    fn geometry_tab_busy(&self, scope_id: &str) -> bool {
+        self.geometry_in_flight(scope_id)
+            || self
+                .pane_operations
+                .values()
+                .any(|operation| operation.scope_id == scope_id && operation.phase == "queued")
+    }
+
+    /// The tab's layout as it will stand once every operation already in its
+    /// line lands: what the next request is predicted on.
+    /// The tab as the line will leave it: Herdr's confirmed layout with every
+    /// prediction folded in. The stored layout already shows the drawn ones,
+    /// so the fold starts from what Herdr confirmed when there is a drawing.
+    fn predicted_tab_layout(&self, scope_id: &str) -> Option<PaneLayoutSnapshot> {
+        let layout = self.confirmed_layouts.get(scope_id).or_else(|| {
+            self.snapshot
+                .pane_layouts
+                .iter()
+                .find(|layout| layout.tab_id == scope_id)
+        })?;
+        Some(super::pane_prediction::predict(
+            layout,
+            &self.geometry_predictions(scope_id),
+        ))
+    }
+
+    fn request_prediction(
+        &self,
+        scope_id: &str,
+        action: &PaneControlAction,
+    ) -> Option<super::pane_prediction::Prediction> {
+        let layout = self.predicted_tab_layout(scope_id)?;
+        match action {
+            PaneControlAction::ToggleZoom { pane_id } => {
+                Some(super::pane_prediction::Prediction::Zoom {
+                    pane: pane_id.clone(),
+                    zoomed: !layout.zoomed,
+                })
+            }
+            PaneControlAction::Resize {
+                pane_id,
+                direction,
+                amount,
+            } => super::pane_prediction::resize_prediction(&layout, pane_id, *direction, *amount),
+            _ => None,
+        }
+    }
+
+    /// Folds `action` into the last unsent resize of the same pane and axis
+    /// in the tab's line, when that is the line's last entry.
+    fn fold_queued_resize(&mut self, scope_id: &str, action: &PaneControlAction) -> bool {
+        let PaneControlAction::Resize {
+            pane_id,
+            direction,
+            amount,
+        } = action
+        else {
+            return false;
+        };
+        let signed = |direction: PaneResizeDirection, amount: f32| match direction {
+            PaneResizeDirection::Left | PaneResizeDirection::Up => -amount,
+            PaneResizeDirection::Right | PaneResizeDirection::Down => amount,
+        };
+        let horizontal = |direction: PaneResizeDirection| {
+            matches!(
+                direction,
+                PaneResizeDirection::Left | PaneResizeDirection::Right
+            )
+        };
+        let Some(last_id) = self
+            .pane_operations
+            .values()
+            .filter(|operation| operation.scope_id == scope_id && operation.phase == "queued")
+            .max_by_key(|operation| operation.sequence)
+            .map(|operation| operation.id.clone())
+        else {
+            return false;
+        };
+        let GeometryRequest::Pane(PaneControlAction::Resize {
+            pane_id: queued_pane,
+            direction: queued_direction,
+            amount: queued_amount,
+        }) = &self.pane_operations[&last_id].request
+        else {
+            return false;
+        };
+        if queued_pane != pane_id || horizontal(*queued_direction) != horizontal(*direction) {
+            return false;
+        }
+        let delta = (signed(*queued_direction, *queued_amount) + signed(*direction, *amount))
+            .clamp(-0.5, 0.5);
+        let folded = if delta.abs() < 0.001 {
+            None
+        } else {
+            let direction = match (horizontal(*direction), delta > 0.0) {
+                (true, true) => PaneResizeDirection::Right,
+                (true, false) => PaneResizeDirection::Left,
+                (false, true) => PaneResizeDirection::Down,
+                (false, false) => PaneResizeDirection::Up,
+            };
+            Some(PaneControlAction::Resize {
+                pane_id: pane_id.clone(),
+                direction,
+                amount: delta.abs(),
+            })
+        };
+        let Some(folded) = folded else {
+            // The two cancel out: nothing is left to send.
+            self.pane_operations.remove(&last_id);
+            self.op_timings.finish(&last_id, "cancelled");
+            return true;
+        };
+        // Predicted on the line without the entry it replaces.
+        let mut predictions = self.geometry_predictions(scope_id);
+        predictions.retain(|prediction| {
+            self.pane_operations[&last_id].prediction.as_ref() != Some(prediction)
+        });
+        // From Herdr's confirmed layout, as `predicted_tab_layout`: the
+        // stored one already shows the entry being replaced.
+        let prediction = self
+            .confirmed_layouts
+            .get(scope_id)
+            .or_else(|| {
+                self.snapshot
+                    .pane_layouts
+                    .iter()
+                    .find(|layout| layout.tab_id == scope_id)
+            })
+            .map(|layout| super::pane_prediction::predict(layout, &predictions))
+            .and_then(|layout| match &folded {
+                PaneControlAction::Resize {
+                    pane_id,
+                    direction,
+                    amount,
+                } => {
+                    super::pane_prediction::resize_prediction(&layout, pane_id, *direction, *amount)
+                }
+                _ => None,
+            });
+        let operation = self.pane_operations.get_mut(&last_id).expect("found above");
+        operation.request = GeometryRequest::Pane(folded);
+        operation.prediction = prediction;
+        true
+    }
+
+    /// The predictions of the tab's line in order: its pane operations and
+    /// the closes of one pane among several that are still settling.
+    pub(super) fn geometry_predictions(
+        &self,
+        scope_id: &str,
+    ) -> Vec<super::pane_prediction::Prediction> {
+        let mut ordered = self
+            .pane_operations
+            .values()
+            .filter(|operation| operation.scope_id == scope_id)
+            .filter_map(|operation| {
+                operation.prediction.clone().map(|prediction| {
+                    (operation.started_at_unix_ms, operation.sequence, prediction)
+                })
+            })
+            .collect::<Vec<_>>();
+        ordered.extend(
+            self.close_operations
+                .values()
+                .filter(|operation| operation.scope_id == scope_id)
+                .filter(|operation| {
+                    matches!(
+                        operation.phase.as_str(),
+                        "preparing" | "transmitting" | "awaiting_topology"
+                    ) && operation.leaving_tab().is_none()
+                })
+                .filter_map(|operation| match &operation.request.target {
+                    live::CloseCaptureTarget::Pane { pane_id } => {
+                        let (started, sequence) = self
+                            .close_line_places
+                            .get(&operation.request.key)
+                            .copied()
+                            .unwrap_or((operation.started_at_unix_ms, 0));
+                        Some((
+                            started,
+                            sequence,
+                            super::pane_prediction::Prediction::Close {
+                                pane: pane_id.clone(),
+                            },
+                        ))
+                    }
+                    live::CloseCaptureTarget::Tab { .. } => None,
+                }),
+        );
+        ordered.sort_by_key(|(started, sequence, _)| (*started, *sequence));
+        ordered
+            .into_iter()
+            .map(|(_, _, prediction)| prediction)
+            .collect()
+    }
+
+    /// The closes of one pane among several drawn gone ahead of Herdr.
+    fn drawn_close_keys(&self) -> Vec<&str> {
+        let mut keys = self
+            .close_operations
+            .iter()
+            .filter(|(_, operation)| {
+                matches!(
+                    operation.phase.as_str(),
+                    "preparing" | "transmitting" | "awaiting_topology"
+                ) && operation.leaving_tab().is_none()
+            })
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// Runs `apply`, a close's answer arriving off the session stream, and
+    /// when it changed which closes are drawn ahead of Herdr reads the session
+    /// again (a refused or unknown close is drawn back) and lets the tab
+    /// lines behind those closes move on.
+    pub(super) fn with_close_geometry<T>(&mut self, apply: impl FnOnce(&mut Self) -> T) -> T {
+        let before = self
+            .drawn_close_keys()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let answer = apply(self);
+        if self.drawn_close_keys() != before {
+            self.request_republish();
+            self.pump_geometry_queues();
+        }
+        answer
+    }
+
+    /// Sends the next operation of the tab's line once nothing ahead of it
+    /// is still waiting for Herdr.
+    pub(super) fn pump_geometry_queue(&mut self, scope_id: &str) -> bool {
+        // An operation the pump starts can end at once and pump again; the
+        // outer pump owns the line, so the inner one leaves it alone.
+        if self.pumping_geometry {
+            return false;
+        }
+        self.pumping_geometry = true;
+        let moved = self.pump_geometry_line(scope_id);
+        self.pumping_geometry = false;
+        moved
+    }
+
+    fn pump_geometry_line(&mut self, scope_id: &str) -> bool {
+        let mut moved = false;
+        while !self.geometry_in_flight(scope_id) {
+            let Some(id) = self
+                .pane_operations
+                .values()
+                .filter(|operation| operation.scope_id == scope_id && operation.phase == "queued")
+                .min_by_key(|operation| operation.sequence)
+                .map(|operation| operation.id.clone())
+            else {
+                break;
+            };
+            let request = self.pane_operations[&id].request.clone();
+            // A close starts once the close ahead of it has settled and left
+            // the tab, which a settling one about to leave would refuse, and
+            // from a navigator that shows the session as it now stands. A
+            // close ahead that failed or is unknown stays until the operator
+            // acts; starting meets its refusal, which drops the line.
+            if matches!(request, GeometryRequest::Close { .. })
+                && (self.ingesting_session
+                    || self
+                        .close_operations
+                        .values()
+                        .any(|operation| operation.scope_id == scope_id && operation.settling()))
+            {
+                break;
+            }
+            moved = true;
+            match request {
+                GeometryRequest::Pane(action) => {
+                    self.send_pane_operation(&id, action);
+                    break;
+                }
+                GeometryRequest::Close { pane_id, confirmed } => {
+                    let place = self
+                        .pane_operations
+                        .remove(&id)
+                        .map(|queued| (queued.started_at_unix_ms, queued.sequence));
+                    let before = self
+                        .close_operations
+                        .keys()
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    self.close_local_pane(pane_id.clone(), confirmed, false);
+                    let started = self
+                        .close_operations
+                        .iter()
+                        .find(|(key, operation)| {
+                            !before.contains(*key) && operation.target_id == pane_id
+                        })
+                        .map(|(key, _)| key.clone());
+                    // The close keeps its place in the line for the drawing:
+                    // what was asked after it is predicted on the tab without
+                    // the pane.
+                    if let (Some(key), Some(place)) = (started.as_ref(), place) {
+                        let live_keys = self
+                            .close_operations
+                            .keys()
+                            .cloned()
+                            .collect::<HashSet<_>>();
+                        self.close_line_places
+                            .retain(|key, _| live_keys.contains(key));
+                        self.close_line_places.insert(key.clone(), place);
+                    }
+                    if started.is_none() {
+                        // A close that did not start is refused like any other
+                        // step of the line: what waited behind it goes too.
+                        self.drop_geometry_queue(scope_id, "close_refused");
+                        self.request_republish();
+                        break;
+                    }
+                }
+            }
+        }
+        moved
+    }
+
+    /// Every tab whose line has an operation waiting.
+    pub(super) fn pump_geometry_queues(&mut self) -> bool {
+        let scopes = self
+            .pane_operations
+            .values()
+            .filter(|operation| operation.phase == "queued")
+            .map(|operation| operation.scope_id.clone())
+            .collect::<HashSet<_>>();
+        let mut moved = false;
+        for scope_id in scopes {
+            moved |= self.pump_geometry_queue(&scope_id);
+        }
+        moved
+    }
+
+    fn send_pane_operation(&mut self, id: &str, action: PaneControlAction) {
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.fail_pane_operation(id, "Herdr disconnected before the request was sent".into());
+            return;
+        };
+        let now = unix_milliseconds();
+        let baseline = self
+            .pane_operation_baseline(action.pane_id())
+            .unwrap_or_else(|| self.pane_operations[id].baseline_signature.clone());
+        let operation = self.pane_operations.get_mut(id).expect("queued above");
+        operation.phase = "transmitting".to_owned();
+        operation.stage = "request".to_owned();
+        operation.connection_generation = self.live_generation;
+        operation.deadline_at_unix_ms = Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS));
+        // The tab as Herdr has it now, after what was ahead in the line.
+        operation.baseline_signature = baseline;
         if let Err(message) =
             live::spawn_pane_control_with_generation(context, action, Some(self.live_generation))
         {
-            self.fail_pane_operation(&id, message);
+            self.fail_pane_operation(id, message);
         }
-        true
+    }
+
+    /// Drops every operation still waiting in the tab's line after the one
+    /// ahead of it was refused, failed or became unknown (D-09, D-10): the
+    /// layout returns to what Herdr confirmed and keys typed for a dropped
+    /// split reach no pane.
+    pub(super) fn drop_geometry_queue(&mut self, scope_id: &str, reason: &str) {
+        let dropped = self
+            .pane_operations
+            .values()
+            .filter(|operation| operation.scope_id == scope_id && operation.phase == "queued")
+            .map(|operation| operation.id.clone())
+            .collect::<Vec<_>>();
+        for id in dropped {
+            let Some(operation) = self.pane_operations.remove(&id) else {
+                continue;
+            };
+            self.op_timings.finish(&id, "dropped");
+            self.discard_input_request(
+                &super::terminal_input::InputOrigin::Split(id.clone()),
+                reason,
+            );
+            crate::diagnostic!(serde_json::json!({
+                "component": "pane_operation",
+                "kind": "pane.operation.dropped",
+                "operation_id": id,
+                "operation": operation.kind,
+                "tab_id": scope_id,
+                "pane_id": operation.target_id,
+                "reason": reason,
+            }));
+        }
     }
 
     pub(super) fn fail_pane_operation(&mut self, id: &str, message: String) {
         let Some(operation) = self.pane_operations.get(id).cloned() else {
             return;
         };
+        self.op_timings.finish(id, "failed");
+        self.discard_input_request(
+            &super::terminal_input::InputOrigin::Split(id.to_owned()),
+            "failed",
+        );
         if let Some(current) = self.pane_operations.get_mut(id) {
             current.phase = "failed".to_owned();
             current.stage = "request".to_owned();
@@ -955,8 +1427,10 @@ impl Runtime {
             current.message = Some(message.clone());
             current.retryable = true;
             current.created_pane_id = None;
-            current.queued_resize = None;
+            current.prediction = None;
         }
+        self.drop_geometry_queue(&operation.scope_id, "refused");
+        self.request_republish();
         self.set_error(
             "pane.operation_failed",
             format!(
@@ -988,8 +1462,19 @@ impl Runtime {
             ));
             operation.retryable = false;
             operation.deadline_at_unix_ms = None;
-            operation.id.clone()
+            operation.prediction = None;
+            (operation.id.clone(), operation.scope_id.clone())
         };
+        let (operation_id, scope_id) = operation_id;
+        // An unknown result draws what Herdr confirmed and drops what waited
+        // behind it, the same as a refusal; it does not hold the line.
+        self.drop_geometry_queue(&scope_id, "unknown");
+        self.request_republish();
+        self.op_timings.finish(&operation_id, "unknown");
+        self.discard_input_request(
+            &super::terminal_input::InputOrigin::Split(operation_id.clone()),
+            "unknown",
+        );
         self.push_diagnostic(
             "pane.operation.unknown",
             format!("Pane operation {operation_id} requires fresh topology"),
@@ -1028,6 +1513,45 @@ impl Runtime {
                     );
                     return true;
                 }
+                let now = std::time::Instant::now();
+                self.op_timings
+                    .stamp(id, super::op_timing::Stage::HerdrAck, now);
+                match created_pane_id.as_deref() {
+                    Some(created) => {
+                        self.op_timings.learn(id, None, Some(created));
+                        self.op_timings.await_frame(id, created, false);
+                        // The split is drawn now, with the pane Herdr named
+                        // (D-03, D-07); Herdr's layout replaces it on arrival.
+                        if let GeometryRequest::Pane(PaneControlAction::Split {
+                            pane_id,
+                            direction,
+                            ..
+                        }) = &operation.request
+                            && let Some(current) = self.pane_operations.get_mut(id)
+                        {
+                            current.prediction = Some(super::pane_prediction::Prediction::Split {
+                                target: pane_id.clone(),
+                                direction: match direction {
+                                    PaneSplitDirection::Right => {
+                                        crate::model::PaneLayoutDirection::Right
+                                    }
+                                    PaneSplitDirection::Down => {
+                                        crate::model::PaneLayoutDirection::Down
+                                    }
+                                },
+                                created: created.to_owned(),
+                            });
+                            self.request_republish();
+                        }
+                        // Keys typed since the split was asked for belong to
+                        // the pane Herdr just named, and to no other.
+                        self.resolve_input_request(
+                            &super::terminal_input::InputOrigin::Split(id.to_owned()),
+                            created,
+                        );
+                    }
+                    None => self.op_timings.await_frame(id, &operation.target_id, true),
+                }
                 if let Some(current) = self.pane_operations.get_mut(id) {
                     current.phase = "awaiting_topology".to_owned();
                     current.stage = "topology".to_owned();
@@ -1047,7 +1571,30 @@ impl Runtime {
                         operation.kind, operation.target_id
                     ),
                 );
-                self.settle_pane_operation_from_known_topology(id);
+                if self.settle_pane_operation_from_known_topology(id) {
+                    self.request_republish();
+                }
+            }
+            // Herdr moved nothing, so no layout event follows: the operation
+            // ends at this answer and the line moves on (D-12).
+            Ok(PaneControlOutcome::Unchanged) => {
+                self.pane_operations.remove(id);
+                self.op_timings.finish(id, "unchanged");
+                // A split that made no pane leaves its keys nowhere to go.
+                self.discard_input_request(
+                    &super::terminal_input::InputOrigin::Split(id.to_owned()),
+                    "unchanged",
+                );
+                self.push_diagnostic(
+                    "pane.operation.unchanged",
+                    format!(
+                        "{} for {} changed nothing in {elapsed_ms} ms",
+                        operation.kind, operation.target_id
+                    ),
+                );
+                if operation.prediction.is_some() {
+                    self.request_republish();
+                }
             }
             Ok(PaneControlOutcome::Projected { .. }) => self.fail_pane_operation(
                 id,
@@ -1058,6 +1605,7 @@ impl Runtime {
             }
             Err(error) => self.fail_pane_operation(id, error.message().to_owned()),
         }
+        self.pump_geometry_queue(&operation.scope_id);
         self.sync_recent_closed_snapshot();
         true
     }
@@ -1139,34 +1687,17 @@ impl Runtime {
 
     fn settle_pane_operations(&mut self, completed: Vec<(String, PaneTopologySignature)>) -> bool {
         let mut changed = false;
-        let mut restart = Vec::new();
+        let mut scopes = HashSet::new();
         for (id, current_signature) in completed {
-            let Some(operation) = self.pane_operations.get_mut(&id) else {
-                continue;
-            };
-            if let Some(queued) = operation.queued_resize.take()
-                && let Some(action) = queued.into_action(operation.target_id.clone())
-            {
-                operation.connection_generation = self.live_generation;
-                operation.phase = "transmitting".to_owned();
-                operation.stage = "request".to_owned();
-                operation.started_at_unix_ms = unix_milliseconds();
-                operation.deadline_at_unix_ms = Some(
-                    operation
-                        .started_at_unix_ms
-                        .saturating_add(CLOSE_STAGE_TIMEOUT_MS),
-                );
-                operation.message = Some("Sending the latest resize position…".to_owned());
-                operation.retryable = false;
-                operation.created_pane_id = None;
-                operation.baseline_signature = current_signature;
-                restart.push((id.clone(), action));
-                changed = true;
-                continue;
-            }
             let Some(operation) = self.pane_operations.remove(&id) else {
                 continue;
             };
+            self.report_prediction_mismatch(&operation, &current_signature);
+            self.op_timings.stamp(
+                &id,
+                super::op_timing::Stage::Applied,
+                std::time::Instant::now(),
+            );
             self.push_diagnostic(
                 "pane.operation.topology_confirmed",
                 format!(
@@ -1174,28 +1705,80 @@ impl Runtime {
                     operation.kind, operation.target_id
                 ),
             );
+            // The next operation in the line is sent below and takes its
+            // baseline from here, so it must be the layout that confirmed
+            // this one, not the one from before it (D-10).
+            self.confirmed_pane_layout_signatures
+                .insert(operation.scope_id.clone(), current_signature);
+            scopes.insert(operation.scope_id);
             changed = true;
         }
-        for (id, action) in restart {
-            let Some(context) = self.live.as_ref().cloned() else {
-                self.fail_pane_operation(
-                    &id,
-                    "The latest resize could not be sent because Herdr disconnected".to_owned(),
-                );
-                continue;
-            };
-            if let Err(message) = live::spawn_pane_control_with_generation(
-                context,
-                action,
-                Some(self.live_generation),
-            ) {
-                self.fail_pane_operation(&id, message);
-            }
+        for scope_id in scopes {
+            self.pump_geometry_queue(&scope_id);
         }
         if changed {
             self.sync_recent_closed_snapshot();
         }
         changed
+    }
+
+    /// When Herdr's confirmed layout differs from what was drawn for the
+    /// operation it confirms (a ratio Herdr rounds otherwise, a focus it
+    /// places elsewhere), the confirmed layout is drawn and the difference
+    /// goes to the log only (B18). Read only when nothing else is drawn for
+    /// the tab, so the comparison is of this operation alone.
+    fn report_prediction_mismatch(
+        &self,
+        operation: &PendingPaneOperation,
+        confirmed: &PaneTopologySignature,
+    ) {
+        if operation.prediction.is_none()
+            || self.drawn_closes.contains_key(&operation.scope_id)
+            || self
+                .pane_operations
+                .values()
+                .any(|other| other.scope_id == operation.scope_id && other.prediction.is_some())
+        {
+            return;
+        }
+        let Some(drawn) = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.tab_id == operation.scope_id)
+            .map(Self::model_layout_signature)
+        else {
+            return;
+        };
+        if drawn.pane_ids == confirmed.pane_ids
+            && drawn.splits == confirmed.splits
+            && drawn.zoomed == confirmed.zoomed
+            && drawn.focused_pane_id == confirmed.focused_pane_id
+        {
+            return;
+        }
+        let ratios = |signature: &PaneTopologySignature| {
+            signature
+                .splits
+                .iter()
+                .map(|(_, bits)| f32::from_bits(*bits))
+                .collect::<Vec<_>>()
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "pane_operation",
+            "kind": "pane.prediction_mismatch",
+            "operation_id": operation.id,
+            "operation": operation.kind,
+            "tab_id": operation.scope_id,
+            "drawn_pane_ids": drawn.pane_ids,
+            "confirmed_pane_ids": confirmed.pane_ids,
+            "drawn_ratios": ratios(&drawn),
+            "confirmed_ratios": ratios(confirmed),
+            "drawn_zoomed": drawn.zoomed,
+            "confirmed_zoomed": confirmed.zoomed,
+            "drawn_focus": drawn.focused_pane_id,
+            "confirmed_focus": confirmed.focused_pane_id,
+        }));
     }
 
     pub(super) fn sync_async_operations(&mut self) {
@@ -1283,6 +1866,7 @@ impl Runtime {
 
     pub(super) fn expire_pane_operations(&mut self, now_unix_ms: u64) -> bool {
         let mut changed = false;
+        let mut expired_scopes = Vec::new();
         for id in self.pane_operations.keys().cloned().collect::<Vec<_>>() {
             let Some(operation) = self.pane_operations.get(&id).cloned() else {
                 continue;
@@ -1305,7 +1889,7 @@ impl Runtime {
                             .to_owned(),
                     );
                     current.retryable = false;
-                    current.queued_resize = None;
+                    current.prediction = None;
                     current.deadline_at_unix_ms =
                         Some(now_unix_ms.saturating_add(CLOSE_STAGE_TIMEOUT_MS));
                     self.push_diagnostic(
@@ -1315,6 +1899,12 @@ impl Runtime {
                             operation.kind, operation.target_id
                         ),
                     );
+                    self.op_timings.finish(&id, "unknown");
+                    self.discard_input_request(
+                        &super::terminal_input::InputOrigin::Split(id.clone()),
+                        "unknown",
+                    );
+                    expired_scopes.push(operation.scope_id.clone());
                     changed = true;
                 }
                 "unknown" => {
@@ -1335,6 +1925,14 @@ impl Runtime {
                 }
                 _ => {}
             }
+        }
+        // A deadline is an unknown result: it draws what Herdr confirmed and
+        // drops what waited behind it (D-09, D-10).
+        for scope_id in &expired_scopes {
+            self.drop_geometry_queue(scope_id, "unknown");
+        }
+        if !expired_scopes.is_empty() {
+            self.request_republish();
         }
         if changed {
             self.sync_recent_closed_snapshot();

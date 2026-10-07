@@ -2215,6 +2215,41 @@ pub(crate) enum ReplicaEvent {
     },
     Unrequested(String),
 }
+impl ReplicaEvent {
+    /// The tab and pane this event names, and whether it carries a layout:
+    /// what the stage record of a Hide-started operation needs (PRD
+    /// instant-pane-topology D-14).
+    pub(crate) fn subject(&self) -> (Option<&str>, Option<&str>, bool) {
+        match self {
+            Self::TabCreated { tab, .. } => (Some(&tab.tab_id), None, false),
+            Self::TabClosed { tab_id, .. }
+            | Self::TabRenamed { tab_id, .. }
+            | Self::TabMoved { tab_id, .. }
+            | Self::TabFocused { tab_id, .. } => (Some(tab_id), None, false),
+            Self::PaneCreated { pane } | Self::PaneUpdated { pane } => {
+                (Some(&pane.tab_id), Some(&pane.pane_id), false)
+            }
+            Self::PaneClosed { pane_id, .. }
+            | Self::PaneFocused { pane_id, .. }
+            | Self::PaneExited { pane_id, .. }
+            | Self::PaneAgentDetected { pane_id, .. } => (None, Some(pane_id), false),
+            Self::PaneMoved(moved) => (Some(&moved.pane.tab_id), Some(&moved.pane.pane_id), false),
+            Self::LayoutUpdated { layout } => (Some(&layout.tab_id), None, true),
+            Self::WorkspaceCreated { .. }
+            | Self::WorkspaceUpdated { .. }
+            | Self::WorkspaceRenamed { .. }
+            | Self::WorkspaceMoved { .. }
+            | Self::WorkspaceReordered { .. }
+            | Self::WorkspaceClosed { .. }
+            | Self::WorkspaceFocused { .. }
+            | Self::WorktreeCreated { .. }
+            | Self::WorktreeOpened { .. }
+            | Self::WorktreeRemoved { .. }
+            | Self::Unrequested(_) => (None, None, false),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PaneMove {
     pub(crate) previous_pane_id: String,

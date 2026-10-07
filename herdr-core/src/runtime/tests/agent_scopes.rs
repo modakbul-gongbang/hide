@@ -702,3 +702,94 @@ fn request_work_keeps_current_chips_and_expanded_history_in_source_order() {
         ["github:acme/app#9"]
     );
 }
+
+#[test]
+fn factory_workers_leave_requests_and_overview_count_without_leaving_physical_lists() {
+    let mut runtime = runtime();
+    let mut agents = rows();
+    agents[0].group = "needs_you".into();
+    agents[0].demand = "question".into();
+    agents[0].unread = true;
+    agents[0].state = crate::agent_state::turn::row_state(&agents[0]);
+    runtime.snapshot.navigator.agents = agents;
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/fixture",
+        vec![checkout(
+            "project",
+            "main",
+            "/fixture",
+            Some(pane("root", "/fixture")),
+        )],
+    )];
+    runtime.refresh_agent_scopes();
+    assert_eq!(
+        runtime.snapshot.navigator.devices[0]
+            .agent_scope
+            .overview_needs_you,
+        1
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .requests
+            .rows
+            .len(),
+        1
+    );
+    let summary = serde_json::from_value(serde_json::json!({
+        "my_turn": 1, "inbox": [], "factories": [{
+            "id": "f-1", "project": "/fixture", "project_name": "Fixture", "source": "local", "verification": "none", "closed": false,
+            "flow": {"drafting": 0, "waiting": 0, "running": 1, "done_today": 0}, "my_turn": 1,
+            "columns": [{"column": "running", "label": "", "cards": [{
+                "task": "T-1", "display_id": "T-1", "column": "running", "title": "Fixture", "state": "running", "state_label": "", "needs_person": true,
+                "waiting_on": [], "priority": 0, "since": 0, "unread": false, "folded": false, "archived": false, "failures": 0, "external": [], "worker_pane": "root"
+            }]}], "cancelled": [], "graph": {"nodes": [], "edges": [], "unrelated": []}, "dependencies": [],
+            "stale": false, "main_broken": false, "auto_merge_available": false, "merge_mode": "manual"
+        }]
+    })).unwrap();
+    runtime.set_factory_screen(Some(std::sync::Arc::new(summary)), None);
+    let scope = &runtime.snapshot.navigator.devices[0].agent_scope;
+    assert_eq!(
+        scope.groups.needs_you, 1,
+        "the physical list still includes its worker"
+    );
+    assert_eq!(scope.overview_needs_you, 0);
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .requests
+            .rows
+            .is_empty()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .requests
+            .todo,
+        0
+    );
+    assert!(
+        !runtime.refresh_agent_scopes(),
+        "unchanged worker membership publishes nothing"
+    );
+    runtime.set_factory_screen(
+        Some(std::sync::Arc::new(hide_factory::FactorySummary::default())),
+        None,
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.devices[0]
+            .agent_scope
+            .overview_needs_you,
+        1
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .agent_scope
+            .requests
+            .rows
+            .len(),
+        1
+    );
+}

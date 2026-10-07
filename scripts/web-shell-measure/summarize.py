@@ -3,6 +3,9 @@
 
 usage: summarize.py echo <echo-*.json...>      -> per-trial p50/p95/p99/max, median of trial p95s
        summarize.py frames <frames.json>       -> count, over 16.7 ms, fraction, complete
+       summarize.py topology <topology.json>   -> per operation p50/p95/max to screen and to frame
+       summarize.py timing <core.jsonl>        -> per operation stage times from pane_op.timing lines,
+                                                  with Herdr's share and Hide's (layout event to sent)
 """
 import json
 import math
@@ -66,7 +69,67 @@ def frames(path):
     }
 
 
+def topology(path):
+    doc = json.loads(Path(path).read_text())
+    operations = {}
+    for sample in doc["samples"]:
+        operations.setdefault(sample["kind"], []).append(sample)
+    result = {}
+    for kind, samples in operations.items():
+        row = {"count": len(samples), "timeouts": sum(1 for s in samples if s.get("timeout"))}
+        for stage in ("screen_ms", "frame_ms"):
+            values = [float(s[stage]) for s in samples if s.get(stage) is not None]
+            row[stage] = {
+                "p50": percentile(values, 0.50),
+                "p95": percentile(values, 0.95),
+                "max": max(values) if values else None,
+            }
+        result[kind] = row
+    return {"load": doc.get("load"), "rounds": doc.get("rounds"), "operations": result}
+
+
+def stats(values):
+    return {
+        "count": len(values),
+        "p50": percentile(values, 0.50),
+        "p95": percentile(values, 0.95),
+        "max": max(values) if values else None,
+    }
+
+
+def timing(path):
+    records = {}
+    for line in Path(path).read_text().splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        record = entry.get("event", entry)
+        if record.get("kind") != "pane_op.timing":
+            continue
+        records.setdefault(record["op"], []).append(record)
+    result = {}
+    for op, rows in records.items():
+        stages = {}
+        for stage in ("herdr_ack_ms", "drawn_ms", "first_event_ms", "layout_event_ms", "applied_ms", "sent_ms", "first_frame_ms"):
+            stages[stage] = stats([float(r[stage]) for r in rows if stage in r])
+        herdr = [float(r["layout_event_ms"]) - float(r["herdr_ack_ms"]) for r in rows if "layout_event_ms" in r and "herdr_ack_ms" in r]
+        hide = [float(r["sent_ms"]) - float(r["layout_event_ms"]) for r in rows if "sent_ms" in r and "layout_event_ms" in r]
+        outcomes = {}
+        for r in rows:
+            outcomes[r.get("outcome")] = outcomes.get(r.get("outcome"), 0) + 1
+        result[op] = {"records": len(rows), "outcomes": outcomes, "stages": stages, "herdr_share_ms": stats(herdr), "hide_share_ms": stats(hide)}
+    return result
+
+
 if __name__ == "__main__":
     kind = sys.argv[1]
-    result = echo(sys.argv[2:]) if kind == "echo" else frames(sys.argv[2])
+    if kind == "echo":
+        result = echo(sys.argv[2:])
+    elif kind == "topology":
+        result = topology(sys.argv[2])
+    elif kind == "timing":
+        result = timing(sys.argv[2])
+    else:
+        result = frames(sys.argv[2])
     print(json.dumps(result, indent=2))

@@ -332,7 +332,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     use hide_kit::Availability::{Available, NotInstalled};
     let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
     answer.agents = vec![
-        agent_report("gemini-cli", Available, false, ComponentState::Off),
+        agent_report("omp", Available, false, ComponentState::Off),
         agent_report("grok", NotInstalled, false, ComponentState::Off),
         agent_report("codex", Available, true, ComponentState::Removed),
     ];
@@ -353,7 +353,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     dispatch(
         &shared,
         "kit_agent_set",
-        serde_json::json!({ "device_id": DEVICE, "agent": "gemini-cli", "enabled": true }),
+        serde_json::json!({ "device_id": DEVICE, "agent": "omp", "enabled": true }),
     );
     settle(&shared);
     dispatch(
@@ -364,7 +364,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     dispatch(
         &shared,
         "kit_agent_set",
-        serde_json::json!({ "device_id": DEVICE, "agent": "gemini-cli", "enabled": false }),
+        serde_json::json!({ "device_id": DEVICE, "agent": "omp", "enabled": false }),
     );
     settle(&shared);
     dispatch(
@@ -385,9 +385,9 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
         actions,
         vec![
             KitAction::Status,
-            agents(&["gemini-cli"]),
+            agents(&["omp"]),
             // The agent not set up there sent nothing, and this device's
-            // report still says Gemini is off, so switching it off is met.
+            // report still says omp is off, so switching it off is met.
             agents(&["codex"]),
         ],
         "{actions:?}"
@@ -396,7 +396,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
 
 /// PRD settings-cleanup D-13: a device's Herdr integration for an agent is a
 /// piece of that agent's row, a failed one offers Reinstall for that agent
-/// alone, and an agent without one (Gemini CLI) carries none.
+/// alone, and a row from a helper whose build predates the piece carries none.
 #[test]
 fn a_failed_herdr_integration_shows_on_its_agent_and_offers_reinstall() {
     use hide_kit::Availability::Available;
@@ -406,9 +406,9 @@ fn a_failed_herdr_integration_shows_on_its_agent_and_offers_reinstall() {
         reason: Some("`herdr integration install pi` failed: disk full".to_owned()),
         location: Some("/home/me/.pi/agent".to_owned()),
     });
-    let gemini = agent_report("gemini-cli", Available, true, ComponentState::Installed);
+    let grok = agent_report("grok", Available, true, ComponentState::Installed);
     let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
-    answer.agents = vec![pi, gemini];
+    answer.agents = vec![pi, grok];
     let shared = with_consent(Some(KitDevice::answering(Ok(answer))));
     shared
         .lock()
@@ -514,7 +514,7 @@ fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_late
     dispatch(
         &shared,
         "agent_onboarding_apply",
-        serde_json::json!({ "agents": ["gemini-cli"] }),
+        serde_json::json!({ "agents": ["omp"] }),
     );
     settle(&shared);
     assert_eq!(helper.calls().len(), 1);
@@ -1250,12 +1250,7 @@ fn reinstall_is_not_offered_for_the_hook_part_of_an_agent_that_is_off() {
 fn the_latest_agent_switch_wins_over_one_still_queued() {
     use hide_kit::Availability::Available;
     let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
-    answer.agents = vec![agent_report(
-        "gemini-cli",
-        Available,
-        false,
-        ComponentState::Off,
-    )];
+    answer.agents = vec![agent_report("omp", Available, false, ComponentState::Off)];
     let helper = KitDevice::answering(Ok(answer));
     let shared = with_consent(Some(Arc::clone(&helper)));
     shared
@@ -1275,10 +1270,10 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
         dispatch(
             &shared,
             "kit_agent_set",
-            serde_json::json!({ "device_id": DEVICE, "agent": "gemini-cli", "enabled": enabled }),
+            serde_json::json!({ "device_id": DEVICE, "agent": "omp", "enabled": enabled }),
         );
     };
-    // The device reports Gemini off, so a lone "off" would be met; with "on"
+    // The device reports omp off, so a lone "off" would be met; with "on"
     // queued first it is not, and the later "off" replaces the queued "on".
     press(true);
     press(true);
@@ -1288,8 +1283,8 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
         let Some(KitJob::Apply(scope)) = runtime.device_kit_pending.get(DEVICE) else {
             panic!("work stays queued");
         };
-        assert!(scope.agent_off.contains("gemini-cli"), "{scope:?}");
-        assert!(!scope.agent_on.contains("gemini-cli"), "{scope:?}");
+        assert!(scope.agent_off.contains("omp"), "{scope:?}");
+        assert!(!scope.agent_on.contains("omp"), "{scope:?}");
     }
     release.send(()).unwrap();
     settle(&shared);
@@ -1327,7 +1322,7 @@ fn an_existing_macs_agents_become_the_saved_choice_a_later_device_receives() {
     existing.agents = vec![
         agent_report("claude-code", Available, true, ComponentState::Installed),
         agent_report("codex", Available, true, ComponentState::Installed),
-        agent_report("gemini-cli", Available, false, ComponentState::Off),
+        agent_report("omp", Available, false, ComponentState::Off),
     ];
     shared
         .lock()

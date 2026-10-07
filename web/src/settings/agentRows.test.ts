@@ -33,9 +33,9 @@ const device = (patch: Partial<Device> & { agents?: KitAgent[]; unavailable?: st
 
 describe("the agents of a machine (B8, B9, D-06)", () => {
   it("lists the seven supported agents in their order and nothing a machine still reports from before", () => {
-    const reported = ["cursor", "kiro", "claude-code", "amp", "pi", "codex"].map((id) => agent(id));
-    expect(supportedAgents(reported).map((row) => row.id)).toEqual(["claude-code", "codex", "pi", "cursor"]);
-    expect(SUPPORTED_AGENTS).toHaveLength(7);
+    const reported = ["cursor", "kiro", "gemini-cli", "omp", "claude-code", "amp", "pi", "codex"].map((id) => agent(id));
+    expect(supportedAgents(reported).map((row) => row.id)).toEqual(["claude-code", "codex", "pi", "omp", "cursor"]);
+    expect(SUPPORTED_AGENTS).toEqual(["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor"]);
   });
 
   it("calls an agent installed only when its program was found; an agent the operator switched on keeps its switch after its program goes (B9)", () => {
@@ -86,6 +86,9 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
   it("opens each agent's installation guide and none for an agent Hide does not support", () => {
     for (const id of SUPPORTED_AGENTS) expect(installDocUrl(id)).toMatch(/^https:\/\//);
     expect(installDocUrl("kiro")).toBeNull();
+    expect(installDocUrl("gemini-cli")).toBeNull();
+    expect(installDocUrl("omp")).toBe("https://omp.sh/docs/quickstart");
+    expect(docsUrl("omp")).toBe("https://omp.sh/docs/skills");
     // The Docs link is this build's table, never a URL a machine reports (a device's helper supplies `doc_url`).
     for (const id of SUPPORTED_AGENTS) expect(docsUrl(id)).toMatch(/^https:\/\//);
     expect(docsUrl("kiro")).toBeNull();
@@ -104,8 +107,8 @@ describe("what a row says (B13, B14, B16, B19, B20)", () => {
     expect(agentProblems(row).map(({ part }) => part)).toEqual(["herdr", "skill", "hook"]);
     expect(agentProblems(agent("codex", { hook: piece("absent", "no ~/.codex"), skill: piece("installed"), herdr: piece("off") }))).toEqual([]);
     expect(agentProblems(agent("codex", { enabled: false, skill: piece("removed") }))).toEqual([]);
-    // Gemini CLI has no Herdr integration: nothing to fail (B15).
-    expect(agentProblems(agent("gemini-cli", { herdr: null }))).toEqual([]);
+    // A row from a helper whose build predates the Herdr piece has nothing there to fail.
+    expect(agentProblems(agent("grok", { herdr: null }))).toEqual([]);
   });
 
   it("keeps a switched-off agent whose removal did not finish from reading Off (B14)", () => {
