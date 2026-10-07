@@ -160,7 +160,6 @@ mod tests {
     const FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
 
     #[test]
-    #[cfg(unix)]
     fn gh_boundary_is_read_only_noninteractive_and_preserves_failure_categories() {
         let fixture = GhFixture::new(
             r#"
@@ -261,7 +260,6 @@ esac"#,
     }
 
     #[test]
-    #[cfg(unix)]
     fn timed_out_gh_and_its_pipe_holding_helper_are_terminated() {
         let fixture = GhFixture::new("echo $$ > pid; sleep 5; touch survived");
         let started = Instant::now();
@@ -290,7 +288,6 @@ esac"#,
     }
 
     #[test]
-    #[cfg(unix)]
     fn an_issue_panel_reads_only_its_fields_and_nothing_else_passes_issue_view() {
         let fixture = GhFixture::new(
             r#"
@@ -313,7 +310,6 @@ esac"#,
     }
 
     #[test]
-    #[cfg(unix)]
     fn a_pull_request_takes_only_its_body_write_and_its_two_reads() {
         let fixture = GhFixture::new(r#"printf 'ok'"#);
         let run = |arguments: &[&str]| {
@@ -348,13 +344,11 @@ esac"#,
         }
     }
 
-    #[cfg(unix)]
     struct GhFixture {
         root: PathBuf,
         binary: PathBuf,
     }
 
-    #[cfg(unix)]
     impl GhFixture {
         fn new(body: &str) -> Self {
             static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -374,7 +368,6 @@ esac"#,
         }
     }
 
-    #[cfg(unix)]
     impl Drop for GhFixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
