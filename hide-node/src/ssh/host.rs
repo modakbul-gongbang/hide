@@ -1349,6 +1349,28 @@ fn private_file(attrs: &FileAttributes, owner: u32) -> bool {
         && attrs.permissions.is_some_and(|mode| mode & 0o022 == 0)
 }
 
+/// Where the private walk to the helper root starts, and the names it
+/// creates from there: below home it starts at home, which it never touches,
+/// and anywhere else at `/`. Both are the device's paths, so they are read
+/// as `/`-spelled names whatever system the core runs on: empty names (`//`,
+/// a trailing `/`) are dropped as the device drops them, and `/home/al` is
+/// not a prefix of `/home/alice`.
+fn private_walk(
+    home: &str,
+    root: &str,
+) -> Result<(String, String), hide_platform::path::PathError> {
+    let plain = |path: &str| {
+        let names: Vec<&str> = path.split('/').filter(|name| !name.is_empty()).collect();
+        format!("/{}", names.join("/"))
+    };
+    let (home, root) = (plain(home), plain(root));
+    match hide_platform::path::wire_relative(&home, &root) {
+        Ok(below) => Ok((home.trim_end_matches('/').to_owned(), below.to_string())),
+        Err(hide_platform::path::PathError::Outside) => Ok((String::new(), root)),
+        Err(error) => Err(error),
+    }
+}
+
 /// Creates and checks the helper root, and answers the real path it resolves
 /// to, which is the one the helper is installed under and started from.
 async fn ensure_private_dirs(
@@ -1357,14 +1379,11 @@ async fn ensure_private_dirs(
     root: &str,
     owner: u32,
 ) -> Result<String, EstablishError> {
-    // Components below home are created private; home itself is not touched.
-    // Both are the device's paths, so they are compared as `/`-spelled names
-    // whatever system the core runs on, and `/home/al` is not a prefix of
-    // `/home/alice`.
-    let (mut current, relative) = match hide_platform::path::wire_relative(home, root) {
-        Ok(below) => (home.trim_end_matches('/').to_owned(), below.to_string()),
-        Err(_) => (String::new(), root.to_owned()),
-    };
+    let (mut current, relative) = private_walk(home, root).map_err(|error| {
+        EstablishError::Install(format!(
+            "The helper install root is not a plain path: {error}"
+        ))
+    })?;
     for part in relative.split('/').filter(|part| !part.is_empty()) {
         current.push('/');
         current.push_str(part);
@@ -2093,8 +2112,26 @@ mod tests {
         assert!(ancestors("relative/helper").is_err());
         assert!(ancestors("/a/../b").is_err());
         assert!(owned_by(&folder(0, 0o755), me) && !owned_by(&folder(502, 0o755), me));
-        // Component-wise: `/home/al` is not a prefix of `/home/alice`.
-        assert!(hide_platform::path::wire_relative("/home/al", "/home/alice/x").is_err());
+        let walk = |home: &str, root: &str| {
+            let (start, below) = private_walk(home, root).unwrap();
+            (start, below)
+        };
+        let pair = |start: &str, below: &str| (start.to_owned(), below.to_owned());
+        assert_eq!(
+            walk("/home/alice", "/home/alice/.hide/helper"),
+            pair("/home/alice", ".hide/helper")
+        );
+        assert_eq!(walk("/home/alice", "/home/alice"), pair("/home/alice", ""));
+        assert_eq!(walk("/", "/helper"), pair("", "helper"));
+        // Spelled with empty names, it is the same folder and the same walk.
+        assert_eq!(
+            walk("/home/alice/", "/home/alice//.hide/helper/"),
+            pair("/home/alice", ".hide/helper")
+        );
+        // Outside home, and beside it by a shared prefix, it walks from `/`.
+        assert_eq!(walk("/home/alice", "/opt/hide"), pair("", "/opt/hide"));
+        assert_eq!(walk("/home/al", "/home/alice/x"), pair("", "/home/alice/x"));
+        assert!(private_walk("/home/alice", "/home/alice/../bob").is_err());
     }
 
     #[test]
