@@ -366,6 +366,45 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    #[test]
+    fn a_full_proof_limit_never_calls_the_link_from_its_reader() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let panes = Arc::new(NodePanes::new(runtime.handle().clone()));
+        // Hold the admitted work at its limit without racing 32 kernel
+        // attestations. The next event still enters the real reader callback.
+        panes.proofs.store(MAX_PROOFS, Ordering::Release);
+        let link = RemoteHost::detached("mini");
+        let reader_link = link.clone();
+        let events = Events(Arc::clone(&panes));
+        let returned = runtime.block_on(async move {
+            tokio::spawn(async move {
+                events.event(
+                    "mini",
+                    &reader_link,
+                    NodeEvent::PaneProof {
+                        request: 33,
+                        pane_id: "w1:p1".to_owned(),
+                        identity: PaneIdentity {
+                            terminal_id: "terminal".to_owned(),
+                            shell_pid: 1,
+                            shell_started: 1,
+                        },
+                        nonce: "fixture".to_owned(),
+                        one_shot: false,
+                    },
+                );
+            })
+            .await
+        });
+        let stayed_open = link.closed_reason().is_none();
+        link.close("fixture finished");
+        assert!(returned.is_ok(), "the SSH reader panicked at the proof limit");
+        assert!(stayed_open, "one busy proof must not end a healthy link");
+    }
+
     /// B30: a refusal is recorded with the node, the pane and the reason,
     /// and what a device chose is cut to a bounded prefix whoever records it.
     #[test]
