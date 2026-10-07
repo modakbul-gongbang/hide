@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { transitiveReduction } from "../projectBoard";
 import type { CardView, FactoryView } from "./model";
-import { boardColumns, factoryGraph, taskChain, workerPanes } from "./view";
+import { boardColumns, factoryGraph, taskChain, withoutCutMark, workerPanes } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
@@ -62,5 +62,12 @@ describe("the Factory workers (B13)", () => {
     const view = factory([card("T-1", { worker_pane: "w1:p2" }), card("T-2")], []);
     expect([...workerPanes({ my_turn: 0, factories: [view], inbox: [] })]).toEqual(["w1:p2"]);
     expect(workerPanes(null).size).toBe(0);
+  });
+});
+
+describe("withoutCutMark", () => {
+  it("reads the store's shortening mark as a cue and leaves other text alone", () => {
+    expect(withoutCutMark("병합 결정\n[cut 9 bytes]")).toEqual({ text: "병합 결정", cut: true });
+    expect(withoutCutMark("[cut 3 bytes] is how the store marks a cut")).toEqual({ text: "[cut 3 bytes] is how the store marks a cut", cut: false });
   });
 });

@@ -349,3 +349,14 @@ it("leaves an open priority form alone when another action on the page is taken 
   await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, factories: [factory()], inbox: [] }, actions: [{ request_id: cancel.payload.request_id, answer: { ok: true } }] } }));
   expect(container.querySelector("[data-factory-priority]")).not.toBeNull();
 });
+
+it("shows a done Task's criteria met, names what the verification count counts, and cues a shortened decision (B19)", async () => {
+  const { container } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const done = { ...detail("done", []), verification: "0/3", criteria: ["README가 최신"], decisions: [{ at: NOW, by: "engine", text: "머지 결정\n[cut 9 bytes]" }] } as unknown as TaskDetail;
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: done } }));
+  expect(container.querySelector("[data-factory-criterion]")!.getAttribute("data-factory-criterion")).toBe("met");
+  expect(container.querySelector("[data-factory-verification]")!.textContent).toContain(english["factory.task.verification"].replace("{{value}}", "0/3"));
+  const decisions = container.querySelector("[data-factory-decisions]")!;
+  expect(decisions.textContent).not.toContain("[cut");
+  expect(decisions.querySelector("[data-factory-cut]")).not.toBeNull();
+});

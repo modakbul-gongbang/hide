@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, BanIcon, CircleIcon, ExternalLinkIcon, GitPullRequestIcon, ListChecksIcon, MessageSquareIcon, PaperclipIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, BanIcon, CircleCheckIcon, CircleIcon, ExternalLinkIcon, GitPullRequestIcon, ListChecksIcon, MessageSquareIcon, PaperclipIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed, useRemaining } from "../components/elapsed";
 import { Button } from "../components/ui/button";
@@ -19,7 +19,7 @@ import { useFactoryRequest, type FactoryRequest } from "./request";
 
 /** The engine's priority is a 32-bit integer; a larger one would not reach it. */
 const PRIORITY_LIMIT = 2_147_483_647;
-import { inboxKey, taskChain } from "./view";
+import { inboxKey, taskChain, withoutCutMark } from "./view";
 
 const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
 
@@ -118,7 +118,12 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
               <ul className="flex flex-col gap-xs">
                 {detail.criteria.map((line, at) => (
                   <li key={at} className="flex items-start gap-sm text-body">
-                    <CircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 text-muted-foreground" />
+                    {/* A done Task passed what it was held to, so its criteria read as met. */}
+                    {card.state === "done" ? (
+                      <CircleCheckIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 text-success" data-factory-criterion="met" />
+                    ) : (
+                      <CircleIcon aria-hidden="true" className="mt-xxs size-(--size-icon-sm) shrink-0 text-muted-foreground" data-factory-criterion="open" />
+                    )}
                     <span className="[overflow-wrap:anywhere]">{line}</span>
                   </li>
                 ))}
@@ -383,10 +388,22 @@ function Attempt({ attempt, actions }: { attempt: AttemptView; actions: Actions 
       </span>
       {open && attempt.log_tail ? (
         <pre className="max-h-(--size-pr-popover) overflow-auto rounded-sm bg-muted p-sm font-mono text-caption whitespace-pre-wrap [overflow-wrap:anywhere]" data-factory-log="true">
-          {attempt.log_tail}
+          <ShortenedText text={attempt.log_tail} />
         </pre>
       ) : null}
     </div>
+  );
+}
+
+/** A text the engine shortened ends with a muted cue instead of the store's `[cut N bytes]` mark. */
+function ShortenedText({ text, className }: { text: string; className?: string }) {
+  const { t } = useInterfaceTranslation();
+  const shown = withoutCutMark(text);
+  return (
+    <span className={className}>
+      {shown.text}
+      {shown.cut ? <span className="text-muted-foreground" data-factory-cut="true"> … {t("factory.task.cut")}</span> : null}
+    </span>
   );
 }
 
@@ -398,7 +415,7 @@ function Decisions({ detail }: { detail: TaskDetail }) {
       <ol className="flex flex-col gap-sm" data-factory-decisions={detail.decisions.length}>
         {[...detail.decisions].reverse().map((decision, at) => (
           <li key={`${decision.at}:${at}`} className="flex min-w-0 items-start gap-sm text-body">
-            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{decision.text}</span>
+            <ShortenedText text={decision.text} className="min-w-0 flex-1 [overflow-wrap:anywhere]" />
             <span className="flex shrink-0 gap-xxs text-caption text-muted-foreground">
               {decision.by}
               <span>·</span>

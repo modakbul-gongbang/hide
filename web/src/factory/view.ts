@@ -121,3 +121,10 @@ export function workerPanes(summary: FactorySummary | null | undefined): Readonl
   }
   return panes;
 }
+
+/** The mark the engine's store leaves where it shortened a text (`[cut N bytes]`), read as a cue rather than shown. */
+const CUT_MARK = /\n?\[cut \d+ bytes\]$/;
+
+export function withoutCutMark(text: string): { text: string; cut: boolean } {
+  return CUT_MARK.test(text) ? { text: text.replace(CUT_MARK, ""), cut: true } : { text, cut: false };
+}

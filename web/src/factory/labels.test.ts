@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { english } from "../i18n/catalogs";
+import { factoryCatalogs } from "../i18n/resources/factory";
 import { COLUMN_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, GATE_LABEL, KIND_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, RESULT_LABEL, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, itemWhy, refusalText, resultText, waitingText } from "./labels";
 import { type CardView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMNS, DISCOVERY_CLASSES, ENV_HOLDS, GATES, QUESTION_KINDS, QUESTION_ORIGINS, RESULT_CODES, STOP_REASONS, TASK_STATES, WAITING_FOR } from "./model";
 
@@ -90,5 +91,13 @@ describe("the Factory's code sentences", () => {
   it("names a refusal it has no words for rather than hiding it (B10)", () => {
     expect(refusalText("lineage_unknown", t)).toBe(english["factory.refusal.lineage_unknown"]);
     expect(refusalText("a_new_reason", t)).toBe("The Factory did not take this (a_new_reason)");
+  });
+});
+
+describe("Korean Factory strings", () => {
+  it("never leave a particle to a fallback such as (으)로 or 을(를), which reads wrong after a value", () => {
+    const fallback = /\((으|을|를|이|가|은|는|와|과)\)|[가-힣]\((을|를|이|가|은|는|와|과)\)/;
+    const offending = Object.entries(factoryCatalogs.ko).filter(([, text]) => fallback.test(text));
+    expect(offending).toEqual([]);
   });
 });

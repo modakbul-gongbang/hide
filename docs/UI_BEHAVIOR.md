@@ -1126,7 +1126,7 @@ A start whose default-runtime read is refused, or that gets no answer within 20 
 ### The screen
 
 The header holds the Factory name, the project filter, the flow bar and '비서에게 묻기'.
-The flow bar shows 정리 중 · 대기 · 실행 중 · 완료 오늘 and never a person's-turn cell; a cell opens the board filtered to that column.
+The flow bar shows 정리 중 · 대기 · 실행 중 · 완료 오늘 (today in the machine's time zone) and never a person's-turn cell; a cell opens the board filtered to that column.
 The flow bar ends with the time of the last GitHub read, which turns the warning colour after three failed reads in a row and back when a read succeeds; there is no banner.
 The tabs are 내 차례 · 보드 · 그래프 · 설정, and the screen opens on 내 차례; the project filter applies to every tab.
 The 내 차례 tab's count and the sidebar badge are the engine's `my_turn` and are always the same number.
@@ -1158,7 +1158,8 @@ A filter that leaves the board or graph empty offers to clear it; a Factory whos
 ### The Task page
 
 The Task page is full width: the chain (its predecessors → this Task → the Tasks waiting on it) at the top, the goal, completion criteria, out of scope and attachments on the left, and progress (pull request and CI, verification n/3, each attempt's log tail and CI link, the external wait, 'worker 보기') and the decision record on the right.
-Verification n/3 counts the worker's resubmissions; a Factory without verification shows '검증 없음'.
+Verification n/3 counts the worker's resubmissions and reads '검증 실패 n/3'; a Factory without verification shows '검증 없음'.
+A done Task's completion criteria read as met, and a text the engine shortened ends with a muted '… (줄임)' instead of the store's cut mark.
 The page offers only the actions the engine allows in the Task's state: 정리 중 edit (which opens the secretary) and cancel, 대기 priority, removing a dependency and cancel, 실행 중 pause and cancel, 멈춤 retry and cancel, 머지 대기 merge, request changes and cancel, a blocked Task nothing but its answer, and a cancelled Task 되살리기 while it lasts.
 An open question is answered only in 내 차례: '내 차례에서 답하기 →' opens that item there.
 'worker 보기' opens the worker's pane in its Workspace.
