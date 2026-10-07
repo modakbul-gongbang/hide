@@ -333,7 +333,19 @@ pub(crate) fn apply(
             {
                 return Err("parent_authority_required".into());
             }
-            insert_record(ledger, record, *check)
+            // Registration has no provenance input. A handoff's own retry
+            // keeps its stored origin; binding a spawn still compares the
+            // complete immutable identity through the strict insertion path.
+            let mut registration = record.clone();
+            if registration.origin.is_none()
+                && let Some(existing) = ledger
+                    .agents
+                    .iter()
+                    .find(|existing| !existing.ended && existing.actor.same_identity(&record.actor))
+            {
+                registration.origin = existing.origin.clone();
+            }
+            insert_record(ledger, &registration, *check)
         }
         Mutation::End { id, actor } => {
             let record = ledger
@@ -1151,6 +1163,72 @@ mod tests {
             )
             .unwrap();
             assert!(restored.watches.is_empty());
+        }
+    }
+
+    #[test]
+    fn handoff_self_registration_preserves_provenance_without_transferring_responsibility() {
+        let (mut ledger, caller, origin, spawn, child) =
+            pending_spawn_mode(SpawnMode::Handoff, "local");
+        let mut registration = child.clone();
+        registration.origin = None; // The public register command has no origin input.
+        let id = apply(
+            &mut ledger,
+            &caller,
+            &Mutation::BindChild {
+                id: spawn,
+                record: child,
+            },
+            3,
+        )
+        .unwrap()["child"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let before = ledger.clone();
+        for check in [false, true] {
+            let reply = apply(
+                &mut ledger,
+                &registration.actor,
+                &Mutation::Register {
+                    record: registration.clone(),
+                    check,
+                },
+                4,
+            )
+            .unwrap();
+            assert_eq!(reply["id"], id);
+            assert_eq!(reply["origin"], origin);
+            assert!(reply["parent"].is_null());
+            assert_eq!(ledger, before);
+            for changed in [
+                AgentRecord {
+                    name: "changed".into(),
+                    ..registration.clone()
+                },
+                AgentRecord {
+                    parent: Some(origin.clone()),
+                    ..registration.clone()
+                },
+                AgentRecord {
+                    origin: Some("someone-else".into()),
+                    ..registration.clone()
+                },
+            ] {
+                assert!(
+                    apply(
+                        &mut ledger,
+                        &registration.actor,
+                        &Mutation::Register {
+                            record: changed,
+                            check
+                        },
+                        5,
+                    )
+                    .is_err()
+                );
+                assert_eq!(ledger, before);
+            }
         }
     }
 
