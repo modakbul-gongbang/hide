@@ -8,6 +8,27 @@ use crate::runtime::delivery::Observation;
 use crate::workspace_control::Query;
 
 use super::Runtime;
+use crate::factory::screen::{
+    ActionAnswer, FactorySection, FactoryTaskSection, REQUEST_ID_LIMIT, ScreenRequest,
+};
+use crate::model::Edited;
+
+/// `factory_action`: one person's action on a Factory screen, the stage-1
+/// command as the CLI sends it (PRD software-factory-ui).
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FactoryActionPayload {
+    request_id: String,
+    command: hide_factory::Command,
+}
+
+/// `factory_task_open`: the Task page a screen shows.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FactoryTaskOpenPayload {
+    factory: String,
+    task: String,
+}
 
 /// A worker pane as the runtime sees it now.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,6 +47,126 @@ pub(crate) struct WorkerProbe {
 const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
+    pub(crate) fn set_factory_screen_port(&mut self, port: crate::factory::ScreenPort) {
+        self.factory_screen = Some(port);
+    }
+
+    /// The Factory host's changed values; it builds and compares them off
+    /// the lock, so this only swaps them in under a new edit number.
+    pub(crate) fn set_factory_screen(
+        &mut self,
+        summary: Option<std::sync::Arc<hide_factory::FactorySummary>>,
+        task: Option<Option<FactoryTaskSection>>,
+    ) {
+        if let Some(summary) = summary {
+            self.snapshot
+                .factory
+                .get_or_insert_with(Edited::default)
+                .edit()
+                .summary = Some(summary);
+        }
+        if let Some(task) = task {
+            self.snapshot.factory_task = task.map(Edited::new);
+        }
+    }
+
+    pub(crate) fn factory_answered(&mut self, answer: ActionAnswer) {
+        self.snapshot
+            .factory
+            .get_or_insert_with(Edited::<FactorySection>::default)
+            .edit()
+            .push_answer(answer);
+    }
+
+    /// Hands a screen action to the engine thread; a queue that cannot take
+    /// it is answered at once on the same request id.
+    pub(super) fn factory_action(&mut self, payload: FactoryActionPayload) -> bool {
+        if payload.request_id.is_empty() || payload.request_id.len() > REQUEST_ID_LIMIT {
+            crate::diagnostic!(serde_json::json!({
+                "component": "factory",
+                "kind": "screen.request_id_invalid",
+                "length": payload.request_id.len(),
+            }));
+            return false;
+        }
+        let request_id = payload.request_id.clone();
+        let sent = match &self.factory_screen {
+            Some(port) => port.send(ScreenRequest::Action {
+                request_id: payload.request_id,
+                command: payload.command,
+            }),
+            None => Err("factory_unavailable"),
+        };
+        match sent {
+            Ok(()) => false,
+            Err(reason) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "factory",
+                    "kind": "screen.action_refused",
+                    "request_id": request_id,
+                    "reason": reason,
+                }));
+                let next = if reason == "factory_busy" {
+                    "Try again in a moment"
+                } else {
+                    "See the diagnostic log"
+                };
+                self.factory_answered(ActionAnswer {
+                    request_id,
+                    answer: hide_factory::Refusal::new(reason, next).to_json(),
+                });
+                true
+            }
+        }
+    }
+
+    pub(super) fn factory_task_open(&mut self, payload: FactoryTaskOpenPayload) -> bool {
+        self.factory_screen_send(ScreenRequest::OpenTask {
+            factory: payload.factory,
+            task: payload.task,
+        })
+    }
+
+    pub(super) fn factory_task_close(&mut self) -> bool {
+        self.factory_screen_send(ScreenRequest::CloseTask)
+    }
+
+    /// Remembers the Home agent pane started as the Factory secretary (B23).
+    /// A pane no tab holds is refused and logged; the screen starts again.
+    pub(super) fn factory_secretary_set(&mut self, pane_id: String) -> bool {
+        if !self.pane_listed(&pane_id) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "factory",
+                "kind": "screen.secretary_unlisted",
+                "pane_id": pane_id,
+            }));
+            return false;
+        }
+        if self.snapshot.ui_state.factory_secretary_pane.as_deref() == Some(pane_id.as_str()) {
+            return false;
+        }
+        self.snapshot.ui_state.factory_secretary_pane = Some(pane_id);
+        self.persist_ui_state();
+        true
+    }
+
+    /// A page the queue could not take is logged; the screen keeps its
+    /// skeleton and the next open asks again (design #13).
+    fn factory_screen_send(&mut self, request: ScreenRequest) -> bool {
+        let sent = match &self.factory_screen {
+            Some(port) => port.send(request),
+            None => Err("factory_unavailable"),
+        };
+        if let Err(reason) = sent {
+            crate::diagnostic!(serde_json::json!({
+                "component": "factory",
+                "kind": "screen.page_refused",
+                "reason": reason,
+            }));
+        }
+        false
+    }
+
     /// Checks a local caller like a delivery request does and names the pane
     /// and checkout it speaks from.
     pub(crate) fn factory_caller(

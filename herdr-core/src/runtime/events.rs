@@ -1285,6 +1285,10 @@ pub(super) enum Event {
     SessionSearch(super::session_search::SearchPayload),
     LinksOpen(super::links::LinksOpenPayload),
     LinksClose,
+    FactoryAction(Box<super::factory::FactoryActionPayload>),
+    FactoryTaskOpen(super::factory::FactoryTaskOpenPayload),
+    FactoryTaskClose,
+    FactorySecretarySet(PaneTargetPayload),
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
@@ -1499,6 +1503,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
         "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
+        "factory_action" => serde_json::from_value::<super::factory::FactoryActionPayload>(payload)
+            .map(|payload| Event::FactoryAction(Box::new(payload)))
+            .map_err(|_| invalid_payload(&kind)),
+        "factory_task_open" => decode!(super::factory::FactoryTaskOpenPayload, FactoryTaskOpen),
+        "factory_task_close" => Ok(Event::FactoryTaskClose),
+        "factory_secretary_set" => decode!(PaneTargetPayload, FactorySecretarySet),
         "links_close" => Ok(Event::LinksClose),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
@@ -1594,6 +1604,10 @@ impl Runtime {
             },
             Event::SessionSearch(payload) => self.request_session_search(payload),
             Event::LinksOpen(payload) => self.open_links(payload),
+            Event::FactoryAction(payload) => self.factory_action(*payload),
+            Event::FactoryTaskOpen(payload) => self.factory_task_open(payload),
+            Event::FactoryTaskClose => self.factory_task_close(),
+            Event::FactorySecretarySet(payload) => self.factory_secretary_set(payload.pane_id),
             Event::LinksClose => self.close_links(),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
@@ -3486,6 +3500,8 @@ impl Runtime {
                         .and_then(RightPanelSection::parse)
                         .unwrap_or(current.right_panel_section),
                     sessions_mode_by_project: current.sessions_mode_by_project,
+                    // The secretary belongs to `factory_secretary_set`.
+                    factory_secretary_pane: current.factory_secretary_pane,
                     expanded_paths: payload.expanded_paths,
                     device_expanded_paths: payload
                         .device_expanded_paths
