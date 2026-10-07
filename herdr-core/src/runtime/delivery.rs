@@ -1016,18 +1016,35 @@ pub(crate) mod tests {
     /// The overlay a label worker would publish for a Codex pane whose
     /// session read, under Herdr state `seq`, found a finished plan turn.
     fn plan_overlay(pane: &str, native: &str, seq: u64) -> LabelOverlay {
-        use hide_session::turns::{TurnMark, TurnTracker};
-        let mut turns = TurnTracker::default();
+        use hide_session::turns::TurnMark;
         let turn = Some("turn-1".to_owned());
-        turns.fold(
-            0,
-            &TurnMark::Started {
-                turn: turn.clone(),
-                plan: true,
-            },
-        );
-        turns.fold(10, &TurnMark::Plan { turn: turn.clone() });
-        turns.fold(20, &TurnMark::Completed { turn });
+        read_overlay(
+            pane,
+            native,
+            seq,
+            &[
+                TurnMark::Started {
+                    turn: turn.clone(),
+                    plan: true,
+                },
+                TurnMark::Plan { turn: turn.clone() },
+                TurnMark::Completed { turn },
+            ],
+        )
+    }
+
+    /// The overlay for a Codex pane whose session read, under Herdr state
+    /// `seq`, found these records.
+    fn read_overlay(
+        pane: &str,
+        native: &str,
+        seq: u64,
+        marks: &[hide_session::turns::TurnMark],
+    ) -> LabelOverlay {
+        let mut turns = hide_session::turns::TurnTracker::default();
+        for (offset, mark) in marks.iter().enumerate() {
+            turns.fold(offset as u64 * 10, mark);
+        }
         let record = crate::labels::store::PaneRecord {
             owner: hide_session::label_reference_token("codex", "id", native),
             turns: Some(turns),
@@ -1081,6 +1098,47 @@ pub(crate) mod tests {
             observe(&mut guard, "claude", 2, "recipient-native", None),
             Turn::NotReported
         );
+    }
+
+    /// B5: Herdr can read Codex done before its session file records the end
+    /// of the turn. Only a plan-mode turn can end waiting for approval, so an
+    /// ordinary turn still running in the file rings as before; an unfinished
+    /// plan-mode turn is not known and holds until the next state is read.
+    #[test]
+    fn a_turn_not_yet_ended_in_the_file_rings_unless_it_runs_in_plan_mode() {
+        use crate::delivery::doorbell::Hold;
+        use hide_session::turns::TurnMark;
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        let verdict = |guard: &mut Runtime, plan: bool| {
+            let started = TurnMark::Started {
+                turn: Some("turn-1".to_owned()),
+                plan,
+            };
+            let overlay = read_overlay("recipient", "recipient-native", 2, &[started]);
+            let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+                {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"done",
+                 "state_change_seq":2,"lineage_session":"recipient-session",
+                 "agent_session":{"kind":"id","value":"recipient-native"}},
+            ]}))
+            .unwrap();
+            guard.observe_delivery(crate::node::TEST_NODE, &payload, None, Some(&overlay));
+            let long_ago = unix_milliseconds().saturating_sub(10 * 60_000);
+            let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+            observation.last_input_at_unix_ms = long_ago;
+            observation.last_submit_at_unix_ms = long_ago;
+            observation.status_changed_at_unix_ms = long_ago;
+            guard
+                .delivery_bell_verdict(&target.actor, unix_milliseconds())
+                .err()
+        };
+        assert_eq!(
+            verdict(&mut guard, false),
+            None,
+            "a default-mode turn rings"
+        );
+        assert_eq!(verdict(&mut guard, true), Some(Hold::SessionUnread));
     }
 
     #[test]

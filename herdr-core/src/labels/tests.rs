@@ -1490,6 +1490,38 @@ fn a_codex_plan_wait_is_known_only_for_the_state_it_was_read_under() {
     );
 }
 
+/// B5: a default-mode turn whose end Codex has not written yet, when Herdr
+/// already reads done, waits for nothing; only a plan-mode turn could wait.
+#[test]
+fn a_default_turn_not_yet_ended_in_the_file_waits_for_nothing() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (path, _) = codex_plan_session(&harness, "done", 5);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    writeln!(
+        file,
+        "{}",
+        codex_event(
+            "task_started",
+            "turn-2",
+            json!({"collaboration_mode_kind":"default"})
+        )
+    )
+    .unwrap();
+    let done = ObservedAgent {
+        agent: Some("codex".to_owned()),
+        ..agent(&path, "done", 6)
+    };
+    observe(&mut worker, &done);
+    settle(&mut worker, &woken);
+    assert_eq!(waits(&worker, &done), (Some(Waiting::Nothing), Some(false)));
+}
+
 /// B8: a restarted daemon shows the wait it read for the same state without
 /// reading the session again; a record from before turns were read is read
 /// once, and does not claim a wait it could not read.
