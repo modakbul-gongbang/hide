@@ -2864,13 +2864,15 @@ mod tests {
                 "pid {shell}"
             );
         }
-        // The shell is also the foreground process, and is listed once.
+        // The shell is also the foreground process, and is listed once. Under
+        // `cargo test` other tests share this process, so their children are
+        // the shell's descendants here and are listed too, each once.
         let server = server(vec![process_info("w1:p1", me)]);
         let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
-        assert_eq!(
-            held.iter().map(|process| process.pid).collect::<Vec<_>>(),
-            [me]
-        );
+        let pids: Vec<u32> = held.iter().map(|process| process.pid).collect();
+        assert_eq!(pids.iter().filter(|&&pid| pid == me).count(), 1, "{pids:?}");
+        let distinct: std::collections::HashSet<_> = pids.iter().collect();
+        assert_eq!(distinct.len(), pids.len(), "{pids:?}");
     }
 
     #[test]
