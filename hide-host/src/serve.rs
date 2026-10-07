@@ -530,15 +530,29 @@ pub fn handle_with_progress(
         }
         Call::ProcessStarts { pids } => to_value(
             pids.into_iter()
-                .map(|pid| match hide_platform::process::start_time(pid) {
-                    Ok(started) => ProcessStart::Running { started },
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => ProcessStart::Gone,
-                    Err(error) => ProcessStart::Unreadable {
-                        reason: format!("process {pid} could not be read: {error}"),
-                    },
+                .map(|pid| {
+                    let read = hide_platform::process::start_time(pid).and_then(|started| {
+                        hide_platform::process::name_of(pid)
+                            .map(|name| ProcessStart::Running { started, name })
+                    });
+                    match read {
+                        Ok(running) => running,
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => ProcessStart::Gone,
+                        Err(error) => ProcessStart::Unreadable {
+                            reason: format!("process {pid} could not be read: {error}"),
+                        },
+                    }
                 })
                 .collect::<Vec<_>>(),
         ),
+        Call::ProcessDescendants { pid } => {
+            to_value(hide_platform::process::descendants(pid).map_err(|error| {
+                HostError::new(
+                    ErrorCode::Io,
+                    format!("the processes under {pid} could not be read: {error}"),
+                )
+            })?)
+        }
         Call::DiskUsage { paths, shared_git } => {
             let request = crate::disk::DiskRequest {
                 paths: paths.iter().map(PathBuf::from).collect(),

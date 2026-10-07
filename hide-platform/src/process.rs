@@ -941,6 +941,13 @@ pub fn cwd_of(pid: u32) -> io::Result<PathBuf> {
     sys::cwd_of(pid)
 }
 
+/// The name of the program `pid` runs, as the system lists it: the file name
+/// of its image on Windows, the command name elsewhere, which Linux keeps to
+/// its first 15 bytes. `NotFound` when the process is gone.
+pub fn name_of(pid: u32) -> io::Result<String> {
+    sys::name_of(pid)
+}
+
 /// Counts and sizes the process tree rooted at `pid`. `NotFound` when `pid`
 /// does not exist.
 pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
@@ -956,8 +963,12 @@ pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
     })
 }
 
-/// Every process under `root`, parents before children.
-fn descendants(root: u32) -> io::Result<Vec<u32>> {
+/// Every process under `root`, parents before children, read from one look
+/// at the system's process table. A root that has ended, or has no
+/// children, has none. On Windows a child is only one that started after its
+/// parent, because the table keeps a parent's pid after the parent has exited
+/// and another process may hold that pid now.
+pub fn descendants(root: u32) -> io::Result<Vec<u32>> {
     let mut walk = sys::Walk::new()?;
     let mut found: Vec<u32> = Vec::new();
     let mut level = vec![root];
@@ -1626,6 +1637,27 @@ mod sys {
     }
 
     #[cfg(target_os = "macos")]
+    pub(super) fn name_of(pid: u32) -> io::Result<String> {
+        let info = mac::bsd_info(pid)?;
+        // `pbi_name` keeps twice as much of the name as `pbi_comm`, and is
+        // empty for a process that never set it.
+        let name = if info.pbi_name[0] != 0 {
+            &info.pbi_name[..]
+        } else {
+            &info.pbi_comm[..]
+        };
+        let bytes: Vec<u8> = name
+            .iter()
+            .map(|&byte| byte as u8)
+            .take_while(|&byte| byte != 0)
+            .collect();
+        if bytes.is_empty() {
+            return Err(io::Error::other("the process lists no name"));
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[cfg(target_os = "macos")]
     pub(super) fn cwd_of(pid: u32) -> io::Result<PathBuf> {
         use std::os::unix::ffi::OsStringExt;
 
@@ -1738,10 +1770,9 @@ mod sys {
     mod linux {
         use super::*;
 
-        /// The fields of `/proc/<pid>/stat` after the command name, which may
-        /// itself contain spaces and parentheses (hence the last `) `).
-        pub(in super::super) fn fields(pid: u32) -> io::Result<Vec<String>> {
-            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|error| {
+        /// The text of `/proc/<pid>/<file>`.
+        pub(in super::super) fn read(pid: u32, file: &str) -> io::Result<String> {
+            std::fs::read_to_string(format!("/proc/{pid}/{file}")).map_err(|error| {
                 // A process that exits during the read answers `ESRCH`, which
                 // Rust does not name.
                 if error.raw_os_error() == Some(libc::ESRCH) {
@@ -1749,7 +1780,13 @@ mod sys {
                 } else {
                     error
                 }
-            })?;
+            })
+        }
+
+        /// The fields of `/proc/<pid>/stat` after the command name, which may
+        /// itself contain spaces and parentheses (hence the last `) `).
+        pub(in super::super) fn fields(pid: u32) -> io::Result<Vec<String>> {
+            let stat = read(pid, "stat")?;
             let (_, rest) = stat
                 .rsplit_once(") ")
                 .ok_or_else(|| io::Error::other("unreadable process status"))?;
@@ -1775,6 +1812,12 @@ mod sys {
     #[cfg(target_os = "linux")]
     pub(super) fn start_time(pid: u32) -> io::Result<u64> {
         linux::field(&linux::fields(pid)?, 19)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn name_of(pid: u32) -> io::Result<String> {
+        let name = linux::read(pid, "comm")?;
+        Ok(name.strip_suffix('\n').unwrap_or(&name).to_owned())
     }
 
     #[cfg(target_os = "linux")]
@@ -1857,8 +1900,8 @@ mod sys {
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
         GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
-        TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, QueryFullProcessImageNameW,
+        ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
     };
 
     use super::*;
@@ -2365,6 +2408,21 @@ mod sys {
             return Err(io::Error::last_os_error());
         }
         Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+    }
+
+    pub(super) fn name_of(pid: u32) -> io::Result<String> {
+        let process = open_live(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        let mut buffer = [0_u16; 1024];
+        let mut length = buffer.len() as u32;
+        // SAFETY: the handle is open, and the buffer holds the `length` units
+        // the call is told of.
+        let named =
+            unsafe { QueryFullProcessImageNameW(process.0, 0, buffer.as_mut_ptr(), &mut length) };
+        if named == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let image = String::from_utf16_lossy(&buffer[..length as usize]);
+        Ok(image.rsplit('\\').next().unwrap_or(&image).to_owned())
     }
 
     pub(super) fn cwd_of(_: u32) -> io::Result<PathBuf> {
