@@ -13,6 +13,8 @@ export type AgentRow = {
   id: string;
   pane_id: string;
   identity_label: string;
+  /** The name Herdr knows the agent by (`agent start --name`, `agent rename`); absent when it was given none. */
+  herdr_name?: string;
   agent_kind: string;
   /** The checkout that physically owns this pane. */
   checkout_label?: string | null;

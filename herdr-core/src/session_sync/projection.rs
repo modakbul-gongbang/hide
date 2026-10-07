@@ -102,6 +102,7 @@ impl ProjectionState {
                     .map(str::to_owned);
                 SessionAgentPayload {
                     id: agent.name.clone().or_else(|| Some(agent.pane_id.clone())),
+                    name: agent.name.clone(),
                     pane_id: Some(agent.pane_id.clone()),
                     workspace_label,
                     cwd: agent.cwd.clone(),
