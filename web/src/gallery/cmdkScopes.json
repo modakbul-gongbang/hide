@@ -416,6 +416,7 @@
           "rows": [
             {
               "pane_id": "p-parent",
+              "occurrence": 0,
               "depth": 0,
               "tag": "here",
               "caption_parent": null
@@ -429,6 +430,7 @@
           "rows": [
             {
               "pane_id": "p-child",
+              "occurrence": 0,
               "depth": 0,
               "tag": null,
               "caption_parent": "p-parent"
@@ -446,12 +448,14 @@
           "rows": [
             {
               "pane_id": "p-child",
+              "occurrence": 0,
               "depth": 0,
               "tag": "here",
               "caption_parent": null
             },
             {
               "pane_id": "p-parent",
+              "occurrence": 0,
               "depth": 1,
               "tag": "parent",
               "caption_parent": null
@@ -467,6 +471,7 @@
           "rows": [
             {
               "pane_id": "p-dag",
+              "occurrence": 0,
               "depth": 0,
               "tag": "here",
               "caption_parent": null
@@ -949,10 +954,12 @@
           "lineage": [
             {
               "pane_id": "p-parent",
+              "occurrence": 0,
               "depth": 0
             },
             {
               "pane_id": "p-child",
+              "occurrence": 0,
               "depth": 1
             }
           ],
@@ -1283,24 +1290,29 @@
         "rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0
           },
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 1
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0
           }
         ],
         "visible_rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0
           }
         ],
@@ -1316,24 +1328,29 @@
         "rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0
           },
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 1
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0
           }
         ],
         "visible_rows": [
           {
             "pane_id": "p-parent",
+            "occurrence": 0,
             "depth": 0
           },
           {
             "pane_id": "p-dag",
+            "occurrence": 0,
             "depth": 0
           }
         ],
@@ -1500,12 +1517,14 @@
         "rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0
           }
         ],
         "visible_rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0
           }
         ],
@@ -1520,12 +1539,14 @@
         "rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0
           }
         ],
         "visible_rows": [
           {
             "pane_id": "p-child",
+            "occurrence": 0,
             "depth": 0
           }
         ],

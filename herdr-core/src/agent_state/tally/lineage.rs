@@ -1,7 +1,7 @@
 //! Surface-specific lineage membership and marks. The desktop's locale-aware
 //! alphabetical placement remains presentation; core resolves status priority
 //! first and publishes only the tied candidates in each priority tier.
-use super::scope::descendants;
+use super::scope::{RowRef, descendants, row_references};
 use crate::model::{DescendantCountsSnapshot, SidebarAgentSnapshot, WorkspaceSnapshot};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -37,6 +37,7 @@ pub struct Tree {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TreeRow {
     pub pane_id: String,
+    pub occurrence: usize,
     pub depth: usize,
 }
 
@@ -46,6 +47,14 @@ pub(super) fn checkout_trees(
     project: &WorkspaceSnapshot,
     agents: &[&SidebarAgentSnapshot],
 ) -> HashMap<String, Tree> {
+    let references = row_references(agents);
+    let occurrences: HashMap<_, _> = agents
+        .iter()
+        .map(|a| {
+            let r = &references[&(*a as *const _)];
+            ((r.pane_id.as_str(), r.occurrence), *a)
+        })
+        .collect();
     let mut owners = HashMap::new();
     for checkout in &project.checkouts {
         for pane in checkout.tabs.iter().flat_map(|t| &t.panes) {
@@ -65,12 +74,14 @@ pub(super) fn checkout_trees(
         index: &HashMap<&str, &SidebarAgentSnapshot>,
         seen: &mut HashSet<String>,
         tree: &mut Tree,
+        references: &HashMap<*const SidebarAgentSnapshot, RowRef>,
     ) {
         if !seen.insert(agent.pane_id.clone()) {
             return;
         }
         let row = TreeRow {
             pane_id: agent.pane_id.clone(),
+            occurrence: references[&(agent as *const _)].occurrence,
             depth,
         };
         tree.rows.push(row.clone());
@@ -87,6 +98,7 @@ pub(super) fn checkout_trees(
                     index,
                     seen,
                     tree,
+                    references,
                 );
             }
         }
@@ -108,14 +120,14 @@ pub(super) fn checkout_trees(
                     .as_deref()
                     .is_some_and(|id| ids.contains(id))
             }) {
-                visit(root, 0, true, &by_pane, &mut seen, &mut tree);
+                visit(root, 0, true, &by_pane, &mut seen, &mut tree, &references);
             }
             tree.turn_kind = tree.needs_you.then(|| {
-                if tree
-                    .rows
-                    .iter()
-                    .any(|r| by_pane[r.pane_id.as_str()].state.needs_you)
-                {
+                if tree.rows.iter().any(|r| {
+                    occurrences[&(r.pane_id.as_str(), r.occurrence)]
+                        .state
+                        .needs_you
+                }) {
                     "question"
                 } else {
                     "review"
@@ -124,7 +136,7 @@ pub(super) fn checkout_trees(
             let mut shown = tree
                 .rows
                 .iter()
-                .map(|r| by_pane[r.pane_id.as_str()])
+                .map(|r| occurrences[&(r.pane_id.as_str(), r.occurrence)])
                 .collect::<Vec<_>>();
             shown.sort_by_key(|a| a.state.attention_rank);
             tree.more = shown.len().saturating_sub(2);

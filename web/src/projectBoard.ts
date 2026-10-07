@@ -183,7 +183,12 @@ export type TasksBoard = {
 
 /** The representatives selected by the core for this tree. */
 export function shownAgents(tree: AgentTreeScope, agents: AgentRow[]): { shown: AgentRow[]; more: number } {
-  return { shown: scopeRows(tree.shown, agents), more: tree.more };
+  const refs = new Map(tree.rows.map(row => [row.pane_id, row]));
+  return { shown: scopeOccurrences(tree.shown.map(id => {
+    const row = refs.get(id);
+    if (!row) throw new Error(`Missing core tree representative: ${id}`);
+    return row;
+  }), agents), more: tree.more };
 }
 
 /** Needs-you cards first, each group in its original order; nothing else reorders a column. */
@@ -203,15 +208,10 @@ function prioritized<T extends { needsYou: boolean }>(cards: T[]): T[] {
  * descendants itself (`unfoldedRows`).
  */
 export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[], context: "device" | "global" | "visible" = "device"): Map<string, BoardRow[]> {
-  const byPane = new Map<string, AgentRow>();
-  for (const agent of agents) if (!byPane.has(agent.pane_id)) byPane.set(agent.pane_id, agent);
   return new Map(workspace.checkouts.map((checkout) => {
     const tree = context === "device" ? checkout.agent_scope.tree : checkout.agent_scope.global_tree;
-    return [checkout.id, (context === "visible" ? tree.visible_rows : tree.rows).map((row) => {
-      const agent = byPane.get(row.pane_id);
-      if (!agent) throw new Error(`Checkout tree references a missing row: ${row.pane_id}`);
-      return { agent, depth: row.depth };
-    })];
+    const rows = context === "visible" ? tree.visible_rows : tree.rows;
+    return [checkout.id, scopeOccurrences(rows, agents).map((agent, index) => ({ agent, depth: rows[index]!.depth }))];
   }));
 }
 
@@ -678,7 +678,6 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const { workspace, agents } = project;
   const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
   const board = workspace.agent_scope.prs;
-  const byPane = new Map(agents.map((a) => [a.pane_id, a]));
   const local = workspace.tasks?.source?.kind === "local";
   const rows: PrRow[] = [];
   for (const pr of workspace.pull_requests ?? []) {
@@ -710,11 +709,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       checkout,
       issue,
       agents: agentsHere,
-      lineage: state.lineage.map((row) => {
-        const agent = byPane.get(row.pane_id);
-        if (!agent) throw new Error(`Missing PR lineage row: ${row.pane_id}`);
-        return { agent, depth: row.depth };
-      }),
+      lineage: scopeOccurrences(state.lineage, agents).map((agent, index) => ({ agent, depth: state.lineage[index]!.depth })),
       needsLook: state.needs_look,
       checks,
       review,

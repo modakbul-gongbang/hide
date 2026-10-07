@@ -8,6 +8,7 @@
 // agent lineage fields - and a connection the snapshot does not name has no
 // row, never an empty line (design principle 10).
 
+import { scopeOccurrences } from "./agentScope";
 import type { TFunction } from "i18next";
 import { frontDeviceId } from "./devices";
 import {
@@ -75,9 +76,8 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, t
         const workspace = scope.allWorkspaces.find((p) => p.id === value.project_id);
         const checkout = workspace?.checkouts.find((c) => c.id === value.checkout_id);
         if (!workspace || !checkout) throw new Error("Missing core relation place");
-        const rows = value.rows.map((row) => {
-          const agent = byPane.get(row.pane_id);
-          if (!agent) throw new Error(`Missing relation agent: ${row.pane_id}`);
+        const rows = scopeOccurrences(value.rows, scope.agents).map((agent, index) => {
+          const row = value.rows[index]!;
           const entry = agentEntry(scope, agent, places.get(row.pane_id) ?? null, front, t);
           const parent = row.caption_parent ? byPane.get(row.caption_parent) : null;
           if (parent === undefined) throw new Error(`Missing relation parent: ${row.caption_parent}`);

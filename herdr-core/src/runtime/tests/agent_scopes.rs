@@ -793,3 +793,52 @@ fn factory_workers_leave_requests_and_overview_count_without_leaving_physical_li
         1
     );
 }
+
+#[test]
+fn palette_and_pr_lineage_keep_first_anchor_and_last_ancestor_occurrences() {
+    let mut runtime = runtime();
+    let mut agents = rows();
+    agents[1].lineage_parent_pane_id = Some("root".into());
+    let mut later_child = agents[1].clone();
+    later_child.identity_label = "Later child".into();
+    later_child.lineage_parent_pane_id = None;
+    let mut later_root = agents[0].clone();
+    later_root.identity_label = "Later parent".into();
+    agents.extend([later_child, later_root]);
+    let pr: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+        "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
+        "head_branch":"feature","base_branch":"main","badge":"open","checks":"passing","is_draft":false,"closing_issues":[]
+    })).unwrap();
+    let mut branch = checkout(
+        "project",
+        "feature",
+        "/fixture/feature",
+        Some(pane("child", "/fixture/feature")),
+    );
+    branch.pull_request = Some(pr.clone());
+    branch.exists = true;
+    let mut project = workspace("project", "Project", "/fixture", vec![branch]);
+    project.pull_requests = vec![pr];
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.snapshot.navigator.agents = agents;
+    assert!(runtime.refresh_agent_scopes());
+    let scope = &runtime.snapshot.navigator.workspaces[0].agent_scope;
+    assert_eq!(
+        scope.prs.rows[0]
+            .lineage
+            .iter()
+            .map(|r| (r.pane_id.as_str(), r.occurrence, r.depth))
+            .collect::<Vec<_>>(),
+        [("root", 1, 0), ("child", 0, 1)]
+    );
+    let relation = &runtime.snapshot.navigator.devices[0].agent_scope.relations["child"][0];
+    assert_eq!(
+        relation
+            .rows
+            .iter()
+            .map(|r| (r.pane_id.as_str(), r.occurrence, r.tag))
+            .collect::<Vec<_>>(),
+        [("child", 0, Some("here")), ("root", 1, Some("parent"))]
+    );
+    assert!(!runtime.refresh_agent_scopes());
+}

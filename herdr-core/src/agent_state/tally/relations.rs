@@ -1,4 +1,5 @@
 //! The command palette's lineage groups, independent of translated labels.
+use super::scope::{RowRef, row_references};
 use crate::model::{SidebarAgentSnapshot, WorkspaceSnapshot};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -13,14 +14,21 @@ pub struct Group {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Row {
     pub pane_id: String,
+    pub occurrence: usize,
     pub depth: usize,
     pub tag: Option<&'static str>,
     pub caption_parent: Option<String>,
 }
 
-fn row(agent: &SidebarAgentSnapshot, depth: usize, tag: Option<&'static str>) -> Row {
+fn row(
+    agent: &SidebarAgentSnapshot,
+    depth: usize,
+    tag: Option<&'static str>,
+    references: &HashMap<*const SidebarAgentSnapshot, RowRef>,
+) -> Row {
     Row {
         pane_id: agent.pane_id.clone(),
+        occurrence: references[&(agent as *const _)].occurrence,
         depth,
         tag,
         caption_parent: None,
@@ -34,6 +42,7 @@ fn walk<'a>(
     seen: &mut HashSet<String>,
     depth: usize,
     rows: &mut Vec<Row>,
+    references: &HashMap<*const SidebarAgentSnapshot, RowRef>,
 ) {
     for id in &agent.lineage_child_pane_ids {
         let Some(child) = by_pane.get(id.as_str()) else {
@@ -43,8 +52,8 @@ fn walk<'a>(
             continue;
         }
         seen.insert(id.clone());
-        rows.push(row(child, depth, None));
-        walk(child, by_pane, inside, seen, depth + 1, rows);
+        rows.push(row(child, depth, None, references));
+        walk(child, by_pane, inside, seen, depth + 1, rows, references);
     }
 }
 
@@ -52,6 +61,7 @@ pub(super) fn project(
     projects: &[&WorkspaceSnapshot],
     agents: &[&SidebarAgentSnapshot],
 ) -> BTreeMap<String, Vec<Group>> {
+    let references = row_references(agents);
     let by_pane: HashMap<_, _> = agents.iter().map(|a| (a.pane_id.as_str(), *a)).collect();
     let checkouts: Vec<_> = projects
         .iter()
@@ -99,16 +109,16 @@ pub(super) fn project(
         let mut rows: Vec<_> = chain
             .iter()
             .enumerate()
-            .map(|(d, a)| row(a, d, None))
+            .map(|(d, a)| row(a, d, None, &references))
             .collect();
-        rows.push(row(agent, depth, Some("here")));
+        rows.push(row(agent, depth, Some("here"), &references));
         if let Some(parent) = top
             .lineage_parent_pane_id
             .as_deref()
             .and_then(|p| by_pane.get(p))
             && !inside.contains(parent.pane_id.as_str())
         {
-            rows.push(row(parent, depth + 1, Some("parent")));
+            rows.push(row(parent, depth + 1, Some("parent"), &references));
         }
         walk(
             agent,
@@ -117,6 +127,7 @@ pub(super) fn project(
             &mut seen,
             depth + 1,
             &mut rows,
+            &references,
         );
         let mut keys = std::collections::HashSet::new();
         let issues = checkout
@@ -142,6 +153,7 @@ pub(super) fn project(
             &mut HashSet::from([agent.pane_id.clone()]),
             0,
             &mut descendants,
+            &references,
         );
         for (other_project, other_checkout, panes) in &checkouts {
             if other_checkout.id == checkout.id {
@@ -160,6 +172,7 @@ pub(super) fn project(
                         child,
                         usize::from(parent.is_some_and(|p| panes.contains(p.pane_id.as_str()))),
                         None,
+                        &references,
                     );
                     value.caption_parent = parent
                         .filter(|p| !panes.contains(p.pane_id.as_str()))

@@ -499,6 +499,13 @@ describe("the PRs tab", () => {
     expect(row.group).toBe("turn");
   });
 
+  it("keeps the first checkout row and its last-occurrence ancestor in expanded PR lineage", () => {
+    const project = repo([checkout("feature", { panes: ["child"] })], [listed(9, "feature")]);
+    const agents = [agent("root", "working", { identity_label: "First parent" }), agent("child", "working", { identity_label: "First child", lineage_parent_pane_id: "root" }), agent("child", "seen", { identity_label: "Later child", lineage_parent_pane_id: null }), agent("root", "seen", { identity_label: "Later parent" })];
+    const board = buildPullRequests({ workspace: project, agents, device: null }, NOW);
+    expect(board.groups[0]!.rows[0]!.lineage.map(row => [row.agent.identity_label, row.depth])).toEqual([["Later parent", 0], ["First child", 1]]);
+  });
+
   it("draws no header for an empty group", () => {
     const board = buildPullRequests({ workspace: repo([], [listed(6, "asks")]), agents: [], device: null }, NOW);
     expect(groups(board)).toEqual([["turn", [6]]]);

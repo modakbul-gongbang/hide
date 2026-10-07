@@ -48,11 +48,19 @@ pub struct Issue {
 
 fn lineage(rows: &[TreeRow], agents: &[&SidebarAgentSnapshot]) -> Vec<TreeRow> {
     let by_pane: HashMap<_, _> = agents.iter().map(|a| (a.pane_id.as_str(), *a)).collect();
+    let references = crate::agent_state::tally::scope::row_references(agents);
+    let occurrences: HashMap<_, _> = agents
+        .iter()
+        .map(|a| {
+            let r = &references[&(*a as *const _)];
+            ((r.pane_id.as_str(), r.occurrence), *a)
+        })
+        .collect();
     let mut shown: HashSet<_> = rows.iter().map(|r| r.pane_id.clone()).collect();
     let mut result = Vec::new();
     for (start, root) in rows.iter().enumerate().filter(|(_, r)| r.depth == 0) {
         let mut ancestors = Vec::new();
-        let mut parent = by_pane[root.pane_id.as_str()]
+        let mut parent = occurrences[&(root.pane_id.as_str(), root.occurrence)]
             .lineage_parent_pane_id
             .as_deref()
             .and_then(|id| by_pane.get(id));
@@ -60,16 +68,17 @@ fn lineage(rows: &[TreeRow], agents: &[&SidebarAgentSnapshot]) -> Vec<TreeRow> {
             if shown.contains(&row.pane_id) || ancestors.len() >= 8 {
                 break;
             }
-            ancestors.insert(0, row.pane_id.clone());
+            ancestors.insert(0, *row);
             parent = row
                 .lineage_parent_pane_id
                 .as_deref()
                 .and_then(|id| by_pane.get(id));
         }
-        for (depth, id) in ancestors.iter().enumerate() {
-            shown.insert(id.clone());
+        for (depth, agent) in ancestors.iter().enumerate() {
+            shown.insert(agent.pane_id.clone());
             result.push(TreeRow {
-                pane_id: id.clone(),
+                pane_id: agent.pane_id.clone(),
+                occurrence: references[&(*agent as *const _)].occurrence,
                 depth,
             });
         }
@@ -79,6 +88,7 @@ fn lineage(rows: &[TreeRow], agents: &[&SidebarAgentSnapshot]) -> Vec<TreeRow> {
             }
             result.push(TreeRow {
                 pane_id: row.pane_id.clone(),
+                occurrence: row.occurrence,
                 depth: row.depth + ancestors.len(),
             });
         }

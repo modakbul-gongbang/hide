@@ -9,7 +9,7 @@ export type AgentScope = {
   overview_needs_you: number;
   work: Record<string, RowWork>;
   has_working: boolean;
-  relations: Record<string, { issues: string[]; project_id: string; checkout_id: string; rows: { pane_id: string; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
+  relations: Record<string, { issues: string[]; project_id: string; checkout_id: string; rows: { pane_id: string; occurrence: number; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
   listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];
   places: Record<string, { project_id: string; checkout_id: string; kind: "home" | "folder" | "checkout" }>;
   places_live: boolean;
@@ -20,7 +20,7 @@ export type AgentScope = {
   badge_total: number;
   prs: {
     counts: Record<"turn" | "fixing" | "blocked" | "review" | "draft" | "look", number>;
-    rows: { number: number; checkout_id: string | null; agents: AgentRef[]; lineage: { pane_id: string; depth: number }[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
+    rows: { number: number; checkout_id: string | null; agents: AgentRef[]; lineage: (AgentRef & { depth: number })[]; needs_look: boolean; group: "turn" | "fixing" | "blocked" | "merged"; issue: { key: string; label: string; url: string | null; task_key: string | null } | null }[];
     groups: { group: "turn" | "fixing" | "blocked" | "merged"; numbers: number[] }[];
     open: number;
   };
@@ -81,8 +81,8 @@ export function scopeOccurrences(refs: readonly AgentRef[], agents: readonly Age
 }
 
 export type AgentTreeScope = {
-  rows: { pane_id: string; depth: number }[];
-  visible_rows: { pane_id: string; depth: number }[];
+  rows: (AgentRef & { depth: number })[];
+  visible_rows: (AgentRef & { depth: number })[];
   shown: string[];
   more: number;
   needs_you: boolean;
