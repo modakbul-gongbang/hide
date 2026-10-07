@@ -89,7 +89,7 @@ pub(crate) fn valid_agent_name(name: &str) -> bool {
 /// keeps two forks of different panes apart after the truncation.
 pub fn fork_name(parent_pane_id: &str, nonce: &str) -> String {
     bounded_name(format!(
-        "fork-{}-{}",
+        "{FORK_PREFIX}{}-{}",
         sanitize(parent_pane_id),
         sanitize(nonce)
     ))
@@ -107,6 +107,19 @@ pub fn wake_name(pane_id: &str) -> String {
 /// the same provider never collide.
 pub fn task_agent_name(kind: &str, pane_id: &str) -> String {
     bounded_name(format!("hide-{}-{}", sanitize(kind), sanitize(pane_id)))
+}
+
+/// Every fork name's head, which `bounded_name` keeps.
+const FORK_PREFIX: &str = "fork-";
+
+/// Whether Hide made `name` up for the `kind` agent in `pane_id` rather than
+/// someone giving it: that pane's task or wake name, or any fork's, which
+/// spells its parent's pane and a sequence. Such a name only spells a pane
+/// id, so ⌘K neither draws nor finds an agent by it.
+pub(crate) fn hide_made_name(name: &str, kind: &str, pane_id: &str) -> bool {
+    name == task_agent_name(kind, pane_id)
+        || name == wake_name(pane_id)
+        || name.starts_with(FORK_PREFIX)
 }
 
 fn bounded_name(full: String) -> String {

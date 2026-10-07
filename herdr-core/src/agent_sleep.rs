@@ -216,6 +216,7 @@ impl SleepRecord {
                     .clone()
                     .unwrap_or_else(|| pane_id.to_owned()),
             ),
+            name: self.agent_name.clone(),
             pane_id: Some(pane_id.to_owned()),
             workspace_label: workspace_label.or_else(|| Some(self.workspace_label.clone())),
             cwd: self.cwd.clone(),
@@ -518,6 +519,7 @@ mod tests {
     fn agent(pane_id: &str) -> SidebarAgentSnapshot {
         SidebarAgentSnapshot {
             id: pane_id.to_owned(),
+            herdr_name: None,
             pane_id: pane_id.to_owned(),
             workspace_label: "Fixture".to_owned(),
             identity_label: "Refactor the parser".to_owned(),
@@ -726,6 +728,7 @@ mod tests {
         assert_eq!(
             (
                 row.id.as_str(),
+                row.herdr_name.as_deref(),
                 row.pane_id.as_str(),
                 row.identity_label.as_str(),
                 row.session_id.as_deref(),
@@ -735,6 +738,7 @@ mod tests {
             ),
             (
                 "reviewer",
+                Some("reviewer"),
                 "w1:p2",
                 "Refactor the parser",
                 Some("session-a"),
