@@ -20,6 +20,7 @@ MAX_CHILDREN = 16
 MAX_DESCENDANTS = 128
 MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024
 MAX_OUTPUT = 1024 * 1024
+MAX_FAILURE_REASON = 512
 COMMAND_SECONDS = 15
 RUN_SECONDS = 30 * 60
 POLL_SECONDS = 0.1
@@ -117,7 +118,7 @@ class OwnedProcesses:
                 try:
                     self.end(child)
                 except ProcessError as error:
-                    reasons = [line[:256] for line in output[1].decode("utf-8", errors="replace").splitlines()
+                    reasons = [line[:MAX_FAILURE_REASON] for line in output[1].decode("utf-8", errors="replace").splitlines()
                                if line.startswith(("guardian_failure:", "guardian_cleanup_failure:",
                                                    "guardian_orphan_scan_failure:", "guardian_signal_failure:"))]
                     raise ProcessError(str(error) + (": " + "; ".join(reasons[:4]) if reasons else "")) from error

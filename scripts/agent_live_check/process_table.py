@@ -212,42 +212,63 @@ def darwin_candidate_current(process: Process) -> bool:
             and (8 if info.flags & 0x10 else 4) == process.pointer_width)
 
 
+class OwnerEnvironmentUnavailable(RuntimeError):
+    """Structural facts only: never retain the queried argv or environment."""
+
+    def __init__(self, reason, byte_count, argc, offset):
+        self.details = {"reason": reason, "bytes": byte_count, "argc": argc, "offset": offset}
+        super().__init__("owner_environment_unavailable:" + json.dumps(
+            self.details, sort_keys=True, separators=(",", ":")))
+
+
 def procargs_owned(data: bytes, pointer_width: int, expected: bytes) -> bool:
     """Prove token ownership or a complete negative KERN_PROCARGS2 answer."""
-    argc = int.from_bytes(data[:4], sys.byteorder, signed=True)
-    if len(data) < 4 or not 1 <= argc <= MAX_SYSTEM_PROCESSES or pointer_width not in (4, 8):
-        raise RuntimeError("owner_environment_unavailable")
+    argc = int.from_bytes(data[:4], sys.byteorder, signed=True) if len(data) >= 4 else None
+    def refuse(reason, offset=0):
+        raise OwnerEnvironmentUnavailable(reason, len(data), argc, offset)
+    if len(data) < 4:
+        refuse("header_short")
+    if not 1 <= argc <= MAX_SYSTEM_PROCESSES:
+        refuse("argc_invalid")
+    if pointer_width not in (4, 8):
+        refuse("width_invalid")
     offset = data.find(b"\0", 4)
     if offset < 0:
-        raise RuntimeError("owner_environment_unavailable")
+        refuse("path_unterminated", 4)
     offset += 1
     # exec_extract_strings aligns the saved executable path to the target's
     # pointer width. sysctl strips its 16-byte key and prepends a 4-byte argc.
     # Skipping every NUL here would also consume a legitimate empty argv[0].
     aligned = 4 + ((offset - 4 + pointer_width - 1) // pointer_width) * pointer_width
-    if aligned >= len(data) or any(data[offset:aligned]):
-        raise RuntimeError("owner_environment_unavailable")
+    if aligned >= len(data):
+        refuse("padding_missing", offset)
+    if any(data[offset:aligned]):
+        refuse("padding_invalid", offset)
     offset = aligned
     first_empty = False
     for index in range(argc):
         end = data.find(b"\0", offset)
         if end < 0:
-            raise RuntimeError("owner_environment_unavailable")
+            refuse("argv_unterminated", offset)
         if index == 0:
             first_empty = end == offset
         offset = end + 1
     environment = [entry for entry in data[offset:].split(b"\0") if entry]
     # XNU may successfully return argv but omit ALL environment variables for
     # a restricted target. An empty/invalid environment cannot exclude ours.
-    if not data.endswith(b"\0") or not environment or any(b"=" not in entry for entry in environment):
-        raise RuntimeError("owner_environment_unavailable")
+    if not data.endswith(b"\0"):
+        refuse("tail_unterminated", offset)
+    if not environment:
+        refuse("tail_empty", offset)
+    if any(b"=" not in entry for entry in environment):
+        refuse("tail_non_assignment", offset)
     if expected in environment:
         return True
     # XNU's restricted-target crop also skips every NUL after the path. With
     # empty argv[0] it can expose only an environment prefix. Missing ownership
     # in that prefix is not a complete negative observation.
     if first_empty:
-        raise RuntimeError("owner_environment_unavailable")
+        refuse("empty_argv_negative", offset)
     return False
 
 
@@ -306,7 +327,15 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
             if hasattr(table, "vanished"):
                 table.vanished.append(pid)
             continue
-        if procargs_owned(buffer.raw[:size.value], process.pointer_width, expected):
+        try:
+            owned = procargs_owned(buffer.raw[:size.value], process.pointer_width, expected)
+        except OwnerEnvironmentUnavailable as error:
+            details = {**error.details, "pid": pid, "birth": process.birth,
+                       "parent": process.parent, "guardian": os.getpid(),
+                       "width": process.pointer_width, "returned": size.value}
+            raise RuntimeError("owner_environment_unavailable:" + json.dumps(
+                details, sort_keys=True, separators=(",", ":"))) from error
+        if owned:
             result[pid] = process
             if remember:
                 # Retain proven ownership even if a later unrelated process

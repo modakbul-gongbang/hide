@@ -266,6 +266,76 @@ class ProcessProtection(unittest.TestCase):
             self.assertEqual(marked_descendants(table, "fixture-run", 1), {})
         self.assertEqual(table.vanished, [111])
 
+    def test_owner_refusal_retains_subject_and_query_shape_without_private_values(self):
+        orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
+        library = Mock()
+        payload = procargs(b"OTHER=private-environment", argv=(b"", b"private-argument"))
+        def query(mib, unused, buffer, size, *rest):
+            ctypes.memmove(buffer, payload, len(payload))
+            size._obj.value = len(payload)
+            return 0
+        def current(pid, flavor, unused, buffer, size):
+            info = buffer._obj
+            info.sec, info.usec, info.uid, info.flags = 0, 10, os.getuid(), 0x10
+            return size
+        library.sysctl.side_effect, library.proc_pidinfo.side_effect = query, current
+        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            with self.assertRaisesRegex(RuntimeError, "owner_environment_unavailable") as failure:
+                marked_descendants({111: orphan}, "private-owner-token", 1)
+        message = str(failure.exception)
+        details = json.loads(message.split(":", 1)[1])
+        self.assertEqual((details["pid"], details["birth"], details["parent"], details["width"]),
+                         (111, 10, 1, 8))
+        self.assertEqual((details["reason"], details["bytes"], details["returned"], details["argc"]),
+                         ("empty_argv_negative", len(payload), len(payload), 2))
+        self.assertEqual(details["guardian"], os.getpid())
+        self.assertLessEqual(len(message), 512)
+        for secret in ("private-environment", "private-argument", "private-owner-token"):
+            self.assertNotIn(secret, message)
+
+    def test_owner_refusal_distinguishes_opaque_shapes_without_payload_contents(self):
+        owner = b"HIDE_LIVE_CHECK_OWNER=private-owner-token"
+        good = procargs(b"OTHER=private-environment")
+        padding = bytearray(good)
+        padding[13] = ord("x")
+        cases = [(b"\x01", 8, "header_short"),
+                 ((0).to_bytes(4, sys.byteorder, signed=True) + good[4:], 8, "argc_invalid"),
+                 (good, 3, "width_invalid"), (good[:4] + b"private-path", 8, "path_unterminated"),
+                 (good[:13], 8, "padding_missing"), (padding, 8, "padding_invalid"),
+                 (good[:20] + b"private-argument", 8, "argv_unterminated"),
+                 (good[:-1], 8, "tail_unterminated"), (procargs(), 8, "tail_empty"),
+                 (procargs(b"private-unassigned-entry"), 8, "tail_non_assignment")]
+        for payload, width, reason in cases:
+            with self.subTest(reason=reason), self.assertRaises(RuntimeError) as failure:
+                procargs_owned(payload, width, owner)
+            message = str(failure.exception)
+            details = json.loads(message.split(":", 1)[1])
+            self.assertEqual((details["reason"], details["bytes"]), (reason, len(payload)))
+            self.assertNotIn("private-", message)
+
+    def test_guardian_failure_preserves_complete_bounded_subject_diagnostic(self):
+        details = {"reason": "tail_non_assignment", "pid": 4194304, "parent": 4194304,
+                   "birth": 9223372036854775807, "guardian": 4194304, "width": 8,
+                   "bytes": 1048576, "returned": 1048576, "argc": 65536, "offset": 1048576}
+        record = json.dumps(details, sort_keys=True, separators=(",", ":"))
+        diagnostic = "guardian_orphan_scan_failure:RuntimeError:owner_environment_unavailable:" + record
+        self.assertGreater(len(diagnostic), 256)
+        self.assertLessEqual(len(diagnostic), 512)
+        child = Mock(returncode=125)
+        child.wait.return_value = child.poll.return_value = 125
+        selector = Mock()
+        selector.get_map.side_effect = [True, False]
+        selector.select.return_value = [(Mock(fileobj=child.stderr, data=1), None)]
+        with patch("agent_live_check.processes.subprocess.Popen", return_value=child), \
+                patch("agent_live_check.processes.os.pipe", return_value=(700, 701)), \
+                patch("agent_live_check.processes.os.close"), \
+                patch("agent_live_check.processes.os.set_blocking"), \
+                patch("agent_live_check.processes.os.read", return_value=(diagnostic + "\n").encode()), \
+                patch("agent_live_check.processes.selectors.DefaultSelector", return_value=contextlib.nullcontext(selector)):
+            with OwnedProcesses() as owner, self.assertRaises(ProcessError) as failure:
+                owner.run(["fixture"], env={}, check=False)
+        self.assertTrue(str(failure.exception).endswith(record), "subject diagnostic was truncated before delivery")
+
     def test_successful_token_answer_is_rejected_if_sampled_pid_was_reused(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid())
         for environment in (b"OTHER=fixture", b"HIDE_LIVE_CHECK_OWNER=fixture-run"):
