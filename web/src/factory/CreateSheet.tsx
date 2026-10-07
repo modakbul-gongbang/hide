@@ -200,7 +200,7 @@ function detectedCommands(preview: InitPreview): Verification {
   return commands.length > 0 ? { kind: "commands", commands } : { kind: "none" };
 }
 
-const STAGE_LABEL: Partial<Record<string, "factory.create.stage.probe">> = { probe: "factory.create.stage.probe" };
+const INIT_STAGE_LABEL: Partial<Record<string, "factory.create.stage.probe">> = { probe: "factory.create.stage.probe" };
 
 /**
  * Where a failed project check stopped and what to do next (B5). The engine
@@ -213,7 +213,7 @@ export function InitFailure({ state }: { state: RequestState }) {
   const stage = (state.answer.detail as { stage?: unknown } | undefined)?.stage;
   const next = state.answer.next_action;
   const stageName = (code: string) => {
-    const key = STAGE_LABEL[code];
+    const key = INIT_STAGE_LABEL[code];
     return key ? t(key) : code;
   };
   return (
