@@ -840,26 +840,32 @@ pub(crate) mod tests {
                     .panes
                     .as_ref()
                     .map(|panes| panes.iter().collect::<std::collections::BTreeSet<_>>());
-                (device, json!({"scope": read.host_scope, "floor": read.floor, "panes": panes}))
+                (
+                    device,
+                    json!({"scope": read.host_scope, "floor": read.floor, "panes": panes}),
+                )
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         let observations = runtime
             .delivery_observations
             .iter()
             .map(|(pane, observed)| {
-                (pane, json!({
-                    "actor": observed.actor, "raw_pane": observed.raw_pane_id,
-                    "status": observed.status, "sequence": observed.state_change_seq,
-                    "changed": observed.status_changed_at_unix_ms,
-                    "input": observed.last_input_at_unix_ms,
-                    "submit": observed.last_submit_at_unix_ms,
-                    "working": observed.entered_working_at_unix_ms,
-                    "scope": observed.host_scope, "turn": format!("{:?}", observed.turn),
-                    "session": observed.session.as_ref().map(|session| json!({
-                        "kind": session.reference_kind, "value": session.reference_value,
-                        "cwd": session.cwd,
-                    })),
-                }))
+                (
+                    pane,
+                    json!({
+                        "actor": observed.actor, "raw_pane": observed.raw_pane_id,
+                        "status": observed.status, "sequence": observed.state_change_seq,
+                        "changed": observed.status_changed_at_unix_ms,
+                        "input": observed.last_input_at_unix_ms,
+                        "submit": observed.last_submit_at_unix_ms,
+                        "working": observed.entered_working_at_unix_ms,
+                        "scope": observed.host_scope, "turn": format!("{:?}", observed.turn),
+                        "session": observed.session.as_ref().map(|session| json!({
+                            "kind": session.reference_kind, "value": session.reference_value,
+                            "cwd": session.cwd,
+                        })),
+                    }),
+                )
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         let gone = runtime
@@ -882,7 +888,10 @@ pub(crate) mod tests {
         device: &str,
         connector: &Arc<dyn hide_herdr_client::ApiConnector>,
     ) {
-        let control = runtime.remote_controls.get(device).expect("installed owner");
+        let control = runtime
+            .remote_controls
+            .get(device)
+            .expect("installed owner");
         assert!(Arc::ptr_eq(&control.api_connector(), connector));
         let status = runtime
             .snapshot
