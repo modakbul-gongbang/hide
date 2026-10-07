@@ -1160,7 +1160,7 @@ A filter that leaves the board or graph empty offers to clear it; a Factory whos
 
 The Task page is full width: the chain (its predecessors → this Task → the Tasks waiting on it) at the top, the goal, completion criteria, out of scope and attachments on the left, and progress (pull request and CI, verification n/3, each attempt's log tail and CI link, the external wait, 'worker 보기') and the decision record on the right.
 Verification n/3 counts the worker's resubmissions and reads '검증 실패 n/3'; a Factory without verification shows '검증 없음'.
-A done Task's completion criteria read as met, and a text the engine shortened ends with a muted '… (줄임)' instead of the store's cut mark.
+A done Task's completion criteria read as met, and a muted '… (줄임)' stands where the engine shortened a text, at its end or mid-sentence, instead of the store's cut mark.
 The page offers only the actions the engine allows in the Task's state: 정리 중 edit (which opens the secretary) and cancel, 대기 priority, removing a dependency and cancel, 실행 중 pause and cancel, 멈춤 retry and cancel, 머지 대기 merge, request changes and cancel, a blocked Task nothing but its answer, and a cancelled Task 되살리기 while it lasts.
 An open question is answered only in 내 차례: '내 차례에서 답하기 →' opens that item there.
 'worker 보기' opens the worker's pane in its Workspace.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { transitiveReduction } from "../projectBoard";
 import type { CardView, FactoryView } from "./model";
-import { boardColumns, factoryGraph, taskChain, withoutCutMark, workerPanes } from "./view";
+import { boardColumns, factoryGraph, splitAtCuts, taskChain, workerPanes } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
@@ -65,9 +65,10 @@ describe("the Factory workers (B13)", () => {
   });
 });
 
-describe("withoutCutMark", () => {
-  it("reads the store's shortening mark as a cue and leaves other text alone", () => {
-    expect(withoutCutMark("병합 결정\n[cut 9 bytes]")).toEqual({ text: "병합 결정", cut: true });
-    expect(withoutCutMark("[cut 3 bytes] is how the store marks a cut")).toEqual({ text: "[cut 3 bytes] is how the store marks a cut", cut: false });
+describe("splitAtCuts", () => {
+  it("splits a text where the engine shortened it, at its end or in its middle, and leaves other text whole", () => {
+    expect(splitAtCuts("병합 결정\n[cut 9 bytes]")).toEqual(["병합 결정", ""]);
+    expect(splitAtCuts("is al [cut 15 bytes] -> Raise ValueError")).toEqual(["is al ", " -> Raise ValueError"]);
+    expect(splitAtCuts("a whole decision")).toEqual(["a whole decision"]);
   });
 });

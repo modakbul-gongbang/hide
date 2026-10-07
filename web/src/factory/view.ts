@@ -122,9 +122,14 @@ export function workerPanes(summary: FactorySummary | null | undefined): Readonl
   return panes;
 }
 
-/** The mark the engine's store leaves where it shortened a text (`[cut N bytes]`), read as a cue rather than shown. */
-const CUT_MARK = /\n?\[cut \d+ bytes\]$/;
+/**
+ * The marks the engine leaves where it shortened a text (`[cut N bytes]`),
+ * at its end or, where a shortened question is joined to its answer, in its
+ * middle: the text's pieces between them, each mark read as a cue rather
+ * than shown.
+ */
+const CUT_MARK = /\n?\[cut \d+ bytes\]/g;
 
-export function withoutCutMark(text: string): { text: string; cut: boolean } {
-  return CUT_MARK.test(text) ? { text: text.replace(CUT_MARK, ""), cut: true } : { text, cut: false };
+export function splitAtCuts(text: string): string[] {
+  return text.split(CUT_MARK);
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon, BanIcon, CircleCheckIcon, CircleIcon, ExternalLinkIcon, GitPullRequestIcon, ListChecksIcon, MessageSquareIcon, PaperclipIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed, useRemaining } from "../components/elapsed";
@@ -19,7 +19,7 @@ import { useFactoryRequest, type FactoryRequest } from "./request";
 
 /** The engine's priority is a 32-bit integer; a larger one would not reach it. */
 const PRIORITY_LIMIT = 2_147_483_647;
-import { inboxKey, taskChain, withoutCutMark } from "./view";
+import { inboxKey, splitAtCuts, taskChain } from "./view";
 
 const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
 
@@ -395,14 +395,18 @@ function Attempt({ attempt, actions }: { attempt: AttemptView; actions: Actions 
   );
 }
 
-/** A text the engine shortened ends with a muted cue instead of the store's `[cut N bytes]` mark. */
+/** A text the engine shortened shows a muted cue where each `[cut N bytes]` mark stood. */
 function ShortenedText({ text, className }: { text: string; className?: string }) {
   const { t } = useInterfaceTranslation();
-  const shown = withoutCutMark(text);
+  const pieces = splitAtCuts(text);
   return (
     <span className={className}>
-      {shown.text}
-      {shown.cut ? <span className="text-muted-foreground" data-factory-cut="true"> … {t("factory.task.cut")}</span> : null}
+      {pieces.map((piece, at) => (
+        <Fragment key={at}>
+          {at > 0 ? <span className="text-muted-foreground" data-factory-cut="true"> … {t("factory.task.cut")} </span> : null}
+          {piece}
+        </Fragment>
+      ))}
     </span>
   );
 }
