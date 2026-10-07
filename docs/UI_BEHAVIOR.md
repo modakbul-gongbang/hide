@@ -652,7 +652,8 @@ The filter applies to Board, List and Dependencies alike, and `필터 지우기`
 A project's filter lives with its Overview's lens and comes back with it; the Overview of every project keeps its own while the page is open.
 The mode is a mode of the Issues view, not a tab; it belongs to the page, so the Overview of every project's Tasks and every entry into a project keep it.
 List draws the same cards one row each, grouped by stage with the moving work first (진행 중, 리뷰, 백로그, 완료 folded): the stage glyph, the id and title, at most two labels as a card draws them, a `질문` or `확인` badge on a row waiting on the operator, and on the right the agents' marks, the PR chip, the branch, `↑N` and the age; a row with agents unfolds them under it, one waiting on the operator starts unfolded, and a row's click opens the issue panel.
-Dependencies draws the Board's cards left to right with a quiet stage word at each card's top right: an issue sits one column right of the longest chain of issues it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle; a card's click opens the issue panel.
+Dependencies draws the Board's cards left to right with a quiet stage word at each card's top right, placed by elkjs's layered layout (`web/src/dependencyLayout.ts`, used unmodified under EPL-2.0): a blocker sits in a column left of what it blocks, crossings are kept few, and an arrow that spans columns bends through the gaps between cards instead of crossing them; a card's click opens the issue panel.
+The layout loads when a graph first opens and runs in its own Web Worker; until it answers, or when it fails, runs past three seconds or is asked for more than 400 cards, the cards stand one column right of the longest chain they wait on with arrows from right middle to left middle, and the reason goes to the diagnostic log.
 Arrows carry no label; one legend line above the graph says the left issue has to finish first.
 A blocked card is dimmed with its lock line, a done card is dimmed, and a card waiting on the operator keeps the Board's warning outline.
 Issues with no relation in scope gather below the graph under `관계 없는 태스크`.
@@ -1151,7 +1152,7 @@ The board has four columns, 정리 중 · 대기 · 실행 중 · 완료, in the
 A card that needs the person (blocked, stopped, waiting to merge, an open question) has the warning border and stands at the top of its column; verifying, waiting to merge, blocked, stopped, relanding and outside work sit in 실행 중 with their state mark.
 A done Task the person has not seen has the unread dot; done Tasks older than three days fold into one group, and those past 90 days leave the group while their Task page still opens.
 A cancelled Task leaves the board and is found under the '취소됨' filter, which offers 되살리기 for seven days; cancelling asks nothing and leaves '취소됨 · 되살리기' in its place.
-The graph tab draws each Factory's dependencies in the Issues view's Dependencies layout with every arrow a longer path implies left out (A→B→C draws no A→C); the engine's data keeps every edge.
+The graph tab draws each Factory's dependencies in the Issues view's Dependencies layout with every arrow a longer path implies left out (A→B→C draws no A→C), which the Issues view does not do; the engine's data keeps every edge.
 Only cards that need the person are emphasised, done cards are dimmed, waiting cards say what they wait for, unrelated Tasks sit below, folded completions leave the drawing, and a node opens its Task page.
 A filter that leaves the board or graph empty offers to clear it; a Factory whose cards are all archived is empty, not filtered.
 

@@ -360,3 +360,21 @@ it("shows a done Task's criteria met, names what the verification count counts, 
   expect(decisions.textContent).not.toContain("[cut");
   expect(decisions.querySelector("[data-factory-cut]")).not.toBeNull();
 });
+
+it("keeps the graph in columns and logs why when the layout worker cannot start (D-08)", async () => {
+  // jsdom has no Worker, so the layered layout refuses the way a failed worker does.
+  const graphed = factory({
+    columns: [{ column: "waiting", label: "waiting", cards: [card("T-1", "waiting", { column: "waiting" }), card("T-2", "waiting", { column: "waiting" })] }],
+    graph: { nodes: ["T-1", "T-2"], edges: [["T-1", "T-2"]], unrelated: [] },
+    dependencies: [["T-1", "T-2"]],
+  });
+  useShellStore.setState({ diagnostics: [] });
+  // jsdom has no CSS.escape; the ids here need no escaping.
+  vi.stubGlobal("CSS", { escape: (value: string) => value });
+  const { container } = await mount({ my_turn: 0, factories: [graphed], inbox: [] }, { tab: "graph" });
+  await act(async () => {
+    await vi.waitFor(() => expect(useShellStore.getState().diagnostics.some((line) => line.includes("dependency graph stays in columns"))).toBe(true));
+  });
+  expect(container.querySelector("[data-dependency-graph]")!.getAttribute("data-dependency-layout")).toBe("columns");
+  expect(container.querySelectorAll("[data-dependency-layer]")).toHaveLength(2);
+});

@@ -23,7 +23,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { createContext, useContext, useId, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
@@ -47,6 +47,8 @@ import { typing } from "./IssueDialogs";
 import { previewRead, useCachedDetail } from "./issueDetails";
 import { markdownPlainText } from "./markdownPlain";
 import { cn } from "./lib/utils";
+import { useShellStore } from "./store";
+import { placeWithin, workerElk, type NodeBox, type PlacedNode } from "./dependencyLayout";
 import { useMeasuredPaths } from "./measuredPaths";
 import { AgentMessageHint, PullRequestChip } from "./OverviewLenses";
 import {
@@ -1247,48 +1249,130 @@ export function DependenciesView({ board, page, actions, handlers }: { board: Ta
 }
 
 /**
- * The layered graph: one column per depth of blockers, and the arrows drawn
- * over it from each card's right middle to the next one's left middle. Each
- * drawn node carries `data-dependency-node` with its id; the Factory graph
- * draws its own cards the same way (PRD software-factory-ui D-08).
+ * The dependency graph: cards placed by elkjs's layered layout, with each
+ * edge routed through the gaps between cards (`dependencyLayout.ts`). Until
+ * the layout worker answers, or when it cannot, the cards stand in one
+ * column per depth of blockers and the arrows run from each card's right
+ * middle to the next one's left middle. Each drawn node carries
+ * `data-dependency-node` with its id; the Factory graph draws its own cards
+ * the same way (PRD software-factory-ui D-08).
  */
 export function DependencyGraphView<T>({ graph, draw }: { graph: LayeredGraph<T>; draw: (value: T) => ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const marker = `dependency-arrow-${useId()}`;
+  const placement = useDependencyPlacement(box, graph);
   const arrows = useMeasuredPaths(
     box,
     "[data-dependency-node]",
     (origin, at) =>
-      graph.edges.flatMap((edge) => {
-        const from = at("data-dependency-node", edge.from);
-        const to = at("data-dependency-node", edge.to);
-        if (!from || !to) return [];
-        const x1 = from.right - origin.left;
-        const y1 = from.top + from.height / 2 - origin.top;
-        const x2 = to.left - origin.left;
-        const y2 = to.top + to.height / 2 - origin.top;
-        const bend = (x2 - x1) / 2;
-        return [{ id: `${edge.from}>${edge.to}`, d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` }];
-      }),
-    [graph],
+      placement
+        ? []
+        : graph.edges.flatMap((edge) => {
+            const from = at("data-dependency-node", edge.from);
+            const to = at("data-dependency-node", edge.to);
+            if (!from || !to) return [];
+            const x1 = from.right - origin.left;
+            const y1 = from.top + from.height / 2 - origin.top;
+            const x2 = to.left - origin.left;
+            const y2 = to.top + to.height / 2 - origin.top;
+            const bend = (x2 - x1) / 2;
+            return [{ id: `${edge.from}>${edge.to}`, d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` }];
+          }),
+    [graph, placement],
   );
+  const lines = placement ? placement.edges : arrows;
+  const svg = (
+    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-warning">
+      <defs>
+        <marker id={marker} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M 1 1 L 7 4 L 1 7" fill="none" stroke="currentColor" />
+        </marker>
+      </defs>
+      {lines.map((arrow) => (
+        <path key={arrow.id} d={arrow.d} fill="none" stroke="currentColor" strokeWidth={1.5} markerEnd={`url(#${marker})`} data-dependency-edge={arrow.id} />
+      ))}
+    </svg>
+  );
+  if (placement) {
+    const values = graph.layers.flat();
+    return (
+      <div ref={box} className="relative" style={{ width: placement.width, height: placement.height }} data-dependency-graph="true" data-dependency-edges={graph.edges.length} data-dependency-layout="layered">
+        {values.map((value, index) => {
+          const place = placement.nodes[index];
+          return (
+            <div key={index} className="absolute" style={{ left: place?.x ?? 0, top: place?.y ?? 0 }} data-dependency-layer={place?.layer ?? 0}>
+              {draw(value)}
+            </div>
+          );
+        })}
+        {svg}
+      </div>
+    );
+  }
   return (
-    <div ref={box} className="relative flex w-fit items-start gap-(--home-dependency-gap)" data-dependency-graph="true" data-dependency-edges={graph.edges.length}>
+    <div ref={box} className="relative flex w-fit items-start gap-(--home-dependency-gap)" data-dependency-graph="true" data-dependency-edges={graph.edges.length} data-dependency-layout="columns">
       {graph.layers.map((layer, index) => (
         <div key={index} className="flex flex-col gap-xl" data-dependency-layer={index}>
           {layer.map(draw)}
         </div>
       ))}
-      <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-warning">
-        <defs>
-          <marker id={marker} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-            <path d="M 1 1 L 7 4 L 1 7" fill="none" stroke="currentColor" />
-          </marker>
-        </defs>
-        {arrows.map((arrow) => (
-          <path key={arrow.id} d={arrow.d} fill="none" stroke="currentColor" strokeWidth={1.5} markerEnd={`url(#${marker})`} data-dependency-edge={arrow.id} />
-        ))}
-      </svg>
+      {svg}
     </div>
   );
+}
+
+/** A placement the view draws: each drawn node's place in drawing order (the graph's layers, flattened). */
+type DrawnPlacement = { width: number; height: number; nodes: (PlacedNode | undefined)[]; edges: { id: string; d: string }[] };
+
+/**
+ * Measures the drawn cards and asks the layout worker where they go, again
+ * whenever the graph changes or a card changes size. A refused layout keeps
+ * the columns and goes to the diagnostic log once per graph.
+ */
+function useDependencyPlacement<T>(box: RefObject<HTMLDivElement | null>, graph: LayeredGraph<T>): DrawnPlacement | null {
+  const [placed, setPlaced] = useState<{ graph: LayeredGraph<T>; sizes: string; placement: DrawnPlacement } | null>(null);
+  const [measured, setMeasured] = useState<{ graph: LayeredGraph<T>; nodes: NodeBox[]; sizes: string } | null>(null);
+  useLayoutEffect(() => {
+    const root = box.current;
+    if (!root) return;
+    const measure = () => {
+      const nodes = [...root.querySelectorAll<HTMLElement>("[data-dependency-node]")].map((node) => ({ id: node.dataset.dependencyNode ?? "", width: node.offsetWidth, height: node.offsetHeight }));
+      const sizes = nodes.map((node) => `${node.id}:${node.width}x${node.height}`).join(",");
+      setMeasured((current) => (current && current.graph === graph && current.sizes === sizes ? current : { graph, nodes, sizes }));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    for (const node of root.querySelectorAll("[data-dependency-node]")) observer.observe(node);
+    return () => observer.disconnect();
+  }, [graph, placed]);
+  useEffect(() => {
+    if (!measured || measured.graph !== graph || measured.nodes.length === 0) return;
+    if (placed && placed.graph === graph && placed.sizes === measured.sizes) return;
+    const root = box.current;
+    if (!root) return;
+    // The same gaps the columns keep: between columns, and between cards in one.
+    const style = getComputedStyle(root);
+    const spacing = { betweenLayers: parseFloat(style.getPropertyValue("--home-dependency-gap")), betweenNodes: parseFloat(style.getPropertyValue("--spacing-xl")) };
+    let current = true;
+    workerElk()
+      .then((elk) => {
+        if (!Number.isFinite(spacing.betweenLayers) || !Number.isFinite(spacing.betweenNodes)) throw new Error("the graph's spacing tokens are not set");
+        return placeWithin(elk, measured.nodes, graph.edges, spacing);
+      })
+      .then(
+        (placement) => {
+          if (!current) return;
+          setPlaced({ graph, sizes: measured.sizes, placement: { width: placement.width, height: placement.height, nodes: measured.nodes.map((node) => placement.nodes.get(node.id)), edges: placement.edges } });
+        },
+        (error: unknown) => {
+          if (!current) return;
+          useShellStore.getState().noteDiagnostic(`dependency graph stays in columns: ${error instanceof Error ? error.message : String(error)}`);
+        },
+      );
+    return () => {
+      current = false;
+    };
+  }, [measured, graph]);
+  return placed && placed.graph === graph ? placed.placement : null;
 }
