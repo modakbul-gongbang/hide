@@ -197,6 +197,7 @@ def guard(reader: int, argv: list[str]) -> int:
     child = None
     guardian_identity = None
     earliest = 0
+    seen_zombies = set()
     observed = {}
     failed = False
     marker = secrets.token_hex(32)
@@ -217,6 +218,7 @@ def guard(reader: int, argv: list[str]) -> int:
         require_complete(initial)
         guardian_identity = initial[os.getpid()]
         earliest = guardian_identity.birth
+        seen_zombies = {(p.pid, p.birth) for p in initial.values() if p.zombie}
         child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker}, stdin=None, stdout=None,
                             stderr=None, _guarded=False)
         while not cancelled.is_set():
@@ -299,8 +301,10 @@ def guard(reader: int, argv: list[str]) -> int:
                 survivors = [pid for pid, item in observed.items()
                              if pid in table and table[pid].birth == item.birth
                              and not table[pid].zombie]
-                unresolved_children = (linux_children_remain() if sys.platform.startswith("linux")
-                                       else bool(getattr(table, "vanished", ())))
+                zombies = {(p.pid, p.birth) for p in table.values() if p.zombie}
+                unresolved_children = (linux_children_remain() if not survivors else True) if sys.platform.startswith("linux") else (
+                    bool(getattr(table, "vanished", ())) or bool(zombies - seen_zombies))
+                seen_zombies = zombies
                 if not survivors and not unresolved_children:
                     break
                 if time.monotonic() >= end:

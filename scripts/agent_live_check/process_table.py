@@ -127,7 +127,7 @@ def snapshot() -> dict[int, Process]:
         for pid in pids[:count]:
             info, task = BsdInfo(), TaskInfo()
             ctypes.set_errno(0)
-            if library.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            if library.proc_pidinfo(pid, 3, 1, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
                 error = ctypes.get_errno()
                 # Full BSD info requires the same UID; short BSD info does
                 # not. Exclude a positively identified foreign UID, rather
@@ -136,10 +136,14 @@ def snapshot() -> dict[int, Process]:
                 ctypes.set_errno(0)
                 read = library.proc_pidinfo(pid, 13, 1, ctypes.byref(short), ctypes.sizeof(short))
                 short_error = ctypes.get_errno()
+                if error == errno.ESRCH:
+                    # A later foreign UID may be a reused PID. Preserve the
+                    # earlier disappearance before excluding that replacement.
+                    result.vanished.append(pid)
                 if read == ctypes.sizeof(short) and short.uid != os.getuid():
                     continue
                 if error == errno.ESRCH and (read == ctypes.sizeof(short) or short_error == errno.ESRCH):
-                    result.vanished.append(pid)
+                    continue
                 else:
                     result.unavailable.append({"pid": pid, "errno": error})
                 continue
@@ -186,6 +190,47 @@ def descendants(table: dict[int, Process], root: int, known=None) -> dict[int, P
         if added <= selected:
             return {pid: table[pid] for pid in selected if pid in table}
         selected |= added
+
+
+def darwin_candidate_current(process: Process) -> bool:
+    """Bind a procargs answer back to the sampled birth without another scan."""
+    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                    ctypes.c_void_p, ctypes.c_int]
+    info = BsdInfo()
+    ctypes.set_errno(0)
+    read = library.proc_pidinfo(process.pid, 3, 1, ctypes.byref(info), ctypes.sizeof(info))
+    if read != ctypes.sizeof(info):
+        error = ctypes.get_errno()
+        if error == errno.ESRCH:
+            return False
+        raise RuntimeError("owned_process_identity_unavailable_" + str(error) + ":" + str(process.pid))
+    return (info.sec * 1_000_000 + info.usec == process.birth
+            and info.uid == process.uid and info.status != 5)
+
+
+def procargs_environment(data: bytes) -> list[bytes]:
+    """Read KERN_PROCARGS2's environment, distinguishing omitted from absent owner."""
+    argc = int.from_bytes(data[:4], sys.byteorder, signed=True)
+    if len(data) < 4 or not 1 <= argc <= MAX_SYSTEM_PROCESSES:
+        raise RuntimeError("owner_environment_unavailable")
+    offset = data.find(b"\0", 4)
+    if offset < 0:
+        raise RuntimeError("owner_environment_unavailable")
+    offset += 1
+    while offset < len(data) and data[offset] == 0:
+        offset += 1
+    for _ in range(argc):
+        end = data.find(b"\0", offset)
+        if end < 0:
+            raise RuntimeError("owner_environment_unavailable")
+        offset = end + 1
+    environment = [entry for entry in data[offset:].split(b"\0") if entry]
+    # XNU may successfully return argv but omit ALL environment variables for
+    # a restricted target. An empty/invalid environment cannot exclude ours.
+    if not data.endswith(b"\0") or not environment or any(b"=" not in entry for entry in environment):
+        raise RuntimeError("owner_environment_unavailable")
+    return environment
 
 
 def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *, known=None, remember=None) -> dict[int, Process]:
@@ -239,7 +284,11 @@ def marked_descendants(table: dict[int, Process], marker: str, earliest: int, *,
             raise RuntimeError("owned_process_arguments_unavailable_" + str(error) + ":" + json.dumps(
                 {"pid": pid, "birth": process.birth, "parent": process.parent,
                  "guardian": os.getpid()}, sort_keys=True, separators=(",", ":")))
-        if expected in buffer.raw[:size.value].split(b"\0"):
+        if not darwin_candidate_current(process):
+            if hasattr(table, "vanished"):
+                table.vanished.append(pid)
+            continue
+        if expected in procargs_environment(buffer.raw[:size.value]):
             result[pid] = process
             if remember:
                 # Retain proven ownership even if a later unrelated process
