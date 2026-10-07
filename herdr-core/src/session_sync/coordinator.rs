@@ -1187,6 +1187,11 @@ fn publish_replica(
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
+        if let SessionSyncTarget::Remote { target_id, .. } = &context.target
+            && !guard.remote_coordinator_is_current(target_id, &context.api_connector)
+        {
+            return false;
+        }
         // A pane announced with a cwd Herdr has not confirmed must not group
         // its tab under another folder before the worker's read lands. Its
         // layout still publishes now (PRD instant-pane-topology B20): it
@@ -1252,7 +1257,12 @@ fn publish_replica(
             return false;
         };
         let changed = match runtime.lock() {
-            Ok(mut guard) => guard.ingest_remote_session(target_id, fetched),
+            Ok(mut guard) => {
+                if !guard.remote_coordinator_is_current(target_id, &context.api_connector) {
+                    return false;
+                }
+                guard.ingest_remote_session(target_id, fetched)
+            }
             Err(_) => return false,
         };
         drop(runtime);
@@ -1620,7 +1630,12 @@ fn begin_delivery_pane_read(context: &SessionSyncContext) -> bool {
     };
     let device = match &context.target {
         SessionSyncTarget::Local { .. } => guard.node().to_string(),
-        SessionSyncTarget::Remote { target_id, .. } => target_id.clone(),
+        SessionSyncTarget::Remote { target_id, .. } => {
+            if !guard.remote_coordinator_is_current(target_id, &context.api_connector) {
+                return false;
+            }
+            target_id.clone()
+        }
     };
     guard.begin_delivery_pane_read(&device);
     true
@@ -1634,6 +1649,9 @@ fn publish_failure(context: &SessionSyncContext, error: SessionFetchError) -> bo
         Ok(mut guard) => match &context.target {
             SessionSyncTarget::Local { .. } => guard.ingest_session_with_catalog(Err(error), None),
             SessionSyncTarget::Remote { target_id, .. } => {
+                if !guard.remote_coordinator_is_current(target_id, &context.api_connector) {
+                    return false;
+                }
                 guard.ingest_remote_session(target_id, Err(error))
             }
         },
