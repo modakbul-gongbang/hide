@@ -1814,12 +1814,15 @@ fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
 /// its current Herdr state, a prompt Herdr reports as `done` (PRD
 /// codex-plan-approval-hold D-05). It is an approval like Herdr's `blocked`
 /// and holds the row the same way; a wait not read for the current state is
-/// not shown.
+/// not shown, and neither is one while Herdr says the agent works: a running
+/// agent waits on no one, even when the read of that state came before the
+/// agent wrote its new turn.
 fn awaiting_operator(agent: &SessionAgentPayload) -> bool {
-    agent
-        .facts
-        .as_ref()
-        .is_some_and(|facts| facts.awaiting_operator)
+    agent.agent_status.as_deref() != Some("working")
+        && agent
+            .facts
+            .as_ref()
+            .is_some_and(|facts| facts.awaiting_operator)
 }
 
 /// The activity axis. A state Herdr does not name is reported as unknown

@@ -381,7 +381,15 @@ fn a_codex_plan_waiting_for_approval_is_an_approval_that_stays_in_needs_you() {
     assert_eq!(read["unread"], false);
     assert_eq!(read["group"], "needs_you", "{read}");
 
+    // Herdr says the agent works before its new turn was written: the read
+    // for that state still finds the plan, and the row does not wait.
+    runtime.set_label_overlay(plan_waiting_overlay(5));
+    runtime.ingest_session(Ok(codex_projection("working", 5)));
+    assert_eq!(row(&runtime)["demand"], "none");
+    assert_eq!(row(&runtime)["group"], "working");
+
     // The operator approved: Herdr's next state was not read as waiting.
+    runtime.set_label_overlay(plan_waiting_overlay(4));
     runtime.ingest_session(Ok(codex_projection("working", 5)));
     assert_eq!(row(&runtime)["demand"], "none");
     assert_eq!(row(&runtime)["group"], "working");
