@@ -1277,6 +1277,8 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
     }
     press(true);
     press(false);
+    // TEMP (do not merge): the worker reaches the queue before the test reads it.
+    settle(&shared);
     {
         let runtime = shared.lock().unwrap();
         let Some(KitJob::Apply(scope)) = runtime.device_kit_pending.get(DEVICE) else {

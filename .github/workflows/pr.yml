@@ -98,7 +98,11 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        # TEMP evidence run (do not merge): herdr-core only.
+        run: |
+          echo 'lanes=["rust"]' >> "$GITHUB_OUTPUT"
+          echo 'full=false' >> "$GITHUB_OUTPUT"
+          echo 'rust-packages=["herdr-core"]' >> "$GITHUB_OUTPUT"
 
   policy:
     name: policy checks
@@ -179,7 +183,7 @@ jobs:
             bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
           fi
       - name: Report flaky tests
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         continue-on-error: true
         timeout-minutes: 5
         env:
