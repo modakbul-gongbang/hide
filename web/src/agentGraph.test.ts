@@ -11,6 +11,7 @@ import {
   chainOf,
   edgeKindOf,
   entryBox,
+  foldHolding,
   foldId,
   forwardPath,
   graphDevices,
@@ -24,7 +25,7 @@ import {
   type GraphGeometry,
   type ProjectGraph,
 } from "./agentGraph";
-import { scopeAgents } from "./overviewLens";
+import { scopeAgents, type LensAgent } from "./overviewLens";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
@@ -125,8 +126,8 @@ function one(project: Workspace, agents: AgentRow[]): BoardProject[] {
   return [{ workspace: project, agents, device: null }];
 }
 
-function graph(projects: BoardProject[], options: Partial<{ scope: "project" | "all"; openFolds: string[]; selectedBox: string | null; filter: GraphFilter }> = {}): GraphBoard {
-  return buildGraph(projects, scopeAgents(projects), { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, ...options, geometry: GEOMETRY });
+function graph(projects: BoardProject[], options: Partial<{ scope: "project" | "all"; openFolds: string[]; selectedBox: string | null; filter: GraphFilter; everyone: LensAgent[] }> = {}): GraphBoard {
+  return buildGraph(projects, scopeAgents(projects), { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, everyone: scopeAgents(projects), ...options, geometry: GEOMETRY });
 }
 
 function only(board: GraphBoard): ProjectGraph {
@@ -378,6 +379,85 @@ describe("All projects", () => {
   });
 });
 
+describe("across projects (issue 718)", () => {
+  const ide = () => workspace([checkout("ide-main", { primary: true, tabs: [["lead", "helper"]] })], "herdr-ide");
+  const sasu = () => workspace([checkout("sasu-main", { primary: true, tabs: [["s1"]] }), checkout("sasu-wt", { tabs: [["s2"]] })], "sasu");
+  const docs = () => workspace([checkout("docs-main", { primary: true, tabs: [["d1"]] })], "docs");
+  const agents = () => [agent("lead", { ...WORKING, identity_label: "Lead" }), child("helper", "lead"), child("s1", "lead", { ...WORKING, identity_label: "Spec" }), child("s2", "lead", { ...WORKING, identity_label: "Build" }), child("d1", "lead", { identity_label: "Docs" })];
+  const projects = (): BoardProject[] => [ide(), sasu(), docs()].map((project) => ({ workspace: project, agents: agents(), device: null }));
+  const row = (board: GraphBoard, pane: string) => board.sections.flatMap((section) => [...section.rows.values()]).find((candidate) => candidate.paneId === pane)!;
+
+  it("puts one chip per other project on the parent's row, counting its agents there most urgent first, and one back on each child's row", () => {
+    const board = graph(projects(), { scope: "all" });
+    const lead = row(board, "lead");
+    expect(lead.cross.map((chip) => [chip.direction, chip.project.id, chip.names, chip.box, chip.device])).toEqual([
+      ["out", "sasu", ["Build", "Spec"], "sasu-wt", null],
+      ["out", "docs", ["Docs"], "docs-main", null],
+    ]);
+    expect(row(board, "s1").cross.map((chip) => [chip.direction, chip.project.id, chip.names, chip.box])).toEqual([["in", "herdr-ide", ["Lead"], "ide-main"]]);
+    // The projects stand in the order of their most urgent agent, not the order the snapshot lists them.
+    expect(row(graph(projects().reverse(), { scope: "all" }), "lead").cross.map((chip) => chip.project.id)).toEqual(["sasu", "docs"]);
+    // A delegation inside the project keeps its indent and has no chip.
+    expect(row(board, "helper")).toMatchObject({ depth: 1, cross: [] });
+    // The child stands as a root of its own project, with no line out of it.
+    expect(row(board, "s1").depth).toBe(0);
+    expect(board.sections.flatMap((section) => section.edges)).toHaveLength(0);
+  });
+
+  it("finds the other end outside the drawn scope, so one project's Overview still names it", () => {
+    const [own] = projects();
+    const board = graph([own!], { everyone: scopeAgents(projects()) });
+    expect(row(board, "lead").cross.map((chip) => [chip.project.id, chip.paneIds.length])).toEqual([["sasu", 2], ["docs", 1]]);
+  });
+
+  it("pairs ends across devices by the pane id the core names per device, and names the other end's device", () => {
+    const remote = workspace([checkout("remote:mini:checkout:1", { primary: true, tabs: [["remote:mini:pane:p1"]] })], "remote:mini:sasu");
+    remote.device_id = "mini";
+    const local = workspace([checkout("local-main", { primary: true, tabs: [["p1", "p2"]] })], "herdr-ide");
+    const localAgents = [agent("p1", { ...WORKING, identity_label: "Local lead" }), agent("p2", WORKING)];
+    const remoteAgents = [child("remote:mini:pane:p1", "p1", { ...WORKING, identity_label: "Remote child" })];
+    const all: BoardProject[] = [
+      { workspace: local, agents: localAgents, device: null },
+      { workspace: remote, agents: remoteAgents, device: "mini" },
+    ];
+    const board = graph(all, { scope: "all" });
+    expect(row(board, "p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["out", "remote:mini:sasu", "mini"]]);
+    expect(row(board, "remote:mini:pane:p1").cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["in", "herdr-ide", THIS_DEVICE]]);
+    expect(row(board, "p2").cross).toEqual([]);
+  });
+
+  it.each([
+    ["different devices", "device-b", "mini"],
+    ["the same device", "device-a", null],
+  ] as const)("keeps device context for %s with matching device labels", (_relation, childDevice, expectedDevice) => {
+    const parentPane = "remote:device-a:pane:p1";
+    const childPane = `remote:${childDevice}:pane:p2`;
+    const parentProject = workspace([checkout("parent-main", { primary: true, tabs: [[parentPane]] })], "remote:device-a:ide");
+    parentProject.device_id = "device-a";
+    const childProject = workspace([checkout("child-main", { primary: true, tabs: [[childPane]] })], `remote:${childDevice}:sasu`);
+    childProject.device_id = childDevice;
+    const all: BoardProject[] = [
+      { workspace: parentProject, agents: [agent(parentPane, WORKING)], device: "mini" },
+      { workspace: childProject, agents: [child(childPane, parentPane, WORKING)], device: "mini" },
+    ];
+    const board = graph(all, { scope: "all" });
+    expect(row(board, parentPane).cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["out", childProject.id, expectedDevice]]);
+    expect(row(board, childPane).cross.map((chip) => [chip.direction, chip.project.id, chip.device])).toEqual([["in", parentProject.id, expectedDevice]]);
+  });
+
+  it("selects a box on All projects only in the section that draws it", () => {
+    const board = graph(projects(), { scope: "all", selectedBox: "sasu-wt" });
+    expect(Object.fromEntries(board.sections.map((section) => [section.project.id, section.selected]))).toEqual({ "herdr-ide": null, sasu: "sasu-wt", docs: null });
+  });
+
+  it("names the fold line that holds a box, so a chip can open it", () => {
+    const everyone = scopeAgents(projects());
+    expect(foldHolding(docs(), everyone, "docs-main", "all")).toBe(foldId("resting", "docs"));
+    expect(foldHolding(docs(), everyone, "docs-main", "project")).toBeNull();
+    expect(foldHolding(sasu(), everyone, "sasu-wt", "all")).toBeNull();
+  });
+});
+
 describe("the lines", () => {
   /** A graph wide and busy enough to need corridors: twenty agents over eight boxes. */
   function busy(): ProjectGraph {
@@ -539,7 +619,7 @@ describe("what moves", () => {
     const times: number[] = [];
     for (let run = 0; run < 40; run++) {
       const start = performance.now();
-      buildGraph(projects, lensAgents, { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, geometry: GEOMETRY });
+      buildGraph(projects, lensAgents, { scope: "project", openFolds: [], selectedBox: null, filter: NO_GRAPH_FILTER, everyone: lensAgents, geometry: GEOMETRY });
       times.push(performance.now() - start);
     }
     expect(Math.min(...times)).toBeLessThan(8);
