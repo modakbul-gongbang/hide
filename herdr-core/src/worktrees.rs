@@ -306,6 +306,15 @@ impl GitWatch {
             while let Ok(report) = outgoing.reports.try_recv() {
                 match report {
                     Ok(GitWatchReport::Changed { common_dirs }) => changed.extend(common_dirs),
+                    // The old watch lost changes while it still stood as
+                    // cover: its replacement owes every project a read.
+                    Ok(GitWatchReport::Overflow { reason }) => {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "worktrees", "kind": "git_watch.overflow",
+                            "message": reason, "replaced": true
+                        }));
+                        self.owes_reread = true;
+                    }
                     Ok(_) => {}
                     Err(_) => ended = true,
                 }
@@ -1090,6 +1099,30 @@ mod tests {
             std::thread::yield_now();
             driver.watch.collect();
         }
+        assert!(driver.watch.pending.is_empty());
+        driver.report(&second, watching());
+        assert_eq!(
+            driver.watch.pending.keys().cloned().collect::<Vec<_>>(),
+            vec![PathBuf::from("/a"), PathBuf::from("/b")]
+        );
+    }
+
+    /// Changes the old watch lost while it stood as cover through a set
+    /// change are owed to every project once the replacement watches.
+    #[test]
+    fn an_overflow_on_the_old_watch_during_a_set_change_is_owed_a_reread() {
+        let mut driver = Driver::new();
+        let first = driver.next_watch(&["/a"]);
+        driver.watch.reconcile(&projects(&["/a"]));
+        driver.report(&first, watching());
+        let second = driver.next_watch(&["/a", "/b"]);
+        driver.watch.reconcile(&projects(&["/a", "/b"]));
+        driver.report(
+            &first,
+            GitWatchReport::Overflow {
+                reason: "queue full".into(),
+            },
+        );
         assert!(driver.watch.pending.is_empty());
         driver.report(&second, watching());
         assert_eq!(
