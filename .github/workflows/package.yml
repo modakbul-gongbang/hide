@@ -13,8 +13,8 @@
 # starting its daemon on Windows).
 #
 # `include-macos` adds the macOS archive and runs the packaged app's own specs
-# on it. A packaged daemon runs the install kit, which a development build
-# does not, so the first-run state those specs meet exists nowhere else.
+# on it: the signed bundle with its own host, daemon and Herdr, which no other
+# lane starts.
 name: package
 
 on:

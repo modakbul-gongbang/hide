@@ -30,8 +30,8 @@
 # asks for a macOS runner only for what a macOS runner alone proves: `desktop
 # e2e` for a change to the desktop app or the web code it drives, `os
 # contract (macos)` for a change to `hide-platform` or `hide-herdr-client`, and
-# `package`'s macOS job for a change to what goes into a package, because only
-# a packaged daemon runs the install kit the packaged app's specs meet.
+# `package`'s macOS job for a change to what goes into a package, the one job
+# that starts the packaged app such a change builds.
 # Core and daemon changes run on Linux and Windows and leave the macOS
 # `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
 # `nightly.yml`.
