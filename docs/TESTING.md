@@ -415,7 +415,6 @@ CI retries a failed test once, for classification and for the report, and for no
 - The report step cannot fail a lane: the run already passed.
   If it cannot file (a GitHub error, a read-only token), it leaves the unfiled tests in a warning annotation and in the job summary under "Flaky tests that were not filed", and the next flaky run files them; a filed run lists its issues in the same summary.
 - GitHub keeps 10 error annotations per step, so one report step runs the script once and annotates at most 8 failed tests; past that it writes one more annotation, `Failed tests not annotated`, whose message is the count it left out.
-
 - `cargo nextest` runs no doc test.
   The workspace has none that runs (its three doc blocks are `ignore`, `text` and `sh`); a runnable doc test needs its own `cargo test --doc` step.
 - `verify-cargo.sh test` and `test-scoped` stay `cargo test` for local runs and the sealed harness; they never retry.
