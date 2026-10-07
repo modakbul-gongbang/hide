@@ -476,7 +476,7 @@ pub(super) fn runtime() -> Runtime {
 /// worker it spawns fails on its own without touching this runtime, so a
 /// test can drive the real focus event rather than a shortcut into the
 /// read record.
-fn live_runtime() -> Runtime {
+pub(super) fn live_runtime() -> Runtime {
     let mut runtime = runtime();
     let socket_path = std::env::temp_dir()
         .join(format!(
