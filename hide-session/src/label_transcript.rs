@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::turns::TurnTracker;
 use crate::{
     Agent, ConfirmedLabelSession, ConversationCheckpoint, ConversationCursor, EventKind,
     SessionError, SessionIdentity, SessionLocator, confirm_label_session,
@@ -43,6 +44,10 @@ pub struct LabelTranscriptRequest {
     /// by file name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub subagents: BTreeMap<String, ConversationCheckpoint>,
+    /// The turn the previous read ended in, continued by this one; ignored
+    /// when the read starts over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<TurnTracker>,
 }
 
 /// A conversation event as the label analysis reads it.
@@ -112,6 +117,12 @@ pub struct LabelTranscript {
     /// Where each subagent file was read up to, for the next request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub subagents: BTreeMap<String, ConversationCheckpoint>,
+    /// The session's last turn as far as this read reached, for an agent
+    /// that reports turns ([`Agent::reports_turns`]); `None` otherwise, and
+    /// from a device helper that predates it, which a caller reads as not
+    /// known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<TurnTracker>,
 }
 
 /// How many of a Claude Code session's subagent files are read.
@@ -185,6 +196,18 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
                 .flatten(),
         });
     }
+    // A read from the start, or one that started over, folds the whole file
+    // again; otherwise it continues the turn the previous read ended in.
+    let turns = request.agent.reports_turns().then(|| {
+        let mut turns = match (&request.checkpoint, &parsed.rescan_reason) {
+            (Some(_), None) => request.turns.clone().unwrap_or_default(),
+            _ => TurnTracker::default(),
+        };
+        for (offset, mark) in &parsed.turn_marks {
+            turns.fold(*offset, mark);
+        }
+        turns
+    });
     let mut pr_sightings = parsed.pr_sightings.clone();
     let mut subagents = BTreeMap::new();
     let mut subagents_pending = false;
@@ -230,6 +253,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         custom_title: parsed.custom_title.clone(),
         pr_sightings,
         subagents,
+        turns,
     })
 }
 
@@ -443,6 +467,7 @@ mod tests {
             cwd: None,
             checkpoint,
             subagents: BTreeMap::new(),
+            turns: None,
         }
     }
 
