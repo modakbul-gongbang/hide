@@ -27,6 +27,8 @@ export type Isolated = {
   /** Runs a `hide` verb against this run's state directory. */
   hide: (args: string[]) => { status: number | null; stdout: string };
   daemonPid: () => number | null;
+  /** A host exception this test causes on purpose, by a part of its message; cleanup fails on any other. */
+  allowHostUncaught: (part: string) => void;
   cleanup: () => void;
 };
 
@@ -83,6 +85,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   // Every state folder a daemon of this home may have used: the one the app is given and the two `hide` falls back to.
   const states = () => [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")];
   const owner = { cleanup: () => {}, candidates: new Set<ChildProcess>(), launching: 0 };
+  const allowed: string[] = [];
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
@@ -91,6 +94,10 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       const pids = live.map((child) => child.pid ?? "unavailable").join(", ");
       throw new Error(`fixture cleanup incomplete; preserve ${root}: candidate exit unconfirmed (PIDs: ${pids || "none"}, pending launches: ${owner.launching}); close only the recorded owned candidates, confirm their exit, then call cleanup() again`);
     }
+    // Read before the root goes: an exception nothing in the host caught fails
+    // the test with its stack, instead of passing unseen (issue 675).
+    const uncaught = hostLog(cleanupEnv).filter((line) => line.event === "host.uncaught"
+      && !allowed.some((part) => String(line.message).includes(part)));
     const errors: unknown[] = [];
     for (const state of states()) {
       if (!fs.existsSync(state)) continue;
@@ -114,13 +121,16 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
     cleaned = true;
     isolations.delete(home);
     owned.disown();
+    if (uncaught.length) {
+      throw new Error(`the host recorded ${uncaught.length} exception(s) or rejection(s) nothing caught:\n${uncaught.map((line) => `${String(line.kind)}: ${String(line.stack ?? line.message)}`).join("\n")}`);
+    }
   };
   const owned = ownUntilWorkerExit(() => {
     try { cleanup(); } catch (error) { process.exitCode = 1; throw error; }
   });
   owner.cleanup = cleanup;
   isolations.set(home, owner);
-  return { root, env, hide, daemonPid, cleanup };
+  return { root, env, hide, daemonPid, allowHostUncaught: (part) => { allowed.push(part); }, cleanup };
 }
 
 /**
