@@ -376,7 +376,7 @@ pub fn candidates(
     let mut found = Vec::new();
     let mut visited = 0_usize;
     walk(
-        &home.join(".claude/projects"),
+        &home.join(crate::CLAUDE_SESSIONS),
         crate::Agent::Claude,
         3,
         window,
@@ -384,7 +384,7 @@ pub fn candidates(
         &mut visited,
     )?;
     walk(
-        &home.join(".codex/sessions"),
+        &home.join(crate::CODEX_SESSIONS),
         crate::Agent::Codex,
         4,
         window,
@@ -605,32 +605,21 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
     answer
 }
 
-/// The path with every link resolved, refused unless it lies under the
-/// agent's transcript root in `home`.
+/// [`crate::inside_session_root`] for one agent, as a read answer's error.
 fn inside_root(
     home: &std::path::Path,
     agent: crate::Agent,
     path: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
-    let root = match agent {
-        crate::Agent::Claude => home.join(".claude/projects"),
-        crate::Agent::Codex => home.join(".codex/sessions"),
-        crate::Agent::OpenCode => return Err("session_kind_unsupported".to_owned()),
-    };
-    let root = hide_platform::fs::identity::canonical(&root)
-        .map_err(|_| "links_session_outside_roots".to_owned())?;
-    let path = hide_platform::fs::identity::canonical(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "session_file_missing".to_owned()
-        } else {
-            "session_unreadable".to_owned()
+    crate::inside_session_root(home, &[agent], path).map_err(|refusal| {
+        match refusal {
+            crate::RootRefusal::Unsupported => "session_kind_unsupported",
+            crate::RootRefusal::Outside => "links_session_outside_roots",
+            crate::RootRefusal::Missing => "session_file_missing",
+            crate::RootRefusal::Unreadable => "session_unreadable",
         }
-    })?;
-    if path.starts_with(&root) && path != root {
-        Ok(path)
-    } else {
-        Err("links_session_outside_roots".to_owned())
-    }
+        .to_owned()
+    })
 }
 
 fn read_opencode(home: &std::path::Path, request: &ReadRequest, answer: &mut ReadAnswer) {

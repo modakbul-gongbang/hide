@@ -117,7 +117,8 @@ impl ConversationCursor {
         budget: u64,
     ) -> Result<ParsedSession> {
         self.read_bytes = 0;
-        let file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+        let file = crate::open_session_file(path)
+            .map_err(|error| SessionError::io("open", path, error))?;
         self.read_file_with_budget(agent, path, &file, budget)
     }
 

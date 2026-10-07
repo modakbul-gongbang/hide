@@ -224,6 +224,30 @@ fn absolute(path: &str) -> HostResult<std::path::PathBuf> {
     Ok(path.to_path_buf())
 }
 
+/// The agents whose session files the core reads by path.
+const SESSION_FILE_AGENTS: &[hide_session::Agent] =
+    &[hide_session::Agent::Claude, hide_session::Agent::Codex];
+
+/// A session file the core names, refused unless it lies in one of `agents`'
+/// session folders in this machine's home, answered with every link resolved.
+fn session_file(env: &Env, agents: &[hide_session::Agent], path: &str) -> HostResult<PathBuf> {
+    let path = absolute(path)?;
+    let home = env.home("sessions_home_unavailable")?;
+    hide_session::inside_session_root(Path::new(&home), agents, &path).map_err(|refusal| {
+        match refusal {
+            hide_session::RootRefusal::Unsupported | hide_session::RootRefusal::Outside => {
+                HostError::new(ErrorCode::OutsideRoot, "session_outside_roots")
+            }
+            hide_session::RootRefusal::Missing => {
+                HostError::new(ErrorCode::Io, "session_file_missing")
+            }
+            hide_session::RootRefusal::Unreadable => {
+                HostError::new(ErrorCode::Io, "session_unreadable")
+            }
+        }
+    })
+}
+
 fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
     let path = Path::new(path);
     if !path.is_absolute() {
@@ -655,9 +679,9 @@ pub fn handle_with_progress(
             to_value(listed)
         }
         Call::SessionIndexRead { agent, path, saved } => {
-            let (step, _) =
-                hide_session::search_read::read_step(saved.as_ref(), agent, &absolute(&path)?)
-                    .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            let path = session_file(env, &[agent], &path)?;
+            let (step, _) = hide_session::search_read::read_step(saved.as_ref(), agent, &path)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
             to_value(step)
         }
         Call::SessionStamps { paths } => {
@@ -670,7 +694,25 @@ pub fn handle_with_progress(
                     ),
                 ));
             }
-            to_value(hide_session::search_read::stamps(&paths))
+            let home = env.home("sessions_home_unavailable")?;
+            to_value(
+                paths
+                    .iter()
+                    .map(|path| {
+                        let path = Path::new(path);
+                        if !path.is_absolute() {
+                            return None;
+                        }
+                        let path = hide_session::inside_session_root(
+                            Path::new(&home),
+                            SESSION_FILE_AGENTS,
+                            path,
+                        )
+                        .ok()?;
+                        hide_session::search_read::stamp_at(&path)
+                    })
+                    .collect::<Vec<_>>(),
+            )
         }
         Call::ProjectSessions { project } => {
             let home = env.home("sessions_home_unavailable")?;
@@ -681,11 +723,11 @@ pub fn handle_with_progress(
             to_value(sessions)
         }
         Call::SessionStat { path } => to_value(
-            crate::sessions::stat(&absolute(&path)?)
+            crate::sessions::stat(&session_file(env, SESSION_FILE_AGENTS, &path)?)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::SessionChunk { path, checkpoint } => to_value(
-            crate::sessions::chunk(&absolute(&path)?, checkpoint)
+            crate::sessions::chunk(&session_file(env, SESSION_FILE_AGENTS, &path)?, checkpoint)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::PanesStart { .. }
@@ -697,8 +739,11 @@ pub fn handle_with_progress(
             "Only a device node's link carries its panes' credentials and commands",
         )),
         Call::SessionText { path } => to_value(
-            hide_session::read_bounded(&absolute(&path)?, hide_session::SESSION_READ_LIMIT_BYTES)
-                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+            hide_session::read_bounded(
+                &session_file(env, SESSION_FILE_AGENTS, &path)?,
+                hide_session::SESSION_READ_LIMIT_BYTES,
+            )
+            .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
@@ -838,6 +883,87 @@ mod tests {
         let error = session_activity(home.path(), &request).unwrap_err();
         assert_eq!(error.code, ErrorCode::Unsupported);
         assert_eq!(error.message, "session_kind_unsupported");
+    }
+
+    /// A session read names a file the core found in the agents' session
+    /// folders; a path outside them, or a link planted inside one that
+    /// leads out, is refused unread, and a pipe in their place is refused
+    /// at once instead of holding the node.
+    #[cfg(unix)]
+    #[test]
+    fn a_session_read_stays_in_the_session_folders_and_never_waits() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::standalone(Some(home.path().to_path_buf()));
+        let folder = home.path().join(".claude/projects/-project");
+        std::fs::create_dir_all(&folder).unwrap();
+        let session = folder.join("session.jsonl");
+        std::fs::write(&session, "{\"type\":\"user\"}\n").unwrap();
+        let secret = home.path().join("secret.jsonl");
+        std::fs::write(&secret, "secret\n").unwrap();
+        let planted = folder.join("planted.jsonl");
+        std::os::unix::fs::symlink(&secret, &planted).unwrap();
+        let named = |path: &Path| path.to_string_lossy().into_owned();
+        let reads = |path: String| {
+            vec![
+                Call::SessionText { path: path.clone() },
+                Call::SessionStat { path: path.clone() },
+                Call::SessionChunk {
+                    path: path.clone(),
+                    checkpoint: None,
+                },
+                Call::SessionIndexRead {
+                    agent: hide_session::Agent::Claude,
+                    path,
+                    saved: None,
+                },
+            ]
+        };
+
+        for call in reads(named(&session)) {
+            handle_in(call, &env).unwrap();
+        }
+        for (path, code) in [
+            (named(&secret), ErrorCode::OutsideRoot),
+            (named(&planted), ErrorCode::OutsideRoot),
+            ("session.jsonl".to_owned(), ErrorCode::InvalidPath),
+        ] {
+            for call in reads(path.clone()) {
+                let refused = handle_in(call, &env).unwrap_err();
+                assert_eq!(refused.code, code, "{path}");
+            }
+        }
+        let stamps = handle_in(
+            Call::SessionStamps {
+                paths: vec![named(&session), named(&secret), named(&planted)],
+            },
+            &env,
+        )
+        .unwrap();
+        let stamps = stamps.as_array().unwrap();
+        assert!(stamps[0].is_string());
+        assert!(stamps[1].is_null() && stamps[2].is_null());
+
+        let pipe = folder.join("pipe.jsonl");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (sender, answers) = mpsc::channel();
+        std::thread::spawn(move || {
+            for call in reads(named(&pipe)) {
+                if matches!(call, Call::SessionStat { .. }) {
+                    continue;
+                }
+                sender.send(handle_in(call, &env).map(|_| ())).unwrap();
+            }
+        });
+        for _ in 0..3 {
+            let refused = answers
+                .recv_timeout(Duration::from_secs(5))
+                .expect("a pipe read answers at once");
+            assert_eq!(refused.unwrap_err().code, ErrorCode::Io);
+        }
     }
 
     /// The SSH channel is gone: nothing written reaches anyone.

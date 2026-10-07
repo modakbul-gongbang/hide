@@ -114,6 +114,7 @@ Each incremental poll reads at most 1 MiB and retains no JSONL line larger than 
 The same provider, session, content-hash retry converges through a deterministic receipt instead of repeating revisions.
 All filesystem, SQLite, hook-config, provider, and serialization work occurs outside the runtime mutex; applying a completed worker result is the only locked transition.
 The session files are read by the node that holds them and the Memory store is the core's: the core asks that node for the Project's facts (`project`, its id named by the node's id), its session list (`project_sessions`), a file's size and time (`session_stat`), one bounded read past a saved cursor (`session_chunk`, which answers the next checkpoint) and a whole session for the archive (`session_text`), and parses and stores what comes back.
+A node reads a session file the core names, for these calls and for search (`session_index_read`, `session_stamps`), only when the path, with every link resolved, lies in the Claude Code or Codex CLI session folder of its home, and opens it without waiting, so a pipe in its place is refused at once.
 Disabling Memory stops new analysis and injection without deleting its data, while Forget, revision Undo, and confirmed Project deletion have their own explicit lifecycle operations.
 
 The core owns the fourth right-panel section, each Project's Sessions/Memory mode, filters, actionable analysis state, and editor preview identity.

@@ -391,24 +391,18 @@ fn is_session_id(value: &str) -> bool {
         && value != ".."
 }
 
-/// The located file with every link resolved, refused unless it lies under
-/// the agent's own transcript root in `home`: a reported path, or a link
-/// planted inside the root, never makes the reader open a file elsewhere.
+/// [`crate::inside_session_root`] for the agent's own folder: a reported
+/// path, or a link planted inside the folder, never makes the reader open a
+/// file elsewhere.
 fn inside_agent_root(home: &Path, agent: Agent, located: &Path) -> Result<PathBuf, String> {
-    let root = match agent {
-        Agent::Claude => home.join(".claude/projects"),
-        Agent::Codex => home.join(".codex/sessions"),
-        Agent::OpenCode => return Err("session_kind_unsupported".to_owned()),
-    };
-    let outside = || "label_session_outside_roots".to_owned();
-    let root = hide_platform::fs::identity::canonical(&root).map_err(|_| outside())?;
-    let path = hide_platform::fs::identity::canonical(located)
-        .map_err(|_| "session_file_missing".to_owned())?;
-    if path.starts_with(&root) && path != root {
-        Ok(path)
-    } else {
-        Err(outside())
-    }
+    crate::inside_session_root(home, &[agent], located).map_err(|refusal| {
+        match refusal {
+            crate::RootRefusal::Unsupported => "session_kind_unsupported",
+            crate::RootRefusal::Outside => "label_session_outside_roots",
+            crate::RootRefusal::Missing | crate::RootRefusal::Unreadable => "session_file_missing",
+        }
+        .to_owned()
+    })
 }
 
 #[cfg(test)]

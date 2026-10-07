@@ -5,7 +5,7 @@ use crate::search::{IndexStep, IndexedMessage, SavedFile, SearchIndex};
 use crate::{Agent, ConversationCheckpoint, ConversationCursor, EventKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -67,10 +67,13 @@ pub fn search(
 
 /// Each path's current stamp, `None` for one that is gone or unreadable.
 pub fn stamps(paths: &[String]) -> Vec<Option<String>> {
-    paths
-        .iter()
-        .map(|path| stamp(Path::new(path)).ok())
-        .collect()
+    paths.iter().map(|path| stamp_at(Path::new(path))).collect()
+}
+
+/// The current stamp of the file at `path`, `None` when it is gone or
+/// unreadable.
+pub fn stamp_at(path: &Path) -> Option<String> {
+    stamp(path).ok()
 }
 
 fn read_opened(
@@ -263,18 +266,7 @@ fn hash_block(opened: &File, start: u64, end: u64) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 fn open_regular(path: &Path) -> Result<File, String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options.open(path).map_err(|e| e.to_string())?;
-    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
-        return Err("Session source is not a regular file.".into());
-    }
-    Ok(file)
+    crate::open_session_file(path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -116,7 +116,7 @@ impl SessionCatalog {
         let mut files = Vec::new();
         let mut visited = 0;
         collect_jsonl(
-            &self.home.join(".claude/projects"),
+            &self.home.join(crate::CLAUDE_SESSIONS),
             Agent::Claude,
             2,
             &mut files,
@@ -124,7 +124,7 @@ impl SessionCatalog {
             SESSION_DISCOVERY_LIMIT,
         )?;
         collect_jsonl(
-            &self.home.join(".codex/sessions"),
+            &self.home.join(crate::CODEX_SESSIONS),
             Agent::Codex,
             4,
             &mut files,
