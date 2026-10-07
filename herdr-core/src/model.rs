@@ -3214,35 +3214,7 @@ pub struct DeviceRegistration {
     pub host_consent: Option<HostConsent>,
 }
 
-/// What the operator allowed on a device: install and update Hide's helper
-/// and its `hide` command under `helper_root`, link `hide` in `cli_dir` when
-/// that name is free or already Hide's, run the helper only for the life of
-/// an SSH connection, and perform file and Git work inside registered
-/// checkouts, with trash moves and worktree removals still confirmed one by
-/// one. `contract` names that scope;
-/// a build whose scope differs asks again, and so does a device that answers
-/// with another identity than the one the consent was first used on.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HostConsent {
-    pub contract: u32,
-    pub helper_root: String,
-    /// Absent in a consent given before contract 2, which never covered it.
-    #[serde(default)]
-    pub cli_dir: Option<String>,
-    pub granted_at_unix_ms: u64,
-    /// The account, address and host key the helper first ran on; bound on
-    /// the first connection after consent and never rewritten by one.
-    #[serde(default)]
-    pub identity: Option<HostIdentity>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HostIdentity {
-    pub user: String,
-    pub hostname: String,
-    pub port: u16,
-    pub host_key_sha256: String,
-}
+pub use hide_node_link::device::{HostConsent, HostIdentity};
 
 pub(crate) fn default_accent_hex() -> String {
     "#B9FF66".to_owned()

@@ -57,26 +57,10 @@ fn present<'de, D: serde::Deserializer<'de>>(
     serde::Deserialize::deserialize(deserializer).map(Some)
 }
 
-/// The scope the operator agrees to, versioned. A build that needs more than
-/// this contract describes bumps it, and every device asks again (B51).
-/// Contract 2 added the `hide` command installed beside the helper and its
-/// link in the consented command folder. Contract 3 is the whole install kit
-/// (PRD device-parity D-12): the hook entries besides the command
-/// (it also held the labels plugin, which labels-in-hided retired, so the
-/// scope only narrowed); a contract-2 consent with the same folders is
-/// carried to 3 on its next connection without asking (D-13).
-pub const HOST_CONSENT_CONTRACT: u32 = 3;
-
-/// The contract a consent may be carried forward from without asking.
-pub const HOST_CONSENT_CARRIED_FROM: u32 = 2;
-
-/// Where the helper is installed on the device unless the daemon was started
-/// with another root; `~` is the remote account's home.
-pub const DEFAULT_HELPER_ROOT: &str = hide_kit::layout::HELPER_ROOT;
-
-/// Where the device's `hide` command is linked unless the daemon was started
-/// with another folder; `~` is the remote account's home.
-pub const DEFAULT_CLI_DIR: &str = "~/.local/bin";
+pub use hide_node_link::device::{
+    DEFAULT_CLI_DIR, DEFAULT_HELPER_ROOT, EstablishError, Established, HOST_CONSENT_CARRIED_FROM,
+    HOST_CONSENT_CONTRACT, Upload,
+};
 
 pub const MAX_RUNNING: usize = hide_host::serve::CONCURRENCY;
 pub const MAX_QUEUED: usize = 32;
@@ -269,59 +253,6 @@ fn platform_of(uname: &str) -> Result<(String, String), String> {
         }
     };
     Ok((os.to_owned(), arch.to_owned()))
-}
-
-#[derive(Debug)]
-pub enum EstablishError {
-    Connect(RemoteError),
-    /// The device answering the alias is not the one consent was given for.
-    IdentityChanged {
-        bound: Box<HostIdentity>,
-        observed: Box<HostIdentity>,
-    },
-    /// This build cannot serve the device; nothing was installed.
-    Unsupported(String),
-    Install(String),
-    Helper(String),
-}
-
-impl fmt::Display for EstablishError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Connect(error) => write!(formatter, "{}", error.diagnostic().reason),
-            Self::IdentityChanged { bound, observed } => write!(
-                formatter,
-                "The device now answers as {}, not {} that the helper was allowed on; allow it again in Settings to continue",
-                observed.describe(),
-                bound.describe()
-            ),
-            Self::Unsupported(reason) | Self::Install(reason) | Self::Helper(reason) => {
-                formatter.write_str(reason)
-            }
-        }
-    }
-}
-
-pub struct Established {
-    pub host: RemoteHost,
-    pub identity: HostIdentity,
-    pub hello: Hello,
-    /// The helper was installed or replaced on this connection.
-    pub installed: bool,
-    pub helper_path: String,
-    /// How the build's files reached the device on this connection.
-    pub upload: Upload,
-}
-
-/// What one connection's install did with the build's files: how many it
-/// sent, how many were already there, and the kit parts left out with why.
-/// The kit on the device reports a left-out part on the device's row; this
-/// is the diagnostic detail.
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
-pub struct Upload {
-    pub sent: usize,
-    pub reused: usize,
-    pub missing: Vec<String>,
 }
 
 /// A live helper connection. Cloning shares it; the SSH connection ends when
@@ -652,15 +583,6 @@ fn mark_closed(inner: &Inner, reason: String) {
     inner.gate.stop(&reason);
 }
 
-impl HostIdentity {
-    pub fn describe(&self) -> String {
-        format!(
-            "{}@{}:{} ({})",
-            self.user, self.hostname, self.port, self.host_key_sha256
-        )
-    }
-}
-
 /// Connects, checks consent against the device that answered, installs the
 /// helper when the device lacks this build's, and starts it. Blocking; run
 /// it off the runtime lock.
@@ -749,7 +671,7 @@ pub fn establish(
         return Err(EstablishError::Helper(reason));
     }
     Ok(Established {
-        host,
+        host: Arc::new(host),
         identity,
         hello,
         installed,
@@ -1874,7 +1796,7 @@ mod probe {
         let timeout = Duration::from_secs(20);
         let root_path = format!("{fixture}/checkout");
         let opened: RootOpened = call_as(
-            &host,
+            &*host,
             Call::RootOpen {
                 root: root_path.clone(),
             },
@@ -1886,7 +1808,7 @@ mod probe {
             identity: opened.identity,
         };
         let listing: hide_node_link::list::Listing = call_as(
-            &host,
+            &*host,
             Call::List {
                 root: root.clone(),
                 path: String::new(),
@@ -1899,7 +1821,7 @@ mod probe {
             "{listing:?}"
         );
         let document: hide_node_link::document::Document = call_as(
-            &host,
+            &*host,
             Call::OpenDocument {
                 root: root.clone(),
                 path: "a.txt".to_owned(),
@@ -1910,7 +1832,7 @@ mod probe {
         assert_eq!(document.contents.as_deref(), Some("old\n"));
         let revision = document.revision.expect("editable revision");
         let saved: hide_node_link::save::Saved = call_as(
-            &host,
+            &*host,
             Call::Save {
                 root: root.clone(),
                 path: "a.txt".to_owned(),

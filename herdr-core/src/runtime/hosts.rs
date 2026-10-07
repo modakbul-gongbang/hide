@@ -433,7 +433,7 @@ impl Runtime {
                 self.set_host_phase(
                     device_id,
                     HostPhase::Ready {
-                        host: Arc::new(established.host),
+                        host: established.host,
                         platform: format!("{} {}", established.hello.os, established.hello.arch),
                         helper_path: established.helper_path,
                     },

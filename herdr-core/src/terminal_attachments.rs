@@ -6,29 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) use hide_node_link::attachments::{MAX_FILES, MAX_PATH_BYTES};
+pub(crate) use hide_node_link::attachments::{
+    AttachmentFile, MAX_FILES, MAX_PATH_BYTES, check_cancelled, valid_request_id,
+};
 pub(crate) const MAX_QUEUED_INPUT: usize = 64 * 1024;
-pub(crate) const MAX_STAGED_FILES: usize = 128;
-pub(crate) const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
-pub(crate) const STAGING_TTL_SECONDS: u64 = 24 * 60 * 60;
-
-#[derive(Clone, Debug)]
-pub(crate) struct AttachmentFile {
-    pub path: String,
-    pub name: String,
-    pub bytes: Vec<u8>,
-}
-
-pub(crate) fn valid_request_id(id: &str) -> bool {
-    id.len() == 36
-        && id.bytes().enumerate().all(|(index, byte)| {
-            if [8, 13, 18, 23].contains(&index) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-}
 
 pub(crate) fn clipboard_root(state_path: &Path) -> PathBuf {
     state_path.with_file_name("TerminalClipboard")
@@ -36,14 +17,6 @@ pub(crate) fn clipboard_root(state_path: &Path) -> PathBuf {
 
 pub(crate) fn clipboard_path(state_path: &Path, request_id: &str) -> PathBuf {
     clipboard_root(state_path).join(format!("hide-{request_id}.png"))
-}
-
-pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
-    if cancelled.load(Ordering::Acquire) {
-        Err("File transfer was cancelled.".to_owned())
-    } else {
-        Ok(())
-    }
 }
 
 /// Reads the picked files on `node`, which asks after each file whether to

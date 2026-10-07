@@ -1324,6 +1324,7 @@ dependencies = [
  "base64 0.23.1",
  "hide-agent-hooks",
  "hide-ai",
+ "hide-herdr-client",
  "hide-kit",
  "hide-platform",
  "hide-project",

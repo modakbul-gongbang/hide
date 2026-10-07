@@ -1,8 +1,8 @@
 //! Attachment staging uses the authenticated russh boundary, never shell commands.
 use super::*;
-use crate::terminal_attachments::{
-    AttachmentFile, MAX_STAGED_BYTES, MAX_STAGED_FILES, STAGING_TTL_SECONDS, check_cancelled,
-    valid_request_id,
+use hide_node_link::attachments::{
+    AttachmentFile, MAX_FILES, MAX_STAGED_BYTES, MAX_STAGED_FILES, STAGING_TTL_SECONDS,
+    check_cancelled, valid_request_id,
 };
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
@@ -37,7 +37,7 @@ fn attachment_name(request_id: &str, index: usize, file: &AttachmentFile) -> Str
 impl RusshSftpTransport {
     /// Best-effort exact-intent cleanup. No directory recursion or unrelated deletion.
     pub(crate) fn remove_attachments(&self, request_id: &str, files: &[AttachmentFile]) {
-        if !valid_request_id(request_id) || files.len() > crate::terminal_attachments::MAX_FILES {
+        if !valid_request_id(request_id) || files.len() > MAX_FILES {
             return;
         }
         let result = self.client.runtime.block_on(async {
