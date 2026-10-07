@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use hide_agent_hooks::codex_trust::{
-    TrustFailure, TrustFailureKind, TrustOutcome, trust_own_hooks,
+    HookEntry, TrustFailure, TrustFailureKind, TrustOutcome, trust_own_hooks,
 };
 
 use crate::KitTarget;
@@ -32,16 +32,19 @@ fn memory() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, String>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Asks Codex to trust Hide's entries and answers the reason the part is not
-/// ready, when it is not. Nothing is asked of a machine with no Codex, and a
-/// Codex with no hook trust says nothing (D-07).
-pub(crate) fn ensure(target: &KitTarget) -> Option<String> {
+/// Asks Codex to trust Hide's entries, and the entries the kit recorded
+/// Herdr's integration writing (`herdr`, empty unless the kit installed it),
+/// and answers the reason the part is not ready, when it is not. Nothing is
+/// asked of a machine with no Codex, and a Codex with no hook trust says
+/// nothing (D-07).
+pub(crate) fn ensure(target: &KitTarget, herdr: &[HookEntry]) -> Option<String> {
     let reason = match target.codex.as_deref() {
         None => None,
         Some(codex) => match trust_own_hooks(
             codex,
             &target.home,
             &target.kit_dir.join(hide_agent_hooks::HELPER_BINARY_NAME),
+            herdr,
             &target.stop,
         ) {
             TrustOutcome::Unsupported | TrustOutcome::Trusted { .. } => None,

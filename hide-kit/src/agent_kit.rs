@@ -16,6 +16,7 @@
 
 use std::path::Path;
 
+use hide_agent_hooks::codex_trust::{HookEntry, MAX_LEARNED_ENTRIES, learn_herdr_entries};
 use hide_agent_hooks::guidance::GuidanceAgent;
 use hide_agent_hooks::{HookStatus, InstallFailure};
 
@@ -615,16 +616,25 @@ struct AgentFailures {
     herdr: std::collections::BTreeMap<&'static str, String>,
 }
 
+/// What a pass did to the agents' own pieces, before anyone reports it: the
+/// pass sets Codex's trust between this and [`reports`], because Herdr's
+/// integration, which the trust covers, is only in place once this has run.
+pub(crate) struct Applied {
+    failures: AgentFailures,
+    herdr: HerdrView,
+    detection: Detection,
+    pub(crate) changed: bool,
+    pub(crate) retirement: Retirement,
+}
+
 /// Applies the operator's per-agent choices in `scope` and what the pass
-/// owes every agent that is on; answers every agent afterwards. `parts` are
-/// the kit parts' reports, for the agents whose hook is one.
+/// owes every agent that is on.
 pub(crate) fn apply(
     target: &KitTarget,
     scope: &Scope,
     record: &mut Record,
     record_failure: Option<&String>,
-    parts: &[PartView],
-) -> (Vec<AgentReport>, bool, Retirement) {
+) -> Applied {
     let mut changed = false;
     let mut failures = AgentFailures::default();
     let record_readable = record_failure.is_none();
@@ -766,8 +776,27 @@ pub(crate) fn apply(
         &mut changed,
     );
 
-    let dirs = observe_dirs(target, record, scope, &detection);
-    let reports: Vec<AgentReport> = ADAPTERS
+    Applied {
+        failures,
+        herdr,
+        detection,
+        changed,
+        retirement: retirement.report,
+    }
+}
+
+/// Every agent after a pass, as [`apply`] left it. `parts` are the kit parts'
+/// reports, for the agents whose hook is one.
+pub(crate) fn reports(
+    target: &KitTarget,
+    scope: &Scope,
+    record: &Record,
+    record_failure: Option<&String>,
+    applied: &Applied,
+    parts: &[PartView],
+) -> Vec<AgentReport> {
+    let dirs = observe_dirs(target, record, scope, &applied.detection);
+    ADAPTERS
         .iter()
         .map(|adapter| {
             let on = enabled(record, scope, adapter);
@@ -777,15 +806,14 @@ pub(crate) fn apply(
                 record,
                 on,
                 &dirs,
-                &detection,
-                &herdr,
-                Some(&failures),
-                record_readable,
+                &applied.detection,
+                &applied.herdr,
+                Some(&applied.failures),
+                record_failure.is_none(),
                 parts,
             )
         })
-        .collect();
-    (reports, changed, retirement.report)
+        .collect()
 }
 
 /// Herdr's integrations: installed for an agent that is on and found, taken
@@ -801,7 +829,7 @@ fn apply_herdr(
     changed: &mut bool,
 ) -> HerdrView {
     let before = Statuses::probe(target);
-    let mut installed_now = Vec::new();
+    let mut installed_now: Vec<(&AgentAdapter, Option<HookFile>)> = Vec::new();
     let mut touched = false;
     for adapter in ADAPTERS {
         let Some(integration) = adapter.herdr else {
@@ -863,9 +891,13 @@ fn apply_herdr(
         if !install_now {
             continue;
         }
+        // What Herdr is about to write is learned from the file it writes in
+        // (PRD codex-herdr-hook-trust D-02): the entries before the call,
+        // against the entries after it.
+        let file_before = adapter.trusts_herdr_hook().then(|| read_hook_file(target));
         match herdr_integration::install(target, integration.name) {
             Ok(()) => {
-                installed_now.push(adapter);
+                installed_now.push((adapter, file_before));
                 touched = true;
             }
             Err(reason) => {
@@ -880,16 +912,68 @@ fn apply_herdr(
     // not take is not Hide's.
     let after = Statuses::probe(target);
     if let Some(Ok(statuses)) = &after {
-        for adapter in installed_now {
+        for (adapter, file_before) in installed_now {
             let Some(integration) = adapter.herdr else {
                 continue;
             };
             if statuses.of(integration.name) == Some(Integration::Current) && record_readable {
                 *changed |= record.insert_piece(&herdr_code(adapter));
+                if let Some(file_before) = file_before {
+                    *changed |= learn_herdr_hooks(target, record, adapter, file_before);
+                }
             }
         }
     }
     after
+}
+
+/// A Codex hook file's entries at one moment, or why they could not be read.
+type HookFile = Result<std::collections::BTreeSet<HookEntry>, String>;
+
+fn read_hook_file(target: &KitTarget) -> HookFile {
+    hide_agent_hooks::codex_trust::hook_entries(&target.home)
+}
+
+/// Keeps in the record the entries Herdr's integration for `adapter` wrote
+/// into the agent's hook file during the install just made, so Codex's trust
+/// can be for exactly those bytes. A file that could not be read, or an
+/// install that added more entries than Herdr's integration does, teaches
+/// nothing and leaves the review screen to the operator; the cause goes to the
+/// log. True when the record changed.
+fn learn_herdr_hooks(
+    target: &KitTarget,
+    record: &mut Record,
+    adapter: &AgentAdapter,
+    before: HookFile,
+) -> bool {
+    let event = |kind: &str, detail: String| {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "kit",
+                "kind": kind,
+                "agent": adapter.id,
+                "detail": detail,
+            })
+        );
+    };
+    let learned = before.and_then(|before| {
+        let after = read_hook_file(target)?;
+        learn_herdr_entries(&before, &after, record.herdr_hook_entries(adapter.id)).map_err(
+            |added| {
+                format!(
+                    "the install added {added} entries, more than the {MAX_LEARNED_ENTRIES} a Herdr integration adds"
+                )
+            },
+        )
+    });
+    match learned {
+        Ok(entries) => record.set_herdr_hook_entries(adapter.id, entries),
+        Err(detail) => {
+            event("herdr_hook_not_learned", detail);
+            record.set_herdr_hook_entries(adapter.id, Vec::new())
+        }
+    }
 }
 
 /// Takes every Hide piece off a machine: each guidance hook's marked

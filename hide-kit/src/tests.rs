@@ -166,7 +166,27 @@ if [ "$1" = integration ]; then
       done ;;
     install)
       if [ -e "$HOME/herdr-fails" ]; then echo "disk full" >&2; exit 1; fi
-      echo current > "$dir/$3" ;;
+      echo current > "$dir/$3"
+      # Herdr's Codex integration also adds its entry to `hooks.json`, as
+      # Herdr 0.9.1 does: one group of its own on `SessionStart`, left alone
+      # when it is already there.
+      if [ "$3" = codex ] && [ -d "$HOME/.codex" ]; then
+        python3 - "$HOME/.codex" <<'PY'
+import json, os, sys
+home = sys.argv[1]
+path = os.path.join(home, "hooks.json")
+command = "bash '%s' session" % os.path.join(home, "herdr-agent-state.sh")
+try:
+    document = json.load(open(path))
+except (OSError, ValueError):
+    document = {}
+groups = document.setdefault("hooks", {}).setdefault("SessionStart", [])
+if not any(h.get("command") == command for g in groups for h in g.get("hooks", [])):
+    groups.append({"hooks": [{"command": command, "timeout": 10, "type": "command"}]})
+with open(path, "w") as f:
+    json.dump(document, f, indent=2)
+PY
+      fi ;;
     uninstall) rm -f "$dir/$3" ;;
   esac
   exit 0

@@ -363,6 +363,14 @@ impl Feature {
 }
 
 impl AgentAdapter {
+    /// Whether the hook entries Herdr's integration writes for this agent are
+    /// covered by Hide's trust for it: only Codex asks the operator to review
+    /// a hook before it runs, and Hide records that trust for it
+    /// (`hide_agent_hooks::codex_trust`, PRD codex-herdr-hook-trust).
+    pub(crate) fn trusts_herdr_hook(&self) -> bool {
+        self.herdr.is_some() && self.hook == HookSupport::Part(ComponentId::CodexHook)
+    }
+
     /// Whether Hide does `feature` for this agent in this build. Every answer
     /// is read off a field of the row that also drives the behavior, so the
     /// popover cannot say more than the kit installs: the hooks from
