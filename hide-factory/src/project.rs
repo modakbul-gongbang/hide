@@ -1263,7 +1263,12 @@ impl MergeTarget for SharedProjects {
             args.extend(["-m", "1"]);
         }
         args.push(sha);
-        this.git("git.revert", &path, &args)?;
+        if let Err(failure) = this.git("git.revert", &path, &args) {
+            // A conflicting revert leaves its state in the Factory's own main
+            // worktree, and every later checkout there would fail on it.
+            let _ = this.git("git.revert", &path, &["revert", "--abort"]);
+            return Err(failure);
+        }
         let commit = this
             .git("git.revert", &path, &["rev-parse", "HEAD"])?
             .trim()

@@ -264,6 +264,41 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
 }
 
 #[test]
+fn a_revert_that_conflicts_leaves_the_factory_main_worktree_clean() {
+    let mut fx = fixture();
+    let factory = factory(&fx.project, &["true"]);
+    let mut t = task(&fx, "T-1", "b.txt", "two\n");
+    let run = fx.projects.start(&factory, &t).unwrap();
+    assert_eq!(settle(&mut fx.projects, &factory, &run), VerifyPoll::Passed);
+    t.attempts.push(Attempt {
+        number: 1,
+        commit: run.commit.clone(),
+        started_at: 0,
+        stage: AttemptStage::Task,
+        outcome: Some(AttemptOutcome::Passed),
+        log: None,
+    });
+    let sha = fx.projects.merge(&factory, &t, MergeMethod::Merge).unwrap();
+    // A later change to the same file makes undoing the merge conflict.
+    write(&fx.project, "b.txt", "changed\n");
+    git(&fx.project, &["add", "."]);
+    git(&fx.project, &["commit", "--quiet", "-m", "later"]);
+    assert!(fx.projects.revert(&factory, &t, &sha).is_err());
+    let main = fx
+        .project
+        .with_file_name("repo.worktrees")
+        .join("factory-main");
+    assert!(main.is_dir(), "{}", main.display());
+    let pending = std::process::Command::new("git")
+        .args(["rev-parse", "-q", "--verify", "REVERT_HEAD"])
+        .current_dir(&main)
+        .output()
+        .unwrap();
+    assert!(!pending.status.success(), "no revert left in progress");
+    assert_eq!(git(&main, &["status", "--porcelain"]), "");
+}
+
+#[test]
 fn a_conflict_and_a_dirty_main_are_found_before_merge() {
     let mut fx = fixture();
     let factory = factory(&fx.project, &[]);
