@@ -409,20 +409,14 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
 /// Prints the record's answer as one line; a refusal prints its reason and
 /// next action and exits non-zero (B42, B43).
 fn links(env: &Env, query: &herdr_core::links::query::LinksQuery) -> Result<(), String> {
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => return query_refusal(&reason, bootstrap_next_action(&reason), true),
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request_links(&reference, query) {
+    let answer = match crate::workspace_cli::request_links(&mut credential, query) {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                true,
-            );
+            return query_refusal(&reason, request_next_action(&reason), true);
         }
     };
     println!("{answer}");
@@ -491,14 +485,15 @@ fn workspace_action_value(
             Err(reason) => return workspace_refusal(&reason, "Check the local runtime and retry"),
         },
     };
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => return workspace_action_before_send_refusal(&request_id, &reason),
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let answer = match crate::workspace_cli::request_action(&reference, action, &request_id) {
+    let answer = match crate::workspace_cli::request_action(&mut credential, action, &request_id) {
         Ok(answer) => answer,
+        Err(reason) if bootstrap_refused(&reason) => {
+            return workspace_action_before_send_refusal(&request_id, &reason);
+        }
         Err(reason) => return workspace_action_refusal(&request_id, &reason),
     };
     if answer["ok"] == true {
@@ -519,6 +514,21 @@ pub(crate) fn bootstrap_next_action(reason: &str) -> &'static str {
         "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
         _ => "Open Hide, reconnect this pane, and retry the same command",
+    }
+}
+
+/// A bootstrap refusal reaches a request when the reference `HIDE_CAP_REF`
+/// named was gone and the bare bootstrap that replaces it was refused;
+/// nothing was sent, and the bootstrap's next step still applies.
+fn bootstrap_refused(reason: &str) -> bool {
+    matches!(reason, "checkout_not_registered" | "caller_unavailable")
+}
+
+fn request_next_action(reason: &str) -> &'static str {
+    if bootstrap_refused(reason) {
+        bootstrap_next_action(reason)
+    } else {
+        "Check Hide status, reconnect the pane, and retry"
     }
 }
 
@@ -595,14 +605,6 @@ fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, Stri
     Err(reason.to_owned())
 }
 
-pub(crate) fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> {
-    match std::env::var(env::HIDE_CAP_REF) {
-        Ok(value) if !value.is_empty() => Ok((std::path::PathBuf::from(value), false)),
-        Ok(_) => Err("invalid_reference".to_owned()),
-        Err(_) => crate::workspace_cli::bootstrap(env, true).map(|path| (path, true)),
-    }
-}
-
 fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
     let answer = workspace_query_value(env, query, true)?;
     println!("{answer}");
@@ -631,27 +633,21 @@ fn workspace_query_options(
     display_id: Option<&str>,
     report: bool,
 ) -> Result<serde_json::Value, String> {
-    let (reference, ephemeral) = match workspace_reference(env) {
-        Ok(reference) => reference,
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
         Err(reason) => {
             return query_refusal(&reason, bootstrap_next_action(&reason), report);
         }
     };
-    let _reference_owner =
-        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
     let requested = if query == "browser_connect" {
-        crate::workspace_cli::browser_connect(&reference, display_id)
+        crate::workspace_cli::browser_connect(&mut credential, display_id)
     } else {
-        crate::workspace_cli::request(&reference, query)
+        crate::workspace_cli::request(&mut credential, query)
     };
     let answer = match requested {
         Ok(answer) => answer,
         Err(reason) => {
-            return query_refusal(
-                &reason,
-                "Check Hide status, reconnect the pane, and retry",
-                report,
-            );
+            return query_refusal(&reason, request_next_action(&reason), report);
         }
     };
     if answer["ok"] == true {

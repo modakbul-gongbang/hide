@@ -148,10 +148,9 @@ fn key(value: &str) -> bool {
 
 pub fn run(env: &Env, command: Command) -> Result<(), String> {
     let result = (|| {
-        let (reference, ephemeral) = crate::cli::workspace_reference(env)?;
-        let _owner = ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
+        let mut credential = crate::workspace_cli::Credential::acquire(env)?;
         let hint = std::env::var(env::HERDR_PANE_ID).ok();
-        crate::workspace_cli::request_delivery(&reference, command, hint.as_deref())
+        crate::workspace_cli::request_delivery(&mut credential, command, hint.as_deref())
     })();
     match result {
         Ok(answer) => {
