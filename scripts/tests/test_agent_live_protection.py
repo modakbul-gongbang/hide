@@ -20,7 +20,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import (Process, ProcessTable, descendants, marked_descendants,
                                            procargs_owned, require_complete, snapshot, validate_linux_procfs)
-from agent_live_check.processes import OwnedProcesses, ProcessError, linux_children_remain
+from agent_live_check.processes import OwnedProcesses, ProcessError, control_plane, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 
@@ -125,6 +125,15 @@ class ConfigurationProtection(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_unavailable_controller_ancestry_refuses_prelaunch_exclusion(self):
+        table = ProcessTable()
+        table[100] = Process(100, 200, 100, 10, 0, False, os.getuid())
+        table.unavailable.append({"pid": 200, "errno": 13})
+        with self.assertRaisesRegex(ProcessError, "control_plane_ancestry_unavailable"):
+            control_plane(table, 100)
+        table[200] = Process(200, 1, 200, 20, 0, False, os.getuid())
+        self.assertEqual(control_plane(table, 100), {100: 10, 200: 20})
+
     def test_missing_or_unconfirmed_receipt_cannot_confirm_cleanup(self):
         for missing in (True, False):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory(prefix="agent-receipt-") as name:

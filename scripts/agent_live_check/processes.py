@@ -54,6 +54,23 @@ def issued_family(family):
     return stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077
 
 
+def control_plane(table, root):
+    excluded = {}
+    ancestor = table.get(root)
+    if ancestor is None:
+        raise ProcessError("control_plane_identity_unavailable")
+    while ancestor.pid not in excluded:
+        excluded[ancestor.pid] = ancestor.birth
+        if len(excluded) > MAX_DESCENDANTS:
+            raise ProcessError("control_plane_ancestry_over_budget")
+        if ancestor.parent <= 1:
+            return excluded
+        ancestor = table.get(ancestor.parent)
+        if ancestor is None:
+            raise ProcessError("control_plane_ancestry_unavailable")
+    raise ProcessError("control_plane_ancestry_cycle")
+
+
 def linux_children_remain():
     # After Popen's direct child has been waited, only owned adopted children
     # remain. __WALL includes clone children with a non-SIGCHLD exit signal.
@@ -307,13 +324,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
     identity = initial[os.getpid()]
     # Neither the controller nor its ancestors were started by this guardian.
     # An inherited prior token must never enlist the control plane itself.
-    excluded = {}
-    ancestor = identity
-    while ancestor is not None and ancestor.pid not in excluded:
-        excluded[ancestor.pid] = ancestor.birth
-        if len(excluded) > MAX_DESCENDANTS:
-            raise ProcessError("control_plane_ancestry_over_budget")
-        ancestor = initial.get(ancestor.parent)
+    excluded = control_plane(initial, identity.pid)
     if not issued_family(family):
         raise ProcessError("owner_family_not_issued")
     marker = f"{family}:{identity.pid}:{identity.birth}:{secrets.token_hex(32)}"
