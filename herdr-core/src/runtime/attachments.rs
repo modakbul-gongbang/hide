@@ -736,16 +736,18 @@ impl Runtime {
                 );
                 self.fail_attachment(&error, true);
             }
-            Ok(paths) => match ingress::paste_bytes(&paths, pending.bracketed) {
-                Ok(paste) => {
-                    pending.paste = Some(paste);
-                    self.deliver_attachment();
+            Ok(paths) => {
+                match ingress::paste_bytes(&paths, pending.bracketed, pending.remote.is_some()) {
+                    Ok(paste) => {
+                        pending.paste = Some(paste);
+                        self.deliver_attachment();
+                    }
+                    Err(error) => {
+                        self.fail_attachment(&error, false);
+                        return true;
+                    }
                 }
-                Err(error) => {
-                    self.fail_attachment(&error, false);
-                    return true;
-                }
-            },
+            }
         }
         self.sync_async_operations();
         true

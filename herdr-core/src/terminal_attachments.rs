@@ -56,14 +56,25 @@ pub(crate) fn read_sources(
 /// Reading 40 MiB from a local disk takes well under a minute.
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-pub(crate) fn paste_bytes(paths: &[String], bracketed: bool) -> Result<Vec<u8>, String> {
+/// The text a terminal receives for the staged files. A destination on a
+/// device is that device's path, spelled with `/` whatever system the core
+/// runs on; a local one is this machine's own.
+pub(crate) fn paste_bytes(
+    paths: &[String],
+    bracketed: bool,
+    on_device: bool,
+) -> Result<Vec<u8>, String> {
     if paths.is_empty() || paths.len() > MAX_FILES {
         return Err("Choose between 1 and 8 regular files.".to_owned());
     }
     let mut quoted = Vec::with_capacity(paths.len());
     for path in paths {
         if path.len() > MAX_PATH_BYTES
-            || !Path::new(path).is_absolute()
+            || !(if on_device {
+                hide_platform::path::is_wire_absolute(path)
+            } else {
+                Path::new(path).is_absolute()
+            })
             || path.chars().any(char::is_control)
         {
             return Err("The attachment destination is not a safe absolute path.".to_owned());
@@ -111,14 +122,27 @@ mod tests {
             "/tmp/a $HOME `echo` ".to_owned(),
         ];
         assert_eq!(
-            String::from_utf8(paste_bytes(&paths, true).unwrap()).unwrap(),
+            String::from_utf8(paste_bytes(&paths, true, true).unwrap()).unwrap(),
             "\u{1b}[200~\"/tmp/한글's.png\"\u{1b}[201~ \u{1b}[200~\"/tmp/a \\$HOME \\`echo\\` \"\u{1b}[201~"
         );
         assert_eq!(
-            paste_bytes(&["/tmp/image.png".to_owned()], false).unwrap(),
+            paste_bytes(&["/tmp/image.png".to_owned()], false, true).unwrap(),
             b"\"/tmp/image.png\" "
         );
-        assert!(paste_bytes(&["/tmp/a\ncommand".to_owned()], true).is_err());
+        assert!(paste_bytes(&["/tmp/a\ncommand".to_owned()], true, true).is_err());
+    }
+
+    /// A device's destination is judged by its `/` spelling and a local one
+    /// by this machine's rules, so a core on Windows still pastes a device's
+    /// staged file.
+    #[test]
+    fn a_destination_is_absolute_by_the_machine_that_holds_it() {
+        let local = std::env::temp_dir().join("image.png");
+        let local = local.to_str().unwrap().to_owned();
+        assert!(paste_bytes(&[local], false, false).is_ok());
+        assert!(paste_bytes(&["image.png".to_owned()], false, false).is_err());
+        assert!(paste_bytes(&["/home/example/image.png".to_owned()], false, true).is_ok());
+        assert!(paste_bytes(&["image.png".to_owned()], false, true).is_err());
     }
 
     #[test]
