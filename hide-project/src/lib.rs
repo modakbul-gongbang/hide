@@ -159,6 +159,31 @@ pub mod git {
 
     /// The most of `packed-refs` `head_oid` reads.
     const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
+    /// The most of a repository's config read; past it the config is refused
+    /// rather than read in part, which also bounds how many branch notes one
+    /// answer can carry.
+    const CONFIG_LIMIT: u64 = 1024 * 1024;
+    /// The most of a pointer file (`HEAD`, a loose ref, `.git`, `gitdir`,
+    /// `commondir`), each a line long when Git writes it.
+    const POINTER_LIMIT: u64 = 64 * 1024;
+
+    /// The text of the regular file at `path`, refused past `limit` bytes. A
+    /// repository's files are written by whatever runs in it, so a pipe, a
+    /// device or a link at the name is refused without blocking the reader,
+    /// and an outsized file is refused rather than read whole.
+    fn read_small(path: &Path, limit: u64) -> std::io::Result<String> {
+        let mut text = String::new();
+        hide_platform::fs::open_regular(path)?
+            .take(limit + 1)
+            .read_to_string(&mut text)?;
+        if text.len() as u64 > limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::FileTooLarge,
+                format!("larger than {limit} bytes"),
+            ));
+        }
+        Ok(text)
+    }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Repository {
@@ -176,7 +201,7 @@ pub mod git {
         }
 
         pub fn branch(&self) -> Option<String> {
-            let head = fs::read_to_string(self.git_dir.join("HEAD")).ok()?;
+            let head = read_small(&self.git_dir.join("HEAD"), POINTER_LIMIT).ok()?;
             let reference = head.trim().strip_prefix("ref:")?.trim();
             let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
             (!name.is_empty()).then(|| name.to_owned())
@@ -190,7 +215,7 @@ pub mod git {
         /// commit yet or a ref holds something that is not an object name;
         /// a wrong commit is never made up.
         pub fn head_oid(&self) -> Option<String> {
-            let head = fs::read_to_string(self.git_dir.join("HEAD")).ok()?;
+            let head = read_small(&self.git_dir.join("HEAD"), POINTER_LIMIT).ok()?;
             let head = head.trim();
             let Some(reference) = head.strip_prefix("ref:") else {
                 return object_name(head);
@@ -208,13 +233,14 @@ pub mod git {
             if !safe {
                 return None;
             }
-            if let Ok(loose) = fs::read_to_string(self.common_dir.join(reference)) {
+            if let Ok(loose) = read_small(&self.common_dir.join(reference), POINTER_LIMIT) {
                 return object_name(loose.trim());
             }
             // Streamed and capped: a repository that has packed many refs
             // can hold a file of megabytes, and a missing line in the first
             // `PACKED_REFS_LIMIT` bytes is no answer rather than a guess.
-            let packed = fs::File::open(self.common_dir.join("packed-refs")).ok()?;
+            let packed =
+                hide_platform::fs::open_regular(&self.common_dir.join("packed-refs")).ok()?;
             BufReader::new(packed.take(PACKED_REFS_LIMIT))
                 .lines()
                 .map_while(Result::ok)
@@ -229,14 +255,14 @@ pub mod git {
 
         pub fn branch_description(&self, branch: &str) -> Result<Option<String>, String> {
             let path = self.common_dir.join("config");
-            let text = fs::read_to_string(&path)
+            let text = read_small(&path, CONFIG_LIMIT)
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
             Ok(parse_branch_description(&text, branch))
         }
 
         pub fn branch_issue(&self, branch: &str) -> Result<Option<String>, String> {
             let path = self.common_dir.join("config");
-            let text = fs::read_to_string(&path)
+            let text = read_small(&path, CONFIG_LIMIT)
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
             Ok(parse_branch_value(&text, branch, "issue"))
         }
@@ -247,7 +273,7 @@ pub mod git {
         /// neither is not listed.
         pub fn branch_notes(&self) -> Result<BTreeMap<String, BranchNote>, String> {
             let path = self.common_dir.join("config");
-            let text = fs::read_to_string(&path)
+            let text = read_small(&path, CONFIG_LIMIT)
                 .map_err(|error| format!("repository config could not be read: {error}"))?;
             Ok(parse_branch_notes(&text))
         }
@@ -311,7 +337,7 @@ pub mod git {
             return Err(invalid(&dotgit, "dotgit_not_file_or_directory"));
         }
 
-        let text = fs::read_to_string(&dotgit)
+        let text = read_small(&dotgit, POINTER_LIMIT)
             .map_err(|error| invalid(&dotgit, format!("pointer_read:{error}")))?;
         let named = text
             .trim()
@@ -337,7 +363,7 @@ pub mod git {
 
         let reciprocal = candidate.join("gitdir");
         require_regular_file(&reciprocal, "worktree_gitdir")?;
-        let reciprocal_text = fs::read_to_string(&reciprocal)
+        let reciprocal_text = read_small(&reciprocal, POINTER_LIMIT)
             .map_err(|error| invalid(&reciprocal, format!("worktree_gitdir_read:{error}")))?;
         let reciprocal_target = canonical(
             &absolute(&candidate, Path::new(reciprocal_text.trim())),
@@ -352,7 +378,7 @@ pub mod git {
     fn common_dir_of(git_dir: &Path) -> Result<PathBuf, ResolveError> {
         let path = git_dir.join("commondir");
         require_regular_file(&path, "commondir")?;
-        let text = fs::read_to_string(&path)
+        let text = read_small(&path, POINTER_LIMIT)
             .map_err(|error| invalid(&path, format!("commondir_read:{error}")))?;
         canonical(
             &absolute(git_dir, Path::new(text.trim())),
@@ -594,6 +620,34 @@ pub mod git {
             .unwrap();
             fs::write(repository.common_dir.join("refs/heads/topic"), SECOND).unwrap();
             assert_eq!(repository.head_oid().as_deref(), Some(SECOND));
+        }
+
+        /// Whatever runs in a repository writes its files, so a pipe at the
+        /// config's name answers at once as unreadable instead of holding
+        /// the reader until something writes into it, and an outsized
+        /// config is refused rather than read whole.
+        #[cfg(unix)]
+        #[test]
+        fn a_config_that_is_a_pipe_or_outsized_is_refused_at_once() {
+            let (_temp, repository) = repository("ref: refs/heads/main");
+            let config = repository.common_dir.join("config");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&config)
+                .status()
+                .unwrap();
+            assert!(made.success());
+            assert!(repository.branch_notes().is_err());
+
+            fs::remove_file(&config).unwrap();
+            fs::write(&config, vec![b'#'; CONFIG_LIMIT as usize + 1]).unwrap();
+            assert!(repository.branch_notes().is_err());
+            fs::write(&config, "[branch \"main\"]\n\tdescription = kept\n").unwrap();
+            assert_eq!(
+                repository.branch_notes().unwrap()["main"]
+                    .description
+                    .as_deref(),
+                Some("kept")
+            );
         }
 
         #[test]
