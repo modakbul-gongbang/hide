@@ -2995,20 +2995,21 @@ impl Runtime {
     /// overview-lenses-prs D-46), which only this machine's repositories do.
     pub(super) fn start_worktree_task(
         &mut self,
-        payload: CreateWorktreePayload,
+        mut payload: CreateWorktreePayload,
         existing_branch: bool,
     ) -> bool {
         // The kind reaches `agent.start`, which runs it in the new pane's
         // shell, so only the providers Hide can start are accepted.
-        if let Some(kind) = payload.agent_kind.as_deref()
-            && !matches!(kind, "claude" | "codex")
-        {
-            self.set_error(
-                "worktree.create_unknown_agent",
-                format!("No agent provider named {kind}"),
-                false,
-            );
-            return true;
+        if let Some(kind) = payload.agent_kind.as_deref() {
+            let Some(canonical) = hide_agent_adapter::start_kind(kind) else {
+                self.set_error(
+                    "worktree.create_unknown_agent",
+                    format!("No agent provider named {kind}"),
+                    false,
+                );
+                return true;
+            };
+            payload.agent_kind = Some(canonical.to_owned());
         }
         let branch = payload.branch.trim().to_owned();
         if branch.is_empty() {
@@ -3341,15 +3342,18 @@ impl Runtime {
         let request_id = payload.request_id.clone();
         let agent_kind = match payload.provider.as_str() {
             "terminal" => None,
-            "claude" | "codex" => Some(payload.provider.clone()),
             other => {
-                self.set_request_error(
-                    "agent_start.unknown_provider",
-                    format!("No agent provider named {other}"),
-                    false,
-                    request_id.as_deref(),
-                );
-                return true;
+                if let Some(kind) = hide_agent_adapter::start_kind(other) {
+                    Some(kind.to_owned())
+                } else {
+                    self.set_request_error(
+                        "agent_start.unknown_provider",
+                        format!("No agent provider named {other}"),
+                        false,
+                        request_id.as_deref(),
+                    );
+                    return true;
+                }
             }
         };
         let model =

@@ -62,19 +62,12 @@ fn count(tokens: &BTreeMap<String, Value>, name: &str) -> Option<u32> {
 /// it lands on the single fallback reason rather than being guessed into one
 /// of the two Hide does know (PRD B32, D-64).
 pub fn runtime_of(agent_kind: &str) -> Option<AgentRuntime> {
-    match agent_kind.trim().to_ascii_lowercase().as_str() {
-        "claude" | "claude-code" | "claude_code" => Some(AgentRuntime::ClaudeCode),
-        "codex" => Some(AgentRuntime::Codex),
-        _ => None,
-    }
+    AgentRuntime::from_id(agent_kind)
 }
 
 /// The kit adapter whose switch governs `runtime`'s hook.
 pub fn adapter_id(runtime: AgentRuntime) -> &'static str {
-    match runtime {
-        AgentRuntime::ClaudeCode => "claude-code",
-        AgentRuntime::Codex => "codex",
-    }
+    runtime.id()
 }
 
 /// The prefix every pane id on a remote target carries.

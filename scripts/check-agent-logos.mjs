@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Every agent logo the web shell bundles has a manifest entry with its source
-// URL and licence note, every adapter in hide-kit has a logo or a stated reason
+// URL and licence note, every shared adapter has a logo or a stated reason
 // for a monogram, and no logo file is bundled without a manifest entry
 // (design principle 10: never render a logo the system cannot source). A logo
 // may also belong to a Hide AI provider's agent (hide-ai/src/registry.rs), which
@@ -13,13 +13,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dir = path.join(root, 'web/src/assets/agents');
 const LOGO_FORMATS = ['svg', 'png'];
 const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
-const adapters = [...fs.readFileSync(path.join(root, 'hide-kit/src/agents.rs'), 'utf8').matchAll(/^\s+id: "([^"]+)",$/gm)].map(match => match[1]);
+const adapters = JSON.parse(fs.readFileSync(path.join(root, 'contracts/agent-adapters.json'), 'utf8')).map(row => row.logo_id);
+if (adapters.length === 0) throw new Error('no adapter logo ids read from contracts/agent-adapters.json');
 const providerAgents = [...fs.readFileSync(path.join(root, 'hide-ai/src/registry.rs'), 'utf8').matchAll(/^\s+agent: "([^"]+)",$/gm)].map(match => match[1]);
 if (providerAgents.length === 0) throw new Error('no provider agent ids read from hide-ai/src/registry.rs');
 const problems = [];
 const claimed = new Map();
 const claim = (id, how) => {
-  if (!adapters.includes(id) && !providerAgents.includes(id)) problems.push(`${id} (${how}) is neither an adapter in hide-kit/src/agents.rs nor a provider agent in hide-ai/src/registry.rs`);
+  if (!adapters.includes(id) && !providerAgents.includes(id)) problems.push(`${id} (${how}) is neither an adapter in contracts/agent-adapters.json nor a provider agent in hide-ai/src/registry.rs`);
   if (claimed.has(id)) problems.push(`${id} is both ${claimed.get(id)} and ${how}`);
   claimed.set(id, how);
 };

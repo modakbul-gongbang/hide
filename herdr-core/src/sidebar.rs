@@ -1443,10 +1443,10 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
 /// starts by their product names, any other kind exactly as Herdr reports it.
 pub(crate) fn provider_name(kind: Option<&str>) -> String {
     match non_empty(kind) {
-        Some("claude") => "Claude".to_owned(),
-        Some("codex") => "Codex".to_owned(),
-        Some("opencode") => "OpenCode".to_owned(),
-        Some(kind) => kind.to_owned(),
+        Some(kind) => hide_agent_adapter::adapter(kind)
+            .map(|row| row.sidebar_label.unwrap_or(row.herdr.name))
+            .unwrap_or(kind)
+            .to_owned(),
         None => "Agent".to_owned(),
     }
 }

@@ -231,9 +231,49 @@ impl Runtime {
         self.set_kit_state(device_id, state)
     }
 
+    fn diagnose_unknown_kit_agents(&mut self, device_id: &str, report: &KitReport) {
+        // Reports are external input. Bound both the count and retained text;
+        // crossing either bound is an explicit diagnostic, never growth.
+        const LIMIT: usize = 128;
+        const ID_BYTES: usize = 512;
+        for agent in &report.agents {
+            if hide_agent_adapter::adapter(&agent.id).is_some() {
+                continue;
+            }
+            if self
+                .unknown_kit_agents
+                .iter()
+                .any(|(device, id)| device == device_id && id == &agent.id)
+            {
+                continue;
+            }
+            if device_id.len() > ID_BYTES
+                || agent.id.len() > ID_BYTES
+                || self.unknown_kit_agents.len() >= LIMIT
+            {
+                if !self.unknown_kit_agents_limit_reported {
+                    self.unknown_kit_agents_limit_reported = true;
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "kit", "kind": "unknown_agent.diagnostic_limit",
+                        "limit": LIMIT, "id_bytes": ID_BYTES,
+                    }));
+                }
+                continue;
+            }
+            let key = (device_id.to_owned(), agent.id.clone());
+            if self.unknown_kit_agents.insert(key) {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "kit", "kind": "unknown_agent.omitted",
+                    "device_id": device_id, "agent_id": agent.id,
+                }));
+            }
+        }
+    }
+
     /// Stores what a check or an install found on one machine. A report that
     /// lands while an install is queued for that machine keeps it busy.
     pub(crate) fn ingest_kit_report(&mut self, device_id: &str, report: &KitReport) -> bool {
+        self.diagnose_unknown_kit_agents(device_id, report);
         // The retired labels plugin is no part the operator acts on; what was
         // taken out, and what stayed for the next pass, goes to the log
         // (PRD labels-in-hided D-12, design principle 13).
@@ -1079,9 +1119,13 @@ impl Runtime {
             return std::collections::BTreeMap::new();
         };
         let mut sessions: std::collections::BTreeMap<&'static str, u32> =
-            hide_kit::agents::ADAPTERS
+            hide_agent_adapter::ADAPTERS
                 .iter()
-                .filter(|adapter| adapter.supports(hide_kit::Feature::Letters))
+                .filter(|adapter| {
+                    adapter
+                        .session
+                        .is_some_and(|format| format.has_session_file())
+                })
                 .map(|adapter| (adapter.id, 0))
                 .collect();
         let panes = workspaces
@@ -1100,9 +1144,8 @@ impl Runtime {
             else {
                 continue;
             };
-            let Some(count) = crate::agent_hooks::runtime_of(&agent.agent_kind)
-                .map(crate::agent_hooks::adapter_id)
-                .and_then(|adapter_id| sessions.get_mut(adapter_id))
+            let Some(count) = hide_agent_adapter::adapter(&agent.agent_kind)
+                .and_then(|adapter| sessions.get_mut(adapter.id))
             else {
                 continue;
             };
@@ -1270,6 +1313,90 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unknown(id: &str) -> hide_kit::AgentReport {
+        hide_kit::AgentReport {
+            id: id.into(),
+            label: id.into(),
+            availability: hide_kit::Availability::Available,
+            enabled: false,
+            chosen: false,
+            skill: hide_kit::PieceReport {
+                state: hide_kit::ComponentState::Installed,
+                reason: None,
+                location: None,
+            },
+            hook: None,
+            herdr: None,
+            doc_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_unknown_helper_agent_is_diagnosed_once_for_each_device() {
+        let mut runtime = super::super::tests::runtime();
+        let report = KitReport {
+            agents: vec![unknown("future-agent")],
+            ..Default::default()
+        };
+        let (_, records) = crate::diagnostics::capture(|| {
+            for device in ["device-a", "device-a", "device-b", "device-b"] {
+                runtime.diagnose_unknown_kit_agents(device, &report);
+            }
+        });
+        let unknown: Vec<_> = records
+            .iter()
+            .filter(|record| record["kind"] == "unknown_agent.omitted")
+            .collect();
+        assert_eq!(unknown.len(), 2);
+        assert_eq!(unknown[0]["device_id"], "device-a");
+        assert_eq!(unknown[1]["device_id"], "device-b");
+        assert!(
+            unknown
+                .iter()
+                .all(|record| record["agent_id"] == "future-agent")
+        );
+    }
+
+    #[test]
+    fn unknown_agent_diagnostics_have_a_reported_count_and_text_bound() {
+        let mut runtime = super::super::tests::runtime();
+        let report = KitReport {
+            agents: (0..129)
+                .map(|index| unknown(&format!("future-{index}")))
+                .collect(),
+            ..Default::default()
+        };
+        let (_, records) = crate::diagnostics::capture(|| {
+            runtime.diagnose_unknown_kit_agents("device", &report);
+            runtime.diagnose_unknown_kit_agents("device", &report);
+        });
+        assert_eq!(runtime.unknown_kit_agents.len(), 128);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record["kind"] == "unknown_agent.omitted")
+                .count(),
+            128
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record["kind"] == "unknown_agent.diagnostic_limit")
+                .count(),
+            1
+        );
+        let mut runtime = super::super::tests::runtime();
+        let report = KitReport {
+            agents: vec![unknown(&"x".repeat(513))],
+            ..Default::default()
+        };
+        let (_, records) =
+            crate::diagnostics::capture(|| runtime.diagnose_unknown_kit_agents("device", &report));
+        assert!(runtime.unknown_kit_agents.is_empty());
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["kind"], "unknown_agent.diagnostic_limit");
+    }
 
     #[test]
     fn requests_for_one_machine_merge_into_the_widest() {

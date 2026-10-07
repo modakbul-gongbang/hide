@@ -105,7 +105,7 @@ impl Hold {
 /// (Codex's plan approval) is guarded by the session read instead
 /// ([`Turn`]), so a kind that was not observed is not in this list.
 pub(crate) fn bell_target(kind: &str) -> bool {
-    super::mailbox::prompt_hook(kind)
+    hide_agent_adapter::adapter(kind).is_some_and(|row| row.bell)
 }
 
 /// What the agent's session read says it waits for in Herdr's current state

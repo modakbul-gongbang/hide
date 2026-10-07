@@ -38,6 +38,19 @@ Neither is the View area layout inside `workspace_view`: a split's `axis` (`row`
 Neither is `ui_state.theme` (`system`, `light`, `dark`); the web shell reads a value it does not know as Dark rather than failing.
 List an enum here, with a Rust-side pin and a reading-side check for it, in the change that adds one.
 
+# Agent adapters
+
+`agent-adapters.json` is the web projection of `hide-agent-adapter`'s static declarations: support order, canonical ids, labels, Herdr kinds, Docs and Install links, logo ids and start eligibility.
+`web/src/agentAdapters.ts` is the shell's reader; Settings, onboarding, agent pickers and logo lookup derive their answers from it.
+The Rust contract test compares the committed file with the current projection and checks its source links, logo manifest entries and support fixtures.
+Do not maintain another web support table or edit this generated file by hand.
+Build the exporter through the repository's verification entrypoint, then write its output:
+
+```sh
+bash scripts/verify-cargo.sh build -p hide-agent-adapter --example export_web_contract
+target/debug/examples/export_web_contract > contracts/agent-adapters.json
+```
+
 # hide CLI contract
 
 `hide-cli.json` is what `hide contract --json` exports: the commands other tools call (`hide agent`, `request`, `inbox`, `watch`), their options, and the JSON Schema of each answer ([docs/delivery.md](../docs/delivery.md#the-contract-a-calling-tool-checks)).

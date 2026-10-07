@@ -127,24 +127,37 @@ pub enum Agent {
 }
 
 impl Agent {
-    pub const fn as_str(self) -> &'static str {
+    pub const fn format(self) -> hide_agent_adapter::SessionFormat {
         match self {
-            Self::Codex => "codex",
-            Self::Claude => "claude",
-            Self::OpenCode => "opencode",
+            Self::Claude => hide_agent_adapter::SessionFormat::Claude,
+            Self::Codex => hide_agent_adapter::SessionFormat::Codex,
+            Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
         }
     }
 
-    /// Whether the session read reports this agent's turns (`turns`), so a
-    /// read that did not report them means the wait is not known.
-    pub const fn reports_turns(self) -> bool {
-        matches!(self, Self::Codex)
+    pub const fn from_format(format: hide_agent_adapter::SessionFormat) -> Self {
+        match format {
+            hide_agent_adapter::SessionFormat::Claude => Self::Claude,
+            hide_agent_adapter::SessionFormat::Codex => Self::Codex,
+            hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
+        }
     }
 
-    /// Whether the agent keeps a JSONL file per session, which the file
-    /// readers (the locator, the cursors, search) understand.
+    pub fn from_kind(kind: &str) -> Option<Self> {
+        hide_agent_adapter::adapter(kind)?
+            .session
+            .map(Self::from_format)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.format().adapter().herdr.name
+    }
+
+    pub const fn reports_turns(self) -> bool {
+        self.format().reports_turns()
+    }
     pub const fn has_session_file(self) -> bool {
-        matches!(self, Self::Codex | Self::Claude)
+        self.format().has_session_file()
     }
 }
 

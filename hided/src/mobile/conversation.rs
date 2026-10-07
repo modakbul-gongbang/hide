@@ -92,10 +92,11 @@ pub fn source(
     let Some(session) = session else {
         return Ok(None);
     };
-    let agent = match session.agent.as_str() {
-        "claude" => Agent::Claude,
-        "codex" => Agent::Codex,
-        _ => return Ok(None),
+    let Some(agent) = hide_agent_adapter::adapter(&session.agent)
+        .and_then(|row| row.conversation)
+        .map(Agent::from_format)
+    else {
+        return Ok(None);
     };
     let identity = match session.kind {
         PaneSessionKind::Id => SessionIdentity::id(session.value),

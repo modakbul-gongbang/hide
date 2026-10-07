@@ -238,28 +238,39 @@ impl AgentRuntime {
 
     /// The stable identifier used in state, diagnostics and the wire.
     pub fn id(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-        }
+        self.dialect().adapter().id
     }
 
     /// Reads an id back. The wire carries the id, so this is the one place
     /// that turns it into a runtime rather than each caller matching strings.
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|runtime| runtime.id() == id)
+        match hide_agent_adapter::adapter(id)?.hook {
+            hide_agent_adapter::HookInstall::Runtime(dialect) => Some(Self::from_dialect(dialect)),
+            _ => None,
+        }
     }
 
     /// The name the operator sees.
     pub fn label(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::Codex => "Codex",
-        }
+        self.dialect().adapter().label
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|runtime| runtime.id() == value)
+        Self::from_id(value)
+    }
+
+    pub const fn dialect(self) -> hide_agent_adapter::HookDialect {
+        match self {
+            Self::ClaudeCode => hide_agent_adapter::HookDialect::ClaudeCode,
+            Self::Codex => hide_agent_adapter::HookDialect::Codex,
+        }
+    }
+
+    pub const fn from_dialect(dialect: hide_agent_adapter::HookDialect) -> Self {
+        match dialect {
+            hide_agent_adapter::HookDialect::ClaudeCode => Self::ClaudeCode,
+            hide_agent_adapter::HookDialect::Codex => Self::Codex,
+        }
     }
 
     /// The directory whose presence means this runtime is set up on this Mac.

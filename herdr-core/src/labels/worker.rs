@@ -1140,12 +1140,9 @@ impl LabelWorker {
 }
 
 fn provider(kind: Option<&str>) -> Option<Agent> {
-    match kind? {
-        "claude" => Some(Agent::Claude),
-        "codex" => Some(Agent::Codex),
-        "opencode" => Some(Agent::OpenCode),
-        _ => None,
-    }
+    hide_agent_adapter::adapter(kind?)?
+        .titles
+        .map(Agent::from_format)
 }
 
 /// The worker's one reader thread: reads run one at a time, in the order

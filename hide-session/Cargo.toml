@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 libc = "=0.2.189"
 anyhow = "=1.0.104"
 hide-platform = { path = "../hide-platform" }

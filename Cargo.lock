@@ -1157,6 +1157,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "cap-std",
+ "hide-agent-adapter",
  "hide-agent-hooks",
  "hide-ai",
  "hide-factory",
@@ -1202,9 +1203,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
+name = "hide-agent-adapter"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hide-agent-hooks"
 version = "0.1.0"
 dependencies = [
+ "hide-agent-adapter",
  "hide-herdr-client",
  "hide-memory",
  "hide-platform",
@@ -1256,6 +1266,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "cap-std",
+ "hide-agent-adapter",
  "hide-agent-hooks",
  "hide-ai",
  "hide-herdr-client",
@@ -1276,6 +1287,7 @@ dependencies = [
 name = "hide-kit"
 version = "0.1.0"
 dependencies = [
+ "hide-agent-adapter",
  "hide-agent-hooks",
  "hide-herdr-client",
  "hide-platform",
@@ -1363,6 +1375,7 @@ name = "hide-session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hide-agent-adapter",
  "hide-platform",
  "hide-project",
  "libc",
@@ -1384,6 +1397,7 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-agent-adapter",
  "hide-factory",
  "hide-herdr-client",
  "hide-host",

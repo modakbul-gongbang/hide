@@ -340,7 +340,7 @@ pub struct Intake {
 /// Claude Code hook that runs inside one (Grok, OpenCode) must not count as
 /// that agent having read anything.
 pub(crate) fn prompt_hook(kind: &str) -> bool {
-    crate::agent_hooks::runtime_of(kind).is_some()
+    hide_agent_adapter::adapter(kind).is_some_and(|row| row.prompt_hook.is_some())
 }
 
 /// Whether a bell is still coming for the letter. A letter whose three bells

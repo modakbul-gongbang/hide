@@ -168,7 +168,8 @@ The core follows it (`ui_state.agent_onboarding`), applies the answer to this Ma
 
 Claude Code and Codex are the agents the kit has always had a hook for.
 Hide supports seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order.
-Every agent is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
+Every agent is one row of `hide-agent-adapter/src/declarations.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
+`hide-kit/src/agents.rs` projects those declarations into installation pieces; it does not maintain a second support table.
 A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, Herdr's integration name for it, and the official page the row's answers come from (`doc_url`).
 A test fails a row with no `https` `doc_url`, and a row with no program, so a claim in the table below always has a page behind it and every agent can be found.
 
@@ -180,7 +181,20 @@ Lineage, the mailbox identity, labels and sleep all read the session id that int
 Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook.
 Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook that adds context, the guidance hook.
 Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
-It is then one row of `ADAPTERS`, the web shell's `SUPPORTED_AGENTS`, `DOCS` and `INSTALL_DOCS` (`web/src/settings/agentRows.ts`), the logo manifest, and the expected row of `hide-kit/src/tests/agent_cases.rs`.
+It is then one shared declaration, its contract fixtures, the logo manifest, and the expected kit case; the web shell reads the generated `contracts/agent-adapters.json` rather than maintaining its own order, names or links.
+
+### Adding an agent
+
+Add the declaration in `hide-agent-adapter/src/declarations.rs`, keeping its canonical id stable across records, hook commands and device reports.
+Aliases belong on that row: every caller uses the same borrowed, case-insensitive lookup, including surrounding-whitespace normalization.
+Select hook and installation dialects implemented by `hide-agent-hooks`, session formats implemented by `hide-session`, and launch, find and usage dialects in their existing owners; the leaf crate contains data and typed selectors only.
+Declare prompt intake, spawn refusal, subagent counts, Memory and bell eligibility independently.
+A bell target requires a prompt hook and measured menu behavior on the pinned, isolated Herdr; adding prompt intake alone never enables its bell.
+Declare the six Factory capabilities explicitly as available, unavailable or unconfirmed; declaring a slot does not implement a question guard, parse structured questions or change Factory's runtime selection.
+Add independent hook and session samples, or an explicit absence reason when that format is unsupported, in `hide-agent-adapter/tests/fixtures/support.json`, and add the logo or monogram to its manifest.
+Add the owner's dialect tests and feature-gate cases, including aliases, without changing the pre-migration hook-byte fixtures.
+Generate `contracts/agent-adapters.json` with the `export_web_contract` example as described in [contracts/README.md](../contracts/README.md#agent-adapters).
+The leaf contract tests reject missing samples, links, logos, inconsistent capability combinations and generated-contract drift, and the existing feature and isolated-Herdr e2e suites must still pass.
 
 ### What the kit puts down
 
@@ -230,7 +244,7 @@ A guidance hook also needs the agent's own settings folder, which Hide does not 
 An agent is installed on a machine when one of its programs is found there, the way the operator's terminal would find it; a folder the agent creates does not count, because an editor makes `~/.cursor` without the `cursor-agent` CLI and a CLI that was removed leaves its folder behind (`~/.pi/agent` without `pi`).
 The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `grok`, `opencode`, `pi`, `omp` and `cursor-agent`.
 Cursor's installer now calls its command `agent` and keeps `cursor-agent` as a second name; Hide looks for `cursor-agent` only, because Grok's installer also puts an `agent` on the `PATH`.
-The program names live in the kit's adapter table alone; Hide AI keeps no list of them, and an agent it cannot use yet is listed as not installed from what the kit found (`AiRequest.cli_found`).
+The program names live in the shared adapter declaration alone; Hide AI keeps no list of them, and an agent it cannot use yet is listed as not installed from what the kit found (`AiRequest.cli_found`).
 
 The search is, in order, the folders the account's login shell puts on its `PATH`, the daemon's own `PATH`, and the usual install folders: `~/.local/bin`, pnpm's global folder (`~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux, and the `bin` folder inside it from pnpm 11), `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (`hide_platform::programs`, the one search; Hide AI's backends find their CLIs with it too, so the kit's "installed" and Hide AI's "can be asked" cannot disagree about a program only the shell's `PATH` or an install folder reaches).
 The login shell is asked because many installers put their own folder on the `PATH` by editing a startup file rather than using one of those folders: Grok's `~/.grok/bin`, OpenCode's `~/.opencode/bin` and Pi's `~/.pi/agent/bin` are written into `~/.zshrc`, `~/.bashrc` or `config.fish`, and a Node CLI installed under nvm lives in nvm's folder.
@@ -266,18 +280,21 @@ Every row gets the skill stub where the system column says so.
 | omp | `~/.agents/skills` (macOS, Linux) | none: TS extensions like Pi's, which a later change gives Hide's letters and guard; no command hook | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
 | Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
 
-Each row also carries what Hide can do for that agent as a list of features (`hide_kit::agents::Feature`, `KitAgentSnapshot.features`), and an agent with any feature missing is Partial, which is what the Agents tab's Partial popover lists:
+Each row also carries what Hide can do for that agent as a list of features (`hide_agent_adapter::Feature`, re-exported by `hide_kit::agents`, and `KitAgentSnapshot.features`).
+An agent without both prompt intake and spawn refusal wears the Basic chip, regardless of other missing features.
+Its popover groups the feature table into Herdr basics, session reading and multi-agent collaboration, retaining a mark and a supported/unavailable word for every feature:
 
 | Feature | Supported when | Claude Code, Codex | Grok, OpenCode, Pi, omp | Cursor |
 | --- | --- | --- | --- | --- |
 | `skill` | always | yes | yes | yes |
 | `guidance` | Hide writes a guidance hook | yes | no | yes |
-| `letters`, `memory`, `subagents`, `spawn_guard` | the six-event hook, so `HookSupport::Part` | yes | no | no |
+| `letters`, `memory`, `subagents`, `spawn_guard` | their independent prompt, Memory, counter and refusal dialect declarations | yes | no | no |
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no |
 | `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes |
-| `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no |
+| `sleep`, `fork`, `start`, `titles` | their independent launch and conversation/title declarations | yes | no | no |
 
-Claude Code and Codex are the only agents whose sessions Hide reads, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
+Claude Code and Codex are the only agents whose session files Hide reads for these features, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
+OpenCode retains its existing title reader without gaining session-file, sleep, fork or conversation features.
 `herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`), so a flag cannot say yes where the core says no, and holds each row's Herdr target to the kind Herdr reports its panes as.
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.

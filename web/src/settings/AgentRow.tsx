@@ -45,13 +45,14 @@ export function NotInstalledRow({ agent }: { agent: KitAgent }) {
   const href = installDocUrl(agent.id);
   return (
     <Row label={<Name agent={agent} />} data-agent-row={`${agent.id}:not-installed`}>
+      {agent.partial ? <PartialChip agent={agent} /> : null}
       {href ? <OutLink href={href} label={t("agents.install")} aria={t("agents.installAria", { agent: agent.label })} data-agent-install={agent.id} /> : null}
     </Row>
   );
 }
 
 /**
- * One installed agent of one machine (D-08, D-09): its mark and name, the Partial
+ * One installed agent of one machine (D-08, D-09): its mark and name, the Basic
  * chip when Hide does only some things for it, the status of an agent that is
  * on, and the switch. A Docs link shows on hover or keyboard focus only (B12).
  * What needs the operator shows under the row, on this row alone: a part that

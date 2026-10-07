@@ -89,10 +89,7 @@ use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
 fn conversation_agent_kind(kind: &str) -> bool {
-    matches!(
-        kind.to_ascii_lowercase().as_str(),
-        "claude" | "claude-code" | "claude_code" | "codex"
-    )
+    hide_agent_adapter::adapter(kind).is_some_and(|row| row.conversation.is_some())
 }
 
 /// Which Herdr workspace each tab belongs to, from each workspace's tab order.
@@ -1205,6 +1202,9 @@ pub struct Runtime {
     /// device id (the core's own node id for this Mac); `runtime/kit.rs`
     /// owns it.
     kit_states: BTreeMap<String, crate::model::KitSnapshot>,
+    /// Once per unknown id/device during this runtime, with a hard bound.
+    unknown_kit_agents: BTreeSet<(String, String)>,
+    unknown_kit_agents_limit_reported: bool,
     /// The install this Mac's kit worker runs next, merged across requests.
     local_kit_pending: Option<hide_kit::Scope>,
     /// When this Mac's kit is next re-read while Settings is on screen.
@@ -1922,6 +1922,8 @@ impl Runtime {
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
             kit_states: BTreeMap::new(),
+            unknown_kit_agents: BTreeSet::new(),
+            unknown_kit_agents_limit_reported: false,
             local_kit_pending: None,
             local_kit_next_status: None,
             local_kit_check_requested: false,

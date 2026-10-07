@@ -1812,10 +1812,7 @@ impl Runtime {
         // The files cannot say an agent was switched off; this Mac's kit
         // can, so a hook absent on purpose reads Off and not "not installed".
         for runtime in &mut diagnosis.runtimes {
-            let agent = match runtime.runtime {
-                hide_agent_hooks::AgentRuntime::ClaudeCode => "claude-code",
-                hide_agent_hooks::AgentRuntime::Codex => "codex",
-            };
+            let agent = runtime.runtime.id();
             let off = self
                 .kit_state(self.node.as_str())
                 .agents

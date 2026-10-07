@@ -467,7 +467,7 @@ impl AgentSleepStore {
 /// Whether Hide can put an agent of this Herdr kind to sleep and wake it:
 /// only the two whose session files it reads.
 pub(crate) fn sleeps_kind(kind: &str) -> bool {
-    matches!(kind.to_ascii_lowercase().as_str(), "claude" | "codex")
+    hide_agent_adapter::adapter(kind).is_some_and(|row| row.sleep.is_some())
 }
 
 /// Why this agent cannot be put to sleep now, or `None` when it can (B5,

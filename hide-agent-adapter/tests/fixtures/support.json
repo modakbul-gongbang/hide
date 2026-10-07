@@ -1,0 +1,170 @@
+[
+  {
+    "id": "claude-code",
+    "hook": {
+      "sample": "hide-agent-hooks/tests/fixtures/hook-bytes/claude-code-posix.json"
+    },
+    "session": {
+      "sample": "hide-session/tests/fixtures/adapters/claude-2.1.288/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl"
+    },
+    "features": [
+      "skill",
+      "guidance",
+      "letters",
+      "bell",
+      "memory",
+      "subagents",
+      "spawn_guard",
+      "herdr_integration",
+      "sleep",
+      "fork",
+      "start",
+      "titles"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "unconfirmed",
+      "turn_end_and_answer": "unconfirmed",
+      "startup_guidance": "available",
+      "resume": "available",
+      "next_prompt_letters": "available"
+    }
+  },
+  {
+    "id": "codex",
+    "hook": {
+      "sample": "hide-agent-hooks/tests/fixtures/hook-bytes/codex-posix.json"
+    },
+    "session": {
+      "sample": "hide-session/tests/fixtures/adapters/codex-0.160.0/sessions/2026/10/03/rollout-2026-10-03T01-00-00-0199a000-0000-7000-8000-000000000002.jsonl"
+    },
+    "features": [
+      "skill",
+      "guidance",
+      "letters",
+      "bell",
+      "memory",
+      "subagents",
+      "spawn_guard",
+      "herdr_integration",
+      "sleep",
+      "fork",
+      "start",
+      "titles"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "available",
+      "turn_end_and_answer": "available",
+      "startup_guidance": "available",
+      "resume": "available",
+      "next_prompt_letters": "available"
+    }
+  },
+  {
+    "id": "grok",
+    "hook": {
+      "absent": "No installed hook dialect in this build"
+    },
+    "session": {
+      "absent": "No session reader in this build"
+    },
+    "features": [
+      "skill",
+      "herdr_integration"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "unconfirmed",
+      "turn_end_and_answer": "unconfirmed",
+      "startup_guidance": "unavailable",
+      "resume": "unconfirmed",
+      "next_prompt_letters": "unavailable"
+    }
+  },
+  {
+    "id": "opencode",
+    "hook": {
+      "absent": "No installed hook dialect in this build"
+    },
+    "session": {
+      "sample": "hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+    },
+    "features": [
+      "skill",
+      "herdr_integration"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "unconfirmed",
+      "turn_end_and_answer": "unconfirmed",
+      "startup_guidance": "unavailable",
+      "resume": "unconfirmed",
+      "next_prompt_letters": "unavailable"
+    }
+  },
+  {
+    "id": "pi",
+    "hook": {
+      "absent": "No installed hook dialect in this build"
+    },
+    "session": {
+      "absent": "No session reader in this build"
+    },
+    "features": [
+      "skill",
+      "herdr_integration"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "unconfirmed",
+      "turn_end_and_answer": "unconfirmed",
+      "startup_guidance": "unavailable",
+      "resume": "unconfirmed",
+      "next_prompt_letters": "unavailable"
+    }
+  },
+  {
+    "id": "omp",
+    "hook": {
+      "absent": "No installed hook dialect in this build"
+    },
+    "session": {
+      "absent": "No session reader in this build"
+    },
+    "features": [
+      "skill",
+      "herdr_integration"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "unconfirmed",
+      "turn_end_and_answer": "unconfirmed",
+      "startup_guidance": "unavailable",
+      "resume": "unconfirmed",
+      "next_prompt_letters": "unavailable"
+    }
+  },
+  {
+    "id": "cursor",
+    "hook": {
+      "sample": "hide-agent-adapter/tests/fixtures/cursor-guidance.json"
+    },
+    "session": {
+      "absent": "No session reader in this build"
+    },
+    "features": [
+      "skill",
+      "guidance",
+      "herdr_integration"
+    ],
+    "factory": {
+      "direct_ask": "unconfirmed",
+      "user_turn": "unconfirmed",
+      "turn_end_and_answer": "unconfirmed",
+      "startup_guidance": "available",
+      "resume": "unconfirmed",
+      "next_prompt_letters": "unavailable"
+    }
+  }
+]
