@@ -148,10 +148,11 @@ jobs:
           app="$PWD/desktop/out/extracted/hide.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           echo "app=$app" >> "$GITHUB_OUTPUT"
-          # The existing fixtures locate the CLI in target/debug. These exact
-          # archived release binaries avoid building a second workspace.
+          # The existing fixtures locate the CLI in target/debug and link the
+          # three binaries into their own app bundle. These exact archived
+          # release binaries avoid building a second workspace.
           mkdir -p target/debug
-          cp "$app/Contents/Resources/hide" "$app/Contents/Resources/hided" target/debug/
+          cp "$app/Contents/Resources/hide" "$app/Contents/Resources/hided" "$app/Contents/Resources/hide-agent-hooks" target/debug/
       - name: Install the pinned Electron runtime for the package fixtures
         timeout-minutes: 5
         run: bash scripts/verify-web.sh desktop electron-install

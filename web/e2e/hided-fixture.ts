@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 import { ownUntilWorkerExit } from "./worker-owned";
+import { bundledExecutable } from "./bundled-app";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
 
 /**
@@ -64,9 +65,9 @@ export function stopDaemon(child: ChildProcess, binary: string, env: NodeJS.Proc
 
 /**
  * `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset.
- * `bundled` runs the daemon from a `hide.app/Contents/Resources` folder of copies of the debug
- * binaries, which is the one place a daemon installs the kit (`hide_kit::bundled_kit_dir`); the
- * kit then writes into the fixture's private HOME and nowhere else.
+ * `bundled` runs the daemon from the worker's app bundle of the debug binaries (`bundled-app.ts`),
+ * the one place a daemon installs the kit (`hide_kit::bundled_kit_dir`); the kit then writes into
+ * the fixture's private HOME and nowhere else.
  * `seedHideAi: false` leaves Hide AI unchosen, as a Mac that has never been asked is, for a spec
  * about the first-run rule.
  */
@@ -87,27 +88,13 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
     fs.mkdirSync(path.dirname(aiFile), { recursive: true });
     fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
   }
-  return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledBinary(dir) : undefined);
+  return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledExecutable("hided") : undefined);
 }
 
 /** Where the daemon keeps Hide AI's choice under a home: the platform's state folder, `hide/ai.json`. */
 export function aiSettingsFile(home: string): string {
   const stateUnderHome = process.platform === "darwin" ? path.join("Library", "Application Support") : process.platform === "win32" ? path.join("AppData", "Local") : path.join(".local", "state");
   return path.join(home, stateUnderHome, "hide", "ai.json");
-}
-
-/** Copies of the debug binaries laid out as an installed app, so the daemon runs the kit. */
-function bundledBinary(dir: string): string {
-  const resources = path.join(dir, "hide.app", "Contents", "Resources");
-  fs.mkdirSync(resources, { recursive: true });
-  for (const name of ["hided", "hide", "hide-agent-hooks"]) {
-    const target = path.join(resources, fixtureExecutable(name));
-    const built = path.resolve("..", "target", "debug", fixtureExecutable(name));
-    if (!fs.existsSync(built)) throw new Error(`${built} is missing; the lane must build it (cargo build -p hided -p hide-agent-hooks)`);
-    fs.copyFileSync(built, target);
-    fs.chmodSync(target, 0o755);
-  }
-  return path.join(resources, fixtureExecutable("hided"));
 }
 
 async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string, extraEnv: NodeJS.ProcessEnv, bundledAt?: string): Promise<Daemon> {
