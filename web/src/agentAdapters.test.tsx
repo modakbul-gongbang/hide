@@ -15,6 +15,7 @@ import { NO_CHOICE, START_KINDS, selectionOf } from "./mobile/start";
 import type { Checkout, LinkPanel, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
+import { emptyScope } from "../test/legacyAgentScope";
 
 // Match the browser's lack of a canvas capability in jsdom, without a probe log.
 const canvas = vi.hoisted(() => {
@@ -63,7 +64,7 @@ it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"]])("dispatches a canon
   const root = createRoot(container);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   try {
-    useShellStore.setState({ rest: { navigator: { workspaces: [project], devices: [{ id: "local", kind: "local", label: "Local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }] } } });
+    useShellStore.setState({ rest: { navigator: { workspaces: [project], devices: [{ agent_scope: emptyScope(), id: "local", kind: "local", label: "Local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }] } } });
     await act(async () => root.render(<TooltipProvider><LinkSessions panel={panel} project={project} branchOf={() => "task"} onRetry={() => undefined} empty={null} actions={actions} /></TooltipProvider>));
     const button = container.querySelector<HTMLButtonElement>('[data-link-button="resume"]');
     expect(button).not.toBeNull();
