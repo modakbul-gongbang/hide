@@ -466,6 +466,9 @@ fn run(
                 };
                 let added = matches!(command, Command::Add { .. });
                 let answer = handle(engine, &runtime, &caller, command);
+                // A worker's `decide` or a comment changes the open page and
+                // may leave the summary as it was.
+                publisher.touched();
                 publish_recipients(Some(engine), &runtime);
                 if added
                     && answer["result"] == "pending"
@@ -500,6 +503,9 @@ fn run(
             last_tick = Instant::now();
             pump_letters(engine, &runtime);
             engine.tick();
+            // A running attempt's log tail grows on the open page between
+            // summary changes; an unchanged page is still dropped.
+            publisher.touched();
             settle_sleeps(&workers, &runtime);
             let mut port = CoreWorkers {
                 runtime: runtime.clone(),

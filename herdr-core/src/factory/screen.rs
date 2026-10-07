@@ -158,8 +158,8 @@ impl Publisher {
         self.task_dirty = true;
     }
 
-    /// An action can change the open page without changing the summary
-    /// (a decision, a comment); read it again.
+    /// A command or a tick can change the open page without changing the
+    /// summary (a decision, a comment, a growing log tail); read it again.
     pub fn touched(&mut self) {
         self.task_dirty = true;
     }
@@ -304,6 +304,46 @@ mod tests {
         publisher.close();
         publisher.publish(Some(&engine), &mut sink);
         assert_eq!(sink.tasks.last(), Some(&None), "closing clears the page");
+    }
+
+    #[test]
+    fn a_touched_page_that_changed_alone_is_handed_over_once() {
+        let mut publisher = Publisher::default();
+        let mut sink = Sink::default();
+        let engine = source(0);
+        publisher.open("f-1".into(), "T-1".into());
+        publisher.publish(Some(&engine), &mut sink);
+        *engine.detail.borrow_mut() = Some(detail("a worker decided"));
+        publisher.touched();
+        publisher.publish(Some(&engine), &mut sink);
+        publisher.touched();
+        publisher.publish(Some(&engine), &mut sink);
+        assert_eq!(sink.summaries.len(), 1, "the summary did not move");
+        assert_eq!(sink.tasks.len(), 2, "the opened page, then its change once");
+        assert_eq!(
+            sink.tasks[1]
+                .as_ref()
+                .and_then(|page| page.detail.as_deref())
+                .map(|detail| detail.goal.as_str()),
+            Some("a worker decided")
+        );
+    }
+
+    fn detail(goal: &str) -> TaskDetail {
+        let card = serde_json::json!({
+            "task": "T-1", "display_id": "T-1", "column": "running", "title": "t",
+            "state": "running", "state_label": "", "needs_person": false,
+            "waiting_on": [], "priority": 0, "since": 0, "unread": false,
+            "folded": false, "archived": false, "failures": 0, "external": [],
+        });
+        serde_json::from_value(serde_json::json!({
+            "card": card, "factory": "f-1", "project": "/p", "goal": goal,
+            "criteria": [], "out_of_scope": [], "before": [], "after": [],
+            "attachments": [], "verification": "0/3", "attempts": [],
+            "decisions": [], "questions": [], "discoveries": [], "gates": [],
+            "gate_codes": [], "allowed": [],
+        }))
+        .expect("a Task page")
     }
 
     #[test]
