@@ -395,14 +395,26 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
         return table
 
     def signal_owned(signum):
-        if group is not None:
+        def signal_group():
             try:
                 os.killpg(group, signum)
             except ProcessLookupError:
                 pass
+            except OSError as error:
+                raise ProcessError("owned_group_signal:" + json.dumps(
+                    {"group": group, "signal": signum, "errno": error.errno},
+                    separators=(",", ":"))) from error
+        try:
+            table = collect()
+        except BaseException:
+            # Metadata failure still ends the reserved group and remains a
+            # failure; it cannot turn unknown membership into a safe skip.
+            signal_group()
+            raise
+        if any(process.group == group and not process.zombie for process in table.values()):
+            signal_group()
         # Group signals are atomic with respect to membership. Escaped marked
         # helpers require a fresh birth check before each individual signal.
-        table = collect()
         for process in table.values():
             if process.group == group or process.zombie:
                 continue
