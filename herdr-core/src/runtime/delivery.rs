@@ -1376,7 +1376,13 @@ pub(crate) mod tests {
             for command in commands.clone() {
                 assert_eq!(
                     guard
-                        .prepare_delivery("local", &caller, &context, hint, command.clone())
+                        .prepare_delivery(
+                            crate::node::TEST_NODE,
+                            &caller,
+                            &context,
+                            hint,
+                            command.clone()
+                        )
                         .err()
                         .as_deref(),
                     Some("agent_pane_required"),
@@ -1389,7 +1395,7 @@ pub(crate) mod tests {
         assert_eq!(
             guard
                 .prepare_delivery(
-                    "local",
+                    crate::node::TEST_NODE,
                     "sender",
                     &context,
                     Some("recipient"),
@@ -1401,7 +1407,7 @@ pub(crate) mod tests {
         );
         let prepared = guard
             .prepare_delivery(
-                "local",
+                crate::node::TEST_NODE,
                 "sender",
                 &context,
                 Some("sender"),
@@ -1432,7 +1438,7 @@ pub(crate) mod tests {
             guard.install_delivery_client(client);
             guard
                 .prepare_delivery(
-                    "local",
+                    crate::node::TEST_NODE,
                     &actor.pane_id,
                     &context,
                     None,

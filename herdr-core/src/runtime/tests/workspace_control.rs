@@ -1589,7 +1589,7 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
     // as one agent and so needs a pane-bound caller.
     let offered = |caller: &str| {
         runtime
-            .workspace_control_query("local", caller, Query::Info)
+            .workspace_control_query(crate::node::TEST_NODE, caller, Query::Info)
             .unwrap()
             .capabilities
     };
