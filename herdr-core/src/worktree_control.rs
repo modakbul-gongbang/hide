@@ -1812,8 +1812,11 @@ fn wait_for_processes_to_end(
             // ended; a process that cannot be read is not claimed to be gone.
             for (process, start) in held.drain(..).zip(starts) {
                 match start {
-                    ProcessStart::Running { started, .. } if started == process.started => {
-                        running.push(process);
+                    // The program it runs now: one that started another
+                    // since it was first read is named by what holds the
+                    // folder.
+                    ProcessStart::Running { started, name } if started == process.started => {
+                        running.push(PaneProcess { name, ..process });
                     }
                     ProcessStart::Running { .. } | ProcessStart::Gone => {}
                     ProcessStart::Unreadable { reason } => return Err(reason),
@@ -2805,10 +2808,9 @@ mod tests {
             panic!("no time is left to wait")
         })
         .unwrap_err();
-        assert!(
-            error.contains(&format!("still running (sleep pid {})", tree.child)),
-            "{error}"
-        );
+        // The child is `sh` until it has become `sleep`, which may be after
+        // the shell printed its pid; the name is the other test's subject.
+        assert!(error.contains(&format!("pid {})", tree.child)), "{error}");
     }
 
     #[cfg(unix)]
