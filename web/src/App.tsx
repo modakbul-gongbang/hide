@@ -10,6 +10,7 @@ import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
+import { noteOperatorPointer, observeInputRequests } from "./keyTarget";
 import { OverviewModal, OverviewPage } from "./Overview";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
@@ -27,7 +28,7 @@ import { useShellStore } from "./store";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { applyEditorTheme } from "./editor/theme";
-import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
+import { applyGridHolds, applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { primaryValue, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/weekly-usage";
@@ -83,6 +84,9 @@ export function App() {
     };
     window.addEventListener("focusin", observeFocus);
     window.addEventListener("pointerdown", endCommit, true);
+    // Pointing anywhere is the operator choosing where they are, so keys stop
+    // following a pending new tab or split (`keyTarget.ts`).
+    window.addEventListener("pointerdown", noteOperatorPointer, true);
     window.addEventListener("keydown", endCommit, true);
     // All projects and an Overview are visits of their own, and leaving one
     // for the Workspace makes the surface there the one in use; neither
@@ -97,7 +101,11 @@ export function App() {
       if (state.rest === previous.rest) return;
       // A terminal lives as long as the core streams its pane; released or
       // vanished panes lose theirs here, never on a tab switch (D-05).
-      if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) retainTerminals();
+      if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) {
+        retainTerminals();
+        applyGridHolds(state.rest?.terminal?.panes);
+      }
+      if (state.rest?.terminal?.input_requests !== previous.rest?.terminal?.input_requests) observeInputRequests(state.rest?.terminal?.input_requests);
       const fresh = freshError(state, previous);
       const waiting = state.rest?.workspace_view?.agent_layout?.waiting ?? 0;
       const previouslyWaiting = previous.rest?.workspace_view?.agent_layout?.waiting ?? 0;
@@ -118,6 +126,7 @@ export function App() {
     return () => {
       window.removeEventListener("focusin", observeFocus);
       window.removeEventListener("pointerdown", endCommit, true);
+      window.removeEventListener("pointerdown", noteOperatorPointer, true);
       window.removeEventListener("keydown", endCommit, true);
       unsubscribeScreen();
       unsubscribeNotices();

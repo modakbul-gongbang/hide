@@ -692,6 +692,14 @@ export type TerminalPane = {
   transport_message: string | null;
   /** This client only observes the pane and Herdr did not move it for the last wheel; absent while false. */
   scroll_held_elsewhere?: boolean;
+  /** A geometry change for this pane's tab is unconfirmed: the grid stays as it is until Herdr applies it; absent while false. */
+  grid_held?: boolean;
+};
+
+/** Where keys sent against a creation request go (PRD instant-pane-topology D-11). */
+export type InputRequest = {
+  request_id: string;
+  state: "pending" | "ready" | "discarded";
 };
 
 export type AsyncOperation = {
@@ -1422,7 +1430,7 @@ export type SnapshotRest = {
     operator_focus?: { client_id: string; sequence: number }[];
   };
   pane_layouts?: PaneLayout[];
-  terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
+  terminal?: { pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
     device_rail_visible?: boolean;

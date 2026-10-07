@@ -199,6 +199,7 @@ impl Runtime {
                 transport_exit_category: None,
                 transport_retry_decision: idle_lifecycle.retry_decision.to_owned(),
                 scroll_held_elsewhere: false,
+                grid_held: false,
             };
             if *pane != idle {
                 *pane = idle;
@@ -254,6 +255,12 @@ impl Runtime {
         self.terminal_foreign_frame_sizes
             .retain(|pane_id, _| keep(pane_id));
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
+        // A pane Herdr named for typed keys is not gone before its layout
+        // first carries it (D-11, B9).
+        let requests = &self.input_requests;
+        self.pane_input_hold
+            .retain(|pane_id| keep(pane_id) || requests.awaits_layout(pane_id));
+        self.held_resizes.retain(|pane_id| keep(pane_id));
         self.wheel_before_attach.retain(|pane_id, _| keep(pane_id));
         self.viewport_scrolls.retain(|pane_id, _| keep(pane_id));
         self.panes_scroll_held.retain(|pane_id| keep(pane_id));
@@ -272,6 +279,7 @@ impl Runtime {
             + self.terminal_frames_need_full.len()
             + self.terminal_foreign_frame_sizes.len()
             + self.panes_awaiting_size.len()
+            + self.pane_input_hold.len()
             + self.wheel_before_attach.len()
             + self.viewport_scrolls.len()
             + self.panes_scroll_held.len()
@@ -337,6 +345,7 @@ impl Runtime {
             transport_exit_category: lifecycle.exit_category,
             transport_retry_decision: lifecycle.retry_decision.to_owned(),
             scroll_held_elsewhere: self.panes_scroll_held.contains(pane_id),
+            grid_held: self.grid_held_panes.contains(pane_id),
         }
     }
     pub(super) fn sync_transport_projection(&mut self, pane_id: &str) {
@@ -361,6 +370,7 @@ impl Runtime {
             pane.transport_exit_category = lifecycle.exit_category;
             pane.transport_retry_decision = lifecycle.retry_decision.to_owned();
             pane.scroll_held_elsewhere = self.panes_scroll_held.contains(pane_id);
+            pane.grid_held = self.grid_held_panes.contains(pane_id);
         }
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
@@ -941,7 +951,25 @@ impl Runtime {
                 }));
                 true
             }
+            (
+                PaneControlAction::Resize { pane_id, .. }
+                | PaneControlAction::ToggleZoom { pane_id },
+                Ok(PaneControlOutcome::Unchanged),
+            ) => {
+                self.push_diagnostic(
+                    "pane.unchanged",
+                    format!("Herdr changed nothing for pane {pane_id} in {elapsed_ms} ms"),
+                );
+                true
+            }
             (PaneControlAction::Project { .. }, Ok(PaneControlOutcome::Acknowledged { .. }))
+            | (
+                PaneControlAction::Project { .. }
+                | PaneControlAction::Focus { .. }
+                | PaneControlAction::Split { .. }
+                | PaneControlAction::Close { .. },
+                Ok(PaneControlOutcome::Unchanged),
+            )
             | (
                 PaneControlAction::Focus { .. }
                 | PaneControlAction::Split { .. }
@@ -1170,6 +1198,8 @@ impl Runtime {
             self.sync_transport_projection(pane_id);
         }
         self.release_wheel_before_attach(pane_id);
+        self.op_timings
+            .note_frame(pane_id, std::time::Instant::now());
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
         self.snapshot
             .terminal
@@ -1574,6 +1604,7 @@ impl Runtime {
             let _released_session = self.terminal_sessions.remove(&pane_id);
             self.panes_awaiting_size.remove(&pane_id);
             self.terminal_recovery.remove(&pane_id);
+            self.pane_input_hold.discard(&pane_id, "released");
             let attempt = self
                 .terminal_session_lifecycles
                 .get(&pane_id)
@@ -1699,6 +1730,10 @@ impl Runtime {
                     self.terminal_sessions.remove(&pane_id);
                     // A late spawn cannot revive an exhausted attempt.
                     self.terminal_session_generations.remove(&pane_id);
+                    // The pane is no longer connecting; keys held for it
+                    // would run whenever the operator reconnects, so they
+                    // end here (PRD instant-pane-topology B10).
+                    self.pane_input_hold.discard(&pane_id, "session_failed");
                 }
                 self.sync_transport_projection(&pane_id);
             }
@@ -1845,10 +1880,9 @@ impl Runtime {
         }
         #[cfg(test)]
         if self.suppress_terminal_session_workers {
-            self.terminal_sessions.insert(
-                pane_id.to_owned(),
-                TerminalSession::test_stub(pane_id, generation, mode),
-            );
+            let session = TerminalSession::test_stub(pane_id, generation, mode);
+            self.write_held_input(pane_id, &session);
+            self.terminal_sessions.insert(pane_id.to_owned(), session);
             if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
                 lifecycle.state = match mode {
                     TerminalSessionMode::Control => "controlling",
@@ -1991,6 +2025,7 @@ impl Runtime {
                 {
                     self.set_error("terminal.resize_after_attach_failed", message, true);
                 }
+                self.write_held_input(pane_id, &session);
                 self.terminal_sessions.insert(pane_id.to_owned(), session);
                 let reader_result = self
                     .terminal_sessions
@@ -2101,9 +2136,15 @@ impl Runtime {
             }
         }
     }
-    /// Routes key bytes only to an official controller. The actual pipe write
-    /// runs on the session writer thread, outside the runtime mutex.
-    pub(super) fn write_terminal_control(&mut self, pane_id: &str, bytes_base64: &str) {
+    /// Routes key bytes, typed at `typed_at`, only to an official controller.
+    /// The actual pipe write runs on the session writer thread, outside the
+    /// runtime mutex.
+    pub(super) fn write_terminal_control(
+        &mut self,
+        pane_id: &str,
+        bytes_base64: &str,
+        typed_at: Instant,
+    ) {
         if self.close_operation_holds_pane(pane_id) {
             self.set_error(
                 "terminal.close_pending",
@@ -2134,6 +2175,11 @@ impl Runtime {
                     true,
                 );
             }
+            // A pane whose control session is still opening keeps its input
+            // until the session can take it (PRD instant-pane-topology D-11).
+            None if self.terminal_session_opening(pane_id) => {
+                self.pane_input_hold.hold(pane_id, &bytes, typed_at);
+            }
             None => {
                 self.set_error(
                     "terminal.unavailable",
@@ -2141,6 +2187,56 @@ impl Runtime {
                     true,
                 );
             }
+        }
+    }
+
+    /// Input typed while the session was opening goes first, in the order it
+    /// was typed, unless it is older than the hold's age limit; an observer
+    /// cannot take it.
+    fn write_held_input(&mut self, pane_id: &str, session: &TerminalSession) {
+        let Some(held) = self.pane_input_hold.take(pane_id, Instant::now()) else {
+            return;
+        };
+        if session.mode == TerminalSessionMode::Control {
+            if let Err(message) = session.write_bytes(&held) {
+                self.set_error("terminal.write_failed", message, true);
+            }
+            return;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal_input",
+            "kind": "terminal.input_discarded",
+            "pane_id": pane_id,
+            "reason": "read_only",
+            "bytes": held.len(),
+        }));
+    }
+
+    /// Whether this machine's pane is on its way to a control session: never
+    /// attached yet, waiting for its view's size, starting, or retrying after
+    /// a failed start. A released, ended or closing pane is not.
+    fn terminal_session_opening(&self, pane_id: &str) -> bool {
+        // A pane a creation's answer named is opening even before a layout
+        // carries it: the operator's keys for it arrive first (D-11).
+        if pane_id.starts_with("remote:")
+            || self.panes_closing.contains(pane_id)
+            || (self.layout_holding_pane(pane_id).is_none() && !self.input_requests.names(pane_id))
+        {
+            return false;
+        }
+        match self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .map(|lifecycle| lifecycle.state)
+        {
+            None | Some("idle" | "waiting_size" | "starting") => true,
+            // Retrying; a pane whose retries ran out waits for the operator's
+            // Reconnect and holds nothing for it.
+            Some("unavailable") => self
+                .terminal_recovery
+                .get(pane_id)
+                .is_some_and(|recovery| recovery.due.is_some()),
+            Some(_) => false,
         }
     }
     pub(super) fn append_terminal_chunk(&mut self, pane_id: String, bytes_base64: String) {

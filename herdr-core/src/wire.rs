@@ -1321,7 +1321,32 @@ pub(crate) struct DeliveryAgent {
     pub session: Option<String>,
     pub status: String,
     pub state_change_seq: u64,
-    pub ready: bool,
+    pub readiness: Readiness,
+}
+
+/// What Herdr says about whether an agent takes typed input. Herdr reports
+/// readiness only for an agent it started itself (`agent.start`): it sends
+/// `launch_pending: true` while that start settles or is blocked, and
+/// `interactive_ready: true` once it is active, and omits either flag when it
+/// is false. An agent the operator started by typing its program in a shell
+/// carries neither flag, so its readiness is unreported, not refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Readiness {
+    Ready,
+    Unreported,
+    NotReady,
+    Launching,
+}
+
+impl Readiness {
+    fn of(interactive_ready: Option<bool>, launch_pending: Option<bool>) -> Self {
+        match (interactive_ready, launch_pending) {
+            (_, Some(true)) => Self::Launching,
+            (Some(false), _) => Self::NotReady,
+            (Some(true), _) => Self::Ready,
+            (None, _) => Self::Unreported,
+        }
+    }
 }
 
 pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
@@ -1335,9 +1360,7 @@ pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
                 .and_then(|session| session_digest(&session.value)),
             status: agent.agent_status.to_string(),
             state_change_seq: agent.state_change_seq,
-            // Herdr omits a false launch_pending flag on a ready agent.
-            // Positive readiness remains mandatory; an active launch refuses.
-            ready: agent.interactive_ready == Some(true) && agent.launch_pending != Some(true),
+            readiness: Readiness::of(agent.interactive_ready, agent.launch_pending),
         }),
         _ => Err("delivery_agent_format".into()),
     }
@@ -1597,6 +1620,24 @@ pub(crate) fn moved_tabs(value: Value) -> Result<Vec<String>, String> {
         res::ResponseResult::TabList { tabs } => {
             Ok(tabs.into_iter().map(|tab| tab.tab_id).collect())
         }
+        _ => Err(missing.into()),
+    }
+}
+/// Whether a `pane.zoom` answer changed the zoom. A one-pane tab answers
+/// `zoom_changed: false` (`reason: single_pane`) while `changed` can still be
+/// true because the zoom moved focus (Herdr 0.9.1), so the zoom bit is read.
+pub(crate) fn pane_zoom_changed(value: Value) -> Result<bool, String> {
+    let missing = "pane.zoom response is missing zoom";
+    match response(value, missing)? {
+        res::ResponseResult::PaneZoom { zoom } => Ok(zoom.zoom_changed),
+        _ => Err(missing.into()),
+    }
+}
+/// Whether a `pane.resize` answer moved a split.
+pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
+    let missing = "pane.resize response is missing resize";
+    match response(value, missing)? {
+        res::ResponseResult::PaneResize { resize } => Ok(resize.changed),
         _ => Err(missing.into()),
     }
 }
@@ -1896,27 +1937,41 @@ pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
 mod tests {
 
     #[test]
-    fn delivery_requires_positive_readiness_and_preserves_visible_styling() {
-        // The actual ready response omits launch_pending=false. Missing
-        // interactive_ready or an explicit active launch still refuses input.
+    fn delivery_readiness_refuses_only_what_herdr_reports_as_not_ready() {
+        use super::Readiness;
+        // The answer Herdr 0.9.3 gives for an agent it started and that is
+        // active: launch_pending=false is omitted.
         let mut response = serde_json::json!({"type":"agent_info", "agent": {
             "pane_id":"w1:p1", "terminal_id":"terminal", "workspace_id":"w1",
             "tab_id":"w1:t1", "focused":false, "revision":1,
             "agent":"codex", "agent_status":"idle", "state_change_seq":1,
             "interactive_ready":true
         }});
-        assert!(super::delivery_agent(response.clone()).unwrap().ready);
-        response["agent"]["launch_pending"] = serde_json::json!(true);
-        assert!(!super::delivery_agent(response.clone()).unwrap().ready);
+        let readiness = |response: &serde_json::Value| {
+            super::delivery_agent(response.clone()).unwrap().readiness
+        };
+        assert_eq!(readiness(&response), Readiness::Ready);
         response["agent"]["launch_pending"] = serde_json::json!(false);
-        assert!(super::delivery_agent(response.clone()).unwrap().ready);
+        assert_eq!(readiness(&response), Readiness::Ready);
+        // An agent typed into a shell by hand: Herdr reports neither flag.
         response["agent"]
             .as_object_mut()
             .unwrap()
             .remove("interactive_ready");
-        assert!(!super::delivery_agent(response.clone()).unwrap().ready);
+        assert_eq!(readiness(&response), Readiness::Unreported);
         response["agent"]["interactive_ready"] = serde_json::json!(false);
-        assert!(!super::delivery_agent(response).unwrap().ready);
+        assert_eq!(readiness(&response), Readiness::NotReady);
+        // A start still settling refuses whatever else is reported.
+        for interactive in [serde_json::json!(true), serde_json::json!(false)] {
+            response["agent"]["interactive_ready"] = interactive;
+            response["agent"]["launch_pending"] = serde_json::json!(true);
+            assert_eq!(readiness(&response), Readiness::Launching);
+        }
+        response["agent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("interactive_ready");
+        assert_eq!(readiness(&response), Readiness::Launching);
     }
 
     #[test]

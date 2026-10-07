@@ -4,7 +4,9 @@
 //! and when the pane last changed state.
 //!
 //! The file is `labels.json` beside `core-state.json`, written whole through
-//! a temporary file and a rename, mode 0600, never under the runtime mutex.
+//! a temporary file and a rename, mode 0600, never under the runtime mutex
+//! and never on the thread that applies Herdr's events: a save hands the
+//! write to the store's own thread, and dropping the store waits for it.
 //! Labels are the provider's short summaries, positions are byte offsets and
 //! file identities, turns are hashes; the only conversation text is each
 //! local pane's last request and reply, capped (`facts`, PRD overview-request-view
@@ -14,7 +16,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::mpsc::{Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use hide_session::ConversationCheckpoint;
 use serde::{Deserialize, Serialize};
@@ -175,10 +179,25 @@ pub(crate) struct LabelStore {
     /// The store key of the core's own Herdr server: its node id. Only this
     /// target reaches disk.
     node: String,
-    file: Mutex<LabelsFile>,
+    file: Arc<Mutex<LabelsFile>>,
     /// Held from encoding to rename, so two workers saving at once cannot
     /// share the temporary file and the last write carries the newest data.
-    writing: Mutex<()>,
+    writing: Arc<Mutex<()>>,
+    /// The thread that writes this machine's records, started by the first
+    /// save: a write ends in an fsync, and the workers save from the
+    /// coordinator thread that applies Herdr's events (PRD
+    /// instant-pane-topology D-13). It ends, after its last write, when the
+    /// store is dropped.
+    saver: Mutex<Option<Saver>>,
+}
+
+/// The saver thread's requests: `None` asks for a save, and `Some` is
+/// answered once every save asked for before it is on disk.
+type SaveRequest = Option<Sender<()>>;
+
+struct Saver {
+    requests: Sender<SaveRequest>,
+    worker: JoinHandle<()>,
 }
 
 impl LabelStore {
@@ -242,11 +261,12 @@ impl LabelStore {
         let store = Self {
             path: Some(path),
             node: node.to_owned(),
-            writing: Mutex::new(()),
-            file: Mutex::new(LabelsFile {
+            writing: Arc::new(Mutex::new(())),
+            file: Arc::new(Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets,
-            }),
+            })),
+            saver: Mutex::new(None),
         };
         // An import is written at once, so the kit's later removal of the
         // plugin's folder cannot take it away.
@@ -258,11 +278,12 @@ impl LabelStore {
         Self {
             path: None,
             node: node.to_owned(),
-            writing: Mutex::new(()),
-            file: Mutex::new(LabelsFile {
+            writing: Arc::new(Mutex::new(())),
+            file: Arc::new(Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets: BTreeMap::new(),
-            }),
+            })),
+            saver: Mutex::new(None),
         }
     }
 
@@ -287,7 +308,21 @@ impl LabelStore {
             file.targets.insert(key.to_owned(), records.clone());
         }
         if key == self.node {
-            self.save();
+            self.save_later();
+        }
+    }
+
+    /// Returns once every save asked for so far is on disk; the product
+    /// waits for its saves only by dropping the store.
+    #[cfg(test)]
+    pub(crate) fn flush(&self) {
+        let saver = self.saver.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(saver) = saver.as_ref() else {
+            return;
+        };
+        let (answer, answered) = channel();
+        if saver.requests.send(Some(answer)).is_ok() {
+            let _ = answered.recv();
         }
     }
 
@@ -295,51 +330,132 @@ impl LabelStore {
         self.file.lock().unwrap_or_else(|error| error.into_inner())
     }
 
-    fn save(&self) {
-        let Some(path) = self.path.as_deref() else {
+    /// Hands the write to the saver thread; saves asked for while one is
+    /// being written become one more write.
+    fn save_later(&self) {
+        let Some(path) = self.path.clone() else {
             return;
         };
-        let _writing = self
-            .writing
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let encoded = {
-            let file = self.lock();
-            // Filter at the final serialization boundary as well: a later
-            // local save must never serialize device entries held in memory.
-            #[derive(Serialize)]
-            struct LocalFile<'a> {
-                version: u32,
-                targets: BTreeMap<&'a str, &'a BTreeMap<String, PaneRecord>>,
+        let mut saver = self.saver.lock().unwrap_or_else(|error| error.into_inner());
+        if saver.is_none() {
+            let (requests, receiver) = channel::<SaveRequest>();
+            let file = Arc::clone(&self.file);
+            let writing = Arc::clone(&self.writing);
+            let node = self.node.clone();
+            let spawned = std::thread::Builder::new()
+                .name("hide-labels-save".to_owned())
+                .spawn(move || {
+                    while let Ok(request) = receiver.recv() {
+                        let mut flushes = Vec::new();
+                        let mut save = false;
+                        for request in std::iter::once(request).chain(receiver.try_iter()) {
+                            match request {
+                                None => save = true,
+                                Some(answer) => flushes.push(answer),
+                            }
+                        }
+                        if save {
+                            write_store(&path, &node, &writing, &file);
+                        }
+                        for answer in flushes {
+                            let _ = answer.send(());
+                        }
+                    }
+                });
+            match spawned {
+                Ok(worker) => *saver = Some(Saver { requests, worker }),
+                Err(error) => {
+                    crate::diagnostic!(json!({
+                        "component": "labels",
+                        "kind": "store.saver_failed",
+                        "message": error.to_string(),
+                    }));
+                    drop(saver);
+                    self.save();
+                    return;
+                }
             }
-            serde_json::to_vec(&LocalFile {
-                version: SCHEMA_VERSION,
-                targets: file
-                    .targets
-                    .iter()
-                    .filter(|(target, _)| **target == self.node)
-                    .map(|(target, records)| (target.as_str(), records))
-                    .collect(),
-            })
-        };
-        let bytes = match encoded {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                crate::diagnostic!(json!({
-                    "component": "labels",
-                    "kind": "store.encode_failed",
-                    "message": error.to_string(),
-                }));
-                return;
-            }
-        };
-        if let Err(error) = write_private(path, &bytes) {
+        }
+        if let Some(running) = saver.as_ref()
+            && running.requests.send(None).is_err()
+        {
+            // The saver ended (a write panicked): this save is written here,
+            // and the next one starts a new saver.
             crate::diagnostic!(json!({
                 "component": "labels",
-                "kind": "store.write_failed",
+                "kind": "store.saver_ended",
+            }));
+            *saver = None;
+            drop(saver);
+            self.save();
+        }
+    }
+
+    fn save(&self) {
+        if let Some(path) = self.path.as_deref() {
+            write_store(path, &self.node, &self.writing, &self.file);
+        }
+    }
+}
+
+impl Drop for LabelStore {
+    fn drop(&mut self) {
+        let saver = self
+            .saver
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(Saver { requests, worker }) = saver {
+            drop(requests);
+            if worker.join().is_err() {
+                crate::diagnostic!(json!({
+                    "component": "labels",
+                    "kind": "store.saver_join_failed",
+                }));
+            }
+        }
+    }
+}
+
+/// Encodes this machine's records and writes them in place of the file.
+fn write_store(path: &Path, node: &str, writing: &Mutex<()>, file: &Mutex<LabelsFile>) {
+    let _writing = writing.lock().unwrap_or_else(|error| error.into_inner());
+    let encoded = {
+        let file = file.lock().unwrap_or_else(|error| error.into_inner());
+        // Filter at the final serialization boundary as well: a later
+        // local save must never serialize device entries held in memory.
+        #[derive(Serialize)]
+        struct LocalFile<'a> {
+            version: u32,
+            targets: BTreeMap<&'a str, &'a BTreeMap<String, PaneRecord>>,
+        }
+        serde_json::to_vec(&LocalFile {
+            version: SCHEMA_VERSION,
+            targets: file
+                .targets
+                .iter()
+                .filter(|(target, _)| target.as_str() == node)
+                .map(|(target, records)| (target.as_str(), records))
+                .collect(),
+        })
+    };
+    let bytes = match encoded {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "store.encode_failed",
                 "message": error.to_string(),
             }));
+            return;
         }
+    };
+    if let Err(error) = write_private(path, &bytes) {
+        crate::diagnostic!(json!({
+            "component": "labels",
+            "kind": "store.write_failed",
+            "message": error.to_string(),
+        }));
     }
 }
 
@@ -373,6 +489,8 @@ mod tests {
         let mut records = BTreeMap::new();
         records.insert("w1:p1".to_owned(), record("v1:owner"));
         store.save_target(LOCAL_TARGET, &records);
+        // Dropping the store waits for the write it handed off.
+        drop(store);
         let reopened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         assert_eq!(reopened.target(LOCAL_TARGET), records);
         assert!(hide_platform::fs::private::is_private(&root.path().join(LABELS_FILE)).unwrap());
@@ -393,6 +511,7 @@ mod tests {
         assert_eq!(store.target("device:mini"), remote);
         let local = BTreeMap::from([("w1:p1".to_owned(), record("local-owner"))]);
         store.save_target(LOCAL_TARGET, &local);
+        store.flush();
         let disk = std::fs::read_to_string(root.path().join(LABELS_FILE)).unwrap();
         assert!(
             !disk.contains("private remote"),

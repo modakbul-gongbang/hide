@@ -2140,6 +2140,25 @@ pub struct TerminalSnapshot {
     pub closed: bool,
     pub exit_code: Option<i32>,
     pub panes: Vec<TerminalPaneSnapshot>,
+    /// Creation requests the shell sends keys against (PRD
+    /// instant-pane-topology D-11), so it can stop once one is discarded.
+    pub input_requests: Vec<InputRequestSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct InputRequestSnapshot {
+    pub request_id: String,
+    pub state: InputRequestState,
+}
+
+/// Where keys sent against a creation request stand: kept until Herdr
+/// answers, following the pane Herdr named, or dropped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputRequestState {
+    Pending,
+    Ready,
+    Discarded,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
@@ -2175,6 +2194,12 @@ pub struct TerminalPaneSnapshot {
     /// from the wire while false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub scroll_held_elsewhere: bool,
+    /// The pane's tab is drawn ahead of Herdr (a split, close, zoom or resize
+    /// Herdr has not confirmed), so its PTY keeps its size: the core sends no
+    /// resize for it and the shell keeps its terminal grid until Herdr
+    /// confirms (PRD instant-pane-topology D-08). Absent while false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub grid_held: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4355,6 +4380,7 @@ impl Snapshot {
                 closed: false,
                 exit_code: None,
                 panes: Vec::new(),
+                input_requests: Vec::new(),
             },
             editor: EditorSnapshot {
                 tabs: Vec::new(),
@@ -4475,6 +4501,7 @@ pub struct RestSections {
     pub terminal_closed: bool,
     pub terminal_exit_code: Option<i32>,
     pub terminal_panes: Vec<TerminalPaneSnapshot>,
+    pub terminal_input_requests: Vec<InputRequestSnapshot>,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
@@ -4512,6 +4539,7 @@ impl RestSections {
             terminal_closed: snapshot.terminal.closed,
             terminal_exit_code: snapshot.terminal.exit_code,
             terminal_panes: snapshot.terminal.panes.clone(),
+            terminal_input_requests: snapshot.terminal.input_requests.clone(),
             ui_state: snapshot.ui_state.clone(),
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
@@ -4550,6 +4578,7 @@ impl RestSections {
             && self.terminal_closed == snapshot.terminal.closed
             && self.terminal_exit_code == snapshot.terminal.exit_code
             && self.terminal_panes == snapshot.terminal.panes
+            && self.terminal_input_requests == snapshot.terminal.input_requests
             && self.ui_state == snapshot.ui_state
             && self.ime == snapshot.ime
             && self.status == snapshot.status
@@ -4742,6 +4771,7 @@ impl<'a> RestWire<'a> {
                 closed: rest.terminal_closed,
                 exit_code: rest.terminal_exit_code,
                 panes: &rest.terminal_panes,
+                input_requests: &rest.terminal_input_requests,
             },
             ui_state: &rest.ui_state,
             ime: &rest.ime,
@@ -4761,6 +4791,7 @@ pub struct TerminalMetaWire<'a> {
     pub closed: bool,
     pub exit_code: Option<i32>,
     pub panes: &'a [TerminalPaneSnapshot],
+    pub input_requests: &'a [InputRequestSnapshot],
 }
 
 #[cfg(test)]
@@ -5033,6 +5064,21 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "pane_find_route", &find_routes);
         checked.insert("pane_find_route");
+
+        let input_states = [
+            InputRequestState::Pending,
+            InputRequestState::Ready,
+            InputRequestState::Discarded,
+        ];
+        for variant in input_states {
+            match variant {
+                InputRequestState::Pending
+                | InputRequestState::Ready
+                | InputRequestState::Discarded => {}
+            }
+        }
+        assert_wire(&contract, "input_request_state", &input_states);
+        checked.insert("input_request_state");
 
         let kit_parts = hide_kit::ComponentId::ALL;
         for variant in kit_parts {

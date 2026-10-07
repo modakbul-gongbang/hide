@@ -786,11 +786,9 @@ fn run(
                     .lock()
                     .map_err(|_| "delivery_unavailable".to_owned())
                     .and_then(|guard| {
-                        if guard.delivery_bell_current(id, observed, None) {
-                            Ok(())
-                        } else {
-                            Err("doorbell_observation_changed".into())
-                        }
+                        guard
+                            .delivery_bell_current(id, observed, None)
+                            .map_err(|_| "doorbell_observation_changed".into())
                     }),
                 _ => Ok(()),
             };
@@ -1136,7 +1134,11 @@ mod tests {
             guard.invalidate_delivery();
             assert!(guard.delivery_state().is_err());
             assert!(guard.delivery_watch_work().is_empty());
-            assert!(!guard.delivery_bell_current(&letter.id, &target, None));
+            assert!(
+                guard
+                    .delivery_bell_current(&letter.id, &target, None)
+                    .is_err()
+            );
         }
         let (worker, client) = Worker::spawn(
             Arc::downgrade(&runtime),

@@ -124,7 +124,12 @@ Dropping on a tab bar reorders or moves the tab; dropping on a content edge high
 Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
 Closing a tab, or its only pane, takes the tab out of its area the moment the close is approved, without waiting for Herdr: the area shows the tab it showed before it, or collapses when the tab was its last, and when the closed tab held the keyboard the keyboard goes to what is now shown in its place (the area's next tab, or the neighbouring area's), never to the next tab in Herdr's order.
 A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the keyboard with it when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
-A pane closing inside a tab that keeps other panes stays drawn as closing until Herdr confirms it, because Herdr decides how its neighbours fill the space.
+A pane closing inside a tab that keeps other panes leaves the canvas the moment the close is approved, and its neighbours take its space as Herdr will lay them out; its sidebar row stays until Herdr confirms the close, and a close Herdr refuses or cannot answer draws the pane back where it stood.
+A split, a zoom or unzoom and a pane resize Hide asked for are drawn at once, a split as soon as Herdr names the new pane, without waiting for Herdr's layout; a new tab appears in its area as soon as Herdr answers its creation.
+While such a change is drawn ahead of Herdr, each terminal keeps its grid and draws it inside its new rectangle, and its rows and columns change only once Herdr has applied the change, so a change Herdr lays out differently never reflows a terminal twice.
+When Herdr's layout differs from the drawn one, Herdr's is drawn.
+Changes to one tab's panes are made one at a time in the order asked, with up to eight waiting; a ninth waiting change is not made, and one Herdr refuses drops the changes waiting behind it and draws the layout Herdr confirmed.
+Changes in different tabs never wait for each other.
 A sole empty area shows No agent tab is open and New tab.
 Agent tabs cannot enter the View column, and a sole tab cannot split its own area.
 Invalid size, area or depth limits show the forbidden cursor without an overlay; Escape, outside release and a vanished target leave the layout unchanged.
@@ -1338,6 +1343,8 @@ A finished answer is shown only to the operator who asked in that popover.
 `PaneChildren.connection` carries the reason, whether Reopen is offered, and a Reopen's pending or refused state as a code, and `docs/status-model.md`, Not connected and what fixes it, owns what each one means; `web/src/paneConnectionRules.ts` names what each code asks of the operator.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
 The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
+Keys typed right after New tab or a split go to the new pane once Herdr names it, in the order typed, and keys typed while a pane's terminal is still opening reach it once it opens; nothing typed is dropped unless more than 64 KiB waits, which discards what waited, the pane can take a key only more than 3 seconds after it was typed, which discards that key because it is no longer what the operator means to run, or the keys have no pane to go to: the creation is refused or makes no pane, the new pane opens in the background, or the pane closes, is released or its terminal fails before it opens (`docs/ARCHITECTURE.md` names every reason).
+Keyboard focus follows the core's answer, not the drawing, so a second ⌘D pressed before Herdr confirms the first splits the original pane again, as Herdr does.
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
