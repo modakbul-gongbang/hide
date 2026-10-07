@@ -22,8 +22,10 @@ The write is atomic - a temporary file beside the target, created private to the
 The file keeps its mode, a new one is created 0600, and a file that is a symlink stays one: the write lands at the file the link resolves to, so a settings file kept in a dotfiles repository is edited there.
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
-Five events are registered: `SessionStart`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, and `Stop`.
+Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
+`PreToolUse` is the one entry with a matcher: it selects only the `Bash` tool in both runtimes (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+An install made before `PreToolUse` existed has the other five entries and reads Outdated until the kit's next pass, which adds the missing entry; the marker stays `hide-subagents@6`.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command (in Claude Code's Windows entry, inside its `args`).
 The runtime argument selects that runtime's stdout envelope; the version-6 marker makes an installation whose command is not guarded against a missing helper outdated, so the next launch or connection replaces it.
@@ -125,6 +127,35 @@ The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-fail
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
 The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
 
+## The spawn guard
+
+`PreToolUse` carries the spawn guard (PRD herdr-spawn-guard): a shell call that starts an agent through Herdr is refused before it runs, because Herdr records no parent for such a child, so it would show in the Agents graph with no line to the agent that started it and no watch.
+The reason handed back is the filled command to use instead, `hide agent spawn --parent here --name <name> --intent <intent> --kind <kind> --repo <main root> --branch <branch>`, so the agent redoes the call in one step.
+What is refused, in a pane of a registered checkout (the call is `herdr`, or `$HERDR_BIN_PATH`, after any `VAR=value` words and the prefix words `time`, `exec`, `command`, `nohup`, `env` and, at the start of a command in a shell line, `if`, `then`, `elif`, `else`, `while`, `until`, `do`, `{` and `!`):
+
+- `herdr agent start <name> --kind <kind> ...`;
+- `herdr pane run <pane> <command>...` and `herdr pane send-text <pane> <text>`, when the command's first word is one of Herdr's agent kinds (the 24 the pinned Herdr lists in `herdr agent start --help`, pinned by a unit test; `cursor-agent` is read as `cursor`).
+
+Everything else runs untouched, with no output: other `herdr` calls (`pane split`, `agent list`), `--help`, a start with no `--kind`, a call that does not mention `herdr`, any call outside a Herdr pane or a registered checkout, and a call that names another Herdr: `--session`, `--machine`, or a `HERDR_SOCKET_PATH` or `HERDR_SESSION` assignment that differs from the pane's own, whether inline before the call, through `env`, by an earlier `export`, `declare`, `typeset` or bare assignment in the same call, or by an `unset`, because the `hide agent spawn` it would be sent to starts the child in the pane's own Herdr, and an isolated Herdr server of a verification run is reached that way; a `source` of a script that sets them cannot be read, so that form is still refused, and the exact text is compared, so `HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH` counts as another Herdr.
+The guard reads the whole call as a shell would read it, one top-level simple command at a time (`&&`, `||`, `;`, `|`, `&`, newline), with quotes, backslashes, heredoc bodies and comments set aside, so a commit message or a heredoc that quotes `herdr agent start` is not a launch.
+A heredoc inside `$(...)` is read as text to its delimiter line, so a quote or a parenthesis in its body does not count, and text that still ends inside a quote, a backtick or a `$(` is a syntax error a shell would not run, so it holds no launch.
+A `send-text` or `pane run` whose first word is an agent's name is refused whatever the words after it say, so a plain message that starts with `claude` or `pi` is a known false positive of that rule, and `herdr agent prompt` is the call that sends text to a running agent.
+A launch chained behind another command (`cd x && herdr agent start ...`) is refused as a whole and nothing in the chain runs, since the hook sees the tool call and not one command of it; the reason says to run the other commands separately.
+A launch inside `bash -c`, `$(...)`, a script or an alias is not found (PRD non-goal).
+
+The registered-checkout test is `hide workspace bootstrap` through the sibling `hide`, the same daemon-owned call `SessionStart` makes, needing no renderer.
+Only the daemon's own "this caller is not in a Hide checkout" answers (`checkout_not_registered`, `caller_unavailable`, `pane_not_connected`, `pane_unavailable`, `pane_changed`, `caller_not_in_pane`) mean the call is not Hide's to guide, and it runs silently.
+Any other outcome, a `hide` that is missing, a bridge to a device that is gone, an answer that does not come within the guard's 2.5 second budget, an unreadable answer and a reason this build does not know, lets the call run and appends one `daemon.unreachable` line with its cause to the guard's log, throttled to one per ten minutes through the delivery diagnostics' store (cause `guard`), because a refusal Hide cannot explain would be worse than the untracked child.
+The line goes to the log only: a hook's standard error reaches nobody the operator or the agent could act on.
+A pane of a Herdr server Hide does not attach to, whose working directory is inside a registered checkout, is bound by `hide workspace bootstrap` to that checkout and so reads as registered too; the guard is guidance, not a boundary, and the `hide agent spawn --parent here` it offers cannot parent a child of such a pane (known limitation, PRD D-03 reads the pane and the checkout, not whose Herdr it is).
+`--repo` is the repository's main root and `--branch` the caller's current branch, both read from the call's `cwd` through the repository's own files (`hide_project::git`), with no git process; a detached HEAD leaves `<branch>` for the agent to fill.
+The guard stays silent inside a Grok, OpenCode or Cursor session (`ForeignOrigin`), where Claude Code's hook runs but its deny handling is unverified.
+Claude Code and Codex share one deny envelope, `hookSpecificOutput.permissionDecision = "deny"` with `permissionDecisionReason`; every other path prints nothing and exits 0, and the whole entry runs inside `catch_unwind`, so a defect allows the call rather than refusing an ordinary one; a failed owner handshake in the environment ends the outer hook with 0 as well, since exit 2 from a pre-tool hook would refuse the call.
+
+Each refusal appends one JSON line (pane id, agent kind, shape, runtime; never the command text, and the same file holds the `daemon.unreachable` lines) to `~/.hide/agent-hooks/spawn-guard.log` (private, capped at 256 KiB with one rotation) and echoes it on standard error, where a hook run by hand shows it.
+The per-call cost is what an ordinary shell call pays: the payload is read within 0.5 seconds and a byte test for `herdr` over the whole payload runs before anything is parsed or spawned, so a call whose payload does not mention `herdr` (its working directory and transcript path included, which a checkout named `herdr-ide` does, and then the call pays one JSON parse and the lexer as well) costs one process start (numbers in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-spawn-guard-hook-on-a-shell-call)).
+`hide-agent-hooks/tests/spawn_guard.rs` runs the helper beside a stand-in `hide` for each outcome above, and `src/spawn_guard.rs` holds the parser's table tests.
+
 ## Other agents: skill and guidance hook
 
 On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code and Codex) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice.
@@ -214,8 +245,8 @@ Every row gets the skill stub where the system column says so.
 
 | Agent | Skill folder (systems) | Hook | Herdr integration | Why, and the page that says so |
 | --- | --- | --- | --- | --- |
-| Claude Code | `~/.claude/skills` (all) | done: five-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
-| Codex | `~/.agents/skills` (macOS, Linux) | done: five-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
+| Claude Code | `~/.claude/skills` (all) | done: six-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
+| Codex | `~/.agents/skills` (macOS, Linux) | done: six-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
 | Gemini CLI | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | none: the pinned Herdr lists no Gemini CLI target, so its state is read from its screen | [skills](https://geminicli.com/docs/cli/skills/), hooks at geminicli.com/docs/hooks |
 | Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | `grok` | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
 | OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything | `opencode` | [skills](https://opencode.ai/docs/skills/) |
@@ -228,7 +259,8 @@ Each row also carries what Hide can do for that agent as a list of features (`hi
 | --- | --- | --- | --- | --- | --- |
 | `skill` | always | yes | yes | yes | yes |
 | `guidance` | Hide writes a guidance hook | yes | yes | no | yes |
-| `letters`, `memory`, `subagents` | the five-event hook, so `HookSupport::Part` | yes | no | no | no |
+| `letters`, `memory`, `subagents`, `spawn_guard` | the six-event hook, so `HookSupport::Part` | yes | no | no | no |
+| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no |
 | `herdr_integration` | the row has a Herdr target | yes | no | yes | yes |
 | `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no | no |
 
@@ -282,11 +314,11 @@ Starting the app-server also makes Codex do its own bookkeeping in `~/.codex` (i
 What is trusted is exactly the entry Hide wrote, and nothing else (`select_targets`):
 
 - Codex lists it from this account's `~/.codex/hooks.json` as a user hook that is not managed, so a project's hook, a plugin's and a managed one with the same command are not it;
-- its event is one Hide registers, its `command` is byte for byte the command Hide writes for that event with this kit's helper, and its matcher is the one Hide writes for it (none today; the writer and this check read it from one function);
+- its event is one Hide registers, its `command` is byte for byte the command Hide writes for that event with this kit's helper, and its matcher is the one Hide writes for it (`Bash` for `PreToolUse`, none for the other five; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind);
 - Codex does not trust it yet (`untrusted`, or `modified` after a change).
 
 Another tool's hook, an entry that carries Hide's marker over a different command, and any entry that is not like this are neither read nor changed: Codex still shows the review screen for them, and lists only them.
-The usual such hook is Herdr's own integration entry (`herdr integration install codex`, which the kit runs in the same pass), so on a Mac or device where that entry is new Codex's first start still shows "Hooks need review" with one hook, Herdr's, while Hide's hooks are already trusted and run; approving that screen once covers Herdr's hook only.
+The usual such hook is Herdr's own integration entry (`herdr integration install codex`, which the kit runs in the same pass), so on a Mac or device where that entry is new Codex's first start still shows "Hooks need review" with one hook, Herdr's, while Hide's hooks are already trusted and run; approving that screen once covers Herdr's hook only, and the review screen lists no entry for Hide's spawn guard.
 Hide writes `trusted_hash` and never `enabled`, so a hook the operator switched off in Codex's hook list stays off, and switching Hide's hook off there is how the operator opts out of one; switching Codex off in Settings, Agents takes Hide's entries out and Hide asks Codex for nothing.
 Removing Hide's hooks leaves its trust records in `config.toml`; each one matches only the same command and starts nothing by itself.
 Codex's `--dangerously-bypass-hook-trust` and `bypass_hook_trust` skip the review for every hook and are not used.

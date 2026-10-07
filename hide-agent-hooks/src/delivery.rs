@@ -171,7 +171,13 @@ struct Diagnostics {
     last: BTreeMap<String, u64>,
 }
 
-/// Eight fixed causes, private storage and a nonblocking cross-process lock.
+/// The fixed causes a hook may record: the delivery intake's eight and the
+/// spawn guard's one (`guard`: the daemon could not be asked).
+const CAUSES: [&str; 9] = [
+    "cli", "deadline", "format", "confirm", "ledger", "capacity", "identity", "stdout", "guard",
+];
+
+/// Fixed causes ([`CAUSES`]), private storage and a nonblocking cross-process lock.
 /// A hook with no pane can still record its failure without recording its cwd.
 pub fn diagnose(home: &Path, cause: &'static str) -> bool {
     diagnose_failure(home, &cause.into())
@@ -179,9 +185,23 @@ pub fn diagnose(home: &Path, cause: &'static str) -> bool {
 
 pub fn diagnose_failure(home: &Path, failure: &Failure) -> bool {
     let cause = failure.code;
-    const CAUSES: [&str; 8] = [
-        "cli", "deadline", "format", "confirm", "ledger", "capacity", "identity", "stdout",
-    ];
+    // Emit only after the cross-process claim is persisted. Damaged or
+    // unavailable throttle storage cannot authorize an unthrottled log.
+    if claim(home, cause) {
+        eprintln!(
+            "{}",
+            serde_json::json!({"component":"delivery_hook","kind":"intake.failed","code":cause,"cleanup_io_kind":failure.cleanup.map(|kind| format!("{kind:?}")),"diagnostic_saved":true})
+        );
+        true
+    } else {
+        false
+    }
+}
+
+/// Claims the right to record `cause` once per ten minutes, across processes.
+/// True only when this call persisted the claim; a cause outside [`CAUSES`], a
+/// busy lock and damaged or unavailable storage all answer false.
+pub(crate) fn claim(home: &Path, cause: &str) -> bool {
     if !CAUSES.contains(&cause) {
         return false;
     }
@@ -209,7 +229,7 @@ pub fn diagnose_failure(home: &Path, failure: &Failure) -> bool {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Diagnostics::default(),
             Err(error) => return Err(error),
         };
-        if state.last.len() > 8
+        if state.last.len() > CAUSES.len()
             || state
                 .last
                 .keys()
@@ -228,7 +248,7 @@ pub fn diagnose_failure(home: &Path, failure: &Failure) -> bool {
         {
             return Ok(false);
         }
-        if state.last.len() >= 8 && !state.last.contains_key(cause) {
+        if state.last.len() >= CAUSES.len() && !state.last.contains_key(cause) {
             return Err(std::io::Error::other("diagnostic capacity"));
         }
         state.last.insert(cause.to_owned(), now);
@@ -236,17 +256,7 @@ pub fn diagnose_failure(home: &Path, failure: &Failure) -> bool {
         fs::atomic::write_file(&path, &bytes, fs::Access::Private)?;
         Ok(true)
     })();
-    // Emit only after the cross-process claim is persisted. Damaged or
-    // unavailable throttle storage cannot authorize an unthrottled log.
-    if matches!(result, Ok(true)) {
-        eprintln!(
-            "{}",
-            serde_json::json!({"component":"delivery_hook","kind":"intake.failed","code":cause,"cleanup_io_kind":failure.cleanup.map(|kind| format!("{kind:?}")),"diagnostic_saved":true})
-        );
-        true
-    } else {
-        false
-    }
+    matches!(result, Ok(true))
 }
 
 fn diagnostic_path(home: &Path) -> PathBuf {

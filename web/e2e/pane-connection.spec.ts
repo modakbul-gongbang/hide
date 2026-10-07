@@ -25,16 +25,18 @@ type ProcessInfo = { result: { process_info: { foreground_processes: { argv?: st
 function installHook(home: string): void {
   const entry = (event: string) => [
     {
+      // The spawn guard's entry selects the shell tool and asks for no Memory.
+      ...(event === "PreToolUse" ? { matcher: "Bash" } : {}),
       hooks: [
         {
           type: "command",
-          command: `if [ -x '${HELPER}' ]; then exec '${HELPER}' hook --runtime claude-code --event ${event} --memory-injection --source hide-subagents@6; fi`,
+          command: `if [ -x '${HELPER}' ]; then exec '${HELPER}' hook --runtime claude-code --event ${event}${event === "PreToolUse" ? "" : " --memory-injection"} --source hide-subagents@6; fi`,
           timeout: 8,
         },
       ],
     },
   ];
-  const hooks = Object.fromEntries(["SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"].map((event) => [event, entry(event)]));
+  const hooks = Object.fromEntries(["SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "PreToolUse"].map((event) => [event, entry(event)]));
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({ hooks }));
 }
