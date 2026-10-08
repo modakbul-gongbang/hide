@@ -115,12 +115,16 @@ pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
 /// next events, so it does not have to survive a crash, and a sync inside
 /// the lock would make parallel subagent starts wait out the lock.
 pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCounters> {
-    if change == Change::None {
-        return Ok(read(home, pane_id));
-    }
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
         hide_platform::fs::private::create_dir_all(parent)?;
+    }
+    if change == Change::None {
+        // A pane no event has counted yet has nothing running.
+        return match read_settled(home, pane_id) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PaneCounters::default()),
+            settled => settled,
+        };
     }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
     let mut counters = read(home, pane_id);
