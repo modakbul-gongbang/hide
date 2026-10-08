@@ -1513,7 +1513,7 @@ Every supported agent has Herdr's integration, so no row says its status is judg
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Plugin: Outdated: …` for OpenCode's hook piece, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
-An agent that is on and found whose hook Hide could not put in says why in one muted line without Reinstall, since nothing is broken: its program has not created its configuration folder yet, or a file of that name is not Hide's (`Plugin: OpenCode has not created ~/.config/opencode yet; …`).
+An agent that is on and found whose hook Hide could not put in says why in one muted line without Reinstall, since nothing is broken: its program has not created its configuration folder yet, a file of that name is not Hide's, or Hide does not write that hook on this system (`Plugin: OpenCode has not created ~/.config/opencode yet; …`).
 A switch-off whose removal did not finish keeps the row from reading Off and says so in its own line.
 There is no row or switch for Codex per pane, no per-agent CLI group (that is Hide AI's) and no hooks diagnosis list: the row statuses are the diagnosis.
 Idle agents (`Sleep after`) and Starting work (`Link the issue in pull requests`) follow the list.

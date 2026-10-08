@@ -185,7 +185,7 @@ test("a slow, failing or garbled helper passes the prompt unchanged within its b
     const output = await prompt(hooks);
     const spent = Date.now() - started;
     assert.equal(output.parts.length, 1, JSON.stringify(prompt_answer));
-    assert.ok(spent < 6000, `${spent} ms for ${JSON.stringify(prompt_answer)}`);
+    assert.ok(spent < 3500, `${spent} ms for ${JSON.stringify(prompt_answer)}`);
   }
 });
 
@@ -256,23 +256,35 @@ test("a subagent's question call asks the Factory guard about the pane's root se
   assert.deepEqual(call.input, { session_id: "ses_root", tool: "question" });
 });
 
-test("past its session limit the plugin forgets finished children first and still counts and guides once", async () => {
+test("past its session limit the plugin forgets finished children, keeps a running one counted and guides once", async () => {
   answer({ start: { context: "HIDE-GUIDANCE" }, prompt: { context: "", letters: [] }, subagents: { reported: true } });
-  const hooks = await plugin();
+  const running = { ses_long: { type: "busy" } };
+  const hooks = await plugin(HERDR, client({}, running));
   await until("start");
   await hooks.event({ event: sample("session.created") });
   await prompt(hooks);
   const child = (id) => ({ type: "session.created", properties: { sessionID: id, info: { ...sample("session.created.child").properties.info, id } } });
   const status = (id, type) => ({ type: "session.status", properties: { sessionID: id, status: { type } } });
-  // More finished subagents than the plugin keeps, as a long-lived OpenCode runs over hours.
-  for (let index = 0; index < 600; index += 1) {
-    await hooks.event({ event: child(`ses_old${index}`) });
-    await hooks.event({ event: status(`ses_old${index}`, "busy") });
-    await hooks.event({ event: status(`ses_old${index}`, "idle") });
+  // A background subagent that runs all along, then more finished subagents than the plugin keeps.
+  await hooks.event({ event: child("ses_long") });
+  await hooks.event({ event: status("ses_long", "busy") });
+  // OpenCode publishes events without waiting for a plugin's handling, as here.
+  for (let index = 0; index < 560; index += 1) {
+    void hooks.event({ event: child(`ses_old${index}`) });
+    void hooks.event({ event: status(`ses_old${index}`, "busy") });
+    void hooks.event({ event: status(`ses_old${index}`, "idle") });
   }
+  // The turn ends: the event settles once its report is sent, so the last report is the state now.
+  await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_root", status: { type: "idle" } } } });
+  const reports = calls().filter((call) => call.operation === "subagents");
+  assert.deepEqual(reports.at(-1).input, { working: 1, done: 510 });
+  // A burst of changes costs a few reports, not one per change.
+  assert.ok(reports.length < 50, `${reports.length} reports`);
+
+  // A subagent started now is still counted.
   await hooks.event({ event: child("ses_new") });
   await hooks.event({ event: status("ses_new", "busy") });
-  await until("subagents", 1, (input) => input.working === 1);
+  assert.deepEqual(calls().filter((call) => call.operation === "subagents").at(-1).input, { working: 2, done: 509 });
 
   // The root's guidance was given once; its next prompt is not its first.
   const next = await prompt(hooks);

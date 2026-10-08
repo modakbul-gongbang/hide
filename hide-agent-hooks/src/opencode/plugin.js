@@ -108,6 +108,8 @@ function partId(state) {
 
 /** The start of a prompt, enough for Memory's retrieval, cut where JSON can still carry it. */
 function clip(text) {
+  // A lone surrogate anywhere would make the JSON the helper reads invalid.
+  if (typeof text.toWellFormed === "function") text = text.toWellFormed();
   if (text.length <= PROMPT_TEXT_LIMIT) return text;
   const end = PROMPT_TEXT_LIMIT - (/[\uD800-\uDBFF]/.test(text[PROMPT_TEXT_LIMIT - 1]) ? 1 : 0);
   return text.slice(0, end);
@@ -139,7 +141,7 @@ function remember(state, map, key, value, evictable = [() => true]) {
   map.delete(key);
   if (map.size >= SESSION_LIMIT) {
     const entries = [...map.entries()];
-    const oldest = evictable.map((rule) => entries.find(([, entry]) => rule(entry))).find(Boolean);
+    const oldest = evictable.map((rule) => entries.find(([name, entry]) => rule(entry, name))).find(Boolean);
     if (!oldest) {
       state.lost += 1;
       return;
@@ -150,20 +152,33 @@ function remember(state, map, key, value, evictable = [() => true]) {
   else map.set(key, value);
 }
 
-/** A finished child's line goes before a root's, and a root's only when no child's is left. */
-const PARENT_EVICTION = [(parent) => parent !== null, () => true];
+/**
+ * The session lines that may go at the limit: never the pane's root or a line a running child counts through,
+ * a finished child's before a root's, and a root's only when no child's is left.
+ */
+function parentEviction(state) {
+  const kept = new Set([state.root]);
+  for (const [child, status] of state.children) {
+    if (!status.busy) continue;
+    for (let current = child, depth = 0; current && depth < SESSION_LIMIT; depth += 1) {
+      kept.add(current);
+      current = state.parents.get(current);
+    }
+  }
+  return [(parent, key) => parent !== null && !kept.has(key), (parent, key) => !kept.has(key)];
+}
 
 /** Whether `sessionID` is a root session: known from `session.created`, else asked once. A prompted root becomes the newest entry. */
 async function rootSession(state, client, sessionID) {
   if (state.parents.has(sessionID)) {
     const parent = state.parents.get(sessionID);
-    remember(state, state.parents, sessionID, parent, PARENT_EVICTION);
+    remember(state, state.parents, sessionID, parent, parentEviction(state));
     return parent === null;
   }
   const answer = await withBudget(client.session.get({ path: { id: sessionID } }), LOOKUP_BUDGET_MS);
   const info = answer?.data;
   if (!info || info.id !== sessionID) return false;
-  remember(state, state.parents, sessionID, info.parentID ?? null, PARENT_EVICTION);
+  remember(state, state.parents, sessionID, info.parentID ?? null, parentEviction(state));
   return !info.parentID;
 }
 
@@ -179,7 +194,11 @@ function rootOf(state, sessionID) {
   return null;
 }
 
-/** Sends the pane's subagent counts when they changed, or always when `force`; calls run one at a time, in order. */
+/**
+ * Sends the pane's subagent counts when they changed, or always when `force`. One report runs at a time and only
+ * the newest waiting one follows it, so a burst of subagents costs two helper runs, not one per change. The
+ * promise settles once the counts known now have been sent.
+ */
 function publishCounts(state, force) {
   let working = 0;
   let done = 0;
@@ -189,13 +208,19 @@ function publishCounts(state, force) {
     else if (status.ran) done += 1;
   }
   const key = `${working}/${done}`;
-  if (!force && key === state.published) return state.counting;
+  if (!force && key === state.published) return state.counting ?? Promise.resolve();
   // Only a report Herdr took counts as published: a failed one is sent again with the next change, prompt or rest.
   state.published = key;
-  state.counting = state.counting.then(async () => {
-    const answer = await helper(state, "subagents", { working, done }, COUNT_BUDGET_MS);
-    if (answer?.reported !== true && state.published === key) state.published = null;
-  });
+  state.nextCount = { working, done, key };
+  state.counting ??= (async () => {
+    while (state.nextCount) {
+      const next = state.nextCount;
+      state.nextCount = null;
+      const answer = await helper(state, "subagents", { working: next.working, done: next.done }, COUNT_BUDGET_MS);
+      if (answer?.reported !== true && state.published === next.key) state.published = null;
+    }
+    state.counting = null;
+  })();
   return state.counting;
 }
 
@@ -210,16 +235,16 @@ async function sweep(state, client) {
     const now = running[child]?.type;
     if (now !== "busy" && now !== "retry") status.busy = false;
   }
-  await publishCounts(state, false);
 }
 
-function onEvent(state, client, event) {
+/** Applies one event; the promise settles once what it changed is reported (OpenCode does not wait for it). */
+async function onEvent(state, client, event) {
   const type = event?.type;
   const properties = event?.properties ?? {};
   if (type === "session.created") {
     const info = properties.info;
     if (!info?.id) return;
-    remember(state, state.parents, info.id, info.parentID ?? null, PARENT_EVICTION);
+    remember(state, state.parents, info.id, info.parentID ?? null, parentEviction(state));
     // A child still running is never forgotten: it would leave the working count while it works.
     if (info.parentID) remember(state, state.children, info.id, { busy: false, ran: false }, [(child) => !child.busy]);
     return;
@@ -232,10 +257,11 @@ function onEvent(state, client, event) {
       const busy = kind === "busy" || kind === "retry";
       child.busy = busy;
       child.ran ||= busy;
-      void publishCounts(state, false);
+      await publishCounts(state, false);
     } else if (sessionID === state.root && kind === "idle") {
       // Each turn's end reports again, as Claude Code's Stop does, so a Herdr that lost the pane's counts gets them back.
-      void sweep(state, client).then(() => publishCounts(state, true));
+      await sweep(state, client);
+      await publishCounts(state, true);
     }
     return;
   }
@@ -263,7 +289,6 @@ async function onPrompt(state, client, directory, input, output) {
   // Claude Code's SessionStart does for a new or resumed session; event order cannot hide it.
   const first = !state.guided.has(sessionID);
   state.root = sessionID;
-  void publishCounts(state, true);
   const prompt = clip(
     typed
       .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -271,13 +296,15 @@ async function onPrompt(state, client, directory, input, output) {
       .join("\n"),
   );
   const answer = await helper(state, "prompt", { session_id: sessionID, prompt, cwd: directory, first }, Math.max(0, deadline - Date.now()));
+  // After the prompt's own helper, so the report never shares its budget: each turn's start reports again.
+  void publishCounts(state, true);
   const sections = [];
-  if (first) {
+  // Guidance and the session-start Memory travel together: with no answer neither is given, and the next prompt asks again.
+  if (first && answer !== null) {
     const guidance = await withBudget(state.guidance, Math.max(0, deadline - Date.now()));
     if (typeof guidance?.context === "string" && guidance.context) sections.push(guidance.context);
     // Guidance still on its way is given to the next prompt instead.
-    // A prompt whose helper answered nothing has no session-start Memory yet: the next one asks again.
-    if (state.started && answer !== null) remember(state, state.guided, sessionID);
+    if (state.started) remember(state, state.guided, sessionID);
   }
   if (typeof answer?.context === "string" && answer.context) sections.push(answer.context);
   if (sections.length === 0) return;
@@ -327,7 +354,8 @@ export const HidePlugin = async ({ client, directory }) => {
     pending: new Map(),
     root: null,
     published: null,
-    counting: Promise.resolve(),
+    counting: null,
+    nextCount: null,
     idTime: 0,
     idCounter: 0,
     guidance: null,
@@ -340,7 +368,7 @@ export const HidePlugin = async ({ client, directory }) => {
   return {
     event: async ({ event }) => {
       try {
-        onEvent(state, client, event);
+        await onEvent(state, client, event);
       } catch {}
     },
     "chat.message": async (input, output) => {
