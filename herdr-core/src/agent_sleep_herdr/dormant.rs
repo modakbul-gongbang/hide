@@ -99,6 +99,7 @@ pub(crate) fn spawn_dormant_tab(
                 &work.record.kind,
                 &work.record.native_session_id,
                 Some(&work.record.cwd),
+                work.record.source_reference.as_ref(),
             );
             let result = if route.is_err() {
                 DormantTabOutcome::NotCreated("The saved conversation has no confirmed native route. Check its records before retrying; no tab was created.")
@@ -249,6 +250,7 @@ impl ApiConnector for CurrentWorkConnector {
                 &record.kind,
                 &record.native_session_id,
                 Some(&record.cwd),
+                record.source_reference.as_ref(),
             )
             .map_err(|reason| ApiError::Remote {
                 code: reason,
@@ -342,6 +344,7 @@ fn start_dormant(
                 &work.record.kind,
                 &work.record.native_session_id,
                 Some(&work.record.cwd),
+                work.record.source_reference.as_ref(),
             )
         },
     ) {

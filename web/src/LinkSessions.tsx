@@ -159,7 +159,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   const resumeLine = () => {
     const provider = resumeProvider(line.agent);
     if (!checkout || !provider) return;
-    start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === node ? undefined : line.device_id, provider, resumeSessionId: line.id, requestId }));
+    start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === node ? undefined : line.device_id, provider, resumeSessionId: line.id, resumeSessionPath: provider === "pi" ? line.path ?? undefined : undefined, requestId }));
   };
   const request = line.request ?? t("links.noRequest");
   return (

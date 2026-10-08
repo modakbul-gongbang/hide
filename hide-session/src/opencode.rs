@@ -287,6 +287,7 @@ pub(crate) fn read(
         confirmed: ConfirmedLabelSession {
             owner,
             native_session_id: Some(request.reference_value.clone()),
+            source_path: None,
             incarnation: format!("opencode:{created}"),
             bytes: count,
         },

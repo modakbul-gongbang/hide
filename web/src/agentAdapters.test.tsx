@@ -78,6 +78,7 @@ it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"]])("dispatches a canon
     expect(events.filter((event) => event.kind === "agent_start_in_checkout")).toHaveLength(1);
     expect(events.find((event) => event.kind === "agent_start_in_checkout")?.payload).toMatchObject({
       provider: canonical, checkout_path: checkout.path, resume_session_id: "session",
+      ...(canonical === "pi" ? { resume_session_path: "/sessions/session" } : {}),
     });
   } finally {
     await act(async () => root.unmount());

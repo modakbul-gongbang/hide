@@ -38,6 +38,7 @@ struct OverlayPane {
 struct ProvenLabel {
     owner: Option<String>,
     native_session_id: Option<String>,
+    native_source_path: Option<String>,
     proven_reference: Option<String>,
     /// `None` while the operator has turned agent summaries off (D-11): the
     /// row stands on its facts alone.
@@ -68,6 +69,7 @@ impl LabelOverlay {
                 let label = labels_shown.then(|| ProvenLabel {
                     owner: record.owner.clone(),
                     native_session_id: record.native_session_id.clone(),
+                    native_source_path: record.native_source_path.clone(),
                     proven_reference: record.proven_reference.clone(),
                     summary: summaries.then(|| Summary {
                         goal: record.goal.clone(),
@@ -150,6 +152,18 @@ impl LabelOverlay {
                         == label.owner.as_deref()
                 })
                 .cloned();
+            facts.native_reference = facts.native_session_id.as_ref().and_then(|_| {
+                if agent.agent.as_deref() == Some("pi") {
+                    label.native_source_path.as_ref().map(|path| {
+                        crate::sidebar::SessionAgentSessionPayload {
+                            kind: "path".into(),
+                            value: path.clone(),
+                        }
+                    })
+                } else {
+                    agent.agent_session.clone()
+                }
+            });
             facts.awaiting_operator = awaiting_operator;
             facts.user_turn = label.user_turn.as_ref().and_then(|(seq, fact)| {
                 (agent.state_change_seq == Some(*seq)).then(|| fact.clone())
@@ -178,6 +192,7 @@ impl LabelOverlay {
 /// The part of a session's facts a row is built from.
 fn row_facts(facts: &SessionFacts) -> RowFacts {
     RowFacts {
+        native_reference: None,
         native_session_id: None,
         native_title: facts.custom_title.clone().or_else(|| facts.title.clone()),
         operator_request: facts.operator_request.clone(),

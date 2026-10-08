@@ -1953,6 +1953,11 @@ impl Runtime {
                     && agent.state_change_seq == request.parent_state_change_seq
                     && agent.session_id.as_deref() == Some(request.session_id.as_str())
                     && agent.row_facts.is_some()
+                    && agent
+                        .row_facts
+                        .as_ref()
+                        .and_then(|facts| facts.native_reference.as_ref())
+                        == request.source_reference.as_ref()
             })
             && self
                 .snapshot

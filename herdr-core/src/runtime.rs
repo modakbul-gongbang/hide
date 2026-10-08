@@ -1056,6 +1056,7 @@ pub(crate) struct TaskAgentLaunch {
     pub(crate) task: u64,
     pub(crate) prompt: Option<String>,
     pub(crate) args: Vec<String>,
+    pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
 }
 
 pub struct Runtime {

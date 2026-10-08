@@ -243,7 +243,7 @@ pub struct SessionAgentPayload {
     pub(crate) facts: Option<crate::request_view::RowFacts>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize, Eq, PartialEq)]
 pub struct SessionAgentSessionPayload {
     pub kind: String,
     pub value: String,

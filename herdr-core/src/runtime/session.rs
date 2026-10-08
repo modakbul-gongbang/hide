@@ -4310,6 +4310,7 @@ impl Runtime {
                 .map(|prompt| prompt.trim().to_owned())
                 .filter(|prompt| !prompt.is_empty()),
             args,
+            resume_reference: None,
         });
     }
 
@@ -4328,6 +4329,43 @@ impl Runtime {
     /// The agent the task's worker should now start: the created pane, the
     /// chosen kind, its first prompt and its CLI arguments, once the creation
     /// is settled.
+    pub(crate) fn task_session_control_is_current(
+        &self,
+        id: u64,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+        generation: Option<u64>,
+    ) -> bool {
+        let Some(operation) = self
+            .snapshot
+            .task_operation
+            .as_ref()
+            .filter(|operation| operation.id == id)
+        else {
+            return false;
+        };
+        match operation.device_id.as_deref() {
+            Some(device) if device != self.node.as_str() => {
+                self.remote_coordinator_is_current(device, connector)
+            }
+            _ => {
+                generation == Some(self.live_generation)
+                    && self
+                        .live
+                        .as_ref()
+                        .is_some_and(|live| Arc::ptr_eq(&live.api_connector, connector))
+            }
+        }
+    }
+
+    pub(crate) fn task_session_control_generation(
+        &self,
+        id: u64,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+    ) -> Option<u64> {
+        self.task_session_control_is_current(id, connector, Some(self.live_generation))
+            .then_some(self.live_generation)
+    }
+
     pub(crate) fn pending_task_agent_start(&self, id: u64) -> Option<live::PendingAgentStart> {
         let operation = self.snapshot.task_operation.as_ref()?;
         if operation.id != id
@@ -4347,6 +4385,7 @@ impl Runtime {
             .as_ref()
             .filter(|launch| launch.task == id);
         Some(live::PendingAgentStart {
+            resume_reference: launch.and_then(|launch| launch.resume_reference.clone()),
             resume_scope: launch
                 .filter(|launch| {
                     operation.agent_kind.as_deref() == Some("pi")

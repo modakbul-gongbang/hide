@@ -92,7 +92,8 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
         .iter_mut()
         .find(|agent| agent.pane_id == SLEEPER)
         .unwrap()
-        .row_facts = Some(Default::default());
+        .row_facts
+        .get_or_insert_with(Default::default);
     let agent = runtime
         .snapshot
         .navigator
@@ -117,6 +118,10 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
         .ui_state
         .agent_sleep
         .admit_dormant(DormantRecord {
+            source_reference: agent
+                .row_facts
+                .as_ref()
+                .and_then(|facts| facts.native_reference.clone()),
             phase: DormantPhase::SavingClose,
             revision: 1,
             node_id: runtime.node.as_str().into(),
@@ -178,7 +183,15 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
 #[test]
 #[cfg(unix)]
 fn a_pi_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
-    for phase in ["none", "before-close", "before-wake", "before-start"] {
+    for phase in [
+        "none",
+        "before-close",
+        "before-wake",
+        "before-start",
+        "missing-source-before-close",
+        "missing-source-before-wake",
+        "missing-source-before-start",
+    ] {
         durable_dormant_journey("pi", phase);
     }
 }
@@ -213,6 +226,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     )
     .unwrap();
     let native_before = std::fs::read(&native_path).unwrap();
+    let other_before = [native_before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
     if kind == "pi" {
         runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
         runtime.live.as_mut().unwrap().node = runtime.own_node();
@@ -225,6 +239,10 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     initial.agents[0].agent = Some(kind.into());
     initial.agents[0].facts = Some(crate::request_view::RowFacts {
         native_session_id: Some(native_id.into()),
+        native_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+            kind: "path".into(),
+            value: native_path.display().to_string(),
+        }),
         ..Default::default()
     });
     runtime.ingest_session(Ok(initial));
@@ -243,12 +261,17 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     if interference == "before-close" {
         std::fs::copy(&native_path, native_folder.join("duplicate.jsonl")).unwrap();
     }
+    if interference == "missing-source-before-close" {
+        std::fs::write(native_folder.join("other.jsonl"), &other_before).unwrap();
+        std::fs::remove_file(&native_path).unwrap();
+    }
     assert_eq!(runtime.snapshot.ui_state.agent_sleep.dormant[&id].cwd, cwd);
     let path = runtime.state_path.clone();
     let saved_path = path.clone();
     let saved_id = id.clone();
     let saved_cwd = cwd.clone();
     let create_source = native_path.clone();
+    let create_other = other_before.clone();
     let (effects, observed) = std::sync::mpsc::channel();
     let mut created = false;
     let herdr = FakeHerdr::start("dormant-success", move |method, params| match method {
@@ -280,6 +303,10 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             serde_json::json!({"type":"session_snapshot","snapshot":dormant_wire_session(&saved_cwd, &tabs)})
         }
         "layout.apply" => {
+            if interference == "missing-source-before-start" {
+                std::fs::write(create_source.with_file_name("other.jsonl"), &create_other).unwrap();
+                std::fs::remove_file(&create_source).unwrap();
+            }
             if interference == "before-start" {
                 std::fs::copy(
                     &create_source,
@@ -339,7 +366,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     let shared = Arc::new(std::sync::Mutex::new(runtime));
     shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
     shared.lock().unwrap().write_ui_state().unwrap();
-    if interference == "before-close" {
+    if matches!(interference, "before-close" | "missing-source-before-close") {
         wait_for("refused Pi close", || {
             !shared
                 .lock()
@@ -362,7 +389,19 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             herdr.methods()
         );
         assert_eq!(row(&shared.lock().unwrap())["pane_id"], SLEEPER);
-        assert_eq!(std::fs::read(&native_path).unwrap(), native_before);
+        assert_eq!(
+            std::fs::read(if native_path.exists() {
+                native_path.clone()
+            } else {
+                native_folder.join("other.jsonl")
+            })
+            .unwrap(),
+            if interference.starts_with("missing-source") {
+                other_before
+            } else {
+                native_before
+            }
+        );
         return;
     }
     assert_eq!(
@@ -398,10 +437,14 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         if interference == "before-wake" {
             std::fs::copy(&native_path, native_folder.join("duplicate.jsonl")).unwrap();
         }
+        if interference == "missing-source-before-wake" {
+            std::fs::write(native_folder.join("other.jsonl"), &other_before).unwrap();
+            std::fs::remove_file(&native_path).unwrap();
+        }
         assert!(runtime.request_dormant_wake(&id));
         assert!(!runtime.request_dormant_wake(&id));
     }
-    if interference == "before-wake" {
+    if matches!(interference, "before-wake" | "missing-source-before-wake") {
         wait_for("refused Pi wake tab", || {
             shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
                 == DormantPhase::Failed
@@ -417,14 +460,26 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
                 .wake_pane_id
                 .is_none()
         );
-        assert_eq!(std::fs::read(&native_path).unwrap(), native_before);
+        assert_eq!(
+            std::fs::read(if native_path.exists() {
+                native_path.clone()
+            } else {
+                native_folder.join("other.jsonl")
+            })
+            .unwrap(),
+            if interference.starts_with("missing-source") {
+                other_before
+            } else {
+                native_before
+            }
+        );
         return;
     }
     assert_eq!(
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "create"
     );
-    if interference == "before-start" {
+    if matches!(interference, "before-start" | "missing-source-before-start") {
         wait_for("refused Pi wake start", || {
             shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
                 == DormantPhase::Failed
@@ -436,7 +491,19 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
                 .as_deref(),
             Some("w-order:t3:p")
         );
-        assert_eq!(std::fs::read(&native_path).unwrap(), native_before);
+        assert_eq!(
+            std::fs::read(if native_path.exists() {
+                native_path.clone()
+            } else {
+                native_folder.join("other.jsonl")
+            })
+            .unwrap(),
+            if interference.starts_with("missing-source") {
+                other_before
+            } else {
+                native_before
+            }
+        );
         return;
     }
     assert_eq!(

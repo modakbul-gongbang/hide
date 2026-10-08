@@ -2335,6 +2335,7 @@ pub(crate) fn confirm_session_launch(
     kind: &str,
     id: &str,
     cwd: Option<&str>,
+    source_reference: Option<&crate::sidebar::SessionAgentSessionPayload>,
 ) -> Result<(), String> {
     if hide_agent_adapter::canonical_kind(kind) != "pi" {
         return Ok(());
@@ -2348,15 +2349,20 @@ pub(crate) fn confirm_session_launch(
         Ok(())
     };
     check()?;
+    let source_reference = source_reference.ok_or("session_route_reference_unconfirmed")?;
+    if source_reference.kind != "path" {
+        return Err("session_route_reference_unconfirmed".into());
+    }
     let _: hide_session::session_activity::SessionActivity = crate::node_access::call_as(
         node,
         hide_node_link::protocol::Call::SessionActivity {
             request: hide_session::session_activity::SessionActivityRequest {
                 agent: hide_session::Agent::Pi,
-                reference_kind: "id".into(),
-                reference_value: id.into(),
+                reference_kind: source_reference.kind.clone(),
+                reference_value: source_reference.value.clone(),
                 cwd: Some(cwd.ok_or("session_route_cwd_unconfirmed")?.into()),
                 exact_route: true,
+                expected_id: Some(id.into()),
             },
         },
         Duration::from_secs(10),
@@ -2949,6 +2955,7 @@ fn run_agent_fork_with_registration(
             request.agent.kind(),
             &request.session_id,
             request.cwd.as_deref(),
+            request.source_reference.as_ref(),
         )?;
         current()
     };
@@ -4364,6 +4371,8 @@ mod tests {
             "duplicate-before",
             "duplicate-after",
             "execution-after",
+            "source-missing-before",
+            "source-missing-after",
         ] {
             let refused = case == "refused";
             let home = tempfile::tempdir().unwrap();
@@ -4385,14 +4394,20 @@ mod tests {
             .unwrap();
             let source = folder.join("native.jsonl");
             let before = std::fs::read(&source).unwrap();
+            let other_before = [before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
             if case == "duplicate-before" {
                 std::fs::copy(&source, folder.join("duplicate.jsonl")).unwrap();
+            }
+            if case == "source-missing-before" {
+                std::fs::write(folder.join("other.jsonl"), &other_before).unwrap();
+                std::fs::remove_file(&source).unwrap();
             }
             let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let observed_changed = Arc::clone(&changed);
             let node = hide_node::Local::new(Some(home.path().to_path_buf()));
             let expected_cwd = cwd.display().to_string();
             let tab_source = source.clone();
+            let tab_other = other_before.clone();
             let herdr = FakeHerdr::start_with_errors("pi-fork-tab", move |method, params| {
                 Ok(match method {
                     "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
@@ -4405,6 +4420,11 @@ mod tests {
                                 "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
                     }}),
                     "tab.create" => {
+                        if case == "source-missing-after" {
+                            std::fs::write(tab_source.with_file_name("other.jsonl"), &tab_other)
+                                .unwrap();
+                            std::fs::remove_file(&tab_source).unwrap();
+                        }
                         if case == "duplicate-after" {
                             std::fs::copy(
                                 &tab_source,
@@ -4443,6 +4463,10 @@ mod tests {
                 })
             });
             let request = ForkRequest {
+                source_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+                    kind: "path".into(),
+                    value: source.display().to_string(),
+                }),
                 parent_state_change_seq: None,
                 connection_generation: 0,
                 codex_daemon: Default::default(),
@@ -4467,9 +4491,18 @@ mod tests {
             );
             assert_eq!(result.is_err(), case != "success", "{case}");
             assert_eq!(
-                std::fs::read(&source).unwrap(),
-                before,
-                "fork never rewrites its source"
+                std::fs::read(if source.exists() {
+                    source.clone()
+                } else {
+                    folder.join("other.jsonl")
+                })
+                .unwrap(),
+                if case.starts_with("source-missing") {
+                    other_before
+                } else {
+                    before
+                },
+                "fork never rewrites either conversation"
             );
             if case == "success" {
                 assert_eq!(result.unwrap(), "child-pane");
@@ -4480,9 +4513,12 @@ mod tests {
                 "pane.process_info",
                 "agent.start",
             ];
-            if case == "duplicate-before" {
+            if case == "duplicate-before" || case == "source-missing-before" {
                 expected.clear();
-            } else if case == "duplicate-after" || case == "execution-after" {
+            } else if case == "duplicate-after"
+                || case == "execution-after"
+                || case == "source-missing-after"
+            {
                 expected.pop();
                 expected.push("pane.close");
             } else if refused {
@@ -4512,6 +4548,7 @@ mod tests {
             other => panic!("unexpected {other}"),
         });
         let request = ForkRequest {
+            source_reference: None,
             parent_state_change_seq: None,
             connection_generation: 0,
             codex_daemon: crate::codex_launch::CodexDaemon::Present,

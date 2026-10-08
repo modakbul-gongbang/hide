@@ -8,8 +8,9 @@
 //! checkpoint and hands it back on the next read. A read locates the session
 //! Herdr's reference names (a Claude Code or Codex file, an OpenCode
 //! database row), proves the provider's native owner before and after the
-//! read, and returns only conversation events, never injected scaffolding or
-//! a path. Failures are stable reason codes.
+//! read, and returns conversation events without injected scaffolding.
+//! Pi additionally returns its resolved source as an internal effect expectation;
+//! callers never project that path into UI snapshots. Failures are stable codes.
 //!
 //! What every adapter answers, and nothing more: the session's own title,
 //! each person's message with its time, images and Hide letter sender, each

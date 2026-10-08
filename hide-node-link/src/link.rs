@@ -232,11 +232,14 @@ fn label_answer(
     {
         let mut confirmed: RawReaderFields =
             serde_json::from_str(raw.get()).map_err(|_| invalid_label_answer())?;
-        if confirmed
-            .0
-            .remove("native_session_id")
-            .is_some_and(|raw| raw.get() != "null")
-        {
+        let mut supplied = false;
+        for name in ["native_session_id", "source_path"] {
+            supplied |= confirmed
+                .0
+                .remove(name)
+                .is_some_and(|raw| raw.get() != "null");
+        }
+        if supplied {
             refused.push("reader_identity_unsupported");
         }
         *raw = serde_json::value::to_raw_value(&confirmed.0).map_err(|_| invalid_label_answer())?;
@@ -585,7 +588,7 @@ mod tests {
         let peer = LabelPeer {
             features: serde_json::from_str(r#"[{"provider":"claude","features":["labels"]}]"#)
                 .unwrap(),
-            response: r#"{"confirmed":{"owner":"v1:fixture","native_session_id":{"future":true},"incarnation":"1:2","bytes":10},"events":[{"kind":"human","at_unix_ms":1,"text":"working request","offset":0}],"skipped_reasons":{}}"#,
+            response: r#"{"confirmed":{"owner":"v1:fixture","native_session_id":{"future":true},"source_path":{"future":true},"incarnation":"1:2","bytes":10},"events":[{"kind":"human","at_unix_ms":1,"text":"working request","offset":0}],"skipped_reasons":{}}"#,
         };
         let answer: LabelProbe = call_as(
             &peer,
@@ -597,6 +600,7 @@ mod tests {
         let confirmed = answer.confirmed.unwrap();
         assert_eq!(confirmed.owner, "v1:fixture");
         assert!(confirmed.native_session_id.is_none());
+        assert!(confirmed.source_path.is_none());
         assert_eq!(
             answer.skipped_reasons.get("reader_identity_unsupported"),
             Some(&1)

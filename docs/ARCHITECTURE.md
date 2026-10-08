@@ -643,8 +643,11 @@ The native default cwd directory is additionally required because Pi's ID lookup
 Filename suffixes never supply an ID, and links below home and custom session directories confer no read authority.
 Native IDs ending in `.jsonl` are refused locally because this CLI treats that argument as a path.
 Before a Pi close, fork, wake or archive resume, the current Identity/Activity-capable node audits its default directory for one safe exact-ID route.
+The label proof retains Pi's resolved source path even for an ID reference; it stays within authenticated reader answers, internal row facts and local durable intent, never the UI snapshot.
+Fork, sleeping records and queued archive resumes retain that original path with the expected native ID and checkout, and re-prove it instead of discovering a different same-ID file after a wait.
 The action-only audit shares the discovery entry cap and a 1 MiB aggregate header budget; duplicate IDs, linked entries and uninspectable native-resolver candidates refuse the effect.
 Queued starts repeat the route proof after shell readiness and before each actual start attempt; fork execution and task/helper identity must still match their admitted intent.
+Archive resume also checks the actual current control connector, local connection generation and file-node identity before creating topology and each start attempt; a retained retired connector cannot acquire authority from a replacement reader.
 Search, archive detail and Memory reads carry the catalog row's expected native ID and checkout, and refuse a replacement rather than deriving their requested owner from the new file.
 Labels, activity, project catalog, content search, archive detail, link sightings and local phone pages use the same before/after native proof; a phone idle poll and a cloned older-page reader cannot retain a replaced owner's history.
 Same-length reads compare the physical file stamp, failed Pi label reads revoke cached native authority, and link identity comes only from the proven first header even across incremental chunks.

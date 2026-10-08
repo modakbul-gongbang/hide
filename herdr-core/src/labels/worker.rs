@@ -803,6 +803,8 @@ impl LabelWorker {
         }
         changed |= record.native_session_id != transcript.confirmed.native_session_id;
         record.native_session_id = transcript.confirmed.native_session_id.clone();
+        changed |= record.native_source_path != transcript.confirmed.source_path;
+        record.native_source_path = transcript.confirmed.source_path.clone();
         record.read_reference = Some(reference.to_owned());
         record.checkpoint = Some(transcript.checkpoint.clone());
         if from_start || transcript.anchor.is_some() {

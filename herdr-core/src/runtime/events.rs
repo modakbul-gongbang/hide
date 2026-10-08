@@ -808,6 +808,9 @@ pub(super) struct AgentStartInCheckoutPayload {
     /// provider's own resume arguments, and no prompt.
     #[serde(default)]
     pub(super) resume_session_id: Option<String>,
+    /// The archived file selected by the caller; Pi proves it again off-lock.
+    #[serde(default)]
+    pub(super) resume_session_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2739,6 +2742,10 @@ impl Runtime {
                     parent_pane_id: pane_id.clone(),
                     agent: agent_kind,
                     session_id,
+                    source_reference: agent
+                        .row_facts
+                        .as_ref()
+                        .and_then(|facts| facts.native_reference.clone()),
                     cwd,
                     name,
                     codex_daemon: self.codex_daemon_for_pane(&pane_id),

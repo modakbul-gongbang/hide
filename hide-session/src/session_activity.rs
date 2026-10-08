@@ -21,6 +21,9 @@ pub struct SessionActivityRequest {
     /// Action-only proof that the exact native ID has one safe CLI route.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exact_route: bool,
+    /// An effect's admitted native owner, including when its reference is a path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +40,13 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         &request.reference_value,
         request.cwd.as_deref(),
     )?;
+    if request
+        .expected_id
+        .as_deref()
+        .is_some_and(|id| before.native_session_id.as_deref() != Some(id))
+    {
+        return Err("session_route_owner_changed".into());
+    }
     if request.exact_route {
         if request.agent != Agent::Pi {
             return Err("session_route_unsupported".to_owned());
@@ -59,7 +69,10 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         .as_millis()
         .try_into()
         .map_err(|_| "session_activity_mtime_invalid".to_owned())?;
-    let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
+    let reported_id = request
+        .expected_id
+        .as_deref()
+        .or_else(|| (request.reference_kind == "id").then_some(request.reference_value.as_str()));
     let after = crate::confirm_session_file(
         home,
         request.agent,
@@ -118,6 +131,7 @@ mod tests {
             reference_value: path.to_string_lossy().into_owned(),
             cwd: None,
             exact_route: false,
+            expected_id: None,
         }
     }
 
@@ -184,6 +198,7 @@ mod tests {
             reference_value: "missing-native".into(),
             cwd: None,
             exact_route: false,
+            expected_id: None,
         };
         assert_eq!(read(home.path(), &input).unwrap_err(), "session_capacity");
         assert!(
@@ -205,6 +220,7 @@ mod tests {
                 reference_value: "native-a".into(),
                 cwd: None,
                 exact_route: false,
+                expected_id: None,
             };
             let before = read(home.path(), &input).unwrap();
             use std::io::Write;

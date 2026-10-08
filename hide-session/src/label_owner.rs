@@ -38,8 +38,33 @@ pub struct ConfirmedLabelSession {
         deserialize_with = "deserialize_native_id"
     )]
     pub native_session_id: Option<String>,
+    /// Pi's resolved source, retained as an expectation for later effect proofs.
+    /// This stays on the authenticated reader boundary, never in UI snapshots.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_source_path"
+    )]
+    pub source_path: Option<String>,
     pub incarnation: String,
     pub bytes: u64,
+}
+
+fn valid_source_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 4096
+        && Path::new(path).is_absolute()
+        && !path.chars().any(char::is_control)
+}
+
+fn deserialize_source_path<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    let path = Option::<String>::deserialize(deserializer)?;
+    if path.as_deref().is_some_and(|path| !valid_source_path(path)) {
+        return Err(serde::de::Error::custom("label_session_path_invalid"));
+    }
+    Ok(path)
 }
 
 fn deserialize_native_id<'de, D: serde::Deserializer<'de>>(
@@ -198,6 +223,14 @@ fn confirm_metadata(
     Ok(ConfirmedLabelSession {
         owner,
         native_session_id: Some(id),
+        source_path: (agent == Agent::Pi)
+            .then(|| {
+                path.to_str()
+                    .filter(|path| valid_source_path(path))
+                    .map(str::to_owned)
+                    .ok_or_else(|| anyhow!("label_session_path_invalid"))
+            })
+            .transpose()?,
         incarnation: format!("{}:{}", physical.first, physical.second),
         bytes: metadata.len(),
     })

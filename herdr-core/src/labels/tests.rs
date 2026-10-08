@@ -1517,7 +1517,8 @@ fn a_failed_pi_reread_revokes_same_reference_authority_until_a_fresh_native_proo
         let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
             "pane_id":current.pane_id, "agent":current.agent, "agent_status":current.status,
             "state_change_seq":current.state_change_seq,
-            "agent_session":{"kind":"path", "value":path.display().to_string()}
+            "agent_session":{"kind":current.reference.as_ref().unwrap().0,
+                "value":current.reference.as_ref().unwrap().1}
         }]}))
         .unwrap();
         worker.overlay().apply(&mut payload);
@@ -1561,7 +1562,7 @@ fn a_failed_pi_reread_revokes_same_reference_authority_until_a_fresh_native_proo
             std::fs::remove_file(alias).unwrap();
         }
     }
-    std::fs::write(&path, original).unwrap();
+    std::fs::write(&path, &original).unwrap();
     current.state_change_seq += 1;
     observe(&mut worker, &current);
     settle(&mut worker, &woken);
@@ -1571,6 +1572,34 @@ fn a_failed_pi_reread_revokes_same_reference_authority_until_a_fresh_native_proo
             .native_session_id
             .as_deref(),
         Some("native-pi")
+    );
+    // An ID report resolves once at the actual reader boundary. Subsequent
+    // effects retain that selected path even before a failed reread arrives.
+    current.reference = Some(("id".into(), "native-pi".into()));
+    current.state_change_seq += 1;
+    observe(&mut worker, &current);
+    settle(&mut worker, &woken);
+    let admitted = facts(&worker, &current).unwrap().native_reference.unwrap();
+    assert_eq!(admitted.kind, "path");
+    assert_eq!(
+        admitted.value,
+        path.canonicalize().unwrap().display().to_string()
+    );
+    std::fs::write(
+        folder.join("other.jsonl"),
+        format!(
+            "{original}{}\n",
+            json!({
+                "type":"message", "id":"other-message", "message":{"role":"assistant",
+                "content":[{"type":"text", "text":"different history"}]}
+            })
+        ),
+    )
+    .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(
+        facts(&worker, &current).unwrap().native_reference,
+        Some(admitted)
     );
     assert_eq!(harness.backend.calls(), 0);
 }

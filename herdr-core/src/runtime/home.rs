@@ -78,7 +78,9 @@ impl Runtime {
             return true;
         }
         let target = if local {
-            self.live.as_ref().map(live::TabTarget::local)
+            self.live
+                .as_ref()
+                .map(|context| live::TabTarget::local(context, self.live_generation))
         } else {
             self.remote_controls
                 .get(device)
@@ -214,6 +216,7 @@ impl Runtime {
         // A registration that changed while this sync ran is caught up now.
         self.request_home_link_syncs();
         Some(live::CheckoutTabRequest {
+            resume_reference: None,
             id,
             resume_scope: None,
             checkout_path: synced.home,

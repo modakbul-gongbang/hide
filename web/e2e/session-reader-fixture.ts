@@ -9,9 +9,9 @@ export const PI_ID = "fixture-pi-native";
 export const PI_TITLE = "요청 보기 - Pi native title";
 
 /** A seed consumed and written by the fake CLI. No session file exists yet. */
-export function preparePiWriter(herdr: HerdrFixture): string {
+export function preparePiWriter(herdr: HerdrFixture, checkout = path.join(herdr.root, "fixture")): string {
   copyFixtureShim("claude-shim", path.join(herdr.root, "bin", fixtureExecutable("pi")));
-  const cwd = fs.realpathSync(path.join(herdr.root, "fixture"));
+  const cwd = fs.realpathSync(checkout);
   const encoded = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
   const session = path.join(herdr.env.HOME!, ".pi", "agent", "sessions", encoded, "timestamp_fixture.jsonl");
   fs.mkdirSync(path.dirname(session), { recursive: true });

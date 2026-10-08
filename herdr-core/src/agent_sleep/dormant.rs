@@ -100,6 +100,9 @@ pub struct DormantRecord {
     pub old_state_change_seq: Option<u64>,
     pub kind: String,
     pub native_session_id: String,
+    /// The exact reported locator admitted before closing the original pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     /// Provider/native reference proof, not an old terminal attestation.
     pub label_owner: String,
     pub identity_label: String,
@@ -127,6 +130,19 @@ impl DormantRecord {
     /// An over-bound capture is refused, never truncated into another owner.
     pub fn validate(&self) -> Result<(), &'static str> {
         self.validate_context()?;
+        if hide_agent_adapter::canonical_kind(&self.kind) == "pi"
+            && self.source_reference.as_ref().is_none_or(|reference| {
+                reference.value.len() > 4096
+                    || hide_session::label_reference_token(
+                        &self.kind,
+                        &reference.kind,
+                        &reference.value,
+                    )
+                    .is_none()
+            })
+        {
+            return Err("Sleeping-session source reference is unconfirmed");
+        }
         if self.old_state_change_seq.is_none() {
             return Err("Sleeping-session execution identity is unconfirmed");
         }
@@ -376,6 +392,7 @@ mod tests {
 
     fn record(pane: &str) -> DormantRecord {
         DormantRecord {
+            source_reference: None,
             phase: DormantPhase::SavingClose,
             revision: 1,
             node_id: "fixture-node".into(),

@@ -526,6 +526,7 @@ impl Runtime {
                 model: payload.model,
                 request_id: None,
                 resume_session_id: None,
+                resume_session_path: None,
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {

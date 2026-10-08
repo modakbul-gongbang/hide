@@ -43,6 +43,9 @@ pub(crate) struct PaneRecord {
     /// Native metadata proven for `owner`; missing on prior helper answers.
     #[serde(default)]
     pub(crate) native_session_id: Option<String>,
+    /// The Pi reader's resolved path, re-proved before any effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) native_source_path: Option<String>,
     /// The Herdr reference under which `owner` was last proven. A path
     /// reference names the same session as its id only once a read has
     /// shown it; an id reference proves itself.
@@ -154,6 +157,7 @@ impl PaneRecord {
     pub(crate) fn reset_session(&mut self, owner: Option<String>) {
         self.owner = owner;
         self.native_session_id = None;
+        self.native_source_path = None;
         self.proven_reference = None;
         self.goal = None;
         self.line.clear();

@@ -475,12 +475,15 @@ mod pi {
     fn exact_native_id_and_path_prove_the_same_owner_but_wrong_cwd_or_id_never_falls_back() {
         let mut native = Native::new();
         let by_id = native.read().unwrap();
+        assert_eq!(
+            by_id.confirmed.source_path.as_deref(),
+            native.path.canonicalize().unwrap().to_str()
+        );
         native.request.reference_kind = "path".to_owned();
         native.request.reference_value = native.path.display().to_string();
-        assert_eq!(
-            native.read().unwrap().confirmed.owner,
-            by_id.confirmed.owner
-        );
+        let by_path = native.read().unwrap();
+        assert_eq!(by_path.confirmed.owner, by_id.confirmed.owner);
+        assert_eq!(by_path.confirmed.source_path, by_id.confirmed.source_path);
         let other = native.home.path().join("other-checkout");
         fs::create_dir(&other).unwrap();
         native.request.cwd = Some(other.display().to_string());
@@ -669,6 +672,7 @@ mod pi {
                 reference_value: "pi-native-a".into(),
                 cwd: native.cwd.to_str().map(str::to_owned),
                 exact_route: true,
+                expected_id: None,
             },
         )
     }
@@ -692,6 +696,7 @@ mod pi {
             reference_value: duplicate.display().to_string(),
             cwd: native.cwd.to_str().map(str::to_owned),
             exact_route: true,
+            expected_id: None,
         };
         assert_eq!(
             hide_session::session_activity::read(native.home.path(), &by_path).unwrap_err(),
@@ -758,6 +763,7 @@ mod pi {
                     reference_value: native.path.display().to_string(),
                     cwd: native.cwd.to_str().map(str::to_owned),
                     exact_route: true,
+                    expected_id: None,
                 }
             )
             .unwrap_err(),

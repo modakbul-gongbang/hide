@@ -72,6 +72,7 @@ pub struct ForkRequest {
     pub parent_pane_id: String,
     pub agent: ForkableAgent,
     pub session_id: String,
+    pub(crate) source_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub cwd: Option<String>,
     /// The agent name Herdr will list the fork under, unique per fork and
     /// already inside Herdr's name rule (`fork_name`).
@@ -225,6 +226,7 @@ mod tests {
 
     fn request(agent: ForkableAgent) -> ForkRequest {
         ForkRequest {
+            source_reference: None,
             parent_state_change_seq: None,
             connection_generation: 0,
             codex_daemon: Default::default(),

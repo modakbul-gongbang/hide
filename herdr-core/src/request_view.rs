@@ -28,6 +28,8 @@ use crate::model::{GithubSnapshot, PullRequestBadge, PullRequestChecks, SidebarA
 /// while the pane's reference proves the session they were read from.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RowFacts {
+    /// The current reported locator whose native owner the overlay proved.
+    pub(crate) native_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     /// Available only from a current reference-proven native read.
     pub(crate) native_session_id: Option<String>,
     pub(crate) native_title: Option<String>,

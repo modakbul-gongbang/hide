@@ -15,7 +15,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { claudeProjects, startHerdr } from "./herdr-fixture";
+import { agentsIn, claudeProjects, startHerdr } from "./herdr-fixture";
+import { PI_ID, preparePiWriter } from "./session-reader-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
@@ -205,6 +206,52 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 60_000 });
     expect(sent.get("agent_start_in_checkout")).toBe(1);
     expect(last.get("agent_start_in_checkout")).toMatchObject({ checkout_path: tree, provider: "claude", resume_session_id: "s-maker" });
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+// B5/B8: the selected native file reaches the actual queued resume worker.
+test("a Pi archive resume keeps its selected source and uses the current control", async ({ page }) => {
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    fs.writeFileSync(path.join(herdr.root, "home", ".zshenv"), `export PATH="${path.join(herdr.root, "bin")}:$PATH"\n`);
+    const repo = path.join(fs.realpathSync(herdr.root), "repo");
+    const tree = path.join(fs.realpathSync(herdr.root), "repo-link");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "initial"]);
+    git(repo, ["worktree", "add", "-b", BRANCH, tree]);
+    const session = preparePiWriter(herdr, tree);
+    const source = fs.readFileSync(path.join(herdr.root, "pi-session-seed.jsonl"), "utf8") + `${JSON.stringify({
+      type: "message", id: "pr-tool-result", timestamp: at(CREATED + 1_000),
+      message: { role: "toolResult", toolCallId: "pr-tool", toolName: "bash", isError: false,
+        content: [{ type: "text", text: "https://github.com/acme/repo/pull/31" }], timestamp: CREATED + 1_000 },
+    })}\n`;
+    fs.writeFileSync(session, source);
+    herdr.run(["workspace", "create", "--cwd", repo, "--label", "repo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    const gh = fakeGh(herdr.root);
+    daemon = await startHided(herdr, "pi-archive", undefined, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await openProjectOverview(page, "repo");
+    const overview = page.locator("[data-overview-screen]");
+    await overview.locator('[data-lens-tile-button="prs"]').click();
+    await overview.locator('[data-pr-row="31"]').click({ timeout: 30_000 });
+    const archived = page.locator(`[data-pr-panel="31"] [data-link-session="${PI_ID}"]`);
+    await expect(archived).toBeVisible({ timeout: 60_000 });
+    await archived.hover();
+    await archived.locator('[data-link-button="resume"]').click();
+    await expect.poll(() => agentsIn(herdr, tree), { timeout: 60_000 }).toContain("pi");
+    await expect.poll(() => fs.existsSync(path.join(herdr.root, "pi-launches.jsonl"))).toBe(true);
+    const launches = fs.readFileSync(path.join(herdr.root, "pi-launches.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
+    expect(launches).toEqual([["--session", PI_ID]]);
+    expect(fs.readFileSync(session, "utf8")).toBe(source);
+    await screenshot(page, "pi-archive-resume");
   } finally {
     daemon?.stop();
     herdr.stop();

@@ -978,6 +978,7 @@ mod tests {
             reference_value: path.to_string_lossy().into_owned(),
             cwd: None,
             exact_route: false,
+            expected_id: None,
         };
         let answer = session_activity(home.path(), &request).unwrap();
         assert_eq!(answer.as_object().unwrap().len(), 2);

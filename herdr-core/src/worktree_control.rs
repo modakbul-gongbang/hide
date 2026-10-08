@@ -69,6 +69,7 @@ impl WorktreeTarget {
 #[derive(Clone)]
 pub struct TabTarget {
     connector: Arc<dyn ApiConnector>,
+    connection_generation: Option<u64>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     /// The node whose PATH must hold the chosen agent, asked before Herdr
@@ -77,12 +78,13 @@ pub struct TabTarget {
 }
 
 impl TabTarget {
-    pub(crate) fn local(context: &LiveContext) -> Self {
+    pub(crate) fn local(context: &LiveContext, generation: u64) -> Self {
         Self {
             connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
             agent_node: Some(Arc::clone(&context.node)),
+            connection_generation: Some(generation),
         }
     }
 
@@ -92,7 +94,18 @@ impl TabTarget {
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
             agent_node: None,
+            connection_generation: None,
         }
+    }
+
+    fn check_current(&self, id: u64) -> Result<(), String> {
+        let runtime = self.runtime.upgrade().ok_or("runtime stopped")?;
+        let runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
+        if !runtime.task_session_control_is_current(id, &self.connector, self.connection_generation)
+        {
+            return Err("session_resume_control_changed".into());
+        }
+        Ok(())
     }
 }
 
@@ -726,11 +739,12 @@ fn spawn_worktree_task(
                 context.notifier.notify();
             }
             start_task_agent(
-                context.connector.as_ref(),
+                &context.connector,
                 &context.runtime,
                 &context.notifier,
                 context.local.then_some(context.host.as_ref()),
                 request.id,
+                &|| Ok(()),
             );
         })
         .map(|_| ())
@@ -908,6 +922,7 @@ pub struct CheckoutTabRequest {
     pub label: String,
     pub host: crate::checkout_owner::TabHost,
     pub resume_scope: Option<hide_session::SessionReadScope>,
+    pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
 }
 
 /// What the task's worker starts once the creation is settled: the pane, the
@@ -919,6 +934,7 @@ pub struct PendingAgentStart {
     pub prompt: Option<String>,
     pub args: Vec<String>,
     pub resume_scope: Option<hide_session::SessionReadScope>,
+    pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
@@ -943,11 +959,12 @@ const AGENT_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 /// the answer back on its own axis. The creation was already published, so a
 /// failure here never hides the worktree or the pane.
 fn start_task_agent(
-    connector: &dyn ApiConnector,
+    connector: &Arc<dyn ApiConnector>,
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
+    current: &dyn Fn() -> Result<(), String>,
 ) {
     let Some(runtime) = runtime.upgrade() else {
         return;
@@ -959,6 +976,10 @@ fn start_task_agent(
     let Some(start) = pending else {
         return;
     };
+    let generation = runtime
+        .lock()
+        .ok()
+        .and_then(|runtime| runtime.task_session_control_generation(id, connector));
     let reader = start
         .resume_scope
         .as_ref()
@@ -969,12 +990,20 @@ fn start_task_agent(
         Ok(reader) => {
             let expected = start.clone();
             launch_with_prompt_checked(
-                connector,
+                connector.as_ref(),
                 reader.as_deref().or(agent_node),
                 id,
                 start,
                 &|| {
                     if let Some(reader) = reader.as_ref() {
+                        current()?;
+                        if !runtime
+                            .lock()
+                            .map_err(|_| "runtime unavailable")?
+                            .task_session_control_is_current(id, connector, generation)
+                        {
+                            return Err("session_resume_control_changed".into());
+                        }
                         let pending = runtime
                             .lock()
                             .map_err(|_| "runtime unavailable")?
@@ -1031,6 +1060,7 @@ fn launch_with_prompt_checked(
         mut args,
         codex_daemon,
         resume_scope,
+        resume_reference,
     } = start;
     if hide_agent_adapter::canonical_kind(&kind) == "pi"
         && args.first().map(String::as_str) == Some("--session")
@@ -1065,6 +1095,7 @@ fn launch_with_prompt_checked(
                     &kind,
                     &scope.id,
                     Some(&scope.cwd),
+                    resume_reference.as_ref(),
                 )?;
             }
             current()
@@ -1121,11 +1152,12 @@ pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), St
         .name("herdr-core-task-agent-start".into())
         .spawn(move || {
             start_task_agent(
-                context.connector.as_ref(),
+                &context.connector,
                 &context.runtime,
                 &context.notifier,
                 context.local.then_some(context.host.as_ref()),
                 id,
+                &|| Ok(()),
             )
         })
         .map(|_| ())
@@ -1236,12 +1268,28 @@ pub fn spawn_checkout_tab_create(
 fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
     let result = (|| {
         if let Some(scope) = request.resume_scope.as_ref() {
+            target.check_current(request.id)?;
             let runtime = target.runtime.upgrade().ok_or("runtime stopped")?;
             let node = task_session_node(&runtime, request.id)?;
-            crate::live::confirm_session_launch(node.as_ref(), "pi", &scope.id, Some(&scope.cwd))?;
+            crate::live::confirm_session_launch(
+                node.as_ref(),
+                "pi",
+                &scope.id,
+                Some(&scope.cwd),
+                request.resume_reference.as_ref(),
+            )?;
             if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
                 return Err("session_resume_reader_changed".into());
             }
+            target.check_current(request.id)?;
+            return create_checkout_tab(
+                &CurrentTaskConnector {
+                    target: target.clone(),
+                    id: request.id,
+                    node,
+                },
+                request,
+            );
         }
         create_checkout_tab(target.connector.as_ref(), request)
     })();
@@ -1256,12 +1304,48 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
     drop(runtime);
     target.notifier.notify();
     start_task_agent(
-        target.connector.as_ref(),
+        &target.connector,
         &target.runtime,
         &target.notifier,
         target.agent_node.as_deref(),
         request.id,
+        &|| target.check_current(request.id),
     );
+}
+
+/// Topology reads and opening an SSH stream can wait. Recheck the same
+/// control and file-node pair before and after every connection, including
+/// the mutation request after those reads. These checks do no file I/O.
+struct CurrentTaskConnector {
+    target: TabTarget,
+    id: u64,
+    node: Arc<dyn crate::node_access::NodeLink>,
+}
+
+impl CurrentTaskConnector {
+    fn check(&self) -> Result<(), ApiError> {
+        let check = || -> Result<(), String> {
+            self.target.check_current(self.id)?;
+            let runtime = self.target.runtime.upgrade().ok_or("runtime stopped")?;
+            if !Arc::ptr_eq(&self.node, &task_session_node(&runtime, self.id)?) {
+                return Err("session_resume_reader_changed".into());
+            }
+            Ok(())
+        };
+        check().map_err(|code| ApiError::Remote {
+            code,
+            message: "The session execution changed; refresh before retrying".into(),
+        })
+    }
+}
+
+impl ApiConnector for CurrentTaskConnector {
+    fn connect(&self) -> Result<Box<dyn hide_herdr_client::ApiStream>, ApiError> {
+        self.check()?;
+        let stream = self.target.connector.connect()?;
+        self.check()?;
+        Ok(stream)
+    }
 }
 
 fn task_session_node(
@@ -3468,6 +3552,10 @@ mod tests {
         std::fs::copy(&path, folder.join("duplicate.jsonl")).unwrap();
         let node = hide_node::Local::new(Some(home.path().to_path_buf()));
         let make = || PendingAgentStart {
+            resume_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+                kind: "path".into(),
+                value: path.display().to_string(),
+            }),
             pane_id: "w1:p1".into(),
             kind: "pi".into(),
             prompt: None,
@@ -3490,6 +3578,21 @@ mod tests {
             TaskAgentOutcome::Failed("session_resume_scope_required".into())
         );
         std::fs::remove_file(folder.join("duplicate.jsonl")).unwrap();
+        let other_history = format!(
+            "{header}{}\n",
+            json!({"type":"message", "id":"other-message", "message":{"role":"assistant", "content":[{"type":"text", "text":"different history"}]}})
+        );
+        std::fs::write(folder.join("other.jsonl"), &other_history).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            launch_with_prompt(&server, Some(&node), 7, make()),
+            TaskAgentOutcome::Failed("session_route_unconfirmed".into())
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("other.jsonl")).unwrap(),
+            other_history
+        );
+        std::fs::remove_file(folder.join("other.jsonl")).unwrap();
         std::fs::write(&path, header.replace("native-pi", "native-pi-prefix")).unwrap();
         assert_eq!(
             launch_with_prompt(&server, Some(&node), 7, make()),
@@ -3533,6 +3636,7 @@ mod tests {
                 None,
                 7,
                 PendingAgentStart {
+                    resume_reference: None,
                     resume_scope: None,
                     pane_id: "w1:p1".into(),
                     kind: kind.into(),
@@ -3571,6 +3675,7 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "codex".into(),
@@ -3608,6 +3713,7 @@ mod tests {
             Some(&node),
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
@@ -3642,6 +3748,7 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "codex".into(),
@@ -3672,6 +3779,7 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
@@ -3704,6 +3812,7 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
@@ -3731,6 +3840,7 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
@@ -3759,6 +3869,7 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
                 resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
