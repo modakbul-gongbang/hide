@@ -11,7 +11,7 @@ use serde_json::json;
 
 use hide_agent_adapter::Capability;
 
-use super::{Engine, Purpose, Reply, TEXT_LIMIT, refuse};
+use super::{Engine, Purpose, Reply, TEXT_LIMIT, attached_prd, refuse};
 use crate::adapters::{EnvSignal, Failure};
 use crate::judgment::{
     self, Classification, DecisionRequest, Judgment, JudgmentInput, JudgmentOutcome, Priority,
@@ -183,11 +183,7 @@ impl Engine {
             .skip(skip)
             .map(|d| format!("{}: {}", d.by, judgment::cut(&d.text, 600)))
             .collect();
-        let attachment = task
-            .attachments
-            .last()
-            .and_then(|a| std::fs::read_to_string(&a.path).ok());
-        (task.card.clone(), decisions, attachment)
+        (task.card.clone(), decisions, attached_prd(task))
     }
 
     fn set_routing(

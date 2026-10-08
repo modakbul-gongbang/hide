@@ -1965,10 +1965,7 @@ impl Engine {
         } else {
             Vec::new()
         };
-        let attachment = task
-            .attachments
-            .last()
-            .and_then(|a| std::fs::read_to_string(&a.path).ok());
+        let attachment = attached_prd(&task);
         let other_tasks = self
             .tasks_of(factory)
             .filter(|other| other.id != id && other.state != TaskState::Cancelled)
@@ -6909,6 +6906,14 @@ fn extract_criteria(body: &str) -> Vec<String> {
         .collect()
 }
 
+/// The text of a Task's latest attached PRD, the private copy in the
+/// Factory's own store; the one place the engine reads that file.
+pub(crate) fn attached_prd(task: &Task) -> Option<String> {
+    task.attachments
+        .last()
+        .and_then(|a| std::fs::read_to_string(&a.path).ok())
+}
+
 /// The marker that lets an issue write converge on retry (B73).
 pub fn task_marker(factory: &Factory, task: &Task) -> String {
     format!("<!-- hide-factory: {}/{} -->", factory.id, task.id)
@@ -6930,10 +6935,7 @@ pub fn issue_body(task: &Task, factory: &Factory) -> String {
         }
     }
     if factory.config.prd_in_issue
-        && let Some(text) = task
-            .attachments
-            .last()
-            .and_then(|a| std::fs::read_to_string(&a.path).ok())
+        && let Some(text) = attached_prd(task)
     {
         body.push_str("\n## PRD\n");
         body.push_str(&judgment::cut(&text, 48 * 1024));
