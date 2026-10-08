@@ -587,31 +587,37 @@ fn a_refused_device_registration_is_logged_with_its_reason() {
     assert_eq!(refusal["message"], "Device studio is already registered");
 }
 
-/// A device id holding `:pane:` would let one device's pane ids read as
-/// another's (`remote:a:pane:b:pane:w1`): registering one is refused with
-/// `device.invalid`, and one already in the UI state is never connected,
-/// logged with its id and reason and shown as unavailable, while the
-/// devices beside it still connect.
+/// A device id holding `:` could hold `:pane:` or end in `:pane`, and one
+/// device's pane ids would read as another's (`remote:x:pane:pane:w1` as
+/// `x`'s): registering one is refused with `device.invalid`, and one already
+/// in the UI state is never connected, logged with its id and reason and
+/// shown as unavailable, while the devices beside it still connect.
 #[test]
-fn a_device_id_holding_the_pane_mark_is_refused_and_never_connected() {
+fn a_device_id_holding_a_colon_is_refused_and_never_connected() {
     let mut runtime = runtime();
-    assert!(register_device(&mut runtime, "a", "a-host"));
-    let (_, records) = crate::diagnostics::capture(|| {
-        assert!(register_device(&mut runtime, "a:pane:b", "b-host"));
-    });
-    assert!(records.iter().any(
-        |record| record["kind"] == "error.reported" && record["error_kind"] == "device.invalid"
-    ));
+    assert!(register_device(&mut runtime, "x", "x-host"));
+    for id in ["x:pane", "x:pane:b"] {
+        let (_, records) = crate::diagnostics::capture(|| {
+            assert!(register_device(&mut runtime, id, "b-host"));
+        });
+        assert!(
+            records
+                .iter()
+                .any(|record| record["kind"] == "error.reported"
+                    && record["error_kind"] == "device.invalid"),
+            "{id}"
+        );
+    }
     assert!(
         runtime
             .snapshot()
             .ui_state
             .device_registrations
             .iter()
-            .all(|device| device.id != "a:pane:b")
+            .all(|device| !device.id.contains(':'))
     );
 
-    for (id, alias) in [("a:pane:b", "b-host"), ("studio", "studio-host")] {
+    for (id, alias) in [("x:pane", "b-host"), ("studio", "studio-host")] {
         runtime
             .snapshot
             .ui_state
@@ -629,18 +635,18 @@ fn a_device_id_holding_the_pane_mark_is_refused_and_never_connected() {
     });
     assert!(records.iter().any(|record| {
         record["kind"] == "device.connect_failed"
-            && record["target"] == "a:pane:b"
+            && record["target"] == "x:pane"
             && record["message"]
                 .as_str()
-                .is_some_and(|message| message.contains(":pane:"))
+                .is_some_and(|message| message.contains("contains \":\""))
     }));
-    assert!(!runtime.remote_connections.contains_key("a:pane:b"));
-    let row = device(&runtime, "a:pane:b");
+    assert!(!runtime.remote_connections.contains_key("x:pane"));
+    let row = device(&runtime, "x:pane");
     assert_eq!(row.state, "unavailable");
     assert!(
         row.message
             .as_deref()
-            .is_some_and(|message| message.contains(":pane:")),
+            .is_some_and(|message| message.contains("contains \":\"")),
         "{:?}",
         row.message
     );

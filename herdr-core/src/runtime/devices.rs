@@ -110,7 +110,7 @@ impl Runtime {
             // wrote into the UI state, is refused here too: its panes' ids
             // would overlap another device's.
             if !hide_node_link::terminal::device_id_is_unambiguous(&device_id) {
-                return Err("This device's id contains \":pane:\", so its panes cannot be told apart from another device's; remove it and register it under another id".to_owned());
+                return Err("This device's id contains \":\", so its panes cannot be told apart from another device's; remove it and register it under another id".to_owned());
             }
             let home_path = self.home_path.as_ref().ok_or_else(|| {
                 "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
