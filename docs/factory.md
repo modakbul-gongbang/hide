@@ -322,7 +322,8 @@ The diagnosis answers one of three:
 - **Stopped.** The Task stops as "no report" with the diagnosis as one line under it.
 
 A worker that reports in the meantime ends the sequence, and an agent that declares neither a next-prompt letter nor a resume is diagnosed at once.
-With Hide AI off, at the daily cap or with the Factory paused, there is no diagnosis and the Task stops for a person.
+With Hide AI off or at the daily cap there is no diagnosis and the Task stops for a person.
+A paused Factory does not watch its workers' rests at all; a diagnosis that answers after the pause is set aside, and resuming reads each rest from the start.
 The wake and the diagnosis stay on the stopped Task for its page, and a retry, a resume or a new start clears them.
 
 **A vanished worker.**
@@ -335,8 +336,9 @@ An approval merges through the path `hide factory merge` takes, with the pre-mer
 In 직접 and 함께 a risk path always waits for a person.
 
 **Pausing a Factory.**
-`hide factory pause --factory` stops the Factory's starts, judgments and auto merges and puts each running worker to sleep where it is; a request that arrives meanwhile goes to a person.
-`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile and reviews the cards that arrived.
+`hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends; a request that arrives meanwhile goes to a person.
+A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing, and a risk-path approval that answers after the pause merges nothing.
+`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path.
 
 **The Factory AI and the workers.**
 `factory_ai` chooses the agent, and `factory_ai_model` and `factory_ai_effort` its model and effort, that run every judgment of this Factory; unset, the Factory uses the agent Settings › Hide AI chose.

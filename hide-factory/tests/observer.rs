@@ -466,6 +466,38 @@ fn an_assist_wrong_card_offers_the_fix_as_a_choice() {
     assert_eq!(child.proposed_by.as_deref(), Some(t.as_str()));
 }
 
+#[test]
+fn factory_ai_makes_no_task_from_a_task_that_was_itself_proposed() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    let t = h.ready("Store", &[]);
+    h.world().observer.push_back(fix("new_task"));
+    block(&mut h, &f, &t, "This needs a migration first?");
+    h.engine.tick();
+    let child = h
+        .engine
+        .tasks_of(&f)
+        .find(|task| task.id != t)
+        .expect("Factory AI made a Task")
+        .id
+        .clone();
+    tick_until_state(&mut h, &f, &child, TaskState::Running);
+    // The Task Factory AI made asks for one more: a person decides (B30 depth rule).
+    h.world().observer.push_back(fix("new_task"));
+    block(&mut h, &f, &child, "And another migration?");
+    h.engine.tick();
+    assert_eq!(h.engine.tasks_of(&f).count(), 2, "no grandchild");
+    assert!(
+        inbox(&mut h)["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["task"] == child.as_str() && item["group"] == "answer"),
+        "the request waits for a person"
+    );
+}
+
 // ------------------------------------------------------------- risk merges
 
 fn risk_only(h: &mut Bench, f: &str, title: &str) -> String {
@@ -512,6 +544,23 @@ fn an_autonomous_factory_lets_the_observer_approve_a_lone_risk_path() {
             .iter()
             .any(|item| item["notice"] == "ai_risk_merge")
     );
+}
+
+#[test]
+fn a_risk_merge_approved_after_the_mode_left_autonomous_does_not_merge() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    h.world().risk_merge = Some(json!({"approve": true, "reason": "카드 범위"}));
+    let t = risk_only(&mut h, &f, "Infra");
+    tick_until_state(&mut h, &f, &t, TaskState::MergeWaiting);
+    mode(&mut h, "assist");
+    let attempts = h.world().merge_attempts;
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
+    assert_eq!(h.world().merge_attempts, attempts);
 }
 
 #[test]
@@ -801,6 +850,76 @@ fn a_paused_factory_starts_nothing_asks_no_ai_and_delivers_answers_on_resume() {
             .any(|(task, body)| *task == running && body.contains("approve"))
     );
     tick_until_state(&mut h, &f, &waiting, TaskState::Running);
+}
+
+#[test]
+fn a_task_reported_while_its_factory_is_paused_is_checked_on_resume_and_merges_only_then() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Reported while paused", &[]);
+    h.op(Command::PauseFactory { project: None });
+    // The worker's turn was still running: it reports after the pause.
+    h.done(&f, &t);
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    let task = h.task(&f, &t);
+    assert!(!task.gates.contains(&Gate::CheckFailed), "{:?}", task.gates);
+    assert_eq!(task.state, TaskState::Verifying);
+    let drift = |h: &Bench| {
+        h.world().judged.iter().any(|j| {
+            matches!(j.input, JudgmentInput::Drift { .. }) && j.task.as_deref() == Some(t.as_str())
+        })
+    };
+    assert!(!drift(&h), "no check is asked while paused");
+    h.op(Command::ResumeFactory { project: None });
+    for _ in 0..10 {
+        h.engine.tick();
+        if matches!(h.state(&f, &t), TaskState::Landed | TaskState::Done) {
+            break;
+        }
+    }
+    assert!(drift(&h));
+    let task = h.task(&f, &t);
+    assert!(
+        matches!(task.state, TaskState::Landed | TaskState::Done),
+        "{:?} {:?}",
+        task.state,
+        task.gates
+    );
+}
+
+#[test]
+fn a_risk_merge_approved_after_the_factory_paused_waits_for_the_resume() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    h.world().risk_merge = Some(json!({"approve": true, "reason": "카드 범위"}));
+    let t = risk_only(&mut h, &f, "Infra");
+    // The merge judgment is asked; the Factory pauses before its answer.
+    tick_until_state(&mut h, &f, &t, TaskState::MergeWaiting);
+    h.op(Command::PauseFactory { project: None });
+    let attempts = h.world().merge_attempts;
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
+    assert_eq!(
+        h.world().merge_attempts,
+        attempts,
+        "nothing merges while paused"
+    );
+    h.op(Command::ResumeFactory { project: None });
+    for _ in 0..10 {
+        h.engine.tick();
+        if matches!(h.state(&f, &t), TaskState::Landed | TaskState::Done) {
+            break;
+        }
+    }
+    assert!(matches!(
+        h.state(&f, &t),
+        TaskState::Landed | TaskState::Done
+    ));
 }
 
 #[test]

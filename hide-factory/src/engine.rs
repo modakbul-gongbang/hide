@@ -98,6 +98,8 @@ pub const MERGE_UNNAMED_LIMIT_MS: u64 = 10 * 60_000;
 const PUBLISH_RETRY_MS: u64 = 60_000;
 /// A GitHub Task's report whose commits are not pushed yet.
 const PUBLISH_PENDING: &str = "publish_pending";
+/// A reported Task whose checks wait for its paused Factory to resume (D-48).
+const CHECKS_DEFERRED: &str = "checks_deferred";
 const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 
 struct VerifyState {
@@ -3161,6 +3163,18 @@ impl Engine {
         let Some(f) = self.factories.get(factory).cloned() else {
             return;
         };
+        // A paused Factory asks its AI nothing, and a check it cannot ask yet
+        // is not a failed one: it runs when the Factory resumes (D-48, D-49).
+        if f.paused {
+            self.with_task(factory, id, |task| {
+                task.writes.insert(CHECKS_DEFERRED.to_owned());
+            });
+            self.record(factory, Some(id), "checks.deferred", json!({}));
+            return;
+        }
+        self.with_task(factory, id, |task| {
+            task.writes.remove(CHECKS_DEFERRED);
+        });
         // A diff that cannot be read gives the checks nothing to judge; that
         // is a check that cannot run, never a pass (B68).
         let diff = match self.ports.merge.diff_text(&f, &task) {
@@ -3467,7 +3481,7 @@ impl Engine {
         if task.state != TaskState::Verifying {
             return;
         }
-        if task.writes.contains(PUBLISH_PENDING) {
+        if task.writes.contains(PUBLISH_PENDING) || task.writes.contains(CHECKS_DEFERRED) {
             return;
         }
         let key = (factory_id.to_owned(), id.to_owned());

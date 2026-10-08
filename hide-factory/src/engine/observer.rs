@@ -491,10 +491,13 @@ impl Engine {
                 )
             }
             ObserverProposal::NewTask { card, prerequisite } => {
-                // At the new-Task cap the Observer applies nothing (D-38).
+                // At the new-Task cap the Observer applies nothing (D-38),
+                // and a Task that was itself proposed or started by autonomy
+                // proposes no Task, as a worker's own proposal is refused.
                 if observer.is_some()
-                    && task.new_tasks >= config.new_task_limit
-                    && !task.new_task_cap_extended
+                    && ((task.new_tasks >= config.new_task_limit && !task.new_task_cap_extended)
+                        || task.proposed_by.is_some()
+                        || task.autonomy.is_some())
                 {
                     return false;
                 }
@@ -922,6 +925,18 @@ impl Engine {
                 recovery.diagnosing = false;
             }
         });
+        if self.factories.get(factory).is_some_and(|f| f.paused) {
+            // Its worker sleeps until the Factory resumes, which reads the
+            // rest again from the start (D-48).
+            self.with_task(factory, id, |t| t.recovery = None);
+            self.record(
+                factory,
+                Some(id),
+                "observer.late",
+                json!({"purpose": "diagnose", "reason": "paused"}),
+            );
+            return;
+        }
         let asked = task.recovery.as_ref().and_then(|r| r.diagnosed_at);
         if task.state != TaskState::Running
             || task
@@ -1116,6 +1131,34 @@ impl Engine {
         let Some(task) = self.task(factory, id).cloned() else {
             return;
         };
+        let Some(f) = self.factories.get(factory) else {
+            return;
+        };
+        // What allowed the question must still hold when its answer comes:
+        // 맡김, an open Factory and a green main; otherwise a person merges.
+        if f.config.observer_mode != ObserverMode::Autonomous || f.closed || f.main.broken {
+            self.record(
+                factory,
+                Some(id),
+                "observer.late",
+                json!({"purpose": "risk_merge", "reason": "factory_changed"}),
+            );
+            return;
+        }
+        // A Factory paused meanwhile merges nothing; resuming asks again.
+        if f.paused {
+            let key = format!("observer_merge:{}", task.attempts.len());
+            self.with_task(factory, id, |t| {
+                t.writes.remove(&key);
+            });
+            self.record(
+                factory,
+                Some(id),
+                "observer.late",
+                json!({"purpose": "risk_merge", "reason": "paused"}),
+            );
+            return;
+        }
         // A person merged, or the Task moved, first.
         if task.state != TaskState::MergeWaiting || task.gates != [Gate::RiskPath] {
             self.record(
@@ -1252,6 +1295,26 @@ impl Engine {
             .collect();
         for id in drafts {
             self.request_review(factory, &id, now);
+        }
+        // A Task reported while paused runs its checks now, and a verified
+        // Task held only by a risk path is asked about again (D-21, D-49).
+        let deferred: Vec<String> = self
+            .tasks_of(factory)
+            .filter(|t| {
+                t.state == TaskState::Verifying && t.writes.contains(super::CHECKS_DEFERRED)
+            })
+            .map(|t| t.id.clone())
+            .collect();
+        for id in deferred {
+            self.start_checks(factory, &id);
+        }
+        let risk_only: Vec<String> = self
+            .tasks_of(factory)
+            .filter(|t| t.state == TaskState::MergeWaiting && t.gates == [Gate::RiskPath])
+            .map(|t| t.id.clone())
+            .collect();
+        for id in risk_only {
+            self.ask_risk_merge(factory, &id);
         }
     }
 
