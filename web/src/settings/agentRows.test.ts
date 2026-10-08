@@ -109,6 +109,8 @@ describe("what a row says (B13, B14, B16, B19, B20)", () => {
     expect(agentProblems(agent("codex", { enabled: false, skill: piece("removed") }))).toEqual([]);
     // A row from a helper whose build predates the Herdr piece has nothing there to fail.
     expect(agentProblems(agent("grok", { herdr: null }))).toEqual([]);
+    // OpenCode's hook piece is Hide's plugin, and its row says so.
+    expect(agentProblems(agent("opencode", { hook: piece("outdated", "edited") })).map(({ part }) => part)).toEqual(["plugin"]);
   });
 
   it("keeps a switched-off agent whose removal did not finish from reading Off (B14)", () => {

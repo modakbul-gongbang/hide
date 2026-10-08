@@ -87,12 +87,13 @@ export function checkFailedReason(code: string): "agents.checkReason.unreachable
 }
 
 /** The pieces of one agent that a Reinstall would repair, the failed ones first (B13, B20). */
-export type AgentProblem = { part: "skill" | "hook" | "herdr"; piece: KitPiece };
+/** The hook piece is named by what the contract says it is: OpenCode's is a plugin. */
+export type AgentProblem = { part: "skill" | "hook" | "plugin" | "herdr"; piece: KitPiece };
 
 export function agentProblems(agent: KitAgent): AgentProblem[] {
   if (!agent.enabled) return [];
   const pieces: AgentProblem[] = [{ part: "skill", piece: agent.skill }];
-  if (agent.hook) pieces.push({ part: "hook", piece: agent.hook });
+  if (agent.hook) pieces.push({ part: agentAdapter(agent.id)?.hook_kind === "plugin" ? "plugin" : "hook", piece: agent.hook });
   if (agent.herdr) pieces.push({ part: "herdr", piece: agent.herdr });
   const broken = pieces.filter(({ piece }) => kitPartNeedsReinstall(piece));
   return [...broken.filter(({ piece }) => piece.state === "failed"), ...broken.filter(({ piece }) => piece.state !== "failed")];
