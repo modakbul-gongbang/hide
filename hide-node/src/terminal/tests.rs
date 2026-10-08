@@ -920,19 +920,31 @@ fn a_node_keeps_at_most_its_cap_of_panes_attached() {
 }
 
 /// A screen naming pane after pane leaves this node at most its cap of
-/// panes it never attached, with the refusal reported, and a key into a
-/// pane the node was never told of records no fact; a pane the core then
-/// attaches still attaches.
+/// panes it never attached: past it those the core does not show are
+/// forgotten, and with every one on screen the next is refused and the
+/// refusal reported. A key into a pane the node was never told of records
+/// no fact; a pane the core then attaches still attaches.
 #[test]
 fn panes_a_screen_names_and_the_node_never_heard_of_stay_bounded() {
     let harness = harness(RetryPolicy::Automatic);
     for index in 0..10 * MAX_UNATTACHED_PANES {
         harness.service.view(&format!("junk{index}"), SIZE, true);
+        assert!(harness.service.shared.lock().panes.len() <= MAX_UNATTACHED_PANES);
     }
-    assert_eq!(
-        harness.service.shared.lock().panes.len(),
-        MAX_UNATTACHED_PANES
-    );
+    let tracked = harness
+        .service
+        .shared
+        .lock()
+        .panes
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(tracked.len(), MAX_UNATTACHED_PANES);
+    harness
+        .service
+        .control(TerminalControl::Shown { panes: tracked });
+    harness.service.view("one-more", SIZE, true);
+    assert!(!harness.service.shared.lock().panes.contains_key("one-more"));
     harness.report_where(|report| {
         matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.pane_limit")
     });
@@ -941,6 +953,31 @@ fn panes_a_screen_names_and_the_node_never_heard_of_stay_bounded() {
     }
     assert!(harness.service.shared.lock().facts.is_empty());
     let _opened = harness.controlling("w1:p1");
+}
+
+/// A screen's resize that was on its way when the core forgot its pane
+/// leaves a pane nothing owns; however many pile up, a pane on screen later
+/// is still drawn.
+#[test]
+fn views_that_land_after_their_pane_was_forgotten_do_not_keep_a_new_pane_from_being_drawn() {
+    let harness = harness(RetryPolicy::Automatic);
+    for index in 0..MAX_UNATTACHED_PANES {
+        let pane = format!("closed{index}");
+        harness
+            .service
+            .control(TerminalControl::Forget { pane: pane.clone() });
+        harness.service.view(&pane, SIZE, false);
+    }
+    harness.service.view("w1:p9", SIZE, true);
+    harness.attach("w1:p9", Some(SIZE));
+    harness.opened();
+    let mut refused = false;
+    harness.report_where(|report| {
+        refused |=
+            matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.pane_limit");
+        matches!(report, TerminalReport::State { pane, state } if pane == "w1:p9" && state.state == "controlling")
+    });
+    assert!(!refused, "the view of a pane on screen was refused");
 }
 
 #[test]

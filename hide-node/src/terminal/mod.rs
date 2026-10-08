@@ -67,7 +67,9 @@ pub use hide_node_link::terminal::ReportSink;
 const OBSERVER_RESIZE_QUIET: Duration = Duration::from_millis(150);
 
 /// Panes a node tracks that were never asked to attach, each named by a
-/// screen's view; past it a view of a pane the node does not know is refused.
+/// screen's view. At it, those the core does not show and that hold nothing
+/// are forgotten; with none to forget, a view of a pane the node does not
+/// know is refused.
 const MAX_UNATTACHED_PANES: usize = 2 * MAX_ATTACHED_PANES;
 
 /// Seconds between a failed control attach and its next attempt.
@@ -372,6 +374,9 @@ impl TerminalNode for Service {
             // A screen names the panes it draws, and nothing but the cap
             // keeps a client from naming panes no node has.
             if !inner.panes.contains_key(pane) && inner.unattached() >= MAX_UNATTACHED_PANES {
+                inner.forget_unowned();
+            }
+            if !inner.panes.contains_key(pane) && inner.unattached() >= MAX_UNATTACHED_PANES {
                 inner.refuse(
                     pane,
                     "terminal.pane_limit",
@@ -604,6 +609,33 @@ impl Inner {
             .values()
             .filter(|pane| pane.session.is_none() && pane.lifecycle.state == "idle")
             .count()
+    }
+
+    /// Forgets the panes a view named that nothing else owns: never asked to
+    /// attach, not on the core's screen and holding no keys. A screen's
+    /// resize that was on its way when the core forgot its pane leaves one.
+    fn forget_unowned(&mut self) {
+        let shown = &self.shown;
+        let unowned = self
+            .panes
+            .iter()
+            .filter(|(pane, entry)| {
+                entry.session.is_none()
+                    && entry.lifecycle.state == "idle"
+                    && matches!(entry.hold, PaneHold::Empty)
+                    && !shown.contains(*pane)
+            })
+            .map(|(pane, _)| pane.clone())
+            .collect::<Vec<_>>();
+        for pane in &unowned {
+            self.panes.remove(pane);
+            self.facts.remove(pane);
+        }
+        crate::diagnostic!(json!({
+            "component": "terminal_session",
+            "kind": "terminal.unowned_panes_forgotten",
+            "panes": unowned.len(),
+        }));
     }
 
     fn report(&mut self, report: TerminalReport) {
