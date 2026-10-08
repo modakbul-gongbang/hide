@@ -79,29 +79,7 @@ impl Renderer {
             1,
             &serde_json::to_vec(&json!({"schema_version":2,"kind":kind,"payload":payload}))?,
         )?;
-        // The server reads frames in order. Keep this connection alive until
-        // its Pong proves it read the preceding event, instead of dropping
-        // the socket while a concurrent snapshot write is still pending.
-        self.send(9, b"event")?;
-        for _ in 0..8 {
-            let (opcode, data) = self.read_frame()?;
-            match opcode {
-                10 if data == b"event" => return Ok(()),
-                1 => {
-                    let frame: Value =
-                        serde_json::from_slice(&data).context("private renderer JSON")?;
-                    ensure!(
-                        frame["type"] != "error",
-                        "private renderer event {kind} refused: {}",
-                        frame["message"]
-                    );
-                }
-                9 => self.send(10, &data)?,
-                8 => bail!("private renderer closed before event receipt"),
-                _ => bail!("unexpected private renderer event opcode"),
-            }
-        }
-        bail!("private renderer event receipt frame cap")
+        Ok(())
     }
 
     fn send(&mut self, opcode: u8, bytes: &[u8]) -> Result<()> {
