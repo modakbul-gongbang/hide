@@ -344,16 +344,15 @@ mod tests {
 
     impl NodeLink for Peer {
         fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
-            if let Call::LinkRead { requests } = call {
-                if requests
+            if let Call::LinkRead { requests } = call
+                && requests
                     .iter()
                     .any(|request| request.agent != hide_session::Agent::Claude)
-                {
-                    return Err(LinkError::Refused(HostError::new(
-                        ErrorCode::InvalidRequest,
-                        "unknown reader was sent",
-                    )));
-                }
+            {
+                return Err(LinkError::Refused(HostError::new(
+                    ErrorCode::InvalidRequest,
+                    "unknown reader was sent",
+                )));
             }
             self.retired
                 .store(self.retire_after_answer, Ordering::SeqCst);
