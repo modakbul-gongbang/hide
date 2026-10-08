@@ -20,10 +20,12 @@ import sys
 import threading
 
 
-# One tracked file is read whole, so it is bounded. The bound is above the
-# largest tracked source, `design/hide-screens.pen`, which the screen builders
-# regenerate and which passed 16 MiB once the Factory AI screens joined it.
-MAX_BYTES = 32 * 1024 * 1024
+# One tracked file is read whole, so each read is bounded.
+MAX_BYTES = 16 * 1024 * 1024
+# A tracked source that outgrows that bound for a reason, with its own: the
+# shared screens file the screen builders regenerate, which passed 16 MiB once
+# the Factory AI screens joined it. Every other file keeps MAX_BYTES.
+LARGE_SOURCES = {"design/hide-screens.pen": 32 * 1024 * 1024}
 MAX_DIAGNOSTICS = 200
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 MAX_TRACKED_FILES = 100000
@@ -320,6 +322,10 @@ def tracked_entries(root):
     return entries
 
 
+def read_limit(path):
+    return LARGE_SOURCES.get(path, MAX_BYTES)
+
+
 def checkout_bytes(root, path):
     target = root / path
     try:
@@ -330,11 +336,12 @@ def checkout_bytes(root, path):
             return os.fsencode(os.readlink(target))
         if not stat.S_ISREG(mode):
             raise ScanError("unsupported_checkout_entry", path)
-        if target.stat().st_size > MAX_BYTES:
+        limit = read_limit(path)
+        if target.stat().st_size > limit:
             raise ScanError("tracked_blob_too_large", path)
         with target.open("rb") as source:
-            data = source.read(MAX_BYTES + 1)
-        if len(data) > MAX_BYTES:
+            data = source.read(limit + 1)
+        if len(data) > limit:
             raise ScanError("tracked_blob_too_large", path)
         return data
     except OSError:
@@ -375,7 +382,7 @@ def index_bytes(batch, path, oid):
             size = int(header[2])
         except ValueError:
             raise ScanError("index_blob_read_failed", path) from None
-        if size < 0 or size > MAX_BYTES:
+        if size < 0 or size > read_limit(path):
             raise ScanError("tracked_blob_too_large", path)
         data = process.stdout.read(size)
         if len(data) != size or process.stdout.read(1) != b"\n":
