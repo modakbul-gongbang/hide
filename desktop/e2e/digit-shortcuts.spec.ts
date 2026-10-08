@@ -230,9 +230,8 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     const other = secondPane!;
     labelAgent(herdr, asking, { task: asking === herdr.panes[0] ? "Agent one" : "Agent two", reply: "계속할까요?", question: true });
     try {
-      await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
       const raised = page.locator(`[data-raised-group="needs_you"] [data-pane="${asking}"]`);
-      await expect(raised).toBeVisible();
+      await expect(raised).toBeVisible({ timeout: 20_000 });
       const checkoutToggle = page.locator("[data-checkout-toggle]").first();
       if ((await checkoutToggle.getAttribute("aria-expanded")) === "false") await checkoutToggle.click();
       const tree = page.locator("[data-checkout-agents-open]");

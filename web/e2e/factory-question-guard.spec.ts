@@ -55,15 +55,14 @@ test("Factory questions redirect to ask while a nonworker publishes and clears i
     await fixture.state(nonworker, "idle");
     await expect.poll(() => row()?.user_turn, { message: "native unanswered question reached the snapshot", timeout: 20_000 }).toEqual({ kind: "question", content: { text: "배포 대상을 골라주세요", choices: ["미리보기", "운영"], truncated: false } });
     expect(row()).toMatchObject({ group: "needs_you", status_code: "question" });
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${nonworker}"] [data-agent-status-mark="question"]`)).toBeVisible();
+    await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${nonworker}"] [data-agent-status-mark="question"]`)).toBeVisible();
 
     await fixture.state(nonworker, "working");
     fs.appendFileSync(transcript, `${JSON.stringify({ type: "user", sessionId: session, timestamp: "2026-10-08T09:00:01Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "target-question", content: "미리보기" }] } })}\n`);
     await fixture.state(nonworker, "idle");
     await expect.poll(() => row()?.user_turn, { message: "answer cleared the structured question", timeout: 20_000 }).toBeUndefined();
     expect(row()).toMatchObject({ pane_id: nonworker, session_id: session });
-    await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${nonworker}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${nonworker}"]`)).toHaveCount(0);
   } catch (error) {
     failure = error;
     try {

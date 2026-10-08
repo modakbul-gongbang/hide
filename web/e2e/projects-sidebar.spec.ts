@@ -389,6 +389,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // B4 in Agents: a quiet row and the row after it stay put through hover,
     // keyboard focus and selection.
     await folderToggle.click();
+    await expect(folderToggle).toHaveAttribute("aria-expanded", "true");
     const quietRows = page.locator("nav[data-sidebar] li[data-pane]:not(:has([data-agent-line])):has([data-agent-elapsed])");
     const [agentRow, nextRow] = [quietRows.nth(0), quietRows.nth(1)];
     const agentParts = [agentRow.locator("[data-agent-title]"), agentRow.locator("[data-agent-elapsed]")];
