@@ -165,6 +165,35 @@ class ConfigurationProtection(unittest.TestCase):
             self.assertGreaterEqual(inventory["uninspected_subtrees"], 1)
         self.assertEqual(result["directory_changes"], [])
 
+    def test_excluded_directory_file_transitions_are_changes_not_false_absence(self):
+        installed = self.home / "plugins" / "installed-code"
+        installed.mkdir(parents=True)
+        guard = self.guard()
+        installed.rmdir()
+        installed.write_bytes(b"now-an-ordinary-file")
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertIn({"path": str(installed), "kind": "changed"}, result["directory_changes"])
+        guard = ConfigGuard(self.run / "backup-reverse", [self.config], [self.home])
+        installed.unlink()
+        installed.mkdir()
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertIn({"path": str(installed), "kind": "changed"}, result["directory_changes"])
+
+    def test_explicit_nested_installation_root_cannot_bypass_exclusion(self):
+        nested = self.home / "node_modules" / "package" / "data"
+        nested.mkdir(parents=True)
+        code = nested / "code"
+        code.write_bytes(b"before")
+        guard = ConfigGuard(self.run / "backup", [self.config], [nested, code, self.home])
+        code.write_bytes(b"after-longer")
+        (nested / "new-code").write_bytes(b"unreported")
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["directory_changes"], [])
+        self.assertEqual(result["inventory"]["after"]["excluded_subtrees"], 3)
+
     def test_invalid_known_file_keeps_named_failure_and_independent_recovery(self):
         peer = self.home / "peer.json"
         peer.write_bytes(b"original-peer")

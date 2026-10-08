@@ -153,11 +153,15 @@ class ConfigInventory:
 
 
 def excluded_installation(path: Path) -> bool:
-    name = path.name.lower()
     # Registry/config files directly in plugins remain observable; the
     # installed code directories beneath it do not belong to this inventory.
-    return (name in {"node_modules", "extensions", "marketplace", "marketplaces", "bundled"}
-            or "cache" in name or path.parent.name.lower() == "plugins")
+    # Inspect ancestors too: an explicit nested root cannot reopen code.
+    for current in (path, *path.parents):
+        name = current.name.lower()
+        if (name in {"node_modules", "extensions", "marketplace", "marketplaces", "bundled"}
+                or "cache" in name or current.parent.name.lower() == "plugins"):
+            return True
+    return False
 
 
 def inventory_directory(path: Path) -> int:
@@ -184,12 +188,12 @@ def fingerprint(roots: list[Path]) -> ConfigInventory:
         nonlocal excluded
         if info is None:
             result[str(path)] = {"kind": "absent"}
+        elif excluded_installation(path if stat.S_ISDIR(info.st_mode) else path.parent):
+            excluded += 1
+            result[str(path)] = {"kind": "excluded"}
         elif stat.S_ISDIR(info.st_mode):
-            if excluded_installation(path):
-                excluded += 1
-            else:
-                result[str(path)] = {"kind": "directory"}
-                pending.append(path)
+            result[str(path)] = {"kind": "directory"}
+            pending.append(path)
         else:
             kind = "file" if stat.S_ISREG(info.st_mode) else "link" if stat.S_ISLNK(info.st_mode) else "other"
             result[str(path)] = {"kind": kind, "size": info.st_size,
