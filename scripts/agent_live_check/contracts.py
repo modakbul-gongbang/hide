@@ -11,7 +11,7 @@ SCENES = ("startup", "rest", "working", "shell_approval", "file_approval", "ques
 
 
 def source_contract(checkout: Path) -> dict:
-    source = checkout / "hide-kit/src/agents.rs"
+    source = checkout / "hide-agent-adapter/src/declarations.rs"
     rows = {}
     row = None
     # These are deliberately single-line declarations. A changed source form
