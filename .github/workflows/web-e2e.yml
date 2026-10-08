@@ -247,8 +247,7 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=()
-          if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
+          args=(--grep "With no workspace bound|closing a primary checkout|A new tab in a plain folder" --repeat-each 40 --retries 0)
           if [ "${SHARD#*/}" -gt 1 ]; then
             # The shard's tests are dealt by their recorded durations, not by
             # Playwright's equal counts. Playwright counts a `--test-list` that
@@ -274,7 +273,7 @@ jobs:
         # seven-day deadline, or a comment on the issue that tracks it. A
         # report that fails to file is a warning, not a failed lane.
         id: flaky
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -288,7 +287,7 @@ jobs:
         # is on the step's stdout. A screen assertion alone cannot say which
         # side moved. A flaky run keeps them too: its first attempt failed,
         # and its issue has no other evidence of why.
-        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}

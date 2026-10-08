@@ -207,6 +207,12 @@ fn run_coordinator(
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
+                    crate::diagnostic!(json!({
+                        "component": "tmp_evidence",
+                        "kind": "tmp.connected",
+                        "generation": subscription_generation,
+                        "tabs": replica.as_ref().map(|current| current.state.tabs.iter().map(|tab| tab.tab_id.clone()).collect::<Vec<_>>()),
+                    }));
                     active_tab_reads.clear();
                     if let Err(message) = sync_reader.reset() {
                         crate::diagnostic!(json!({
@@ -577,6 +583,15 @@ fn run_coordinator(
                 } else {
                     ApplyMode::Strict
                 };
+                crate::diagnostic!(json!({
+                    "component": "tmp_evidence",
+                    "kind": "tmp.line",
+                    "mode": format!("{mode:?}"),
+                    "generation": generation,
+                    "applied": replica.as_ref().map(|current| current.applied_events),
+                    "tabs": replica.as_ref().map(|current| current.state.tabs.iter().map(|tab| tab.tab_id.clone()).collect::<Vec<_>>()),
+                    "line": line.chars().take(220).collect::<String>(),
+                }));
                 match parse_subscription_line(&line) {
                     Ok(SubscriptionLine::Event(event)) => {
                         if context.is_local() {
@@ -599,6 +614,14 @@ fn run_coordinator(
                         let applied = current
                             .apply(event, mode)
                             .map_err(|error| ("event.rejected", error));
+                        crate::diagnostic!(json!({
+                            "component": "tmp_evidence",
+                            "kind": "tmp.applied",
+                            "ok": applied.is_ok(),
+                            "applied": current.applied_events,
+                            "tabs": current.state.tabs.iter().map(|tab| tab.tab_id.clone()).collect::<Vec<_>>(),
+                            "pending_layouts": current.pending_layouts.iter().cloned().collect::<Vec<_>>(),
+                        }));
                         match applied {
                             Ok(outcome) => {
                                 // A pane announced with a cwd Herdr has not
