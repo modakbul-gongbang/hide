@@ -823,9 +823,18 @@ impl Engine {
                 question,
                 choice,
                 text,
+                change,
             } => {
                 let (factory, id) = self.resolve(role, &task)?;
-                self.answer(role, &factory, &id, question.as_deref(), choice, text)
+                self.answer(
+                    role,
+                    &factory,
+                    &id,
+                    question.as_deref(),
+                    choice,
+                    text,
+                    change,
+                )
             }
             Command::Ask {
                 text,
@@ -2296,6 +2305,7 @@ impl Engine {
 
     // ------------------------------------------------------------------- answer
 
+    #[allow(clippy::too_many_arguments)]
     fn answer(
         &mut self,
         role: &Role,
@@ -2304,16 +2314,26 @@ impl Engine {
         question: Option<&str>,
         choice: Option<String>,
         text: Option<String>,
+        change: bool,
     ) -> Reply {
         let task = self
             .task(factory, id)
             .cloned()
             .ok_or_else(|| refuse("task_not_found", "Check hide factory status"))?;
-        // "다른 답" on a request the Observer answered (D-19).
+        // "다른 답" on a request the Observer answered (D-19); a plain answer
+        // to an answered question is refused, so the loser of a race with the
+        // Observer changes nothing.
         if let Some(qid) = question
             && let Some(answered) = task.questions.iter().find(|q| q.id == qid && !q.open())
         {
-            return self.override_answer(role, factory, id, answered.clone(), choice, text);
+            if change {
+                return self.override_answer(role, factory, id, answered.clone(), choice, text);
+            }
+            return Err(refuse(
+                "already_answered",
+                "This question was answered already; check hide factory show",
+            )
+            .with(json!({"by": answered.answer.as_ref().map(|a| a.relayed_by.clone())})));
         }
         let open: Vec<&Question> = task.open_questions().collect();
         let target = match question {

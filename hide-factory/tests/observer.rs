@@ -189,6 +189,7 @@ fn a_person_answering_first_leaves_the_late_verdict_without_effect() {
         question: Some(question),
         choice: None,
         text: Some("sqlite".into()),
+        change: false,
     });
     assert_eq!(answered["ok"], true, "{answered}");
     h.engine.tick();
@@ -294,11 +295,23 @@ fn a_person_overrides_the_ai_answer_and_the_worker_hears_it() {
     ask(&mut h, &f, &t, "Which database?", &[]);
     h.engine.tick();
     let question = h.task(&f, &t).questions[0].id.clone();
+    // A person who answered without "다른 답" lost the race: nothing moves.
+    let letters = letters_to(&h, &t).len();
+    let late = h.op(Command::Answer {
+        task: t.clone(),
+        question: Some(question.clone()),
+        choice: None,
+        text: Some("sqlite".into()),
+        change: false,
+    });
+    assert_eq!(late["reason"], "already_answered", "{late}");
+    assert_eq!(letters_to(&h, &t).len(), letters, "no second letter");
     let changed = h.op(Command::Answer {
         task: t.clone(),
         question: Some(question.clone()),
         choice: None,
         text: Some("sqlite after all".into()),
+        change: true,
     });
     assert_eq!(changed["ok"], true, "{changed}");
     let task = h.task(&f, &t);
@@ -316,8 +329,36 @@ fn a_person_overrides_the_ai_answer_and_the_worker_hears_it() {
         question: Some(question),
         choice: None,
         text: Some("no".into()),
+        change: true,
     });
     assert_eq!(again["reason"], "already_answered", "{again}");
+}
+
+#[test]
+fn a_finished_task_s_ai_answer_cannot_be_changed() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Finished", &[]);
+    h.world().observer.push_back(classified("B", "postgres"));
+    ask(&mut h, &f, &t, "Which database?", &[]);
+    h.engine.tick();
+    h.done(&f, &t);
+    for _ in 0..10 {
+        if h.state(&f, &t) == TaskState::Done {
+            break;
+        }
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &t), TaskState::Done);
+    let question = h.task(&f, &t).questions[0].id.clone();
+    let refused = h.op(Command::Answer {
+        task: t.clone(),
+        question: Some(question),
+        choice: None,
+        text: Some("sqlite".into()),
+        change: true,
+    });
+    assert_eq!(refused["reason"], "task_finished", "{refused}");
 }
 
 #[test]
@@ -411,6 +452,7 @@ fn an_assist_wrong_card_offers_the_fix_as_a_choice() {
         question: item["question"].as_str().map(str::to_owned),
         choice: Some(PROPOSAL_CHOICE.into()),
         text: None,
+        change: false,
     });
     assert_eq!(chosen["ok"], true, "{chosen}");
     let child = h
@@ -700,6 +742,7 @@ fn a_paused_factory_starts_nothing_asks_no_ai_and_delivers_answers_on_resume() {
         question: Some(question),
         choice: Some("approve".into()),
         text: None,
+        change: false,
     });
     for _ in 0..3 {
         h.engine.tick();

@@ -386,11 +386,13 @@ fn parse_answer(rest: &[&str]) -> Option<Command> {
     let mut question = None;
     let mut choice = None;
     let mut text = None;
+    let mut change = false;
     while let Some(flag) = flags.next() {
         match flag {
             "--question" => once(&mut question, flags.value())?,
             "--choose" => once(&mut choice, flags.value())?,
             "--text" => once(&mut text, flags.value())?,
+            "--change" if !change => change = true,
             _ => return None,
         }
     }
@@ -402,6 +404,7 @@ fn parse_answer(rest: &[&str]) -> Option<Command> {
         question,
         choice,
         text,
+        change,
     })
 }
 
@@ -535,6 +538,7 @@ mod tests {
             "inbox",
             "answer T-1 --choose suggestion",
             "answer T-1 --question q-1 --text yes",
+            "answer T-1 --question q-1 --text no --change",
             "ask --question q --suggestion s --default d --deadline-hours 4",
             "block --question q --suggestion s",
             "block --question q --suggestion s --choice a --choice b",

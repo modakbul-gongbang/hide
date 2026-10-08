@@ -62,6 +62,11 @@ pub enum Command {
         /// `suggestion`, `default`, a listed choice, or free text.
         choice: Option<String>,
         text: Option<String>,
+        /// "다른 답": replaces an answer Factory AI gave (D-19). Without it an
+        /// answered question is refused, so a person who raced the Observer
+        /// and lost changes nothing.
+        #[serde(default)]
+        change: bool,
     },
     Ask {
         text: String,
@@ -275,7 +280,7 @@ hide factory add [--task <id>|<issue>] --title <t> --goal <g> --criterion <c>...
 hide factory status [--project <path>]
 hide factory show <task>
 hide factory inbox
-hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>]
+hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>] [--change]
 hide factory ask --question <text> --suggestion <text> --default <action> [--choice <text>]... [--deadline-hours <n>]
 hide factory block --question <text> --suggestion <text> [--choice <text>]... [--deadline-hours <n>]
 hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...] [--autonomy <scope>] [--reclassify <discovery>]

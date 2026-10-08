@@ -381,6 +381,7 @@ fn a_review_that_cannot_run_keeps_the_task_drafting_and_asks_for_the_provider() 
         question: Some(question.id),
         choice: Some("retry-review".into()),
         text: None,
+        change: false,
     });
     h.engine.tick();
     assert_ne!(h.state(&f, &id), TaskState::Drafting);
@@ -419,6 +420,7 @@ fn review_questions_hold_the_task_until_answered_and_re_adding_is_idempotent() {
         question: Some(question.id),
         choice: Some("suggestion".into()),
         text: None,
+        change: false,
     });
     assert_eq!(h.task(&f, &id).issue, Some(IssueRef::Local { number: 1 }));
     assert_ne!(h.state(&f, &id), TaskState::Drafting);
@@ -533,6 +535,7 @@ fn a_prd_changed_while_running_becomes_the_task_s_only_once_approved() {
         question: Some(question.id),
         choice: Some("approve".into()),
         text: None,
+        change: false,
     });
     let after = h.task(&f, &t);
     assert_eq!(after.card.goal, "Make Spec work the v2 way");
@@ -792,6 +795,7 @@ fn a_different_answer_before_the_deadline_sends_the_worker_back() {
         question: Some(question.id),
         choice: None,
         text: Some("use --quick".into()),
+        change: false,
     });
     assert_eq!(h.state(&f, &t), TaskState::Running);
     assert!(
@@ -903,6 +907,7 @@ fn a_blocking_question_releases_the_slot_and_the_answer_wakes_the_same_session()
         question: Some(question.id),
         choice: Some("suggestion".into()),
         text: None,
+        change: false,
     });
     assert_eq!(h.state(&f, &blocked), TaskState::Waiting);
     h.done(&f, &other);
@@ -1356,6 +1361,7 @@ fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage
             question: None,
             choice: None,
             text: Some("yes".into()),
+            change: false,
         },
     ] {
         let refused = h.engine.caller_role(&cut, &command).unwrap_err();
@@ -1389,6 +1395,7 @@ fn a_worker_cannot_act_as_a_person() {
             question: None,
             choice: None,
             text: Some("x".into()),
+            change: false,
         },
         Command::Config {
             project: None,
@@ -1439,6 +1446,7 @@ fn a_proposed_task_waits_for_a_person_and_its_worker_cannot_propose() {
         question: Some(question.id),
         choice: Some("approve".into()),
         text: None,
+        change: false,
     });
     let child = h
         .engine
@@ -1545,6 +1553,7 @@ fn a_proposal_the_review_finds_outside_its_scope_waits_for_a_person() {
         question: Some(question.id),
         choice: Some("suggestion".into()),
         text: None,
+        change: false,
     });
     tick_until(&mut h, &f, &child, TaskState::Running);
 }
@@ -2522,6 +2531,7 @@ fn an_issue_closed_without_a_pull_request_cancels_and_a_label_creates_a_draft() 
         question: Some(question.id),
         choice: Some("confirm".into()),
         text: None,
+        change: false,
     });
     assert_eq!(
         h.writes("issue.create").len(),
@@ -2675,6 +2685,7 @@ fn a_diagnosis_runs_an_enabled_recovery_and_an_approved_proposal_runs_too() {
         question: Some(proposal),
         choice: Some("approve".into()),
         text: None,
+        change: false,
     });
     assert_eq!(answered["ok"], true, "{answered}");
     assert_ne!(h.state(&f, &stopped), TaskState::Stopped);
@@ -2991,6 +3002,7 @@ fn a_restart_keeps_every_task_question_and_applied_letter() {
         question: Some(question.id),
         choice: Some("suggestion".into()),
         text: None,
+        change: false,
     });
     tick_until(&mut h, &f, &a, TaskState::Running);
     assert_eq!(h.state(&f, &b), TaskState::Waiting);
@@ -3710,6 +3722,7 @@ fn intake_summary_is_persisted_and_goal_edits_replace_it_without_growing_judgmen
         question: Some(question.id),
         choice: Some("approve".into()),
         text: None,
+        change: false,
     });
     assert_eq!(card_json(&h, &id)["summary"], "새 목표 첫 문장.");
     for judgment in &h.world().judged {
