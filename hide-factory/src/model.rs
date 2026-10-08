@@ -814,6 +814,8 @@ pub enum DecisionKind {
 }
 
 impl DecisionKind {
+    pub const ALL: [Self; 5] = [Self::A, Self::B, Self::C, Self::D, Self::E];
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "A" => Some(Self::A),
@@ -1320,6 +1322,10 @@ pub enum PauseReason {
     Person,
     /// The operator closed the worker's pane in Hide (D-26).
     PaneClosed,
+}
+
+impl PauseReason {
+    pub const ALL: [Self; 2] = [Self::Person, Self::PaneClosed];
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

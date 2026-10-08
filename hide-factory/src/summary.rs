@@ -90,6 +90,7 @@ pub struct FactorySummary {
     /// Factories; notices are not counted (D-43).
     pub my_turn: u32,
     /// Notices across Factories, shown below the line (D-43).
+    #[serde(default)]
     pub notices: u32,
     pub factories: Vec<FactoryView>,
     pub inbox: Vec<InboxItem>,
@@ -105,19 +106,26 @@ pub struct FactoryView {
     pub verification: String,
     pub closed: bool,
     /// The operator paused the whole Factory (D-48).
+    #[serde(default)]
     pub paused: bool,
     pub flow: Flow,
     pub my_turn: u32,
+    #[serde(default)]
     pub notices: u32,
     /// `manual`, `assist` or `autonomous` (직접, 함께, 맡김).
+    #[serde(default)]
     pub observer_mode: String,
     /// Observer calls today and the daily cap (D-34).
+    #[serde(default)]
     pub observer_today: u32,
+    #[serde(default)]
     pub observer_limit: u32,
     /// The Factory AI; `None` is the app's Hide AI (D-40).
     pub factory_ai: Option<FactoryAi>,
     /// The worker candidates, the first the default (D-41).
+    #[serde(default)]
     pub workers: Vec<WorkerCandidate>,
+    #[serde(default)]
     pub macos_notifications: bool,
     pub columns: Vec<ColumnView>,
     /// Off the board, revivable for the keep period (D-47).
@@ -254,6 +262,7 @@ pub struct InboxItem {
     pub decision_kind: Option<DecisionKind>,
     pub observer_reason: Option<String>,
     /// Whether the decision can still be changed (its Task is not finished).
+    #[serde(default)]
     pub overridable: bool,
 }
 
@@ -889,6 +898,7 @@ pub struct TaskDetail {
     /// The Observer's one line under a no-report stop (B23).
     pub diagnosis: Option<String>,
     /// Automatic restarts used since a person last started it (D-25).
+    #[serde(default)]
     pub auto_restarts: u32,
     /// When the worker's current rest began, as the core saw it (B43).
     pub resting_since: Option<UnixMs>,
@@ -1050,6 +1060,7 @@ mod tests {
     //! listed, and then fails until its wire value is pinned below and in
     //! `docs/factory.md`.
     use super::*;
+    use crate::model::ObserverMode;
 
     fn wire<T: Serialize>(values: &[T]) -> Vec<String> {
         values
@@ -1204,5 +1215,24 @@ mod tests {
                 "daily_limit",
             ]
         );
+        complete(&DecisionKind::ALL, |kind| match kind {
+            DecisionKind::A => 0,
+            DecisionKind::B => 1,
+            DecisionKind::C => 2,
+            DecisionKind::D => 3,
+            DecisionKind::E => 4,
+        });
+        assert_eq!(wire(&DecisionKind::ALL), ["A", "B", "C", "D", "E"]);
+        complete(&PauseReason::ALL, |reason| match reason {
+            PauseReason::Person => 0,
+            PauseReason::PaneClosed => 1,
+        });
+        assert_eq!(wire(&PauseReason::ALL), ["person", "pane_closed"]);
+        complete(&ObserverMode::ALL, |mode| match mode {
+            ObserverMode::Manual => 0,
+            ObserverMode::Assist => 1,
+            ObserverMode::Autonomous => 2,
+        });
+        assert_eq!(wire(&ObserverMode::ALL), ["manual", "assist", "autonomous"]);
     }
 }

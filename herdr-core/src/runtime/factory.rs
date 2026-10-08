@@ -37,10 +37,22 @@ pub(crate) struct WorkerProbe {
     pub present: bool,
     /// The agent sleeps (or its end is in flight).
     pub asleep: bool,
-    pub working: bool,
-    /// The agent waits for the person in its own pane.
-    pub waiting: bool,
-    pub status_changed_at_unix_ms: u64,
+    /// What the agent is doing, from the status model's axes; work it
+    /// delegated counts as working.
+    pub activity: crate::agent_state::AgentUse,
+    /// When the core saw the agent's state last change (D-52); `None`
+    /// before the core has observed it.
+    pub changed_at_unix_ms: Option<u64>,
+}
+
+/// What a diagnosis may read about a worker (D-37, D-52): the user turn
+/// and last answer its adapter declares, from the agent's row, and where
+/// to read its screen off the lock.
+pub(crate) struct WorkerTextSources {
+    pub user_turn: Option<String>,
+    pub last_answer: Option<String>,
+    pub raw_pane: Option<String>,
+    pub connector: Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>>,
 }
 
 /// How far up the spawn lineage a caller is followed to its worker.
@@ -434,6 +446,7 @@ impl Runtime {
     }
 
     pub(crate) fn factory_worker_probe(&self, pane: &str) -> WorkerProbe {
+        use crate::agent_state::AgentUse;
         let asleep = self
             .snapshot
             .ui_state
@@ -449,12 +462,75 @@ impl Runtime {
         WorkerProbe {
             present: agent.is_some(),
             asleep,
-            working: agent.is_some_and(crate::agent_state::has_work_in_progress),
-            waiting: agent.is_some_and(crate::agent_state::is_waiting_for_operator),
-            status_changed_at_unix_ms: self
+            activity: match agent {
+                None => AgentUse::Unknown,
+                Some(agent) if crate::agent_state::has_work_in_progress(agent) => AgentUse::Working,
+                Some(agent) => AgentUse::of(&agent.demand, agent.blocked, &agent.activity),
+            },
+            changed_at_unix_ms: agent.and_then(|agent| agent.changed_at_unix_ms),
+        }
+    }
+
+    /// Owned copies of what a worker's adapter declares it reports, and
+    /// the connection its screen is read through; nothing is read here.
+    pub(crate) fn factory_worker_texts(&self, pane: &str) -> WorkerTextSources {
+        use hide_agent_adapter::Capability;
+        let agent = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == pane);
+        let factory = agent
+            .and_then(|agent| hide_agent_adapter::adapter(&agent.agent_kind))
+            .map(|row| row.factory);
+        let user_turn = factory
+            .filter(|f| matches!(f.user_turn, Capability::Available(_)))
+            .and(agent)
+            .and_then(|agent| agent.user_turn.as_ref())
+            .and_then(|turn| turn.content.as_ref())
+            .map(|content| {
+                let mut text = content.text().to_owned();
+                for choice in content.choices() {
+                    text.push_str("\n- ");
+                    text.push_str(choice);
+                }
+                text
+            });
+        let last_answer = factory
+            .filter(|f| matches!(f.turn_end_and_answer, Capability::Available(_)))
+            .and(agent)
+            .and_then(|agent| agent.request.as_ref())
+            .and_then(|request| request.reply.as_ref())
+            .map(|reply| reply.text.clone());
+        WorkerTextSources {
+            user_turn,
+            last_answer,
+            raw_pane: self
                 .delivery_observations
                 .get(pane)
-                .map_or(0, |observation| observation.status_changed_at_unix_ms),
+                .map(|observation| observation.raw_pane_id.clone()),
+            connector: self.delivery_connector(self.node.as_str()),
+        }
+    }
+
+    /// Panes the operator closed in Hide: a Factory worker among them pauses
+    /// its Task instead of being started again (D-26).
+    pub(crate) fn factory_panes_closed(&self, panes: &[String]) {
+        if panes.is_empty() {
+            return;
+        }
+        let sent = match &self.factory_screen {
+            Some(port) => port.panes_closed(panes.to_vec()),
+            None => Ok(()),
+        };
+        if let Err(reason) = sent {
+            crate::diagnostic!(serde_json::json!({
+                "component": "factory",
+                "kind": "worker.close_unsent",
+                "panes": panes,
+                "reason": reason,
+            }));
         }
     }
 
@@ -544,11 +620,14 @@ impl Runtime {
             .cloned()
     }
 
-    /// Whether this Mac's kit has answered since launch; when not, asks it to
-    /// read the machine. A Codex start needs that answer (`codex_launch`),
-    /// and the Factory starts workers with no Settings on screen.
-    pub(crate) fn factory_kit_read(&mut self) -> bool {
-        if self.kit_states.contains_key(self.node.as_str()) {
+    /// Whether a start of `kind` may go: this Mac's kit has answered since
+    /// launch, or the start does not need it (`codex_launch`). When not,
+    /// asks the kit to read the machine; the Factory starts workers with no
+    /// Settings on screen.
+    pub(crate) fn factory_kit_read(&mut self, kind: &str) -> bool {
+        if !crate::codex_launch::needs_kit_answer(kind)
+            || self.kit_states.contains_key(self.node.as_str())
+        {
             return true;
         }
         self.request_kit_check();
@@ -597,6 +676,7 @@ mod tests {
     use super::*;
     use crate::coordination::AgentRecord;
     use crate::delivery::ledger::Ledger;
+    use crate::model::SidebarAgentSnapshot;
     use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
     use std::sync::Arc;
 
@@ -655,11 +735,13 @@ mod tests {
             agent: Some("accepted-worker".into()),
             name: "worker".into(),
             pane: Some("recipient".into()),
-            runtime: hide_factory::model::Runtime::Codex,
+            runtime: hide_factory::model::Runtime::CODEX,
             worktree: "/checkouts/fixture".into(),
             branch: "task".into(),
             started_at: 1,
             asleep: false,
+            model: None,
+            effort: None,
         };
         let caller = runtime
             .factory_question_caller(
@@ -761,11 +843,13 @@ mod tests {
             agent: Some("accepted-worker".into()),
             name: "worker".into(),
             pane: Some("recipient".into()),
-            runtime: hide_factory::model::Runtime::Codex,
+            runtime: hide_factory::model::Runtime::CODEX,
             worktree: "/checkouts/fixture".into(),
             branch: "task".into(),
             started_at: 1,
             asleep: false,
+            model: None,
+            effort: None,
         };
         assert_eq!(
             runtime.factory_question_current(&caller, &worker),
@@ -957,5 +1041,90 @@ mod tests {
             "99 percent still runs"
         );
         assert_eq!(usage_limit(&[], "claude", 0), None);
+    }
+
+    /// A worker row with the status model's axes set directly.
+    fn worker_row(pane: &str, kind: &str, demand: &str, activity: &str) -> SidebarAgentSnapshot {
+        let mut row = crate::sidebar::project_agents(
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+                {"id": pane, "pane_id": pane, "agent_status": "idle", "state_change_seq": 1}
+            ]}))
+            .unwrap(),
+        )
+        .agents
+        .remove(0);
+        row.agent_kind = kind.into();
+        row.demand = demand.into();
+        row.activity = activity.into();
+        row.blocked = false;
+        row.group = "seen".into();
+        row.changed_at_unix_ms = Some(5_000);
+        row
+    }
+
+    #[test]
+    fn a_worker_rests_only_when_its_row_says_stopped() {
+        use crate::agent_state::AgentUse;
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.snapshot.navigator.agents = vec![
+            worker_row("quiet", "claude", "none", "stopped"),
+            worker_row("unsure", "claude", "none", "unknown"),
+            worker_row("asking", "claude", "question", "stopped"),
+            worker_row("busy", "claude", "none", "working"),
+        ];
+        let probe = runtime.factory_worker_probe("quiet");
+        assert_eq!(
+            (probe.present, probe.activity, probe.changed_at_unix_ms),
+            (true, AgentUse::Quiet, Some(5_000))
+        );
+        assert_eq!(
+            runtime.factory_worker_probe("unsure").activity,
+            AgentUse::Unknown,
+            "what Hide cannot tell is never rest (D-52)"
+        );
+        assert_eq!(
+            runtime.factory_worker_probe("asking").activity,
+            AgentUse::Waiting
+        );
+        assert_eq!(
+            runtime.factory_worker_probe("busy").activity,
+            AgentUse::Working
+        );
+        let gone = runtime.factory_worker_probe("gone");
+        assert_eq!((gone.present, gone.activity), (false, AgentUse::Unknown));
+    }
+
+    #[test]
+    fn a_diagnosis_reads_only_what_the_worker_s_adapter_declares() {
+        let mut runtime = crate::runtime::tests::runtime();
+        let mut claude = worker_row("claude-pane", "claude", "question", "stopped");
+        claude.user_turn = Some(hide_session::turns::UserTurnFact {
+            kind: hide_session::turns::UserTurnKind::Question,
+            content: Some(hide_session::turns::UserTurnContent::new(
+                "Blue or green?",
+                ["blue", "green"],
+            )),
+        });
+        let mut unknown = claude.clone();
+        unknown.pane_id = "other-pane".into();
+        unknown.agent_kind = "some-new-agent".into();
+        runtime.snapshot.navigator.agents = vec![claude, unknown];
+        let texts = runtime.factory_worker_texts("claude-pane");
+        assert_eq!(
+            texts.user_turn.as_deref(),
+            Some("Blue or green?\n- blue\n- green")
+        );
+        assert_eq!(
+            runtime.factory_worker_texts("other-pane").user_turn,
+            None,
+            "an agent with no adapter declares nothing"
+        );
+    }
+
+    #[test]
+    fn only_a_start_that_takes_the_codex_flag_waits_for_the_kit() {
+        assert!(crate::codex_launch::needs_kit_answer("codex"));
+        assert!(!crate::codex_launch::needs_kit_answer("claude"));
+        assert!(!crate::codex_launch::needs_kit_answer("unknown-agent"));
     }
 }

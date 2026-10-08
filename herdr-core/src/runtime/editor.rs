@@ -1899,6 +1899,7 @@ impl Runtime {
             current.deadline_at_unix_ms = None;
         }
         self.clear_close_guards(&operation);
+        self.factory_panes_closed(&operation.pane_ids);
         if operation.item.is_none() {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(

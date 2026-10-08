@@ -16,11 +16,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hide_factory::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, Removal,
-    WorkerRuntime, WorkerSpawn, WorkerStatus,
+    WorkerRuntime, WorkerSpawn, WorkerStatus, WorkerTexts,
 };
 use hide_factory::exec::Machine;
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentOutcome};
-use hide_factory::model::{Runtime as AgentRuntime, UnixMs, WorkerRef};
+use hide_factory::model::{FactoryAi, Runtime as AgentRuntime, UnixMs, WorkerRef};
 use hide_factory::project::{IssueBook, SharedProjects};
 use hide_factory::role::Role;
 use hide_factory::{Command, Engine, Inbound, Ports, Refusal};
@@ -49,6 +49,10 @@ const START_GRACE_MS: u64 = 3 * 60_000;
 /// The longest prompt argument; the rest is read with `hide factory show`.
 const PROMPT_LIMIT: usize = 6 * 1024;
 const JUDGMENT_DEADLINE: Duration = Duration::from_secs(180);
+/// The screen a diagnosis reads: the last lines, cut again to 4 KiB by the
+/// engine (D-37).
+const SCREEN_LINES: u32 = 80;
+const SCREEN_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn now_ms() -> UnixMs {
     SystemTime::now()
@@ -119,10 +123,13 @@ enum Request {
     /// From a Factory screen, through a runtime event (PRD
     /// software-factory-ui); its answer comes back on the snapshot.
     Screen(ScreenRequest),
+    /// Panes the operator closed in Hide (D-26).
+    PanesClosed(Vec<String>),
 }
 
-/// The runtime's way to the engine thread for the screens: a full queue is
-/// refused at once, never waited on under the runtime lock.
+/// The runtime's way to the engine thread for the screens and the panes the
+/// operator closes: a full queue is refused at once, never waited on under
+/// the runtime lock.
 #[derive(Clone)]
 pub(crate) struct ScreenPort {
     requests: SyncSender<Request>,
@@ -130,8 +137,16 @@ pub(crate) struct ScreenPort {
 
 impl ScreenPort {
     pub(crate) fn send(&self, request: ScreenRequest) -> Result<(), &'static str> {
+        self.try_send(Request::Screen(request))
+    }
+
+    pub(crate) fn panes_closed(&self, panes: Vec<String>) -> Result<(), &'static str> {
+        self.try_send(Request::PanesClosed(panes))
+    }
+
+    fn try_send(&self, request: Request) -> Result<(), &'static str> {
         self.requests
-            .try_send(Request::Screen(request))
+            .try_send(request)
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => "factory_busy",
                 mpsc::TrySendError::Disconnected(_) => "factory_unavailable",
@@ -489,7 +504,7 @@ fn run(
         // node's (PRD core-host-node D-01).
         let machine = Machine::new(guard(&lock(&runtime)?).own_node(), Arc::clone(&runner_stop));
         let started = JudgeThread::start(runtime.clone(), home.clone());
-        let port = started.port();
+        let port = started.port(runtime.clone(), home.clone());
         *judge = Some(started);
         let projects = SharedProjects::new(
             machine.clone(),
@@ -626,6 +641,17 @@ fn run_requests(
                     continue;
                 }
                 let _ = reply.send(answer);
+                false
+            }
+            Ok(Request::PanesClosed(panes)) => {
+                // A closed pane matters only to an engine already running.
+                let Some(engine) = engine.as_mut() else {
+                    continue;
+                };
+                for pane in &panes {
+                    engine.worker_closed(pane);
+                }
+                publisher.touched();
                 false
             }
             Ok(Request::Screen(request)) => {
@@ -881,6 +907,15 @@ fn handle(
             set,
         },
         Command::Close { project } => Command::Close {
+            project: project.or_else(here),
+        },
+        Command::PauseFactory { project } => Command::PauseFactory {
+            project: project.or_else(here),
+        },
+        Command::ResumeFactory { project } => Command::ResumeFactory {
+            project: project.or_else(here),
+        },
+        Command::AckNotices { project } => Command::AckNotices {
             project: project.or_else(here),
         },
         Command::Check {
@@ -1232,9 +1267,7 @@ impl WorkerRuntime for CoreWorkers {
             return answer;
         }
         let runtime = self.runtime()?;
-        if request.runtime == hide_factory::model::Runtime::Codex
-            && !guard(&runtime).factory_kit_read()
-        {
+        if !guard(&runtime).factory_kit_read(request.runtime.as_str()) {
             return Err(Failure::starting("worker.spawn", "kit_not_read"));
         }
         drop(runtime);
@@ -1341,6 +1374,7 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn status(&mut self, worker: &WorkerRef) -> WorkerStatus {
+        use crate::agent_state::AgentUse;
         let Some(pane) = &worker.pane else {
             return WorkerStatus::Gone;
         };
@@ -1349,13 +1383,17 @@ impl WorkerRuntime for CoreWorkers {
             .lock()
             .is_ok_and(|state| state.pending_sleep.contains(pane));
         let Ok(runtime) = self.runtime() else {
-            return WorkerStatus::Working;
+            return WorkerStatus::Unknown;
         };
         let probe = guard(&runtime).factory_worker_probe(pane);
+        drop(runtime);
+        // A rest starts when the core saw the agent's state change (D-52).
+        let resting = || match probe.changed_at_unix_ms {
+            Some(since) => WorkerStatus::Resting { since },
+            None => WorkerStatus::Unknown,
+        };
         if probe.asleep || pending {
-            return WorkerStatus::Resting {
-                since: probe.status_changed_at_unix_ms,
-            };
+            return resting();
         }
         if !probe.present {
             return if now_ms().saturating_sub(worker.started_at) < START_GRACE_MS {
@@ -1364,14 +1402,40 @@ impl WorkerRuntime for CoreWorkers {
                 WorkerStatus::Gone
             };
         }
-        if probe.working {
-            WorkerStatus::Working
-        } else if probe.waiting {
-            WorkerStatus::Blocked
+        match probe.activity {
+            AgentUse::Working => WorkerStatus::Working,
+            AgentUse::Waiting => WorkerStatus::Blocked,
+            AgentUse::Quiet => resting(),
+            // What Hide cannot tell is never counted as rest (D-52).
+            AgentUse::Unknown => WorkerStatus::Unknown,
+        }
+    }
+
+    /// What a diagnosis reads about a quiet worker, in the order D-37 takes
+    /// them; the screen is read from Herdr only when neither of the others
+    /// is there, off the runtime lock.
+    fn texts(&mut self, worker: &WorkerRef) -> WorkerTexts {
+        let Some(pane) = &worker.pane else {
+            return WorkerTexts::default();
+        };
+        let Ok(runtime) = self.runtime() else {
+            return WorkerTexts::default();
+        };
+        let sources = guard(&runtime).factory_worker_texts(pane);
+        drop(runtime);
+        let screen = if sources.user_turn.is_some() || sources.last_answer.is_some() {
+            None
         } else {
-            WorkerStatus::Resting {
-                since: probe.status_changed_at_unix_ms,
-            }
+            sources
+                .raw_pane
+                .as_deref()
+                .zip(sources.connector.as_deref())
+                .and_then(|(raw, connector)| read_screen(connector, raw))
+        };
+        WorkerTexts {
+            user_turn: sources.user_turn,
+            last_answer: sources.last_answer,
+            screen,
         }
     }
 
@@ -1454,9 +1518,35 @@ impl WorkerRuntime for CoreWorkers {
         )
     }
 
+    /// The usage row the agent's adapter declares (D-52).
     fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
+        let provider = runtime.adapter().usage?.adapter().herdr.name;
         let core = self.runtime().ok()?;
-        guard(&core).factory_usage_limit(runtime.as_str(), now_ms())
+        guard(&core).factory_usage_limit(provider, now_ms())
+    }
+}
+
+/// The lines a worker's screen shows now, for a diagnosis; a read Herdr
+/// does not answer in time is no screen text.
+fn read_screen(connector: &dyn hide_herdr_client::ApiConnector, pane: &str) -> Option<String> {
+    let params = crate::wire::pane_read_params(pane, "recent_unwrapped", SCREEN_LINES).ok()?;
+    let answer = hide_herdr_client::request_small_response(
+        connector,
+        "pane.read",
+        params,
+        SCREEN_READ_TIMEOUT,
+    );
+    match answer
+        .map_err(|error| error.to_string())
+        .and_then(crate::wire::pane_text)
+    {
+        Ok(read) => Some(read.text).filter(|text| !text.trim().is_empty()),
+        Err(reason) => {
+            crate::diagnostic!(
+                json!({"component":"factory","kind":"worker.screen_unread","pane_id":pane,"reason":reason})
+            );
+            None
+        }
     }
 }
 
@@ -1540,6 +1630,8 @@ fn start_worker(
         branch: request.branch.clone(),
         started_at: now_ms(),
         asleep: false,
+        model: request.model.clone(),
+        effort: request.effort.clone(),
     })
 }
 
@@ -1669,25 +1761,6 @@ struct CoreNotifier {
 }
 
 impl Notifier for CoreNotifier {
-    fn macos(&mut self, title: &str, body: &str) {
-        let Some(runtime) = lock(&self.runtime) else {
-            return;
-        };
-        let connector = {
-            let guard = guard(&runtime);
-            guard.delivery_connector(guard.node().as_str())
-        };
-        drop(runtime);
-        if let Some(connector) = connector {
-            let _ = hide_herdr_client::request_small_response(
-                connector.as_ref(),
-                "notification.show",
-                json!({"title": title, "body": body}),
-                Duration::from_millis(500),
-            );
-        }
-    }
-
     /// A pending review's result goes to the pane that added the Task (B11).
     fn producer(&mut self, factory: &str, pane: &str, body: &str) -> bool {
         let Some(runtime) = lock(&self.runtime) else {
@@ -1746,10 +1819,12 @@ impl JudgeThread {
         Self { shared, thread }
     }
 
-    fn port(&self) -> JudgePort {
+    fn port(&self, runtime: Weak<Mutex<Runtime>>, home: Option<PathBuf>) -> JudgePort {
         JudgePort {
             shared: Arc::clone(&self.shared),
             alive: self.thread.is_some(),
+            runtime,
+            home,
         }
     }
 }
@@ -1768,6 +1843,36 @@ impl Drop for JudgeThread {
 struct JudgePort {
     shared: Arc<JudgeShared>,
     alive: bool,
+    runtime: Weak<Mutex<Runtime>>,
+    home: Option<PathBuf>,
+}
+
+/// The Hide AI settings the core holds, else the ones on disk.
+fn ai_settings(
+    runtime: &Weak<Mutex<Runtime>>,
+    home: Option<&Path>,
+) -> Option<(hide_ai::AiSettings, Arc<dyn crate::node_access::NodeLink>)> {
+    let core = lock(runtime)?;
+    let (settings, node) = {
+        let core = guard(&core);
+        (core.factory_ai_settings(), core.own_node())
+    };
+    drop(core);
+    let settings = settings
+        .or_else(|| home.and_then(|home| hide_ai::settings::load(home).ok()))
+        .unwrap_or_default();
+    Some((settings, node))
+}
+
+/// The pick a judgment carries to Hide AI: the Factory AI the Factory chose
+/// (D-40), or none for the app's own choice.
+fn ai_pick(ai: Option<&FactoryAi>) -> Option<hide_ai::AiPick> {
+    let ai = ai?;
+    Some(hide_ai::AiPick {
+        provider: hide_ai::ProviderId::from_id(&ai.provider)?,
+        model: ai.model.clone(),
+        effort: ai.effort.clone(),
+    })
 }
 
 impl Judge for JudgePort {
@@ -1807,6 +1912,36 @@ impl Judge for JudgePort {
             .map(|mut answers| std::mem::take(&mut *answers))
             .unwrap_or_default()
     }
+
+    /// A Factory AI choice names an agent Hide AI has, a model it can pass,
+    /// an effort the agent declares, and an agent ready to answer (B31).
+    /// Asked only when the operator changes the choice.
+    fn check_ai(&mut self, ai: &FactoryAi) -> Result<(), String> {
+        let provider =
+            hide_ai::ProviderId::from_id(&ai.provider).ok_or("factory_ai_unknown_agent")?;
+        if let Some(model) = &ai.model
+            && !hide_agent_adapter::valid_model(model)
+        {
+            return Err("factory_ai_model_invalid".into());
+        }
+        if let Some(effort) = &ai.effort
+            && !provider.efforts().contains(&effort.as_str())
+        {
+            return Err("factory_ai_effort_not_declared".into());
+        }
+        let (settings, node) =
+            ai_settings(&self.runtime, self.home.as_deref()).ok_or("core_stopped")?;
+        let router = crate::ai::factory_router(&node, &settings);
+        match router
+            .availability()
+            .into_iter()
+            .find(|(id, _)| *id == provider)
+        {
+            Some((_, hide_ai::Availability::Ready)) => Ok(()),
+            Some((_, availability)) => Err(format!("factory_ai_{}", availability.class())),
+            None => Err("factory_ai_unknown_agent".into()),
+        }
+    }
 }
 
 fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Option<PathBuf>) {
@@ -1830,18 +1965,9 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             }
         };
         // The core ended: nothing is left to answer the judgment to.
-        let Some(core) = lock(&runtime) else { return };
-        let (settings, node) = {
-            let core = guard(&core);
-            (core.factory_ai_settings(), core.own_node())
+        let Some((settings, node)) = ai_settings(&runtime, home.as_deref()) else {
+            return;
         };
-        drop(core);
-        let settings = settings
-            .or_else(|| {
-                home.as_deref()
-                    .and_then(|home| hide_ai::settings::load(home).ok())
-            })
-            .unwrap_or_default();
         if router
             .as_ref()
             .is_none_or(|(current, _)| *current != settings)
@@ -1864,7 +1990,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             output_schema: judgment.schema(),
             deadline: JUDGMENT_DEADLINE,
             schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
-            pick: None,
+            pick: ai_pick(judgment.ai.as_ref()),
         };
         let started = Instant::now();
         let outcome = match router.execute(&request, &shared.cancel) {
@@ -2056,6 +2182,10 @@ mod tests {
                 watch_sent_today: 0,
                 watch_last_at: Some(now_ms()),
                 github_approval: None,
+                paused: false,
+                observer_day: 0,
+                observer_calls: 0,
+                observer_cap_notice_day: 0,
             };
             hide_factory::store::Store::open(&paths.store, &paths.files)
                 .unwrap()
@@ -2094,6 +2224,8 @@ mod tests {
                         judge: Box::new(JudgePort {
                             shared: Arc::clone(&judgments),
                             alive: true,
+                            runtime: Weak::new(),
+                            home: None,
                         }),
                         environment: Box::new(MachineEnvironment(machine)),
                         notifier: Box::new(CoreNotifier {
@@ -2273,11 +2405,13 @@ mod tests {
             factory: "f-1".into(),
             task: task.into(),
             name: format!("w-{task}"),
-            runtime: hide_factory::model::Runtime::Claude,
+            runtime: hide_factory::model::Runtime::CLAUDE,
             project: "/work/p".into(),
             branch: format!("factory/{task}"),
             prompt: "p".into(),
             args: Vec::new(),
+            model: None,
+            effort: None,
             resume,
             attempt: 0,
         }
@@ -2294,6 +2428,8 @@ mod tests {
             branch: job.branch.clone(),
             started_at: 1,
             asleep: false,
+            model: None,
+            effort: None,
         }
     }
 
@@ -2412,6 +2548,7 @@ mod tests {
             task: None,
             priority,
             input: hide_factory::judgment::JudgmentInput::Watch { board: json!({}) },
+            ai: None,
         }
     }
 
@@ -2428,6 +2565,8 @@ mod tests {
         let mut port = JudgePort {
             shared: Arc::clone(&shared),
             alive: true,
+            runtime: Weak::new(),
+            home: None,
         };
         port.submit(judgment("f-1", "watch", Priority::Factory))
             .unwrap();
@@ -2456,6 +2595,8 @@ mod tests {
         let mut dead = JudgePort {
             shared,
             alive: false,
+            runtime: Weak::new(),
+            home: None,
         };
         assert!(dead.submit(judgment("f-3", "x", Priority::Intake)).is_err());
     }
