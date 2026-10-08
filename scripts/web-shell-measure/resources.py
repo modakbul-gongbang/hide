@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Twenty one-second CPU deltas and RSS samples for owned process trees.
+"""One-second CPU deltas and RSS samples for owned process trees.
 
 usage: resources.py <hided-pid> <herdr-pid> <chrome-pid> [--memory-series]
+MEASURE_RESOURCE_SECONDS sets how many one-second samples (20 by default).
+A chrome pid of 0 samples no browser (a windowless window).
 CPU is one-core percent from process CPU-time deltas, not ps's lifetime average.
 No command line, environment, or operator socket is read.
 """
 import json
+import os
 import subprocess
 import sys
 import time
@@ -39,7 +42,7 @@ def tree(root, rows):
 
 if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] != "--memory-series"):
     raise SystemExit("usage: resources.py <hided-pid> <herdr-pid> <chrome-pid> [--memory-series]")
-roots = dict(zip(("hided", "herdr", "chrome"), map(int, sys.argv[1:4])))
+roots = {name: pid for name, pid in zip(("hided", "herdr", "chrome"), map(int, sys.argv[1:4])) if pid}
 if len(sys.argv) == 5:
     origin = time.monotonic()
     samples = []
@@ -55,7 +58,8 @@ if len(sys.argv) == 5:
     raise SystemExit(0)
 before, started = snapshot(), time.monotonic()
 samples = []
-for _ in range(20):
+seconds = int(os.environ.get("MEASURE_RESOURCE_SECONDS", "20"))
+for _ in range(seconds):
     time.sleep(1)
     after, ended = snapshot(), time.monotonic()
     sample = {"seconds": ended - started}
@@ -66,4 +70,4 @@ for _ in range(20):
                         "rss_kb": sum(after[pid][2] for pid in pids), "processes": len(pids)}
     samples.append(sample)
     before, started = after, ended
-print(json.dumps({"method": "20 one-second CPU-time deltas; RSS sums; owned process trees", "samples": samples}))
+print(json.dumps({"method": f"{seconds} one-second CPU-time deltas; RSS sums; owned process trees", "samples": samples}))

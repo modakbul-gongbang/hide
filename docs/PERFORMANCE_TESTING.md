@@ -363,6 +363,27 @@ Every time is on the page's clock from the chord's first keydown (or the click):
 `MEASURE_HIDED_BIN` points the run at another hided, such as a baseline built from the merge base, so baseline and candidate share the fixture; run both headless (`--isolated-headless`) under the same scale and report the load beside each.
 Herdr's share and Hide's are read from the candidate's `pane_op.timing` lines in the run's `hide-state` diagnostic log (Drawn ahead of Herdr in [ARCHITECTURE.md](ARCHITECTURE.md#drawn-ahead-of-herdr)), which the baseline does not write.
 
+### Screen key echo, lost keys and the terminal path's cost
+
+`echo.mjs` puts bytes into the pane with `herdr pane send-text`, so it times only the output path; a change to how a key travels needs the key typed on the screen (PRD core-host-node-terminal D-07).
+`key-echo.mjs` types into the measured pane's terminal with CDP `Input.dispatchKeyEvent`, which takes the shell's own keydown path and its `/ws` `key` frame.
+Each sample is one key: the marker `aNNNN` is typed and waited for, then its last key `z` is typed, and the sample is the xterm write completion that first shows `aNNNNz` minus the moment before that key event was sent; the pane runs `stty -echo -icanon; cat`, so the drawn character is the pane's echo.
+It also records every `/ws` frame the page received while it typed, by type (`ws_frames_by_type`), so a key that made the core publish shows as a `delta` frame (B5).
+
+`key-count.mjs` types `MEASURE_KEY_COUNT` distinct markers (10,000 for the claim) as one CDP `Input.insertText` each, which is one input event in xterm and one `key` frame, then reads the pane's logical lines back from the pane's own isolated Herdr and reports how many markers never arrived (`missing`), how many arrived out of order (`reordered`, adjacent inversions among first sightings) and how many twice (D-08).
+It never stops at the first loss.
+`MEASURE_PANE_READ` replaces the read command, which is how a device pane is read from the device's isolated Herdr over SSH; `MEASURE_KEY_INTERVAL_MS` spaces the keys (0 by default: as fast as CDP takes them, in order).
+
+`MEASURE_SCENARIO=keys` runs both on the shape the terminal claims are made on: the measured pane and four splits in one tab, five attached panes.
+It records, in order: idle resources over `MEASURE_IDLE_SECONDS` (60) in `resources-idle.json`; the idle key echo (`key-echo-idle.json`); every pane printing a line per 8 ms (a private `drive.py` beside `cat`) while resources are sampled over `MEASURE_DRIVEN_SECONDS` (120, `resources-driven.json`) and the key echo runs again (`key-echo-driven.json`); the key count when `MEASURE_KEY_COUNT` is set (`key-count.json`); and the window closed while the panes print for `MEASURE_WINDOWLESS_SECONDS` (60, `resources-windowless.json`, no browser in the sampled trees), then reopened, with each pane's drawn text length (`reopen-panes.json`) and the core log's terminal, redraw and resume records (`reopen-diagnostics.json`).
+`summarize.py resources` reads hided's median one-second CPU and its largest RSS from a resources file; `summarize.py echo` reads a key echo file like an echo file.
+
+A comparison runs the baseline and the candidate `hided` (release builds, each from its own worktree, `MEASURE_HIDED_BIN`) in alternating trials on the same machine, idle and driven reported separately, with nearest-rank p50 and p95 per condition and the load recorded beside each trial; the claim's thresholds are the PRD's (B2: p50 and p95 no more than 5 ms above the baseline; B21: median CPU no more than 10% above and largest RSS no more than 32 MiB above; B19: windowless median CPU no more than 10% above), never a past run's figure.
+Keep `--isolated-headless` the same for both builds.
+A device pane is measured the same way from a screen whose isolated hided has the device registered with consent, reaching a private sshd, an isolated Herdr and a separate HOME and state folder on the device; the operator's own device account, daemons and Herdr are never the target.
+`MEASURE_SCENARIO=device` does this: it copies `MEASURE_DEVICE_SSH_CONFIG` (the private sshd's alias, `MEASURE_DEVICE_ALIAS`) into the private HOME, starts hided with the consent folders `MEASURE_DEVICE_HELPER_ROOT` and `MEASURE_DEVICE_CLI_DIR` inside the device account, registers and fronts the device as the shell does (`device-front.mjs`), and runs the key echo (`key-echo-device.json`) and, with `MEASURE_KEY_COUNT`, the key count (`key-count-device.json`) on the device's one fixture pane; `MEASURE_DEVICE_HERDR` is the command that runs the device's isolated Herdr from this machine and `MEASURE_DEVICE_SOCKET` its socket.
+Fingerprint the device's real `~/.hide`, `~/.local/bin`, `~/Library/LaunchAgents` and Herdr configuration (hash, modification time and the processes that hold them) before and after, and record both.
+
 ## Scoped browser gateway discovery
 
 Browser inventory area identity is projected in the existing changed-layout generation pass, one visit per area and display, with no additional notification or timer.

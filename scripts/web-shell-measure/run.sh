@@ -15,6 +15,22 @@
 # server to that scale (scale.sh); it then records idle resources, one echo
 # trial under the scale's agent churn, and the split, zoom, close, new tab
 # and tab switch latencies (topology.mjs), and skips the frame window.
+# `keys` (PRD core-host-node-terminal D-07, D-08, B2, B4, B5, B19, B21) is
+# the measured pane and four splits in one tab, five attached panes: idle
+# resources for MEASURE_IDLE_SECONDS (60), the screen key echo idle
+# (key-echo.mjs), then every pane printing a line per 8 ms while resources
+# are sampled for MEASURE_DRIVEN_SECONDS (120) and the key echo runs again,
+# then MEASURE_KEY_COUNT (0: skipped) distinct keys counted back from the
+# pane (key-count.mjs), then the window closed while the panes print for
+# MEASURE_WINDOWLESS_SECONDS (60) and reopened.
+# `device` (B3, B4) is the same key echo and key count on a device's pane:
+# the shell registers the device with consent (device-front.mjs), brings
+# its fixture workspace to the front, and types into the device's one
+# pane. The device is an isolated account the caller set up: its SSH alias
+# in MEASURE_DEVICE_SSH_CONFIG (copied into the private HOME), its Herdr
+# socket in MEASURE_DEVICE_SOCKET, MEASURE_DEVICE_HERDR the command that
+# runs its Herdr from here, and MEASURE_DEVICE_HELPER_ROOT and
+# MEASURE_DEVICE_CLI_DIR the consent folders inside that account.
 # MEASURE_HIDED_BIN measures another hided build, such as a baseline, with
 # the same fixture.
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
@@ -37,7 +53,7 @@ measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
 trap 'rmdir "$MEASURE_SOCKET_DIR"' EXIT
 scenario="${MEASURE_SCENARIO:-single}"
-case "$scenario" in single|multi|areas2|areas3|topology) ;; *) echo "MEASURE_SCENARIO must be single, multi, areas2, areas3 or topology" >&2; exit 2;; esac
+case "$scenario" in single|multi|keys|device|areas2|areas3|topology) ;; *) echo "MEASURE_SCENARIO must be single, multi, keys, device, areas2, areas3 or topology" >&2; exit 2;; esac
 scale="${MEASURE_SCALE:-none}"
 case "$scale" in none|operator|double) ;; *) echo "MEASURE_SCALE must be none, operator or double" >&2; exit 2;; esac
 [[ "$scale" == none || "$scenario" == topology ]] || { echo "MEASURE_SCALE needs MEASURE_SCENARIO=topology" >&2; exit 2; }
@@ -190,15 +206,18 @@ wait_prompt "$MEASURE_PANE_ID"
 "$HERDR_BIN_PATH" pane run "$MEASURE_PANE_ID" 'stty -echo -icanon; cat' >/dev/null
 extra_panes=()
 extra_tabs=()
-if [[ "$scenario" == multi ]]; then
+if [[ "$scenario" == multi || "$scenario" == keys ]]; then
   # Four splits beside the measured pane, alternating direction so the tree
-  # nests, and four more tabs; none of it takes focus from the measured pane.
+  # nests, and (multi) four more tabs; none of it takes focus from the
+  # measured pane.
   split_from="$MEASURE_PANE_ID"
   for direction in right down right down; do
     split_pane="$("$HERDR_BIN_PATH" pane split "$split_from" --direction "$direction" --no-focus | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')"
     extra_panes+=("$split_pane")
     split_from="$split_pane"
   done
+fi
+if [[ "$scenario" == multi ]]; then
   for label in two three four five; do
     extra_tab="$("$HERDR_BIN_PATH" tab create --workspace "$measure_workspace" --cwd "$MEASURE_FIXTURE" --label "$label" --no-focus | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
     extra_tabs+=("$extra_tab")
@@ -225,8 +244,25 @@ if [[ "$scenario" == topology ]]; then
   fi
 fi
 
+hided_env=()
+if [[ "$scenario" == device ]]; then
+  for name in MEASURE_DEVICE_ID MEASURE_DEVICE_ALIAS MEASURE_DEVICE_SSH_CONFIG MEASURE_DEVICE_SOCKET MEASURE_DEVICE_HERDR MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
+    [[ -n "${!name:-}" ]] || { echo "the device scenario needs $name" >&2; exit 2; }
+  done
+  mkdir -p "$MEASURE_PRIVATE/home/.ssh"
+  cp "$MEASURE_DEVICE_SSH_CONFIG" "$MEASURE_PRIVATE/home/.ssh/config"
+  chmod 600 "$MEASURE_PRIVATE/home/.ssh/config"
+  hided_env=(HIDE_HOST_HELPER_ROOT="$MEASURE_DEVICE_HELPER_ROOT" HIDE_HOST_CLI_DIR="$MEASURE_DEVICE_CLI_DIR")
+  device_herdr() { eval "$MEASURE_DEVICE_HERDR" '"$@"'; }
+  device_pane="$(device_herdr api snapshot | python3 "$measure_dir/pane-id.py")"
+  device_herdr pane send-keys "$device_pane" ctrl+c >/dev/null
+  sleep 0.3
+  device_herdr pane run "$device_pane" "printf '\033c'; stty -echo -icanon; cat" >/dev/null
+  echo "device_pane=$device_pane" >> "$MEASURE_RUN_DIR/identity.txt"
+fi
+
 # Product hided (release, embedded web/dist) on the private socket.
-spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 "$hided_bin"
+spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 ${hided_env[@]+"${hided_env[@]}"} "$hided_bin"
 hided_pid=$owned_pid
 deadline=$((SECONDS+20)); until [[ -f "$MEASURE_PRIVATE/hide-state/hided.json" ]]; do (( SECONDS < deadline )) || { echo 'hided state file missing' >&2; exit 1; }; sleep 0.1; done
 hided_port="$(python3 -c "import json;print(json.load(open('$MEASURE_PRIVATE/hide-state/hided.json'))['port'])")"
@@ -271,6 +307,12 @@ if [[ "$scenario" == multi ]]; then
   wait_js "window.__hideProbe.attachedPanes().length >= 9"
   sleep 2
 fi
+if [[ "$scenario" == keys ]]; then
+  for pane in "${extra_panes[@]}"; do wait_prompt "$pane"; done
+  wait_js "document.querySelectorAll('[data-pane-view]').length === 5 && window.__hideProbe.paneId() === '$MEASURE_PANE_ID'"
+  wait_js "window.__hideProbe.attachedPanes().length >= 5"
+  sleep 2
+fi
 node -e "
 import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(JSON.stringify(await p.evaluate('({scenario: \"$scenario\", pane: window.__hideProbe.paneId(), pane_views: document.querySelectorAll(\"[data-pane-view]\").length, splits: document.querySelectorAll(\"[data-split]\").length, tabs: document.querySelectorAll(\"[role=tab]\").length, attached_panes: window.__hideProbe.attachedPanes(), live_terminals: window.__hideProbe.liveTerminals(), ua: navigator.userAgent, dpr: devicePixelRatio, inner: [innerWidth, innerHeight]})'))); p.close(); })" > "$MEASURE_RUN_DIR/page.json"
 cat "$MEASURE_RUN_DIR/page.json"
@@ -295,6 +337,110 @@ if [[ "$scenario" == topology ]]; then
   python3 "$measure_dir/summarize.py" timing "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/timing-summary.json"
   python3 "$measure_dir/memory.py" after-topology "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-after-topology.json"
   cat "$MEASURE_RUN_DIR/echo-summary.json" "$MEASURE_RUN_DIR/topology-summary.json"
+  note 'measurement complete; cleaning up owned processes'
+  exit 0
+fi
+
+if [[ "$scenario" == device ]]; then
+  export MEASURE_HIDED_PORT="$hided_port" MEASURE_HIDED_TOKEN="$hided_token"
+  note "device: registering $MEASURE_DEVICE_ID and bringing it to the front"
+  node "$measure_dir/device-front.mjs" register
+  node "$measure_dir/device-front.mjs" front
+  scoped_pane="remote:$MEASURE_DEVICE_ID:pane:$device_pane"
+  wait_js "window.__hideProbe?.paneId() === '$scoped_pane' && window.__hideProbe.attachedPanes().includes('$scoped_pane')"
+  sleep 2
+  note "device: screen key echo on $scoped_pane (50 samples)"
+  MEASURE_PANE_ID="$scoped_pane" MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-device.json"
+  python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/key-echo-device.json" > "$MEASURE_RUN_DIR/key-echo-device-summary.json"
+  cat "$MEASURE_RUN_DIR/key-echo-device-summary.json"
+  if (( ${MEASURE_KEY_COUNT:-0} > 0 )); then
+    device_herdr pane send-keys "$device_pane" ctrl+c >/dev/null
+    sleep 0.3
+    device_herdr pane run "$device_pane" "printf '\033c'; stty -echo -icanon; cat" >/dev/null
+    sleep 0.5
+    note "device: $MEASURE_KEY_COUNT distinct keys counted back from the device's pane"
+    MEASURE_PANE_ID="$device_pane" MEASURE_SCREEN_PANE_ID="$scoped_pane" \
+      MEASURE_PANE_READ="$MEASURE_DEVICE_HERDR pane read '$device_pane' --source recent-unwrapped --lines 4000" \
+      node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count-device.json"
+    cat "$MEASURE_RUN_DIR/key-count-device.json"
+  fi
+  device_herdr pane send-keys "$device_pane" ctrl+c >/dev/null
+  note 'measurement complete; cleaning up owned processes'
+  exit 0
+fi
+
+if [[ "$scenario" == keys ]]; then
+  all_panes=("$MEASURE_PANE_ID" "${extra_panes[@]}")
+  # One line per 8 ms for the given seconds, beside the cat that echoes keys.
+  printf '%s\n' 'import sys, time' 'end = time.monotonic() + float(sys.argv[1]); i = 0' \
+    'while time.monotonic() < end:' "    print(f'drive {i:05d}', flush=True); i += 1; time.sleep(0.008)" > "$MEASURE_RUN_DIR/drive.py"
+  reset_pane() {
+    "$HERDR_BIN_PATH" pane send-keys "$1" ctrl+c >/dev/null
+    sleep 0.3
+    "$HERDR_BIN_PATH" pane run "$1" "printf '\033c'; stty -echo -icanon; ${2:+/usr/bin/python3 $MEASURE_RUN_DIR/drive.py $2 & }cat" >/dev/null
+  }
+  drive_all() { for pane in "${all_panes[@]}"; do reset_pane "$pane" "$1"; done; sleep 1; }
+  quiet_all() { for pane in "${all_panes[@]}"; do reset_pane "$pane"; done; sleep 0.5; }
+  idle_seconds="${MEASURE_IDLE_SECONDS:-60}"
+  driven_seconds="${MEASURE_DRIVEN_SECONDS:-120}"
+  windowless_seconds="${MEASURE_WINDOWLESS_SECONDS:-60}"
+  quiet_all
+  note "keys: idle resources, $idle_seconds s, five attached panes"
+  MEASURE_RESOURCE_SECONDS="$idle_seconds" python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid" > "$MEASURE_RUN_DIR/resources-idle.json"
+  note "keys: screen key echo, idle (50 samples)"
+  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-idle.json"
+  note "keys: driven, $driven_seconds s at one line per 8 ms per pane"
+  drive_all $((driven_seconds + 30))
+  export MEASURE_RESOURCE_SECONDS="$driven_seconds"
+  spawn_owned resources-driven python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid"
+  resource_pid=$owned_pid
+  unset MEASURE_RESOURCE_SECONDS
+  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-driven.json"
+  wait "$resource_pid"
+  cp "$MEASURE_RUN_DIR/logs/resources-driven.log" "$MEASURE_RUN_DIR/resources-driven.json"
+  quiet_all
+  if (( ${MEASURE_KEY_COUNT:-0} > 0 )); then
+    note "keys: $MEASURE_KEY_COUNT distinct keys counted back from the pane"
+    node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count.json"
+    cat "$MEASURE_RUN_DIR/key-count.json"
+    quiet_all
+  fi
+  note "keys: windowless, $windowless_seconds s with every pane printing"
+  printf 'about:blank' | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
+  sleep 2
+  drive_all $((windowless_seconds + 10))
+  MEASURE_RESOURCE_SECONDS="$windowless_seconds" python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" 0 > "$MEASURE_RUN_DIR/resources-windowless.json"
+  printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
+  wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID' && document.querySelectorAll('[data-pane-view]').length === 5"
+  sleep 5
+  node -e "
+import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); const panes = JSON.parse(process.argv[1]); console.log(JSON.stringify(await p.evaluate('(' + JSON.stringify(panes) + ').map((id) => ({pane: id, text_chars: window.__hideProbe.paneText(id).trim().length}))'))); p.close(); })" "$(printf '%s\n' "${all_panes[@]}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" > "$MEASURE_RUN_DIR/reopen-panes.json"
+  python3 - "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/reopen-diagnostics.json" <<'PYJSON'
+import collections, json, sys
+counts = collections.Counter()
+try:
+    lines = open(sys.argv[1]).read().splitlines()
+except FileNotFoundError:
+    lines = []
+for line in lines:
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    record = record.get("event", record)
+    kind = str(record.get("kind", ""))
+    if kind.startswith("terminal.") or "redraw" in kind or "resume" in kind:
+        counts[kind] += 1
+print(json.dumps(dict(sorted(counts.items()))))
+PYJSON
+  cat "$MEASURE_RUN_DIR/reopen-panes.json" "$MEASURE_RUN_DIR/reopen-diagnostics.json"
+  for name in idle driven; do
+    python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/key-echo-$name.json" > "$MEASURE_RUN_DIR/key-echo-$name-summary.json"
+  done
+  for name in idle driven windowless; do
+    python3 "$measure_dir/summarize.py" resources "$MEASURE_RUN_DIR/resources-$name.json" > "$MEASURE_RUN_DIR/resources-$name-summary.json"
+  done
+  cat "$MEASURE_RUN_DIR"/key-echo-*-summary.json "$MEASURE_RUN_DIR"/resources-*-summary.json
   note 'measurement complete; cleaning up owned processes'
   exit 0
 fi

@@ -6,6 +6,7 @@ usage: summarize.py echo <echo-*.json...>      -> per-trial p50/p95/p99/max, med
        summarize.py topology <topology.json>   -> per operation p50/p95/max to screen and to frame
        summarize.py timing <core.jsonl>        -> per operation stage times from pane_op.timing lines,
                                                   with Herdr's share and Hide's (layout event to sent)
+       summarize.py resources <resources.json> -> hided's median one-second CPU and its largest RSS
 """
 import json
 import math
@@ -97,6 +98,19 @@ def stats(values):
     }
 
 
+def resources(path):
+    doc = json.loads(Path(path).read_text())
+    samples = [s["hided"] for s in doc["samples"] if "hided" in s]
+    cpu = sorted(float(s["cpu_percent"]) for s in samples)
+    return {
+        "samples": len(samples),
+        "hided_cpu_median_percent": percentile(cpu, 0.50),
+        "hided_cpu_p95_percent": percentile(cpu, 0.95),
+        "hided_rss_max_kb": max((int(s["rss_kb"]) for s in samples), default=None),
+        "method": doc.get("method"),
+    }
+
+
 def timing(path):
     records = {}
     for line in Path(path).read_text().splitlines():
@@ -130,6 +144,8 @@ if __name__ == "__main__":
         result = topology(sys.argv[2])
     elif kind == "timing":
         result = timing(sys.argv[2])
+    elif kind == "resources":
+        result = resources(sys.argv[2])
     else:
         result = frames(sys.argv[2])
     print(json.dumps(result, indent=2))
