@@ -158,7 +158,9 @@ const OBS_INBOX = [
     {kind: 'notice', glyph: 'bell', key: 's88', title: '오늘 Observer 100/100번', text: '남은 결정은 사람이 정합니다', cue: '20분'},
   ]},
 ];
-const OBS_INBOX_COUNT = OBS_INBOX.reduce((sum, group) => sum + group.items.length, 0);
+// The 내 차례 number counts only what waits on the person: answers, merges and stops.
+// 알림 lines are read and dismissed, so they sit below a rule and are not counted.
+const OBS_INBOX_COUNT = OBS_INBOX.filter(group => group.group !== '알림').reduce((sum, group) => sum + group.items.length, 0);
 const obsCount = lane => Object.values({...TASKS, ...OBS_TASKS}).filter(task => task.lane === lane && (lane !== 'done' || task.today)).length;
 // The mode table (D-14, D-32): who answers each kind in 수동, 보조 and 자율.
 const MODES = ['수동', '보조', '자율'];
@@ -339,10 +341,19 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       ], {width: 'fill_container', padding: [0, 0, 0, indent]}),
     ]);
   }
-  function turnList(id, inbox = INBOX) {
+  function turnList(id, inbox = INBOX, {quietNotices = false} = {}) {
     const inner = MAIN - 2 * GUTTER;
     const children = [];
     inbox.forEach((group, gi) => {
+      if (quietNotices && group.group === '알림') {
+        children.push(frame(`${id}-g${gi}-gap`, 'Gap', {width: 1, height: 8}, []), rule(`${id}-g${gi}-rule`));
+        children.push(row(`${id}-g${gi}`, [
+          cap(`${id}-g${gi}-t`, `알림 ${group.items.length}`, MUT, {weight: '500'}), cap(`${id}-g${gi}-x`, '확인만 하면 되는 것 · 내 차례 숫자에 세지 않음', MUT), spacer(`${id}-g${gi}-s`),
+          screenButton(`${id}-g${gi}-all`, '모두 확인', {variant: 'ghost', height: num(tokens, '--size-control-sm')}),
+        ], {height: 34, padding: [0, '$--spacing-md'], width: 'fill_container'}));
+        group.items.forEach((item, ii) => children.push(closedItem(`${id}-g${gi}-${ii}`, item, inner)));
+        return;
+      }
       children.push(row(`${id}-g${gi}`, [cap(`${id}-g${gi}-t`, `${group.group} ${group.items.length}`, SUB, {weight: '500'})], {height: 30, padding: [0, '$--spacing-md']}));
       group.items.forEach((item, ii) => children.push(gi === 0 && ii === 0 ? openItem(`${id}-g${gi}-${ii}`, item, inner) : closedItem(`${id}-g${gi}-${ii}`, item, inner)));
     });
@@ -698,7 +709,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   // -- Observer (PRD factory-observer) -------------------------------------------------------------
   const OBS_FLOW = {before: obsCount('before'), moving: obsCount('moving'), stuck: obsCount('stuck'), done: obsCount('done')};
   function obsTurnMain(id) {
-    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 0, counts: OBS_FLOW, count: OBS_INBOX_COUNT}), turnList(`${id}-list`, OBS_INBOX)]);
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 0, counts: OBS_FLOW, count: OBS_INBOX_COUNT}), turnList(`${id}-list`, OBS_INBOX, {quietNotices: true})]);
   }
   // Settings: the Observer group above 실행, in the settings sheet's rows (settings-rows.tsx Group and Row).
   const SHEET_W = num(tokens, '--size-settings-sheet-w');
@@ -727,22 +738,53 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       frame(`${id}-fnw`, 'Footnote', {layout: 'horizontal', padding: ['$--spacing-sm', 0, 0, 0]}, [cap(`${id}-fn`, '¹ 자율에서는 위험 경로 하나만 걸린 머지 승인을 AI가 합니다. 애매하거나 권한 신호가 있으면 사람에게 갑니다.', MUT, {width: SHEET_W - 2 * 12})]),
     ], {gap: 0});
   }
+  const switchOn = (id, on) => frame(id, 'Switch', {width: 32, height: 18, cornerRadius: 9, fill: on ? '$--primary' : '$--secondary', padding: 2, layout: 'horizontal', justifyContent: on ? 'end' : 'start', alignItems: 'center'}, [
+    frame(`${id}-k`, 'Knob', {width: 14, height: 14, cornerRadius: 7, fill: on ? '$--primary-foreground' : MUT}, []),
+  ]);
+  const textValue = (id, value, width) => frame(id, 'Text field', {layout: 'horizontal', alignItems: 'center', width, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    text(`${id}-t`, value, {size: '$--text-body', mono: true}),
+  ]);
+  // A folded line (settings-rows.tsx Disclosure): chevron, title, a short summary of what is inside.
+  const disclosure = (id, title, summary, open = false) => row(id, [
+    icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size: 14, fill: MUT}), text(`${id}-t`, title, {size: '$--text-subhead'}), spacer(`${id}-s`), cap(`${id}-x`, summary, MUT),
+  ], {width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-md']});
+  // Settings keep only what the operator decides; every other engine default moves under 고급 설정
+  // and stays reachable with `hide factory config`.
   function settingsBody(id, {aiOff}) {
-    const stat = (sid, label, value) => row(sid, [cap(`${sid}-l`, label, SUB), text(`${sid}-n`, value, {size: '$--text-body', weight: '600', mono: true})], {gap: '$--spacing-xs'});
     const observer = settingsGroup(`${id}-obs`, 'Observer', [
-      settingsRow(`${id}-mode`, '모드', [screenSelect(`${id}-mode-sel`, {content: '보조', width: 96})], aiOff
+      settingsRow(`${id}-mode`, '누가 정하나', [screenSelect(`${id}-mode-sel`, {content: '보조', width: 96})], aiOff
         ? row(`${id}-off`, [icon(`${id}-off-g`, 'circle-off', {size: 12, fill: MUT}), cap(`${id}-off-t`, 'Hide AI가 꺼져 있어 사람이 모두 정합니다. 고른 모드는 AI가 켜질 때부터 적용됩니다.', SUB)], {gap: '$--spacing-xs'})
-        : modeTable(`${id}-tbl`, 1)),
-      settingsRow(`${id}-cap`, '하루 호출 상한', [...(aiOff ? [] : [cap(`${id}-cap-today`, '오늘 37/100', SUB, {mono: true})]), numberField(`${id}-cap-n`, '100')],
-        cap(`${id}-cap-d`, '넘으면 그날 남은 결정과 진단은 사람이 정합니다', MUT)),
-      settingsRow(`${id}-week`, '지난 7일', [stat(`${id}-w0`, '사람에게', '12'), stat(`${id}-w1`, 'AI가 처리', '31'), stat(`${id}-w2`, '뒤집음', '2')]),
+        : col(`${id}-mode-d`, [
+          cap(`${id}-mode-x`, '기술 결정은 AI가 답하고 뒤집을 수 있게 알립니다. 제품 결정과 권한은 사람이 정합니다.', SUB),
+          cap(`${id}-mode-w`, '지난 7일 · 사람에게 12 · AI가 처리 31 · 뒤집음 2', MUT),
+        ], {gap: '$--spacing-xxs'})),
+      ...(aiOff ? [] : [disclosure(`${id}-tbl`, '모드별로 누가 정하나', '수동 · 보조 · 자율 표')]),
+      settingsRow(`${id}-cap`, '하루 AI 호출', [...(aiOff ? [] : [cap(`${id}-cap-today`, '오늘 37', SUB, {mono: true})]), numberField(`${id}-cap-n`, '100')]),
     ]);
-    const run = settingsGroup(`${id}-run`, '실행', [
-      settingsRow(`${id}-mw`, '이 기기에서 동시에 도는 worker', [numberField(`${id}-mw-n`, '3')]),
-      settingsRow(`${id}-rt`, '기본 런타임', [screenSelect(`${id}-rt-sel`, {content: 'Claude Code', width: 128})]),
+    const work = settingsGroup(`${id}-work`, '작업', [
+      settingsRow(`${id}-mw`, '동시에 도는 작업자', [numberField(`${id}-mw-n`, '3')]),
+      settingsRow(`${id}-rt`, '기본 에이전트', [screenSelect(`${id}-rt-sel`, {content: 'Claude Code', width: 128})]),
+      settingsRow(`${id}-vf`, '검증', [cap(`${id}-vf-t`, 'CI 필수 체크 · web-e2e, rust-test', SUB)]),
+    ]);
+    const merge = settingsGroup(`${id}-merge`, '머지', [
+      settingsRow(`${id}-mm`, '머지', [screenSelect(`${id}-mm-sel`, {content: '사람이 승인', width: 112})]),
+      settingsRow(`${id}-rp`, '위험 경로', [textValue(`${id}-rp-v`, 'hided/, herdr-core/', 200)], cap(`${id}-rp-d`, '이 경로를 바꾼 PR은 사람을 기다립니다', MUT)),
+    ]);
+    const more = settingsGroup(`${id}-more`, '그 밖', [
+      settingsRow(`${id}-mac`, 'macOS 알림', [switchOn(`${id}-mac-sw`, true)]),
+      disclosure(`${id}-adv`, '고급 설정', '질문 기한 · 멈춤 판단 시간 · 점검 · 보관 기간 · 복구 범위 · 작업자 인자'),
+      settingsRow(`${id}-close`, 'Factory 닫기', [screenButton(`${id}-close-b`, '닫기', {variant: 'outline', height: controlSm})], cap(`${id}-close-d`, '새 작업을 받지 않습니다. 기록은 남습니다', MUT)),
     ]);
     // Two Factories exist, so the sheet opens with the Factory picker (FactorySettings.tsx).
-    return frame(id, '설정', {layout: 'vertical', gap: '$--spacing-lg', width: MAIN, height: 'fill_container', padding: ['$--spacing-sm', GUTTER, '$--spacing-lg', GUTTER], clip: true}, [screenSelect(`${id}-factory`, {content: 'herdr-ide', width: 128}), observer, run]);
+    return frame(id, '설정', {layout: 'vertical', gap: '$--spacing-lg', width: MAIN, height: 'fill_container', padding: ['$--spacing-sm', GUTTER, '$--spacing-lg', GUTTER], clip: true}, [screenSelect(`${id}-factory`, {content: 'herdr-ide', width: 128}), observer, work, merge, more]);
+  }
+  // The Observer group with 모드별로 누가 정하나 opened: the mode table, the picked mode's column filled.
+  function obsTableBody(id) {
+    const group = settingsGroup(`${id}-obs`, 'Observer', [
+      settingsRow(`${id}-mode`, '누가 정하나', [screenSelect(`${id}-mode-sel`, {content: '보조', width: 96})]),
+      col(`${id}-tbl`, [disclosure(`${id}-tbl-h`, '모드별로 누가 정하나', '', true), frame(`${id}-tbl-b`, 'Table', {layout: 'vertical', padding: [0, '$--spacing-md', '$--spacing-md', '$--spacing-md']}, [modeTable(`${id}-mt`, 1)])], {gap: 0, width: 'fill_container'}),
+    ]);
+    return frame(id, '모드 표 펼침', {layout: 'vertical', padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [group]);
   }
   function settingsMain(id, opts = {}) {
     return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 3, counts: OBS_FLOW, count: OBS_INBOX_COUNT}), settingsBody(`${id}-set`, {aiOff: false, ...opts})]);
@@ -828,6 +870,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const obsSettings = windowFrame(id('obs-set'), '설정 · Observer', settingsMain(id('obs-set')), {height: BOARD_H, count: OBS_INBOX_COUNT});
   const obsCards = obsCardsBody(id('obs-cards'));
   const obsTask = windowFrame(id('obs-task'), 'Task 페이지 · 보고 없음', obsTaskMain(id('obs-task')), {count: OBS_INBOX_COUNT});
+  const obsTable = obsTableBody(id('obs-table'));
   const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {count: OBS_INBOX_COUNT});
 
   return [
@@ -853,8 +896,8 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         captioned(id('empty'), 'Task가 없을 때: 넣는 방법 한 줄만 보인다', empty),
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
       row(id('r5'), [
-        captioned(id('obs-turn'), 'Observer · 내 차례: 사람에게 온 결정은 선택지 버튼으로, AI가 답한 것은 알림 한 줄과 다른 답으로', obsTurn),
-        captioned(id('obs-set'), 'Observer · 설정: 모드와 그 표, 하루 호출 상한과 오늘 쓴 수, 지난 7일 숫자 셋', obsSettings),
+        captioned(id('obs-turn'), 'Observer · 내 차례: 숫자는 답, 머지, 멈춤만 센다. AI가 처리한 일은 줄 아래 알림으로, 다른 답과 함께', obsTurn),
+        captioned(id('obs-set'), 'Observer · 설정: 운영자가 정하는 것만 보이고 나머지 엔진 기본값은 고급 설정으로 접힌다', obsSettings),
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
       row(id('r6'), [
         captioned(id('obs-cards'), 'Observer · 카드: 선택지가 있는 결정 요청, AI 제안, 보고 없음과 진단, 작업자 사라짐, 일시정지', obsCards),
@@ -863,6 +906,9 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         captioned(id('obs-task'), 'Observer · Task 페이지: 문제 줄 아래 진단 한 줄, 결정 기록의 AI 답과 다른 답', obsTask),
         captioned(id('obs-off'), 'Observer · Hide AI가 꺼졌을 때: 모든 결정을 사람이 정한다', obsOff),
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r8'), [
+        captioned(id('obs-table'), 'Observer · 모드별로 누가 정하나를 펼쳤을 때', obsTable),
+      ], {alignItems: 'start'}),
     ], {gap: '$--spacing-xl'}),
   ];
 }
