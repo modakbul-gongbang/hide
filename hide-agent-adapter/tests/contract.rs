@@ -162,6 +162,10 @@ fn every_start_dialect_declares_model_and_effort_arguments_and_refuses_unsafe_va
         );
         assert_eq!(options.arguments(None, None).unwrap(), Vec::<String>::new());
         assert!(options.arguments(Some("model; rm -rf /"), None).is_err());
+        assert!(
+            options.arguments(Some("--yolo"), None).is_err(),
+            "a model never reads as an option"
+        );
         assert!(options.arguments(None, Some("ultra")).is_err());
     }
     assert_eq!(

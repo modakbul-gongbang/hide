@@ -119,7 +119,9 @@ pub struct LaunchOptions {
 /// A model name reaches a command line, so it is held to the characters
 /// model ids use; anything else is refused rather than quoted.
 pub fn valid_model(model: &str) -> bool {
+    // A leading dash would read as an option to the agent's CLI.
     !model.is_empty()
+        && !model.starts_with('-')
         && model.len() <= 80
         && model
             .bytes()

@@ -1865,15 +1865,21 @@ fn ai_settings(
 }
 
 /// The pick a judgment carries to Hide AI: the Factory AI the Factory chose
-/// (D-40), or none for the app's own choice.
-fn ai_pick(ai: Option<&FactoryAi>) -> Option<hide_ai::AiPick> {
-    let ai = ai?;
-    Some(hide_ai::AiPick {
-        provider: hide_ai::ProviderId::from_id(&ai.provider)?,
+/// (D-40), or none for the app's own choice. A chosen agent Hide AI does not
+/// know is never replaced by the app's choice; it is refused (B31).
+fn ai_pick(ai: Option<&FactoryAi>) -> Result<Option<hide_ai::AiPick>, UnknownAgent> {
+    let Some(ai) = ai else { return Ok(None) };
+    let provider = hide_ai::ProviderId::from_id(&ai.provider).ok_or(UnknownAgent)?;
+    Ok(Some(hide_ai::AiPick {
+        provider,
         model: ai.model.clone(),
         effort: ai.effort.clone(),
-    })
+    }))
 }
+
+/// A Factory AI naming an agent Hide AI does not know.
+#[derive(Debug, PartialEq, Eq)]
+struct UnknownAgent;
 
 impl Judge for JudgePort {
     fn submit(&mut self, judgment: Judgment) -> Result<(), Failure> {
@@ -1978,6 +1984,12 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             ));
         }
         let Some((_, router)) = &router else { continue };
+        // An unknown Factory AI fails as having no provider and goes to a
+        // person, so the count it took is given back (B31, D-34).
+        let (pick, unknown) = match ai_pick(judgment.ai.as_ref()) {
+            Ok(pick) => (pick, false),
+            Err(UnknownAgent) => (None, true),
+        };
         let request = hide_ai::AiRequest {
             feature_id: judgment.feature_id().into(),
             request_id: hide_ai::RequestId(judgment.id.clone()),
@@ -1990,16 +2002,22 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             output_schema: judgment.schema(),
             deadline: JUDGMENT_DEADLINE,
             schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
-            pick: ai_pick(judgment.ai.as_ref()),
+            pick,
         };
         let started = Instant::now();
-        let outcome = match router.execute(&request, &shared.cancel) {
-            Ok(result) => JudgmentOutcome::Answered {
-                value: result.value,
-            },
-            Err(error) => JudgmentOutcome::Failed {
-                reason: error.class().to_owned(),
-            },
+        let outcome = if unknown {
+            JudgmentOutcome::Failed {
+                reason: "no_provider".to_owned(),
+            }
+        } else {
+            match router.execute(&request, &shared.cancel) {
+                Ok(result) => JudgmentOutcome::Answered {
+                    value: result.value,
+                },
+                Err(error) => JudgmentOutcome::Failed {
+                    reason: error.class().to_owned(),
+                },
+            }
         };
         crate::diagnostic!(json!({"component":"factory","kind":"judgment.finished",
             "feature":request.feature_id,"factory":judgment.factory,"task":judgment.task,
@@ -2020,6 +2038,22 @@ mod tests {
     use super::*;
     use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    #[test]
+    fn a_factory_ai_hide_ai_does_not_know_is_refused_rather_than_replaced() {
+        let ai = |provider: &str| FactoryAi {
+            provider: provider.into(),
+            model: Some("sonnet".into()),
+            effort: None,
+        };
+        assert_eq!(ai_pick(None), Ok(None));
+        assert_eq!(ai_pick(Some(&ai("no-such-agent"))), Err(UnknownAgent));
+        let picked = ai_pick(Some(&ai("claude"))).unwrap().unwrap();
+        assert_eq!(
+            (picked.provider.as_str(), picked.model.as_deref()),
+            ("claude", Some("sonnet"))
+        );
+    }
 
     fn question_caller(herdr: &crate::fake_herdr::FakeHerdr) -> QuestionCaller {
         let actor = delivery::Actor {
