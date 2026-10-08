@@ -40,11 +40,13 @@ fn run_coordinator(
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut process_reader = super::process_info::ProcessReader::new(&context);
-    let mut lineage_writer = match crate::coordination::lineage::Writer::new(
-        context.log_target().to_owned(),
-        Arc::clone(&context.api_connector),
-        context.runtime.clone(),
-    ) {
+    let mut lineage_writer = match context.ledger_machine().and_then(|machine| {
+        crate::coordination::lineage::Writer::new(
+            machine,
+            Arc::clone(&context.api_connector),
+            context.runtime.clone(),
+        )
+    }) {
         Ok(writer) => Some(writer),
         Err(message) => {
             crate::diagnostic!(
