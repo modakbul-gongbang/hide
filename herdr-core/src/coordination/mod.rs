@@ -312,7 +312,10 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             ]
             .into_iter()
             .all(|s| key(s))
-            || record.machine.as_deref().is_some_and(|machine| !key(machine))
+            || record
+                .machine
+                .as_deref()
+                .is_some_and(|machine| !key(machine))
             || !ledger
                 .agents
                 .iter()
@@ -819,6 +822,8 @@ fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
     Ok(format!("{prefix}-{id}"))
 }
 
+#[cfg(test)]
+pub(crate) use executor::SPAWN_TURN;
 pub(crate) use executor::{link_fork, register_code_owned, run};
 
 #[cfg(test)]

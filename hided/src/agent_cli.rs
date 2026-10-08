@@ -257,7 +257,9 @@ mod tests {
         // The operator learns the flag from `hide --help` and from the spawn
         // help, which says where its value comes from.
         assert!(USAGE.contains("[--machine <device id>]"));
-        assert!(SPAWN_HELP.starts_with("hide agent spawn [--parent <here|id>] [--machine <device id>]"));
+        assert!(
+            SPAWN_HELP.starts_with("hide agent spawn [--parent <here|id>] [--machine <device id>]")
+        );
         assert!(SPAWN_HELP.contains("`hide workspace info`"));
         assert!(SPAWN_HELP.contains("`hide agent list`"));
     }

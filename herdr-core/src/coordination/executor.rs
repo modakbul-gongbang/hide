@@ -14,6 +14,10 @@ const STORE_TIMEOUT: Duration = Duration::from_secs(5);
 // Finite side effects serialize without occupying the durable store or Runtime.
 // A concurrent spawn is refused instead of accumulating blocked workers.
 static SPAWN: Mutex<()> = Mutex::new(());
+/// Tests share `SPAWN` through the process, so those that spawn take turns
+/// when a runner puts them on threads of one process.
+#[cfg(test)]
+pub(crate) static SPAWN_TURN: Mutex<()> = Mutex::new(());
 fn state(client: &Client) -> Result<Arc<crate::delivery::ledger::Ledger>, String> {
     client
         .runtime
@@ -451,7 +455,9 @@ fn spawn(
         // reserved, and a retry of an intent that already progressed or
         // completed is judged by what it already did.
         let known_parent = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
-            super::live_self(&ledger, actor).next().map(|p| p.id.clone())
+            super::live_self(&ledger, actor)
+                .next()
+                .map(|p| p.id.clone())
         } else {
             parent.clone()
         };
@@ -924,6 +930,7 @@ mod tests {
         // The same public command is exercised through the resident store
         // after reload. No native connector exists: replay must return its
         // durable result before attempting another pane or worktree action.
+        let _turn = SPAWN_TURN.lock().unwrap_or_else(|e| e.into_inner());
         for ending in ["report", "stop", "end", "explicit"] {
             let root = tempfile::Builder::new()
                 .prefix("replay-")

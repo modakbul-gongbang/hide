@@ -833,7 +833,10 @@ impl Runtime {
                 .filter(|id| id != caller_device && self.coordination_context(id).is_ok())
                 .collect();
             connected.sort();
-            return Err(crate::coordination::refusal("machine_unknown", &connected.join(", ")));
+            return Err(crate::coordination::refusal(
+                "machine_unknown",
+                &connected.join(", "),
+            ));
         }
         self.coordination_context(device)
             .map_err(|_| "machine_unavailable".to_owned())?;
