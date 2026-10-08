@@ -43,7 +43,7 @@ The providers are a registry (`hide-ai/src/registry.rs`), in this fixed order: `
 An empty model means the CLI's own default: no `--model` flag is sent.
 There is one place that finds a CLI and says what it is run with (`hide-ai/src/program.rs`): a program is looked for on the account's search (`hide_platform::programs`: the login shell's folders, the daemon's own `PATH`, the usual install folders), and the child is started with that same value as its `PATH`.
 That covers every child, the availability and model-list probes and the Weekly Usage read as much as a request, and the Codex app-server, because a CLI installed as a script (pnpm's `codex`, a Node CLI under nvm) starts its interpreter by name from its environment, and a CLI found on the shell's folders and run with the daemon's would be reported ready and then fail.
-A backend's config can carry a `search_path` of its own, which is how a test gives a stand-in script an interpreter only that value reaches without starting the developer's login shell (`hide-ai/tests/search_path.rs`); a CLI named by file with no `search_path` is run with the process's `PATH`, since nothing searched for it.
+A backend's config can carry a `search_path` of its own, which is how a test gives a stand-in script an interpreter only that value reaches without starting the developer's login shell (`hide-ai/tests/it/search_path.rs`); a CLI named by file with no `search_path` is run with the process's `PATH`, since nothing searched for it.
 The tests that need a missing CLI name an absolute path that does not exist, because a bare name is looked up on the account's search, which asks the login shell.
 A new agent is one registry entry and one backend; the router, the settings and the core iterate `PROVIDERS` and name no provider.
 The backends run on the core's own node, never inside the core: the core's routers hold a `NodeBackend` per provider (`herdr-core/src/ai.rs`), which carries each probe, model list, request and measurement to the node as a call and reads the answer back.
@@ -80,7 +80,7 @@ A request reports progress once a second while it runs, and a cancel in the core
   The child's argument vector is not a preference.
   Measured on claude 2.1.267, a bare `claude -p` carries the whole agent harness into the system prompt, 32,903 cached input tokens, and answers the wrong question: it reviews the transcript instead of classifying it.
   Adding `--system-prompt` with `--tools ''` and `--setting-sources ''` takes the same request to 1,188 input tokens and returns a schema-validated answer.
-  Dropping any of those three is not a cost regression, it is a wrong answer, so `hide-ai/tests/claude_cli.rs` asserts the vector the child actually received.
+  Dropping any of those three is not a cost regression, it is a wrong answer, so `hide-ai/tests/it/claude_cli.rs` asserts the vector the child actually received.
 
   A model turn runs with thinking off: the child gets `MAX_THINKING_TOKENS=0` whatever the operator's environment says, and the same test file asserts the value the child received.
   Print mode thinks by default, and a background answer is a short JSON object; on 2026-10-02 the context label spent a median 2,656 output tokens (at most 9,425) to return about 100, which put its median at 28 seconds and 43 of 252 requests past the 60-second deadline.
@@ -129,7 +129,7 @@ Neither CLI documents a mode that guarantees a one-shot, tool-free, read-only ru
 Settings shows them as installed and not selectable, with that reason.
 Making either selectable is a change to its backend and to this table, with a documented read-only mode cited, not a setting.
 
-Proof level, as of 2026-10-06: Claude and Codex have been run live; Gemini CLI, Grok and Pi are proven by scripted stand-ins (`hide-ai/tests/text_clis.rs`, which records the argument vector, the standard input, the working directory, the environment and the file contents the child received) because none is installed on the machine that built this, so their flags, exit codes, output shapes and login probes follow the CLIs' published documentation and are not yet observed.
+Proof level, as of 2026-10-06: Claude and Codex have been run live; Gemini CLI, Grok and Pi are proven by scripted stand-ins (`hide-ai/tests/it/text_clis.rs`, which records the argument vector, the standard input, the working directory, the environment and the file contents the child received) because none is installed on the machine that built this, so their flags, exit codes, output shapes and login probes follow the CLIs' published documentation and are not yet observed.
 Grok's `--tools ""` giving a tool-free run, where the validated object sits in Grok's JSON output, and the format of `pi --list-models` are the unobserved parts; the parsers accept more than one shape and an unreadable list is `Unknown`, not empty.
 
 ## The operator's choice

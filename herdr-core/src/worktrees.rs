@@ -782,12 +782,7 @@ fn worktree_snapshot(facts: hide_node_link::worktrees::WorktreeFacts) -> Worktre
 
 #[cfg(test)]
 fn git_call_count(root: &Path, command: &str) -> usize {
-    hide_host::worktrees::GIT_CALLS
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(path, cmd)| path == root && cmd == command)
-        .count()
+    hide_host::worktrees::git_calls(root, command)
 }
 
 #[cfg(test)]
