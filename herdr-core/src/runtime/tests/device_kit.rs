@@ -1897,7 +1897,7 @@ fn a_devices_terminals_ride_its_link_and_end_with_it() {
             version: "test".to_owned(),
             os: "macos".to_owned(),
             arch: "aarch64".to_owned(),
-            home: Some("/home/me".to_owned()),
+            home: None,
             machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
                 reason: "test".to_owned(),
             },
