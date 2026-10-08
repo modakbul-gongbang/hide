@@ -11,13 +11,13 @@ use super::*;
 
 const DEVICE: &str = "device-w";
 
-struct Repo {
+pub(super) struct Repo {
     _dir: tempfile::TempDir,
-    root: String,
-    linked: String,
+    pub(super) root: String,
+    pub(super) linked: String,
 }
 
-fn git(cwd: &str, arguments: &[&str]) -> String {
+pub(super) fn git(cwd: &str, arguments: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .args(["-c", "commit.gpgsign=false"])
         .arg("-C")
@@ -32,7 +32,7 @@ fn git(cwd: &str, arguments: &[&str]) -> String {
 /// A repository on `main` with a linked worktree on `feature` at the same
 /// commit, so the branch is merged and may be deleted with it, and a
 /// `parked` branch no worktree has checked out.
-fn repo() -> Repo {
+pub(super) fn repo() -> Repo {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
     let root = base.join("repo").to_string_lossy().into_owned();

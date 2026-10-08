@@ -625,6 +625,9 @@ pub(crate) struct DeviceWorktrees {
     /// Asked again while a read ran; one more read follows it.
     pub again: bool,
     pub unavailable: Option<String>,
+    /// The next read covers every repository, because a new connection has
+    /// not confirmed what the last one listed.
+    pub reread: bool,
 }
 
 /// The Git repositories a device's grouped session shows, by main worktree.

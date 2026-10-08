@@ -556,6 +556,11 @@ impl Runtime {
                     "message": message,
                 }));
                 self.release_held_saves(device_id, &message);
+                // Another machine answers the device's address: what the
+                // last one said about its directories is not this one's.
+                if matches!(error, EstablishError::IdentityChanged { .. }) {
+                    self.forget_device_directories(device_id);
+                }
                 self.device_facts
                     .entry(device_id.to_owned())
                     .or_default()
