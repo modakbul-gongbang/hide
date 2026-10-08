@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agent_areas;
-mod agent_choice;
+pub(crate) mod agent_choice;
 mod agent_close;
 mod agent_sleep;
 mod agents;
@@ -56,7 +56,7 @@ pub(crate) use kit::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob};
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use agent_areas::AgentLayoutPayload;
-use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
+use agent_sleep::{AgentSleepSetPayload, AgentWakePayload, SleepingSessionPayload};
 use control_lane::ControlLane;
 pub(crate) use control_lane::LaneStart;
 use events::*;
@@ -1289,6 +1289,9 @@ pub struct Runtime {
     close_capture_order: VecDeque<String>,
     close_operations: HashMap<String, PendingClose>,
     close_status_checks_in_flight: HashSet<String>,
+    /// One bounded read-only sleeping-session inspection, independent of
+    /// durable transition admission. A generation fences its late reply.
+    dormant_status_check: Option<(crate::agent_sleep::SleepId, u64)>,
     pane_operations: HashMap<String, PendingPaneOperation>,
     /// The last complete raw layout Herdr confirmed for each tab. Mutation
     /// operations compare fresh geometry with this value, because a model
@@ -1735,6 +1738,7 @@ impl Runtime {
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         let local_issues_path = options.local_issues_path.as_ref().map(PathBuf::from);
         snapshot.ui_state = ui_state;
+        snapshot.navigator.sleeping_sessions = snapshot.ui_state.agent_sleep.dormant_snapshots();
         let shortcuts_imported = options
             .shortcut_import_path
             .as_deref()
@@ -1971,6 +1975,7 @@ impl Runtime {
             close_capture_order: VecDeque::new(),
             close_operations: HashMap::new(),
             close_status_checks_in_flight: HashSet::new(),
+            dormant_status_check: None,
             pane_operations: HashMap::new(),
             confirmed_pane_layout_signatures: HashMap::new(),
             op_timings: op_timing::OpTimings::default(),

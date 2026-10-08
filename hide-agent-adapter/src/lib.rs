@@ -24,6 +24,22 @@ impl AgentId {
     pub const fn adapter(self) -> &'static AgentAdapter {
         &ADAPTERS[self as usize]
     }
+
+    /// Display priority is independent of whether this build reads a session.
+    pub const fn title_priority(self) -> TitlePriority {
+        match self {
+            Self::ClaudeCode | Self::Codex => TitlePriority::GoalFirst,
+            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp => TitlePriority::NativeFirst,
+            Self::Cursor => TitlePriority::GoalOnly,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TitlePriority {
+    GoalFirst,
+    NativeFirst,
+    GoalOnly,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,6 +97,11 @@ impl SessionFormat {
 pub enum LaunchDialect {
     Claude,
     Codex,
+    Grok,
+    OpenCode,
+    Pi,
+    Omp,
+    Cursor,
 }
 
 impl LaunchDialect {
@@ -88,11 +109,17 @@ impl LaunchDialect {
         match self {
             Self::Claude => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::Grok => AgentId::Grok.adapter(),
+            Self::OpenCode => AgentId::OpenCode.adapter(),
+            Self::Pi => AgentId::Pi.adapter(),
+            Self::Omp => AgentId::Omp.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
         }
     }
 
     /// How the CLI takes a model and a reasoning effort at launch; `{}` is
-    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160.
+    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160;
+    /// the other agents declare neither, so a start of theirs takes none.
     pub const fn options(self) -> LaunchOptions {
         match self {
             Self::Claude => LaunchOptions {
@@ -105,7 +132,31 @@ impl LaunchDialect {
                 effort: &["-c", "model_reasoning_effort={}"],
                 efforts: &["minimal", "low", "medium", "high", "xhigh"],
             },
+            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp | Self::Cursor => LaunchOptions {
+                model: &[],
+                effort: &[],
+                efforts: &[],
+            },
         }
+    }
+
+    /// The first interactive prompt is an argument, held by the native CLI
+    /// through startup questions. OpenCode's positional argument is a project.
+    pub const fn prompt_flag(self) -> &'static str {
+        match self {
+            Self::OpenCode => "--prompt",
+            _ => "--",
+        }
+    }
+
+    /// Verified launch dialects that accept repeated extra permission roots.
+    /// A checkout cwd is independent of this optional CLI argument.
+    pub const fn accepts_extra_directories(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex | Self::Omp | Self::Cursor)
+    }
+
+    pub const fn closes_pane_when_sleeping(self) -> bool {
+        !matches!(self, Self::Claude | Self::Codex)
     }
 }
 
@@ -138,12 +189,18 @@ impl LaunchOptions {
     ) -> Result<Vec<String>, String> {
         let mut arguments = Vec::new();
         if let Some(model) = model {
+            if self.model.is_empty() {
+                return Err("this agent takes no model at launch".to_owned());
+            }
             if !valid_model(model) {
                 return Err(format!("model `{model}` is not a model name"));
             }
             arguments.extend(self.model.iter().map(|part| part.replace("{}", model)));
         }
         if let Some(effort) = effort {
+            if self.efforts.is_empty() {
+                return Err("this agent takes no effort at launch".to_owned());
+            }
             if !self.efforts.contains(&effort) {
                 return Err(format!(
                     "effort `{effort}` is not one of {}",

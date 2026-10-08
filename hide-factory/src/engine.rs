@@ -5346,13 +5346,12 @@ impl Engine {
         // Without a hold the machine is read before a start, and only when
         // one can happen: a backlog waiting on full slots does not read the
         // disk and fork `sysctl` on every tick.
-        let usable = |runtime: Runtime| {
-            self.runtime_blocked
-                .get(&runtime)
-                .is_none_or(|until| *until <= now)
-        };
         let can_start = (self.machine_max_workers > self.running_count()
-            && Runtime::all().any(usable))
+            && candidates.iter().any(|t| {
+                self.factories
+                    .get(&t.factory)
+                    .is_some_and(|f| self.start_candidate(f, t, now).is_some())
+            }))
             || candidates.iter().any(|t| {
                 t.state == TaskState::Relanding
                     || self
@@ -5442,6 +5441,46 @@ impl Engine {
         }
     }
 
+    /// The candidate a start of this Task uses: its own, where a worker
+    /// started before candidates resumes as it started; for a new start
+    /// whose agent's usage is used up, the next candidate whose usage is
+    /// not. `None` while it waits for a reset: a pinned candidate or a
+    /// resuming worker never moves (D-42, B58).
+    fn start_candidate(
+        &self,
+        factory: &Factory,
+        task: &Task,
+        now: UnixMs,
+    ) -> Option<WorkerCandidate> {
+        let blocked = |agent: &Runtime| {
+            self.runtime_blocked
+                .get(agent)
+                .is_some_and(|until| *until > now)
+        };
+        let (mut candidate, index, pinned) = task.candidate(factory);
+        if let Some(worker) = &task.worker
+            && task.launched.is_none()
+        {
+            candidate = WorkerCandidate {
+                model: worker.model.clone(),
+                effort: worker.effort.clone(),
+                ..WorkerCandidate::bare(worker.runtime)
+            };
+        }
+        if !blocked(&candidate.agent) {
+            return Some(candidate);
+        }
+        if pinned || task.worker.is_some() {
+            return None;
+        }
+        let candidates = factory.config.candidates();
+        let from = index.map_or(0, |i| i + 1);
+        (0..candidates.len())
+            .map(|offset| &candidates[(from + offset) % candidates.len()])
+            .find(|c| !blocked(&c.agent))
+            .cloned()
+    }
+
     fn start(&mut self, factory_id: &str, id: &str) -> Start {
         let Some(factory) = self.factories.get(factory_id).cloned() else {
             return Start::Refused;
@@ -5452,33 +5491,9 @@ impl Engine {
         let now = self.now();
         self.read_usage_limits();
         self.runtime_blocked.retain(|_, until| *until > now);
-        let (mut candidate, index, pinned) = task.candidate(&factory);
-        if let Some(worker) = &task.worker
-            && task.launched.is_none()
-        {
-            // A worker started before candidates resumes as it started.
-            candidate = WorkerCandidate {
-                model: worker.model.clone(),
-                effort: worker.effort.clone(),
-                ..WorkerCandidate::bare(worker.runtime)
-            };
-        }
-        if self.runtime_blocked.contains_key(&candidate.agent) {
-            // A new start moves to the next candidate whose usage is not
-            // used up; a pinned one, or a worker resuming, waits (D-42).
-            if pinned || task.worker.is_some() {
-                return Start::Waiting;
-            }
-            let candidates = factory.config.candidates();
-            let from = index.map_or(0, |i| i + 1);
-            let Some(next) = (0..candidates.len())
-                .map(|offset| &candidates[(from + offset) % candidates.len()])
-                .find(|c| !self.runtime_blocked.contains_key(&c.agent))
-            else {
-                return Start::Waiting;
-            };
-            candidate = next.clone();
-        }
+        let Some(candidate) = self.start_candidate(&factory, &task, now) else {
+            return Start::Waiting;
+        };
         let runtime = candidate.agent;
         let mut args = factory
             .config

@@ -306,8 +306,10 @@ pub fn observe_unseen(
 pub mod phone {
     use std::collections::HashMap;
 
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
     use serde_json::Value;
+
+    pub use crate::agent_sleep::{DormantPhase, SleepId};
 
     /// The groups in the order the phone draws them.
     pub const GROUP_ORDER: [&str; 4] = ["needs_you", "done", "working", "seen"];
@@ -386,11 +388,40 @@ pub mod phone {
         }
     }
 
+    /// An archived conversation has an intent identity, never a pane address.
+    /// Deserialize only the public subset of the core-owned row; serialization
+    /// cannot disclose the saved cwd, native reference, lineage or close key.
+    #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+    pub struct PhoneSleepingSession {
+        pub sleep_id: SleepId,
+        #[serde(rename(deserialize = "node_id"))]
+        pub device_id: String,
+        #[serde(rename(deserialize = "kind"))]
+        pub agent_kind: String,
+        #[serde(rename(deserialize = "identity_label"))]
+        pub title: String,
+        pub group: String,
+        pub phase: DormantPhase,
+        pub since_unix_ms: u64,
+        pub wake_available: bool,
+        pub checking: bool,
+        #[serde(rename(deserialize = "reason"), deserialize_with = "has_sleep_reason")]
+        pub attention: bool,
+    }
+
+    fn has_sleep_reason<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<bool, D::Error> {
+        Option::<String>::deserialize(deserializer).map(|reason| reason.is_some())
+    }
+
     #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
     pub struct Group {
         pub group: String,
         pub count: usize,
         pub agents: Vec<PhoneAgent>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        pub sleeping_sessions: Vec<PhoneSleepingSession>,
     }
 
     #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -411,6 +442,13 @@ pub mod phone {
         pub fn find(&self, key: &AgentKey) -> Option<&PhoneAgent> {
             self.agents()
                 .find(|agent| agent.device_id == key.device_id && agent.pane_id == key.pane_id)
+        }
+
+        pub fn sleeping(&self, id: &SleepId) -> Option<&PhoneSleepingSession> {
+            self.groups
+                .iter()
+                .flat_map(|group| &group.sleeping_sessions)
+                .find(|session| &session.sleep_id == id)
         }
     }
 
@@ -639,6 +677,7 @@ pub mod phone {
                 group: (*group).to_owned(),
                 count: 0,
                 agents: Vec::new(),
+                sleeping_sessions: Vec::new(),
             })
             .collect();
         for agent in agents {
@@ -648,11 +687,36 @@ pub mod phone {
                     group: agent.group.clone(),
                     count: 0,
                     agents: vec![agent],
+                    sleeping_sessions: Vec::new(),
                 }),
             }
         }
+        for value in rest
+            .pointer("/navigator/sleeping_sessions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let row = match serde_json::from_value::<PhoneSleepingSession>(value.clone()) {
+                Ok(row) if row.device_id == node => row,
+                Ok(_) => continue,
+                Err(_) => {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "mobile_phone", "kind": "sleep.projection_invalid",
+                    }));
+                    continue;
+                }
+            };
+            if let Some(group) = groups.iter_mut().find(|group| group.group == row.group) {
+                group.sleeping_sessions.push(row);
+            } else {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "mobile_phone", "kind": "sleep.group_invalid", "sleep_id": row.sleep_id,
+                }));
+            }
+        }
         for group in &mut groups {
-            group.count = group.agents.len();
+            group.count = group.agents.len() + group.sleeping_sessions.len();
         }
         groups.retain(|group| group.count > 0);
         let interface_language = rest

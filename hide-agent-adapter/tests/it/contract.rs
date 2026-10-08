@@ -152,15 +152,10 @@ fn generated_web_contract_and_logo_document_sources_are_current() {
 }
 
 #[test]
-fn every_start_dialect_declares_model_and_effort_arguments_and_refuses_unsafe_values() {
+fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_unsafe_values() {
     use hide_agent_adapter::LaunchDialect;
     for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {
         let options = row.start.unwrap().options();
-        assert!(
-            !options.efforts.is_empty(),
-            "{}: no declared effort",
-            row.id
-        );
         assert_eq!(options.arguments(None, None).unwrap(), Vec::<String>::new());
         assert!(options.arguments(Some("model; rm -rf /"), None).is_err());
         assert!(
@@ -168,6 +163,24 @@ fn every_start_dialect_declares_model_and_effort_arguments_and_refuses_unsafe_va
             "a model never reads as an option"
         );
         assert!(options.arguments(None, Some("ultra")).is_err());
+        // An agent that declares no model or effort refuses one rather than
+        // starting without it.
+        assert_eq!(
+            options.arguments(Some("some-model"), None).is_ok(),
+            !options.model.is_empty(),
+            "{}",
+            row.id
+        );
+        assert_eq!(
+            options.arguments(None, Some("high")).is_ok(),
+            options.efforts.contains(&"high"),
+            "{}",
+            row.id
+        );
+    }
+    for dialect in [LaunchDialect::Claude, LaunchDialect::Codex] {
+        assert!(!dialect.options().model.is_empty(), "{dialect:?}");
+        assert!(!dialect.options().efforts.is_empty(), "{dialect:?}");
     }
     assert_eq!(
         LaunchDialect::Claude

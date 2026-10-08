@@ -14,6 +14,8 @@ use crate::agent_sleep::{
 };
 use crate::agent_sleep_herdr::{self, WakeOutcome, WakeRequest};
 
+mod dormant;
+
 /// Ends in flight at once. A first enable over a long day's panes would
 /// otherwise start one worker per idle agent; the rest wait for the next
 /// minute's decision.
@@ -40,6 +42,12 @@ pub(super) struct AgentWakePayload {
     pub(super) fresh: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SleepingSessionPayload {
+    pub(super) sleep_id: crate::agent_sleep::SleepId,
+}
+
 impl Runtime {
     /// The minute decision (B4-B6), run by the local coordinator's tick. A
     /// tick inside the minute is one integer comparison.
@@ -48,6 +56,7 @@ impl Runtime {
             return false;
         }
         self.agent_sleep_next_decision_unix_ms = now_unix_ms.saturating_add(DECISION_INTERVAL_MS);
+        let mut changed = self.expire_dormant_confirmation(now_unix_ms);
         let on_screen = self.agent_sleep_on_screen();
         let store = &mut self.snapshot.ui_state.agent_sleep;
         let seen = store.mark_seen(on_screen.iter().map(String::as_str), now_unix_ms);
@@ -75,10 +84,14 @@ impl Runtime {
             .values()
             .filter(|record| record.phase == SleepPhase::Ending)
             .count();
-        let mut changed = false;
+        let dormant_in_flight = store
+            .dormant
+            .values()
+            .filter(|record| record.phase.in_flight())
+            .count();
         for pane_id in due
             .into_iter()
-            .take(MAX_ENDS_IN_FLIGHT.saturating_sub(in_flight))
+            .take(MAX_ENDS_IN_FLIGHT.saturating_sub(in_flight + dormant_in_flight))
         {
             changed |= self.begin_agent_sleep(&pane_id, "idle", now_unix_ms);
         }
@@ -115,6 +128,7 @@ impl Runtime {
     /// Marks the projected rows that sleep and moves each awake agent's
     /// change stamp. The stamps are persisted, never published.
     pub(super) fn stamp_agent_sleep(&mut self, agents: &mut [SidebarAgentSnapshot]) {
+        self.confirm_dormant_wake(agents);
         let store = &mut self.snapshot.ui_state.agent_sleep;
         store.annotate(agents);
         if store.stamp(agents, unix_milliseconds()) {
@@ -414,6 +428,12 @@ impl Runtime {
         else {
             return false;
         };
+        if hide_agent_adapter::adapter(&agent.agent_kind)
+            .and_then(|adapter| adapter.sleep)
+            .is_some_and(|dialect| dialect.closes_pane_when_sleeping())
+        {
+            return self.begin_dormant_sleep(pane_id, now_unix_ms);
+        }
         let cwd = self.agent_sleep_pane_cwd(pane_id);
         let Some(record) = SleepRecord::ending(agent, cwd, now_unix_ms) else {
             return false;

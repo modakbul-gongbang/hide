@@ -78,6 +78,7 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
         "w1:t2"
     );
     let close = CloseEffectRequest {
+        retain_for_reopen: true,
         allow_replacement_create: true,
         key: "intent".into(),
         connection_generation: 0,

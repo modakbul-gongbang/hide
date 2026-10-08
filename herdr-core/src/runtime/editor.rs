@@ -677,6 +677,7 @@ impl Runtime {
             .filter_map(|key| {
                 self.close_operations
                     .get(key)
+                    .filter(|operation| operation.request.retain_for_reopen)
                     .map(|operation| (key, operation))
             })
             .map(
@@ -697,7 +698,8 @@ impl Runtime {
             .close_capture_order
             .back()
             .filter(|_| local)
-            .and_then(|key| self.close_operations.get(key));
+            .and_then(|key| self.close_operations.get(key))
+            .filter(|operation| operation.request.retain_for_reopen);
         let queueable =
             newest_close.is_some_and(PendingClose::settling) && self.reopen_after_close.is_none();
         self.snapshot.recent_closed.can_reopen = queueable
@@ -950,6 +952,9 @@ impl Runtime {
     /// target again, so an approval for one pane range never silently covers a
     /// later pane or a newly started agent.
     pub(super) fn close_precondition_failure(&self, operation: &PendingClose) -> Option<String> {
+        if let Some(reason) = self.dormant_close_precondition(operation) {
+            return Some(reason);
+        }
         let current_pane_ids = self
             .snapshot
             .navigator
@@ -1073,6 +1078,7 @@ impl Runtime {
                 operation.request.key
             ),
         );
+        self.settle_dormant_close_result(key);
         self.promote_close_reservations();
         self.sync_recent_closed_snapshot();
     }
@@ -1225,7 +1231,21 @@ impl Runtime {
             }]);
             return true;
         };
+        let retain_for_reopen =
+            !self
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .values()
+                .any(|record| {
+                    record.old_pane_id == target_id
+                        && record.connection_generation == self.live_generation
+                        && record.phase == crate::agent_sleep::DormantPhase::Closing
+                        && record.close_key.is_none()
+                });
         let request = live::CloseCaptureRequest {
+            retain_for_reopen,
             key: self.next_recent_closed_key(),
             connection_generation: self.live_generation,
             context,
@@ -1302,6 +1322,7 @@ impl Runtime {
             },
         );
         self.close_capture_order.push_back(request.key.clone());
+        self.bind_dormant_close(&target_id, &request.key);
         // A pane closing beside others is drawn gone at once (D-07).
         self.request_republish();
         if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
@@ -1500,6 +1521,7 @@ impl Runtime {
             "recent_closed.capture_failed",
             format!("{}: {}", operation.request.key, message),
         );
+        self.settle_dormant_close_result(key);
         self.promote_close_reservations();
         self.sync_recent_closed_snapshot();
     }
@@ -1564,6 +1586,9 @@ impl Runtime {
         request: &live::CloseCaptureRequest,
         result: Result<live::CloseCaptureOutcome, String>,
     ) -> (bool, Vec<live::CloseEffectRequest>) {
+        if !request.retain_for_reopen && !self.close_operations.contains_key(&request.key) {
+            return (false, Vec::new());
+        }
         self.ensure_pending_close_from_request(request);
         let Some(operation) = self.close_operations.get(&request.key).cloned() else {
             return (false, Vec::new());
@@ -1594,42 +1619,61 @@ impl Runtime {
                 let Some(operation) = self.close_operations.get_mut(&request.key) else {
                     return (false, Vec::new());
                 };
-                operation.replacement_effect_started |= request.context.replacement_shell;
                 operation.item = outcome.item;
-                operation.phase = "transmitting".to_owned();
-                operation.stage = "close_request".to_owned();
-                operation.message = None;
-                operation.retryable = false;
-                operation.deadline_at_unix_ms = Some(unix_milliseconds().saturating_add(
-                    if request.context.replacement_shell {
-                        3 * CLOSE_STAGE_TIMEOUT_MS
-                    } else {
-                        CLOSE_STAGE_TIMEOUT_MS
-                    },
-                ));
-                let allow_replacement_create = operation.allow_replacement_create;
-                self.push_diagnostic(
-                    "recent_closed.reserved",
-                    format!(
-                        "Reserved user close {} before its external effect",
-                        request.key
-                    ),
-                );
-                effects.push(live::CloseEffectRequest {
-                    allow_replacement_create,
-                    key: request.key.clone(),
-                    connection_generation: request.connection_generation,
-                    target: request.target.clone(),
-                    replacement: (request.context.replacement_shell
-                        && (matches!(request.target, live::CloseCaptureTarget::Tab { .. })
-                            || request.panes.len() == 1))
-                        .then(|| request.context.clone()),
-                });
+                if self.defer_dormant_close(&request.key) {
+                    if let Some(operation) = self.close_operations.get_mut(&request.key) {
+                        // Keep the existing preparing reservation while the
+                        // one state writer establishes the durable sleep intent.
+                        operation.phase = "preparing".into();
+                        operation.stage = "durable_sleep".into();
+                    }
+                    self.persist_ui_state();
+                } else if let Some(effect) = self.prepare_captured_close_effect(&request.key) {
+                    effects.push(effect);
+                }
             }
             Err(message) => self.fail_close_operation(&request.key, message),
         }
         self.sync_recent_closed_snapshot();
         (true, effects)
+    }
+
+    /// Both ordinary capture and a sleep save receipt enter the existing
+    /// close-effect worker through this one reservation transition.
+    pub(super) fn prepare_captured_close_effect(
+        &mut self,
+        key: &str,
+    ) -> Option<live::CloseEffectRequest> {
+        let operation = self.close_operations.get_mut(key)?;
+        let request = &operation.request;
+        operation.replacement_effect_started |= request.context.replacement_shell;
+        operation.phase = "transmitting".into();
+        operation.stage = "close_request".into();
+        operation.message = None;
+        operation.retryable = false;
+        operation.deadline_at_unix_ms = Some(unix_milliseconds().saturating_add(
+            if request.context.replacement_shell {
+                3 * CLOSE_STAGE_TIMEOUT_MS
+            } else {
+                CLOSE_STAGE_TIMEOUT_MS
+            },
+        ));
+        let effect = live::CloseEffectRequest {
+            retain_for_reopen: request.retain_for_reopen,
+            allow_replacement_create: operation.allow_replacement_create,
+            key: request.key.clone(),
+            connection_generation: request.connection_generation,
+            target: request.target.clone(),
+            replacement: (request.context.replacement_shell
+                && (matches!(request.target, live::CloseCaptureTarget::Tab { .. })
+                    || request.panes.len() == 1))
+                .then(|| request.context.clone()),
+        };
+        self.push_diagnostic(
+            "recent_closed.reserved",
+            format!("Reserved user close {key} before its external effect"),
+        );
+        Some(effect)
     }
 
     pub(crate) fn ingest_close_effect_result(
@@ -1645,6 +1689,9 @@ impl Runtime {
         request: &live::CloseEffectRequest,
         result: Result<(), hide_herdr_client::ApiError>,
     ) -> bool {
+        if !request.retain_for_reopen && !self.close_operations.contains_key(&request.key) {
+            return false;
+        }
         if !self.close_operations.contains_key(&request.key) {
             // A result can outlive the runtime that created its reservation.
             // Rehydrate that reservation without putting it back on the
@@ -1655,6 +1702,7 @@ impl Runtime {
                 live::CloseCaptureTarget::Tab { tab_id } => tab_id.clone(),
             };
             self.ensure_pending_close_from_request(&live::CloseCaptureRequest {
+                retain_for_reopen: request.retain_for_reopen,
                 key: request.key.clone(),
                 connection_generation: request.connection_generation,
                 context: ClosedContext {
@@ -1799,6 +1847,7 @@ impl Runtime {
                 schedule_status_check = true;
             }
         }
+        self.settle_dormant_close_result(&request.key);
         if schedule_status_check {
             self.start_close_status_check(&request.key);
         }
@@ -1829,9 +1878,11 @@ impl Runtime {
             self.clear_close_guards(&operation);
             // Without a captured item the reopen would reach an older close.
             queued_close_completed |= self.reopen_after_close.as_deref() == Some(key.as_str())
+                && operation.request.retain_for_reopen
                 && operation.phase == "completed"
                 && operation.item.is_some();
             if operation.phase == "completed"
+                && operation.request.retain_for_reopen
                 && let Some(item) = operation.item
             {
                 push_bounded(&mut self.recent_closed, item);
@@ -1882,6 +1933,7 @@ impl Runtime {
         if matches!(operation.phase.as_str(), "completed" | "failed" | "refused") {
             return false;
         }
+        self.confirm_dormant_close(&operation);
         self.op_timings.stamp(
             &super::op_timing::pane_close_op_id(key),
             super::op_timing::Stage::Applied,
@@ -2300,6 +2352,7 @@ impl Runtime {
         if self.reopen_device() == self.node.as_str()
             && let Some(key) = self.close_capture_order.back().cloned()
             && let Some(operation) = self.close_operations.get(&key)
+            && operation.request.retain_for_reopen
         {
             // The tab already left the screen, so a reopen pressed right
             // after the close is the operator's intent, not a mistake: it

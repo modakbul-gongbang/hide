@@ -1,7 +1,9 @@
 //! One owned search worker, one latest query slot, no I/O under Runtime.
 use super::*;
 use crate::node_access::{LinkError, NodeLink, call_as};
+use hide_node_link::link::check_reader_support;
 use hide_node_link::protocol::Call;
+use hide_node_link::sessions::ReaderFeature;
 use hide_session::search::{FILE_LIMIT, IndexStep, SearchIndex, SearchPage};
 use std::collections::VecDeque;
 use std::sync::Condvar;
@@ -467,9 +469,19 @@ fn run(
                     .filter(|agent| agent.has_session_file())
                 else {
                     state.failure = Some(format!("Unsupported session provider: {}", row.provider));
-                    queue.clear();
-                    break;
+                    state.indexed += 1;
+                    continue;
                 };
+                if check_reader_support(request.node.as_ref(), agent, ReaderFeature::Search)
+                    .is_err()
+                {
+                    // A helper's unsupported reader cannot invalidate a native
+                    // file or consume its saved checkpoint. Other readers run.
+                    state.failure =
+                        Some("Some session readers are unavailable on their device.".into());
+                    state.indexed += 1;
+                    continue;
+                }
                 let step = db
                     .saved(&request.project, &row.id)
                     .map_err(Failure::Index)
@@ -477,6 +489,8 @@ fn run(
                         read_on_node(request.node.as_ref(), agent, &row.locator, saved)
                     });
                 let applied = step.and_then(|step| {
+                    check_reader_support(request.node.as_ref(), agent, ReaderFeature::Search)
+                        .map_err(|error| Failure::Node(error.to_string()))?;
                     db.apply(&request.project, &row.id, &row.locator, cutoff, step)
                         .map_err(Failure::Index)
                 });
@@ -519,23 +533,32 @@ fn run(
             match if state.days == 0 {
                 Ok(SearchPage::default())
             } else {
-                let allowed = (request.provider != "all").then(|| {
+                let allowed = {
                     request
                         .rows
                         .iter()
                         .filter(|row| {
-                            hide_session::Agent::from_kind(&row.provider)
-                                == hide_session::Agent::from_kind(&request.provider)
+                            hide_session::Agent::from_kind(&row.provider).is_some_and(|agent| {
+                                (request.provider == "all"
+                                    || Some(agent)
+                                        == hide_session::Agent::from_kind(&request.provider))
+                                    && check_reader_support(
+                                        request.node.as_ref(),
+                                        agent,
+                                        ReaderFeature::Search,
+                                    )
+                                    .is_ok()
+                            })
                         })
                         .map(|row| row.id.clone())
                         .collect::<Vec<_>>()
-                });
+                };
                 let node = request.node.as_ref();
                 db.search_scoped(
                     &request.project,
                     &request.query,
                     cutoff,
-                    allowed.as_deref(),
+                    Some(&allowed),
                     &mut |paths| {
                         call_as(
                             node,
@@ -548,7 +571,18 @@ fn run(
                     },
                 )
             } {
-                Ok(page) => state.page = page,
+                Ok(page) => {
+                    if state.days == 0
+                        || (request.node.reader_features().is_some()
+                            && request.node.closed_reason().is_none())
+                    {
+                        state.page = page;
+                    } else {
+                        state.page = SearchPage::default();
+                        state.failure =
+                            Some("Session readers are unavailable on their device.".into());
+                    }
+                }
                 Err(e) => {
                     state.page = SearchPage::default();
                     state.failure = Some(format!("Content search could not finish: {e}"));
@@ -696,6 +730,11 @@ mod tests {
     fn an_unreachable_node_is_not_read_as_a_failed_file() {
         struct Answering(LinkError);
         impl NodeLink for Answering {
+            fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+                static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+                    std::sync::LazyLock::new(hide_node_link::sessions::ReaderFeatures::protocol24);
+                Some(&READERS)
+            }
             fn call(
                 &self,
                 _call: Call,

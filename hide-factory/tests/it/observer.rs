@@ -1498,7 +1498,7 @@ fn worker_and_observer_settings_are_checked_and_old_values_keep_reading() {
     h.world().missing_agents.push(Runtime::CODEX);
     let missing = config(&mut h, "default_runtime", "codex");
     assert_eq!(missing["reason"], "agent_not_installed", "{missing}");
-    let unknown = config(&mut h, "default_runtime", "grok");
+    let unknown = config(&mut h, "default_runtime", "future-agent");
     assert_eq!(unknown["reason"], "agent_not_startable", "{unknown}");
     let effort = config(
         &mut h,
@@ -1506,6 +1506,10 @@ fn worker_and_observer_settings_are_checked_and_old_values_keep_reading() {
         r#"[{"agent":"claude","effort":"ultra"}]"#,
     );
     assert_eq!(effort["reason"], "config_invalid", "{effort}");
+    // Every agent whose adapter declares a start can work (B28); one that
+    // declares no launch model refuses a candidate naming one.
+    let model = config(&mut h, "workers", r#"[{"agent":"grok","model":"grok-4"}]"#);
+    assert_eq!(model["reason"], "config_invalid", "{model}");
     h.world().missing_agents.clear();
     assert_eq!(config(&mut h, "default_runtime", "codex")["ok"], true);
     let factory = h.engine.factories().next().unwrap().clone();

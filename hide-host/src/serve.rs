@@ -261,8 +261,12 @@ fn absolute(path: &str) -> HostResult<std::path::PathBuf> {
 }
 
 /// The agents whose session files the core reads by path.
-const SESSION_FILE_AGENTS: &[hide_session::Agent] =
-    &[hide_session::Agent::Claude, hide_session::Agent::Codex];
+static SESSION_FILE_AGENTS: std::sync::LazyLock<Vec<hide_session::Agent>> =
+    std::sync::LazyLock::new(|| {
+        hide_session::Agent::supported()
+            .filter(|agent| agent.has_session_file())
+            .collect()
+    });
 
 /// A session file the core names, refused unless it lies in one of `agents`'
 /// session folders in this machine's home, answered with every link resolved.
@@ -429,6 +433,9 @@ pub fn handle_with_progress(
     env: &Env,
     progress: &mut dyn FnMut(Value) -> bool,
 ) -> HostResult<Value> {
+    static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+        std::sync::LazyLock::new(hide_node_link::sessions::ReaderFeatures::implemented);
+    hide_node_link::link::check_reader_features(&READERS, &call)?;
     match call {
         Call::Hello => to_value(Hello {
             protocol: PROTOCOL_VERSION,
@@ -445,6 +452,7 @@ pub fn handle_with_progress(
                     reason: error.to_string(),
                 },
             },
+            reader_features: Some(hide_node_link::sessions::ReaderFeatures::implemented()),
         }),
         Call::RootOpen { root } => {
             let opened = Root::open(Path::new(&root))?;
@@ -755,7 +763,7 @@ pub fn handle_with_progress(
                         }
                         let path = hide_session::inside_session_root(
                             Path::new(&home),
-                            SESSION_FILE_AGENTS,
+                            &SESSION_FILE_AGENTS,
                             path,
                         )
                         .ok()?;
@@ -773,11 +781,11 @@ pub fn handle_with_progress(
             to_value(sessions)
         }
         Call::SessionStat { path } => to_value(
-            crate::sessions::stat(&session_file(env, SESSION_FILE_AGENTS, &path)?)
+            crate::sessions::stat(&session_file(env, &SESSION_FILE_AGENTS, &path)?)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::SessionChunk { path, checkpoint } => to_value(
-            crate::sessions::chunk(&session_file(env, SESSION_FILE_AGENTS, &path)?, checkpoint)
+            crate::sessions::chunk(&session_file(env, &SESSION_FILE_AGENTS, &path)?, checkpoint)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::PanesStart { .. }
@@ -790,7 +798,7 @@ pub fn handle_with_progress(
         )),
         Call::SessionText { path } => to_value(
             hide_session::read_bounded(
-                &session_file(env, SESSION_FILE_AGENTS, &path)?,
+                &session_file(env, &SESSION_FILE_AGENTS, &path)?,
                 hide_session::SESSION_READ_LIMIT_BYTES,
             )
             .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,

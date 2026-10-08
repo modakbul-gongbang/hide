@@ -253,9 +253,18 @@ A read, non-blocked demand belongs to Seen unless the core places its running ac
 Disconnected presentation overrides the retained mark and text on every affected surface without modifying demand, activity, read records, or the last known group.
 Unavailable-server tooltips describe the connection problem rather than presenting retained counts as current work.
 
-A sleeping agent keeps its row, name, place, lineage and badge while Herdr no longer lists it: the core draws the row from its own sleep record (`herdr-core/src/agent_sleep.rs`), because the pinned Herdr forgets an agent and its session reference once its process ends.
+A sleeping Claude Code or Codex agent keeps its row, name, place, lineage and badge while Herdr no longer lists it: the core draws the row from its own sleep record (`herdr-core/src/agent_sleep.rs`), because the pinned Herdr forgets an agent and its session reference once its process ends.
 Only a seen, stopped, local Claude or Codex agent with no demand and a reported conversation can sleep, so a sleeping row is always in Seen; a delegated child sleeps by the same rule as its parent and keeps its place under it.
 A new agent in the pane, whether a wake, the operator or a restore started it, is awake: its `state_change_seq` differs from the one the record kept, and the record is dropped.
+
+A provider with an implemented close-pane sleep dialect instead retains a dormant conversation keyed by `SleepId`, separate from the live agent projection.
+Its core-owned group is Seen, and it contributes no active pane, lineage, unread state, doorbell target or executable input address.
+Saving and closing do not duplicate the existing live row; confirmed closure publishes the separate sleeping row, and an uncertain operation publishes its explicit status action.
+Wake resumes the saved native conversation in its own intent-marked tab, and current reader identity must confirm that conversation before the archived row is removed.
+The Wake action is available only when this build declares the provider's resume capability.
+A retained unsupported sleeping record stays visible without a Wake action or a loading spinner; only an active transition or status check spins.
+Unknown work survives restart without replaying external effects; an intent saved before close admission can be released without touching a pane.
+`agent_sleep/dormant.rs` owns the bounded archive and row values, while `runtime/agent_sleep/dormant.rs` owns its transitions and exact save/connection/execution fences.
 
 ### Workspace aggregation
 
@@ -491,7 +500,11 @@ The workspace inspector uses the canonical representative agent and disconnected
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, the Overview agent line and the request view.
 The provider fallback reads the shared adapter's sidebar label or canonical Herdr kind after common alias normalization, preserving a raw unknown kind and `Agent` for no kind.
-`sidebar.rs` owns the ladder (PRD overview-request-view D-13): the label's `goal` (laid on the row as `task`), then the agent's own title for the session (Claude Code's `/rename` over its `ai-title`, Codex's `thread_name`, OpenCode's session title, read by the session adapter), then the provider's name (`Claude`, `Codex`, `OpenCode`, the kind Herdr reports, or `Agent` when it reports none).
+`sidebar.rs` applies the shared adapter's title priority: Claude Code and Codex keep generated `goal`, then proven native title, then provider.
+Grok, OpenCode, Pi and omp use proven native/manual title, then generated goal, then provider.
+Cursor has no native title authority and uses generated goal, then provider.
+A declared priority grants no reader capability; a build that cannot read that provider receives no native title.
+The session adapter gives a manual title priority over the native automatic title.
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
