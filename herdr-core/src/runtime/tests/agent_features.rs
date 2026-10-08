@@ -24,11 +24,19 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
         let hook = crate::agent_hooks::runtime_of(kind).is_some()
             || matches!(adapter.hook, hide_kit::HookSupport::Plugin(_));
         assert_eq!(adapter.supports(Feature::Letters), hook, "{kind}: letters");
-        // Memory and the subagent count need that hook, and what the agent has
-        // besides (Pi runs no subagents).
-        for feature in [Feature::Memory, Feature::Subagents] {
-            assert!(!adapter.supports(feature) || hook, "{kind}: {feature:?}");
-        }
+        // Memory and the subagent count need that hook and their own
+        // declaration (Pi runs no subagents; Pi's and omp's Memory waits).
+        let declared = hide_agent_adapter::adapter(adapter.id).unwrap();
+        assert_eq!(
+            adapter.supports(Feature::Memory),
+            hook && declared.memory.is_some(),
+            "{kind}: memory"
+        );
+        assert_eq!(
+            adapter.supports(Feature::Subagents),
+            hook && declared.subagent_counts.is_some(),
+            "{kind}: subagents"
+        );
         // Letters reach exactly the kinds the mailbox hands them to.
         assert_eq!(
             adapter.supports(Feature::Letters),

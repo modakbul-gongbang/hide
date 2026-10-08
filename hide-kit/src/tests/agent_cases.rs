@@ -829,18 +829,21 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}",
             row.id
         );
-        // Memory and the subagent count need the hook too, and each also needs
-        // what the agent has (Pi runs no subagents).
-        for feature in [
-            crate::agents::Feature::Memory,
-            crate::agents::Feature::Subagents,
-        ] {
-            assert!(
-                !row.supports(feature) || instrumented,
-                "{}: {feature:?}",
-                row.id
-            );
-        }
+        // Memory and the subagent count need the hook too, and each its own
+        // declaration (Pi runs no subagents; Pi's and omp's Memory waits).
+        let declared = hide_agent_adapter::adapter(row.id).unwrap();
+        assert_eq!(
+            row.supports(crate::agents::Feature::Memory),
+            instrumented && declared.memory.is_some(),
+            "{}: memory",
+            row.id
+        );
+        assert_eq!(
+            row.supports(crate::agents::Feature::Subagents),
+            instrumented && declared.subagent_counts.is_some(),
+            "{}: subagents",
+            row.id
+        );
     }
 }
 
