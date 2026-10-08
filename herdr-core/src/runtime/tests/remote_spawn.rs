@@ -98,7 +98,7 @@ fn device_herdr(started: Arc<AtomicBool>, identified: Arc<AtomicBool>) -> FakeHe
 
 struct Spawner {
     _turn: std::sync::MutexGuard<'static, ()>,
-    _root: tempfile::TempDir,
+    root: tempfile::TempDir,
     runtime: Arc<Mutex<Runtime>>,
     actor: Actor,
     node: Arc<Node>,
@@ -228,7 +228,7 @@ fn spawner() -> Spawner {
     .unwrap();
     Spawner {
         _turn: turn,
-        _root: root,
+        root,
         runtime,
         actor,
         node,
@@ -498,7 +498,7 @@ fn a_device_herdr_that_stops_answering_is_unavailable_and_the_retry_converges() 
             ));
     };
     install(Arc::new(hide_herdr_client::LocalSocketConnector::new(
-        "/tmp/hide-remote-spawn-no-herdr.sock",
+        spawner.root.path().join("no-herdr.sock"),
     )));
     assert_eq!(
         spawner
@@ -572,4 +572,31 @@ fn a_busy_spawn_lock_refuses_after_the_checks_and_creates_nothing() {
     assert!(spawner.ledger().spawns.is_empty());
     assert!(spawner.herdr.methods().is_empty());
     assert!(spawner.spawn(Some("here"), Some(DEVICE), "busy").is_ok());
+}
+
+/// A device whose Herdr answers and refuses keeps the refusal's own code: only
+/// a Herdr that stopped answering makes the device unavailable.
+#[test]
+fn a_device_herdr_that_refuses_keeps_its_own_failure() {
+    let spawner = spawner();
+    let refusing = FakeHerdr::start_with_errors("remote-spawn-refuses", |method, _| match method {
+        "worktree.list" => Err(("repository_busy".into(), "the repository is busy".into())),
+        "agent.list" => Ok(json!({"type": "agent_list", "agents": []})),
+        other => panic!("unexpected {other}"),
+    });
+    spawner
+        .runtime
+        .lock()
+        .unwrap()
+        .install_remote_control(RemoteControlContext::new(
+            DEVICE,
+            Arc::new(refusing.connector()),
+            Arc::downgrade(&spawner.runtime),
+            ChangeNotifier::noop(),
+        ));
+    let error = spawner
+        .spawn(Some("here"), Some(DEVICE), "refused")
+        .expect_err("the device Herdr refuses");
+    assert_ne!(error, "machine_unavailable");
+    assert!(error.contains("repository_busy"), "{error}");
 }
