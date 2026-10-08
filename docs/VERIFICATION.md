@@ -162,6 +162,7 @@ It retains the direct child's unreaped identity until the last group signal, so 
 No group signal is sent after that child is reaped.
 Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
 If Darwin's RSS read fails, one fresh BSD identity read distinguishes a vanished or replaced subject, a zombie and a still-live unreadable process.
+An observed replacement in the owned group retains unknown RSS; a host-wide replacement requires its own ownership proof, and a replacement outside the sampled group never inherits the old identity's ownership.
 Only positively ended subjects leave the active RSS calculation; an unreadable live subject still fails, without a delayed retry or a larger cap.
 A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
 A different live guardian's marker belongs to concurrent work and is excluded.

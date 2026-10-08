@@ -163,9 +163,7 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
                 ctypes.set_errno(0)
                 refreshed = library.proc_pidinfo(pid, 3, 1, ctypes.byref(later), ctypes.sizeof(later))
                 refresh_error = ctypes.get_errno()
-                if ((refreshed == ctypes.sizeof(later)
-                     and (later.sec, later.usec) != (info.sec, info.usec))
-                        or (refreshed != ctypes.sizeof(later) and refresh_error == errno.ESRCH)):
+                if refreshed != ctypes.sizeof(later) and refresh_error == errno.ESRCH:
                     result.vanished.append(pid)
                     continue
                 if refreshed != ctypes.sizeof(later):
@@ -174,6 +172,13 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
                 if later.uid != info.uid:
                     result.unavailable.append({"pid": pid, "errno": errno.EPERM,
                                                "reason": "uid_changed_during_rss_read"})
+                    continue
+                if ((later.sec, later.usec) != (info.sec, info.usec)
+                        and group is not None and later.pgid != group):
+                    # Only the old group's member ended. A host-wide sample
+                    # retains replacements for independent ownership checks;
+                    # a fresh member of this group still has unknown RSS.
+                    result.vanished.append(pid)
                     continue
                 info = later
             result[pid] = Process(pid, info.ppid, info.pgid,

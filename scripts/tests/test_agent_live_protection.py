@@ -438,10 +438,11 @@ class ProcessProtection(unittest.TestCase):
         # B8 requires a live unreadable subject to fail, while a kernel-proven
         # exit is no longer resident work. Inject only libproc's read boundary.
         import errno
-        for outcome in ("gone", "zombie", "replaced", "live", "unreadable", "uid_changed"):
+        for outcome in ("gone", "zombie", "replacement_owned", "replacement_outside",
+                        "replacement_host", "live", "unreadable", "uid_changed"):
             with self.subTest(outcome=outcome):
                 library = Mock()
-                pid = 24680
+                pid = os.getpid() if outcome == "replacement_host" else 24680
                 bsd_reads = 0
 
                 def list_group(group, pids, size):
@@ -462,18 +463,23 @@ class ProcessProtection(unittest.TestCase):
                     info.pid, info.ppid, info.pgid, info.uid = pid, 2, pid, os.getuid()
                     info.sec, info.usec, info.flags = 100, 2, 0x10
                     info.status = 5 if bsd_reads > 1 and outcome == "zombie" else 1
-                    if bsd_reads > 1 and outcome == "replaced":
+                    if bsd_reads > 1 and outcome.startswith("replacement_"):
                         info.sec = 101
+                        if outcome != "replacement_owned":
+                            info.pgid = pid + 1
                     if bsd_reads > 1 and outcome == "uid_changed":
                         info.uid += 1
                     return ctypes.sizeof(BsdInfo)
 
                 library.proc_listpgrppids.side_effect = list_group
+                library.proc_listallpids.side_effect = lambda pids, size: list_group(None, pids, size)
                 library.proc_pidinfo.side_effect = read_process
                 with patch("agent_live_check.process_table.sys.platform", "darwin"), \
                         patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
-                    table = snapshot(pid)
-                if outcome in ("gone", "replaced"):
+                    table = snapshot(None if outcome == "replacement_host" else pid)
+                self.assertEqual(bsd_reads, 2)
+                self.assertEqual(library.proc_pidinfo.call_count, 3)
+                if outcome in ("gone", "replacement_outside"):
                     self.assertNotIn(pid, table)
                     self.assertEqual(table.vanished, [pid])
                     require_complete(table)
@@ -483,7 +489,13 @@ class ProcessProtection(unittest.TestCase):
                 else:
                     self.assertEqual(table[pid].rss, -1)
                     self.assertEqual(table[pid].zombie, outcome == "zombie")
-                    self.assertEqual(table[pid].birth, 100_000_002)
+                    replaced = outcome.startswith("replacement_")
+                    self.assertEqual(table[pid].birth, 101_000_002 if replaced else 100_000_002)
+                    self.assertEqual(table.vanished, [])
+                    if replaced:
+                        self.assertEqual(table[pid].group, pid if outcome == "replacement_owned" else pid + 1)
+                        old = Process(pid, 2, pid, 100_000_002, 0, False, os.getuid())
+                        self.assertNotIn(pid, descendants(table, pid + 100, known={pid: old}))
 
     def test_unavailable_controller_ancestry_refuses_prelaunch_exclusion(self):
         table = ProcessTable()
