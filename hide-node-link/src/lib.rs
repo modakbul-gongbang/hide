@@ -35,6 +35,7 @@ pub mod protocol;
 pub mod register;
 pub mod save;
 pub mod sessions;
+pub mod terminal;
 pub mod usage;
 pub mod worktrees;
 

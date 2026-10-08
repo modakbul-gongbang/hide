@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 anyhow = "=1.0.104"
+base64 = "=0.23.1"
 cap-std = "=4.0.3"
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-host = { path = "../hide-host" }

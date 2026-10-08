@@ -1,0 +1,299 @@
+//! The terminal path between a screen, the core and the node that runs a
+//! pane (PRD core-host-node-terminal).
+//!
+//! A node owns its panes' terminal attaches and their bytes: keys from the
+//! screen reach the node's writer and a frame from Herdr reaches the screen
+//! without passing the core. The core decides which panes attach and keeps
+//! the facts it projects; it says so with [`TerminalControl`] and hears what
+//! happened as [`TerminalReport`]. Neither carries a key or a frame's bytes,
+//! except the few writes the core itself makes (a click's mouse report, a
+//! pasted attachment's paths).
+//!
+//! Pane ids here are the node's own: a device's node knows its panes by its
+//! Herdr's ids, and the screen side scopes them to the device.
+
+use serde::{Deserialize, Serialize};
+
+/// Panes one node keeps attached at once (D-18). A pane wanted past it is
+/// refused as unavailable and tried again when it is next shown.
+pub const MAX_ATTACHED_PANES: usize = 64;
+/// Key bytes one pane may have on their way to a device before that pane's
+/// flow is ended (D-18).
+pub const MAX_UNSENT_KEY_BYTES: usize = 256 * 1024;
+/// Output bytes one pane may have on their way to one reader (a screen, or
+/// the link up from a device) before they are dropped and the pane is drawn
+/// again from a full frame once the reader has caught up (D-16).
+pub const MAX_UNSENT_OUTPUT_BYTES: usize = 1024 * 1024;
+/// Recent output kept for a screen that attaches again: the first of these
+/// two bounds to be reached (D-16).
+pub const RETAINED_CHUNKS: usize = 512;
+pub const RETAINED_BYTES: usize = 2 * 1024 * 1024;
+/// Keys held for a pane or a creation that cannot take them yet, per holder
+/// (PRD instant-pane-topology D-11).
+pub const INPUT_HOLD_LIMIT_BYTES: usize = 64 * 1024;
+/// The oldest held key a pane is given, in milliseconds.
+pub const HELD_INPUT_MAX_AGE_MS: u64 = 3_000;
+/// Creation requests whose keys are held at once.
+pub const INPUT_REQUEST_LIMIT: usize = 8;
+/// Keys typed while a paste's files are prepared, held behind the paste.
+pub const MAX_ATTACHMENT_INPUT_BYTES: usize = 64 * 1024;
+
+/// What the core decides about a node's pane terminal.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum TerminalControl {
+    /// Attach the pane, in control when Herdr allows it. A pane with no
+    /// size waits for [`TerminalControl::Resize`]. `manual` is an operator's
+    /// Reconnect: it starts again from a first attempt.
+    Attach {
+        pane: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<GridSize>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        manual: bool,
+    },
+    /// The pane's tab left the attach window: end its session and keep only
+    /// that it was released, with the core's words for why.
+    Release { pane: String, message: String },
+    /// Herdr no longer has the pane: forget everything about it.
+    Forget { pane: String },
+    /// Hide asked Herdr to close the pane (`closing`), or that close ended.
+    /// A session that ends while its pane closes is not a failure, and keys
+    /// for it are refused.
+    Closing { pane: String, closing: bool },
+    /// The PTY size the core settled for the pane, after Herdr confirmed the
+    /// layout it belongs to. `force` sends it even when it is the size the
+    /// session already has: a size held while the layout was drawn ahead.
+    Resize {
+        pane: String,
+        size: GridSize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
+    },
+    /// The panes of the tabs on screen. A failed attach is retried on its
+    /// own only while its pane is shown.
+    Shown { panes: Vec<String> },
+    /// A wheel for a controlled pane.
+    Scroll {
+        pane: String,
+        lines: i32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        row: Option<u16>,
+        #[serde(default)]
+        modifiers: u8,
+    },
+    /// Bytes the core writes itself (a click's mouse report).
+    Write { pane: String, data: String },
+    /// The agent in the pane sleeps: keys for it are dropped until it wakes.
+    Asleep { pane: String, asleep: bool },
+    /// A creation the screen sends keys against before Herdr names its pane.
+    RequestOpen { request: String },
+    /// Herdr's answer for the creation named its pane.
+    RequestResolve { request: String, pane: String },
+    /// The creation made no pane the keys may follow.
+    RequestDiscard { request: String, reason: String },
+    /// A paste is being prepared for the pane: keys for it wait behind it.
+    AttachmentHold { pane: String, intent: String },
+    /// The paste is being cancelled: keys for the pane are refused until it
+    /// is released.
+    AttachmentRefuse { intent: String },
+    /// The paste's text is ready: write it, then the keys held behind it,
+    /// to the session of `generation`.
+    AttachmentDeliver {
+        intent: String,
+        generation: u64,
+        paste: String,
+    },
+    /// The paste ended without being written: drop the keys held behind it.
+    AttachmentRelease { intent: String },
+    /// Report when the pane's next frame reaches the screen.
+    WatchFrame { pane: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct GridSize {
+    pub rows: u16,
+    pub cols: u16,
+}
+
+/// The attach state of one pane, as the screen shows it. Field values are
+/// the ones `TerminalPaneSnapshot` has always carried.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PaneTerminalState {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    pub generation: u64,
+    pub attempt: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_category: Option<String>,
+    pub retry_decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at_unix_ms: Option<u64>,
+}
+
+/// What a node tells the core about its panes' terminals.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "report", rename_all = "snake_case")]
+pub enum TerminalReport {
+    /// The pane's attach state changed.
+    State {
+        pane: String,
+        #[serde(flatten)]
+        state: PaneTerminalState,
+    },
+    /// The first frame of a session reached the screen.
+    FirstFrame { pane: String, generation: u64 },
+    /// The frame a [`TerminalControl::WatchFrame`] waited for.
+    FrameShown { pane: String, at_unix_ms: u64 },
+    /// The operator typed into the pane. `at_unix_ms` is when the last key
+    /// this report covers was typed; `submitted` is whether an Enter was
+    /// among them; `focus` is a key from the screen, which moves the
+    /// keyboard to the pane.
+    Input {
+        pane: String,
+        at_unix_ms: u64,
+        submitted: bool,
+        focus: bool,
+    },
+    /// Something the screen shows went wrong (`status.last_error`).
+    Error {
+        pane: String,
+        kind: String,
+        message: String,
+    },
+    /// A note for the core's diagnostic list.
+    Note {
+        pane: String,
+        kind: String,
+        message: String,
+    },
+    /// Keys held for a creation were discarded at the node (its cap).
+    RequestDiscarded { request: String, reason: String },
+    /// A key could not join the paste's held input.
+    AttachmentInput {
+        intent: String,
+        outcome: AttachmentInputOutcome,
+        bytes: usize,
+    },
+    /// The paste was written (`written`), or the session could not take it.
+    AttachmentDelivered { intent: String, written: bool },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentInputOutcome {
+    /// The held input reached its cap.
+    Limit,
+    /// The paste is being cancelled.
+    Cancelling,
+}
+
+/// Where a screen's key goes: a pane, or a creation whose pane Herdr has not
+/// named yet.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyTarget {
+    Pane(String),
+    Request(String),
+}
+
+/// What travels down a device link for its terminals, one JSON line
+/// `{"terminal": …}` that takes no call slot.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TerminalDown {
+    Control {
+        control: TerminalControl,
+    },
+    Key {
+        target: KeyTarget,
+        data: String,
+        typed_at_unix_ms: u64,
+    },
+    View {
+        pane: String,
+        size: GridSize,
+        new_view: bool,
+    },
+    Redraw {
+        pane: String,
+    },
+}
+
+/// One pane's output as it leaves a node.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TerminalOutput {
+    pub pane: String,
+    /// Base64 of the bytes the screen writes.
+    pub data: String,
+    /// The bytes draw the whole screen (they start with a reset).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub full: bool,
+}
+
+/// A node's terminals, as a screen and the core reach them. Every method
+/// returns at once: work that waits runs on the node's own threads.
+pub trait TerminalNode: Send + Sync {
+    fn control(&self, control: TerminalControl);
+
+    /// A key from the screen, typed at `typed_at_unix_ms`. A key the node
+    /// cannot take is reported, never written elsewhere.
+    fn key(&self, target: KeyTarget, bytes: Vec<u8>, typed_at_unix_ms: u64);
+
+    /// The grid the screen draws the pane at; `new_view` is a view that has
+    /// nothing drawn yet and needs a full frame.
+    fn view(&self, pane: &str, size: GridSize, new_view: bool);
+
+    /// A reader lost the pane's output: draw it again from a full frame.
+    fn redraw(&self, pane: &str);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_control_line_names_its_operation_and_omits_absent_fields() {
+        let line = serde_json::to_value(TerminalDown::Control {
+            control: TerminalControl::Attach {
+                pane: "w1:p1".into(),
+                size: None,
+                manual: false,
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            line,
+            serde_json::json!({"kind": "control", "control": {"op": "attach", "pane": "w1:p1"}})
+        );
+    }
+
+    #[test]
+    fn a_state_report_flattens_the_pane_state() {
+        let report = TerminalReport::State {
+            pane: "w1:p1".into(),
+            state: PaneTerminalState {
+                state: "controlling".into(),
+                mode: Some("control".into()),
+                generation: 3,
+                attempt: 1,
+                message: None,
+                exit_category: None,
+                retry_decision: "none".into(),
+                last_attempt_at_unix_ms: None,
+            },
+        };
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(value["report"], "state");
+        assert_eq!(value["state"], "controlling");
+        assert_eq!(
+            serde_json::from_value::<TerminalReport>(value).unwrap(),
+            report
+        );
+    }
+}

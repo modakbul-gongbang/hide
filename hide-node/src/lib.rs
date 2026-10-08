@@ -22,6 +22,7 @@ pub mod diagnostics;
 pub mod opener;
 pub mod pane_proof;
 pub mod ssh;
+pub mod terminal;
 
 /// Plain calls this node works on at once. A call its caller stopped
 /// waiting for keeps its thread until the work's own bound ends it, so this
