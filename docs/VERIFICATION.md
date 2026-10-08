@@ -174,6 +174,12 @@ It retains the direct child's unreaped identity until the last group signal, so 
 No group signal is sent after that child is reaped.
 If a group signal is denied with EPERM, a fresh complete group snapshot may confirm that only zombies or no members remain; this ends that signal obligation, while reaping and final absence checks remain required.
 A live member or unavailable group metadata retains the signal failure, and bounded diagnostics record the original errno and refresh result.
+Process queries classify the expected birth as live, vanished (ESRCH or a replacement birth), or zombie; denied identity and same-birth UID inconsistency remain failures.
+Group enrollment takes membership and birth from the same kernel record, so a PID reused outside the reserved group cannot inherit its ownership.
+Individual signals recheck the proven birth and UID, and refresh once after permission refusal; only a positively terminal identity ends that signal obligation.
+A changed argument pointer width makes a stale token read unknown without ending established birth ownership.
+A zombie prior guardian has ended supervision; an unavailable prior guardian grants no authority to adopt its marked helper.
+A final group probe denied for a zombie-only group continues bounded absence polling, because zombies remain present until reaped.
 Guardian and cleanup failures end the measurement as failures rather than being reported as scene timeouts.
 Per-scene integration observation and workspace close are attempted independently; their failures are reported beside any original scene failure without replacing it.
 Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.

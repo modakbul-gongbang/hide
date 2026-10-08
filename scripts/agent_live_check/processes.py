@@ -15,9 +15,9 @@ import threading
 import time
 
 if __package__:
-    from .process_table import ProcessTable, darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
+    from .process_table import ProcessState, ProcessTable, descendants, group_state, identity_state, marked_descendants, require_complete, snapshot
 else:
-    from process_table import ProcessTable, darwin_candidate_current, descendants, marked_descendants, require_complete, snapshot
+    from process_table import ProcessState, ProcessTable, descendants, group_state, identity_state, marked_descendants, require_complete, snapshot
 
 MAX_CHILDREN = 16
 MAX_DESCENDANTS = 128
@@ -42,6 +42,18 @@ class ProcessSafetyError(ProcessError):
 
 def signal_reserved_group(group, signum):
     """Signal a group while its caller keeps the group leader unreaped."""
+    # Terminal members have no signal obligation. Their presence still has
+    # to be resolved by wait/reap and the separate final absence check.
+    unavailable = None
+    try:
+        state = group_state(snapshot(group))
+    except Exception as error:
+        # The unreaped leader still reserves this group. A metadata failure
+        # remains a failure but must not abandon its independent signal path.
+        unavailable = error
+    else:
+        if state is not ProcessState.LIVE:
+            return
     try:
         os.killpg(group, signum)
     except ProcessLookupError:
@@ -50,13 +62,12 @@ def signal_reserved_group(group, signum):
         details = {"group": group, "signal": signum, "errno": error.errno}
         try:
             current = snapshot(group)
-            require_complete(current)
+            state = group_state(current)
         except Exception as refresh:
             details.update(refresh="unavailable", refresh_error=type(refresh).__name__)
             raise ProcessError("owned_group_signal:" + json.dumps(details, separators=(",", ":"))) from error
-        live = sum(not process.zombie for process in current.values())
-        if live:
-            details.update(refresh="live", live_members=live)
+        if state is ProcessState.LIVE:
+            details.update(refresh="live", live_members=sum(not p.zombie for p in current.values()))
             raise ProcessError("owned_group_signal:" + json.dumps(details, separators=(",", ":"))) from error
         # XNU's explicit-group kill excludes zombies and can return EPERM
         # when none remain signalable. This refresh ends only the signal
@@ -67,6 +78,29 @@ def signal_reserved_group(group, signum):
         raise ProcessError("owned_group_signal:" + json.dumps(
             {"group": group, "signal": signum, "errno": error.errno},
             separators=(",", ":"))) from error
+    if unavailable is not None:
+        raise ProcessError("owned_group_metadata_unavailable:" + str(unavailable)[:MAX_FAILURE_REASON]) from unavailable
+
+
+def signal_identity(process, signum):
+    """Signal only the proven birth; one fresh denial check can end its duty.
+
+    A birth check narrows PID reuse races; it does not make kill(pid) atomic.
+    """
+    def current():
+        return identity_state(process.pid, process.birth, uid=process.uid)
+    state = current()
+    if state is not ProcessState.LIVE:
+        return state
+    try:
+        os.kill(process.pid, signum)
+    except ProcessLookupError:
+        return ProcessState.VANISHED
+    except PermissionError:
+        state = current()
+        if state is ProcessState.LIVE:
+            raise
+    return state
 
 
 class RssSamples:
@@ -405,6 +439,13 @@ def group_exists(group):
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        state = group_state(snapshot(group))
+        if state is ProcessState.LIVE:
+            raise
+        # A terminal group can still hold zombies awaiting another parent's
+        # reap. Presence is not signalability and is never cleanup success.
+        return state is ProcessState.ZOMBIE
 
 
 def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
@@ -468,8 +509,11 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
         # another live guardian's token belongs to concurrent work.
         if sys.platform == "darwin" or sys.platform.startswith("linux"):
             all_processes = snapshot()
-            if any(subject["pid"] in observed for subject in all_processes.unavailable):
-                raise ProcessError("known_owned_metadata_unavailable")
+            retained = {}
+            for pid, previous in observed.items():
+                state = identity_state(pid, previous.birth, uid=previous.uid, table=all_processes)
+                if state is not ProcessState.VANISHED:
+                    retained[pid] = all_processes[pid]
 
             def matches(entry):
                 prefix = b"HIDE_LIVE_CHECK_OWNER="
@@ -484,14 +528,12 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
                         len(parts[3]) != 64 or any(c not in "0123456789abcdef" for c in parts[3])):
                     return False
                 guardian_pid, birth = int(parts[1]), int(parts[2])
-                guardian = all_processes.get(guardian_pid)
-                if guardian is not None:
-                    return guardian.birth != birth
                 try:
-                    os.kill(guardian_pid, 0)
-                except ProcessLookupError:
-                    return True
-                return False
+                    state = identity_state(guardian_pid, birth, table=all_processes)
+                except RuntimeError:
+                    # Unknown prior supervision grants no adoption authority.
+                    return False
+                return state is not ProcessState.LIVE
 
             candidates = {pid: process for pid, process in all_processes.items()
                           if excluded.get(pid) != process.birth}
@@ -499,10 +541,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
                                         unknown=unknown)
             table.update(extras)
             # Retain an earlier token proof while that exact birth remains.
-            for pid, previous in observed.items():
-                actual = all_processes.get(pid)
-                if actual and actual.birth == previous.birth:
-                    table[pid] = actual
+            table.update(retained)
         observed.clear()
         observed.update(table)
         return table
@@ -515,12 +554,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
             if (skip_group and process.group == group) or process.zombie:
                 continue
             try:
-                actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
-                          else snapshot().get(process.pid) if sys.platform.startswith("linux") else None)
-                if actual and actual.birth == process.birth:
-                    os.kill(process.pid, signum)
-            except ProcessLookupError:
-                pass
+                signal_identity(process, signum)
             except Exception as error:
                 errors.append({"pid": process.pid, "type": type(error).__name__,
                                "reason": str(error)[:MAX_FAILURE_REASON]})

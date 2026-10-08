@@ -7,6 +7,7 @@ import ctypes
 import errno
 import json
 from dataclasses import dataclass
+from enum import Enum
 import os
 from pathlib import Path
 import sys
@@ -23,6 +24,12 @@ class ProcessTable(dict):
         self.unavailable = []
         self.vanished = []
         self.foreign_uid_pids = set()
+
+
+class ProcessState(Enum):
+    LIVE = "live"
+    VANISHED = "vanished"
+    ZOMBIE = "zombie"
 
 
 def require_complete(table):
@@ -128,6 +135,8 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
         ctypes.set_errno(0)
         count = (library.proc_listallpids(pids, ctypes.sizeof(pids)) if group is None
                  else library.proc_listpgrppids(group, pids, ctypes.sizeof(pids)))
+        if group is not None and count <= 0 and ctypes.get_errno() == errno.ESRCH:
+            return result
         if count < 0 or (count == 0 and (group is None or ctypes.get_errno())) or count >= MAX_SYSTEM_PROCESSES:
             raise RuntimeError("process_table_unavailable_or_over_budget")
         for pid in pids[:count]:
@@ -181,6 +190,10 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
                     result.vanished.append(pid)
                     continue
                 info = later
+            if group is not None and info.pgid != group:
+                # Enumeration and identity reads can straddle exit/reuse or
+                # a group move. Only this identity's own group can enroll it.
+                continue
             result[pid] = Process(pid, info.ppid, info.pgid,
                                   info.sec * 1_000_000 + info.usec,
                                   task.resident if read == ctypes.sizeof(task) else -1,
@@ -196,10 +209,10 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
                 if not entry.name.isdecimal():
                     continue
                 try:
-                    if group is not None and os.getpgid(int(entry.name)) != group:
-                        continue
                     raw = (Path(entry.path) / "stat").read_text()
                     fields = raw[raw.rindex(")") + 2:].split()
+                    if group is not None and int(fields[2]) != group:
+                        continue
                     pid = int(entry.name)
                     result[pid] = Process(pid, int(fields[1]), int(fields[2]),
                                           int(fields[19]),
@@ -230,22 +243,50 @@ def descendants(table: dict[int, Process], root: int, known=None) -> dict[int, P
         selected |= added
 
 
-def darwin_candidate_current(process: Process) -> bool:
-    """Bind a procargs answer back to the sampled birth without another scan."""
-    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-    library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
-                                    ctypes.c_void_p, ctypes.c_int]
-    info = BsdInfo()
-    ctypes.set_errno(0)
-    read = library.proc_pidinfo(process.pid, 3, 1, ctypes.byref(info), ctypes.sizeof(info))
-    if read != ctypes.sizeof(info):
-        error = ctypes.get_errno()
-        if error == errno.ESRCH:
-            return False
-        raise RuntimeError("owned_process_identity_unavailable_" + str(error) + ":" + str(process.pid))
-    return (info.sec * 1_000_000 + info.usec == process.birth
-            and info.uid == process.uid and info.status != 5
-            and (8 if info.flags & 0x10 else 4) == process.pointer_width)
+def identity_state(pid, birth, *, uid=None, pointer_width=None, table=None):
+    """Classify an expected birth; denied or inconsistent identity is unknown.
+
+    Width binds a procargs interpretation, not established process ownership.
+    A caller with group/token proof checks UID and birth before signalling.
+    """
+    if table is None and sys.platform == "darwin":
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                        ctypes.c_void_p, ctypes.c_int]
+        info = BsdInfo()
+        ctypes.set_errno(0)
+        read = library.proc_pidinfo(pid, 3, 1, ctypes.byref(info), ctypes.sizeof(info))
+        if read != ctypes.sizeof(info):
+            error = ctypes.get_errno()
+            if error == errno.ESRCH:
+                return ProcessState.VANISHED
+            raise RuntimeError("owned_process_identity_unavailable_" + str(error) + ":" + str(pid))
+        current_birth, current_uid = info.sec * 1_000_000 + info.usec, info.uid
+        width, zombie = (8 if info.flags & 0x10 else 4), info.status == 5
+    else:
+        table = snapshot() if table is None else table
+        if (any(subject["pid"] == pid for subject in getattr(table, "unavailable", ()))
+                or pid in getattr(table, "foreign_uid_pids", ())):
+            raise RuntimeError("owned_process_identity_unavailable:" + str(pid))
+        actual = table.get(pid)
+        if actual is None:
+            return ProcessState.VANISHED
+        current_birth, current_uid = actual.birth, actual.uid
+        width, zombie = actual.pointer_width, actual.zombie
+    if current_birth != birth:
+        return ProcessState.VANISHED
+    if uid is not None and current_uid != uid:
+        raise RuntimeError("owned_process_uid_changed:" + str(pid))
+    if pointer_width is not None and width != pointer_width:
+        raise RuntimeError("process_argument_width_changed:" + str(pid))
+    return ProcessState.ZOMBIE if zombie else ProcessState.LIVE
+
+
+def group_state(table):
+    require_complete(table)
+    if not table:
+        return ProcessState.VANISHED
+    return ProcessState.LIVE if any(not p.zombie for p in table.values()) else ProcessState.ZOMBIE
 
 
 class OwnerEnvironmentUnavailable(RuntimeError):
@@ -346,9 +387,12 @@ def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, 
                     continue
                 entries = data.split(b"\0")
                 owned = any(expected(entry) for entry in entries) if callable(expected) else expected in entries
-                fresh = snapshot().get(pid)
-                if fresh is not None and fresh.birth == process.birth and owned:
+                current = identity_state(pid, process.birth, uid=process.uid)
+                if current is ProcessState.LIVE and owned:
                     result[pid] = process
+            except (FileNotFoundError, ProcessLookupError):
+                if hasattr(table, "vanished"):
+                    table.vanished.append(pid)
             except (OSError, RuntimeError):
                 if unknown:
                     unknown(process)
@@ -366,13 +410,14 @@ def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, 
                 unknown(process)
             continue
         try:
-            current = darwin_candidate_current(process)
+            current = identity_state(pid, process.birth, uid=process.uid,
+                                     pointer_width=process.pointer_width)
         except RuntimeError:
             if unknown:
                 unknown(process)
             continue
-        if not current:
-            if hasattr(table, "vanished"):
+        if current is not ProcessState.LIVE:
+            if current is ProcessState.VANISHED and hasattr(table, "vanished"):
                 table.vanished.append(pid)
             continue
         try:

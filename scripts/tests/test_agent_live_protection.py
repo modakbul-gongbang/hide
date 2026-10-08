@@ -807,19 +807,22 @@ else:raise RuntimeError("group_survived_reap")
         for outcome in ("live", "unavailable", "zombie", "empty"):
             with self.subTest(outcome=outcome):
                 library = Mock()
+                group_reads = 0
                 def list_group(group, pids, size):
-                    if outcome == "empty":
+                    nonlocal group_reads
+                    group_reads += 1
+                    if group_reads > 1 and outcome == "empty":
                         return 0
                     pids[0] = 123
                     return 1
                 def read_info(pid, flavor, arg, buffer, size):
-                    if outcome == "unavailable":
+                    if group_reads > 1 and outcome == "unavailable":
                         ctypes.set_errno(errno.EPERM)
                         return 0
                     if flavor == 3:
                         value = ctypes.cast(buffer, ctypes.POINTER(BsdInfo)).contents
                         value.pid, value.pgid, value.uid = 123, 123, os.getuid()
-                        value.sec, value.status = 10, 5 if outcome == "zombie" else 1
+                        value.sec, value.status = 10, 5 if group_reads > 1 and outcome == "zombie" else 1
                     return size
                 library.proc_listpgrppids.side_effect = list_group
                 library.proc_pidinfo.side_effect = read_info
@@ -934,9 +937,15 @@ else:raise RuntimeError("group_survived_reap")
                 size._obj.value = len(data)
                 return 0
             library.sysctl.side_effect = query
+            def read_info(pid, flavor, unused, buffer, size):
+                info = buffer._obj
+                info.sec, info.usec, info.uid = 0, 10, os.getuid()
+                info.flags = 0x10 if width == 8 else 0
+                return size
+            library.proc_pidinfo.side_effect = read_info
             with self.subTest(pointer_width=width), \
-                    patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
-                    patch("agent_live_check.process_table.darwin_candidate_current", return_value=True):
+                    patch.object(sys, "platform", "darwin"), \
+                    patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
                 self.assertEqual(marked_descendants({111: orphan}, "fixture-run", 1), {111: orphan})
             # The restricted-target crop can retain OTHER while hiding the
             # later owner entry. A readable prefix cannot exclude ownership.
@@ -964,9 +973,14 @@ else:raise RuntimeError("group_survived_reap")
             info.sec, info.usec, info.uid, info.flags = 0, 10, os.getuid(), 0x10
             return size
         library.sysctl.side_effect, library.proc_pidinfo.side_effect = query, changed_width
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
-            self.assertEqual(marked_descendants(table, "fixture-run", 1), {})
-        self.assertEqual(table.vanished, [111])
+        unknown = []
+        with patch.object(sys, "platform", "darwin"), \
+                patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            self.assertEqual(marked_descendants(table, "fixture-run", 1, unknown=unknown.append), {})
+        # Letter 2787: an exec width change rejects stale argv interpretation,
+        # but neither proves exit nor transfers established birth ownership.
+        self.assertEqual(table.vanished, [])
+        self.assertEqual(unknown, [orphan])
 
 
     def test_owner_refusal_distinguishes_opaque_shapes_without_payload_contents(self):
