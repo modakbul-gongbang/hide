@@ -24,6 +24,22 @@ impl AgentId {
     pub const fn adapter(self) -> &'static AgentAdapter {
         &ADAPTERS[self as usize]
     }
+
+    /// Display priority is independent of whether this build reads a session.
+    pub const fn title_priority(self) -> TitlePriority {
+        match self {
+            Self::ClaudeCode | Self::Codex => TitlePriority::GoalFirst,
+            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp => TitlePriority::NativeFirst,
+            Self::Cursor => TitlePriority::GoalOnly,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TitlePriority {
+    GoalFirst,
+    NativeFirst,
+    GoalOnly,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,6 +130,10 @@ impl LaunchDialect {
     /// A checkout cwd is independent of this optional CLI argument.
     pub const fn accepts_extra_directories(self) -> bool {
         matches!(self, Self::Claude | Self::Codex | Self::Omp | Self::Cursor)
+    }
+
+    pub const fn closes_pane_when_sleeping(self) -> bool {
+        !matches!(self, Self::Claude | Self::Codex)
     }
 }
 
