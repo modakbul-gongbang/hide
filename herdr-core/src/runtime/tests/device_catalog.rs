@@ -558,6 +558,73 @@ fn a_reconnected_device_keeps_its_panes_in_their_checkouts_until_its_helper_answ
     );
 }
 
+/// Retry connects to the same device again, so its panes keep the checkouts
+/// its helper confirmed: the new connection's Herdr session, which arrives
+/// before its helper does, is grouped as before rather than by folder, and a
+/// pane's command bound to its checkout is not refused as moved.
+#[test]
+fn retrying_a_device_keeps_its_panes_in_their_checkouts() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: TARGET.to_owned(),
+            label: "Mini".to_owned(),
+            ssh_alias: Some(TARGET.to_owned()),
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status(TARGET));
+    let views = tempfile::tempdir().unwrap();
+    runtime.workspace_views =
+        Some(WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0);
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: CatalogDevice::new(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    let raw = session(vec![herdr_workspace(
+        TARGET,
+        "w2",
+        &t.linked,
+        &[("t3", &t.linked)],
+    )]);
+    runtime.ingest_remote_session(TARGET, Ok(raw.clone()));
+    assert_eq!(runtime.snapshot.status.remote[0].catalog.state, "ready");
+    let pane = format!("remote:{TARGET}:pane:t3");
+    let context = |runtime: &Runtime| {
+        runtime
+            .workspace_control_query(TARGET, &pane, crate::workspace_control::Query::Info)
+            .map(|result| result.context)
+            .map_err(|refusal| refusal.reason)
+    };
+    let bound = context(&runtime).unwrap();
+    assert!(
+        bound.workspace_id.starts_with("remote:mini:project:"),
+        "{bound:?}"
+    );
+
+    // The link dropped and the operator retries; the new connection's
+    // Herdr session arrives before its helper is up.
+    runtime.snapshot.status.remote[0].state = "unavailable".to_owned();
+    assert!(runtime.retry_remote_device(TARGET));
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    assert_eq!(context(&runtime), Ok(bound));
+}
+
 #[test]
 fn a_device_whose_helper_is_not_allowed_shows_its_workspaces_unconfirmed() {
     let t = tree();
@@ -1126,6 +1193,12 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         path: "/repo/p1/gone.txt".to_owned(),
         label: "gone.txt".to_owned(),
     });
+    runtime
+        .device_facts
+        .insert(TARGET.to_owned(), DeviceFacts::default());
+    runtime
+        .device_worktrees
+        .insert(TARGET.to_owned(), Default::default());
 
     dispatch(
         &mut runtime,
@@ -1134,6 +1207,10 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
     );
 
     assert!(runtime.snapshot.ui_state.device_registrations.is_empty());
+    // What its helper answered about its directories goes with it; a Retry
+    // keeps it (`retrying_a_device_keeps_its_panes_in_their_checkouts`).
+    assert!(!runtime.device_facts.contains_key(TARGET));
+    assert!(!runtime.device_worktrees.contains_key(TARGET));
     assert_eq!(
         runtime
             .snapshot

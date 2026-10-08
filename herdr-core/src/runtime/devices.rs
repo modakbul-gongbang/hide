@@ -215,10 +215,11 @@ impl Runtime {
         identity_changed | self.refresh_agent_lineage()
     }
 
-    /// Forgets everything the core holds for a device: its coordinator,
-    /// transports, status entry, pending operations and projected panes. The
-    /// coordinator is joined later, off the lock, by whoever drains
-    /// `take_retired_remote_syncs`.
+    /// Forgets what the core holds for a device's connection: its
+    /// coordinator, transports, status entry, pending operations and
+    /// projected panes. What its helper answered about its directories stays
+    /// (`forget_device_catalog`). The coordinator is joined later, off the
+    /// lock, by whoever drains `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
         self.device_machine_ids.remove(device_id);
         self.forget_device_host(device_id);

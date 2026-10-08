@@ -561,13 +561,23 @@ impl Runtime {
         changed | self.request_device_worktrees(target, true)
     }
 
+    /// Forgets what the device's Herdr reported and the tabs Hide created
+    /// there. What its helper answered about its directories stays: a Retry
+    /// connects to the same device again, and that connection asks again
+    /// (`reread_device_facts`), so meanwhile the device's panes keep their
+    /// checkouts. Removing the device forgets those answers too
+    /// (`forget_device_directories`).
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
         self.device_recent_tabs.remove(target);
-        self.device_facts.remove(target);
-        self.device_worktrees.remove(target);
         self.created_device_tabs
             .retain(|(owner, _), _| owner != target);
+    }
+
+    /// The device was removed: nothing its helper answered is kept.
+    pub(super) fn forget_device_directories(&mut self, target: &str) {
+        self.device_facts.remove(target);
+        self.device_worktrees.remove(target);
     }
 }
 
