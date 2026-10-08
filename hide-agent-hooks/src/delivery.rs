@@ -50,9 +50,18 @@ pub fn read_prompt(payload: &[u8], truncated: bool) -> Prompt {
     }
 }
 
-/// Whether a session id may travel as a `hide` argument.
+/// The longest native session a letter pull or a Factory question guard
+/// carries: Herdr takes an agent session of up to 4096 bytes, and Pi and omp
+/// report theirs as a session file path, which on a deep checkout passes 250
+/// bytes (PRD pi-omp-extension D-05).
+pub const SESSION_LIMIT: usize = 4096;
+
+/// Whether a session id or session file path may travel as a `hide` argument.
 pub fn valid_session(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 256 && !id.starts_with('-') && !id.chars().any(char::is_control)
+    !id.is_empty()
+        && id.len() <= SESSION_LIMIT
+        && !id.starts_with('-')
+        && !id.chars().any(char::is_control)
 }
 
 #[derive(Deserialize)]

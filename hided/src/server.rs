@@ -1125,14 +1125,12 @@ async fn scoped_client_loop(
                             )
                         }),
                         Some("factory_question_guard") => {
-                            let session = value["session"].as_str().filter(|session| {
-                                !session.is_empty()
-                                    && session.len() <= 256
-                                    && !session.chars().any(char::is_control)
-                            });
-                            let runtime = value["runtime"]
+                            let session = value["session"]
                                 .as_str()
-                                .filter(|runtime| matches!(*runtime, "claude-code" | "codex"));
+                                .filter(|session| herdr_core::delivery::valid_session(session));
+                            let runtime = value["runtime"].as_str().filter(|runtime| {
+                                hide_agent_adapter::direct_ask_kind(runtime).is_some()
+                            });
                             match (session, runtime) {
                                 (Some(session), Some(runtime)) => {
                                     Some(ScopedRequest::FactoryQuestionGuard {

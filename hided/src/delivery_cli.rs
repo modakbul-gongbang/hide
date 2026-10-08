@@ -21,7 +21,12 @@ pub fn parse<'a>(
                     match flag.as_str() {
                         "--bell" if !bell => bell = true,
                         "--session" if session.is_none() => {
-                            session = Some(args.next().filter(|id| key(id)).ok_or(USAGE)?.clone());
+                            session = Some(
+                                args.next()
+                                    .filter(|id| herdr_core::delivery::valid_session(id))
+                                    .ok_or(USAGE)?
+                                    .clone(),
+                            );
                         }
                         _ => return Err(USAGE.into()),
                     }

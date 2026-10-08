@@ -380,7 +380,7 @@ impl Runtime {
             ..
         } = &command
         {
-            if !crate::delivery::valid_key(session) {
+            if !crate::delivery::valid_session(session) {
                 return Err("session_invalid".into());
             }
             if crate::wire::session_digest(session) == actor.session {
@@ -1574,7 +1574,7 @@ pub(crate) mod tests {
             bell: false,
             session: Some(session),
         };
-        // An id past the key bound is refused before it is hashed under the lock.
+        // An id past the session bound is refused before it is hashed under the lock.
         assert_eq!(
             guard
                 .prepare_delivery(
@@ -1582,7 +1582,7 @@ pub(crate) mod tests {
                     "recipient",
                     &context,
                     None,
-                    pull("x".repeat(257))
+                    pull("x".repeat(crate::delivery::SESSION_LIMIT + 1))
                 )
                 .err()
                 .as_deref(),
