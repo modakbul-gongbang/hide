@@ -587,7 +587,8 @@ impl Fixture {
                         .any(|row| row["target_id"] == "remote" && row["state"] == "connected")
                 })
                 .then_some(()))
-        })?;
+        })
+        .with_context(|| fixture.device_state())?;
         wait_for("consented private helper", || {
             let snapshot = fixture.snapshot()?;
             if let Some(host) = snapshot
@@ -653,6 +654,20 @@ impl Fixture {
 
     fn event(&self, kind: &str, payload: Value) -> Result<()> {
         renderer::Renderer::connect(self.port, &self.token)?.event(kind, payload)
+    }
+
+    /// What the core says about the device when it never connected: its
+    /// last error, its connection rows and whether it was registered at all.
+    fn device_state(&self) -> String {
+        match self.snapshot() {
+            Ok(snapshot) => format!(
+                "last_error={} remote={} devices={}",
+                snapshot.pointer("/status/last_error").unwrap_or(&Value::Null),
+                snapshot.pointer("/status/remote").unwrap_or(&Value::Null),
+                snapshot.pointer("/navigator/devices").unwrap_or(&Value::Null),
+            ),
+            Err(error) => format!("snapshot unreadable: {error:#}"),
+        }
     }
 
     pub fn reconnect_device(&self) -> Result<()> {
