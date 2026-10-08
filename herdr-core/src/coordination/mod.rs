@@ -367,7 +367,7 @@ pub(crate) fn apply(
             }) {
                 return Err("actor_identity_conflict".into());
             }
-            end_record(ledger, id);
+            end_record(ledger, id, now);
             Ok(view(
                 ledger
                     .agents
@@ -658,8 +658,9 @@ fn insert_record(ledger: &mut Ledger, record: &AgentRecord, check: bool) -> Resu
     Ok(view(&record, ledger))
 }
 
-/// Ends a registration and the watches on it. Returns whether it was live.
-fn end_record(ledger: &mut Ledger, id: &str) -> bool {
+/// Ends a registration, the watches on it and the answer waits of the letters
+/// it sent or received, in one transition. Returns whether it was live.
+fn end_record(ledger: &mut Ledger, id: &str, now: u64) -> bool {
     let Some(record) = ledger.agents.iter_mut().find(|record| record.id == id) else {
         return false;
     };
@@ -668,6 +669,9 @@ fn end_record(ledger: &mut Ledger, id: &str) -> bool {
     ledger
         .watches
         .retain(|watch| !watch.target.same_identity(&target));
+    if live {
+        ledger.end_answer_waits_of(&target, now);
+    }
     live
 }
 
@@ -753,6 +757,7 @@ pub(crate) fn gone_registrations(
 pub(crate) fn end_gone(
     ledger: &mut Ledger,
     gone: &std::collections::BTreeMap<String, PaneGone>,
+    now: u64,
 ) -> Vec<(AgentRecord, PaneGone)> {
     let mut ended = Vec::new();
     for (id, reason) in gone {
@@ -760,7 +765,7 @@ pub(crate) fn end_gone(
             .agents
             .iter()
             .any(|record| &record.id == id && !record.ended)
-            && end_record(ledger, id)
+            && end_record(ledger, id, now)
             && let Some(record) = ledger.agents.iter().find(|record| &record.id == id)
         {
             ended.push((record.clone(), *reason));
@@ -844,6 +849,127 @@ mod tests {
             },
             1,
         )
+    }
+
+    /// Both ways a registration ends, `hide agent end` and the core finding
+    /// its pane gone, end the answer waits of the letters it sent or received.
+    #[test]
+    fn a_registration_that_ends_ends_the_answer_waits_of_its_letters() {
+        for by_pane in [false, true] {
+            let mut ledger = Ledger::default();
+            let (a, b, c) = (
+                record("pane-a", "session-a", None),
+                record("pane-b", "session-b", None),
+                record("pane-c", "session-c", None),
+            );
+            register(&mut ledger, a.clone(), &a.actor);
+            let b_id = register(&mut ledger, b.clone(), &b.actor);
+            register(&mut ledger, c.clone(), &c.actor);
+            let ask = |ledger: &mut Ledger, from: &Actor, to: &Actor, intent: &str| {
+                let id = crate::delivery::mailbox::send(
+                    ledger, from, to, intent, "body", "request", None, 2,
+                )
+                .unwrap()
+                .id;
+                // The recipient took it in; a letter still awaiting intake
+                // is left to the delivery deadline.
+                crate::delivery::mailbox::apply(
+                    ledger,
+                    to,
+                    None,
+                    &crate::delivery::Command::Confirm {
+                        ids: vec![id.clone()],
+                    },
+                    2,
+                )
+                .unwrap();
+                id
+            };
+            let to_b = ask(&mut ledger, &a.actor, &b.actor, "to-b");
+            let from_b = ask(&mut ledger, &b.actor, &c.actor, "from-b");
+            let elsewhere = ask(&mut ledger, &a.actor, &c.actor, "elsewhere");
+            if by_pane {
+                let gone = [(b_id, PaneGone::Left)].into();
+                assert_eq!(end_gone(&mut ledger, &gone, 10).len(), 1);
+            } else {
+                apply(
+                    &mut ledger,
+                    &b.actor,
+                    &Mutation::End {
+                        id: b_id,
+                        actor: None,
+                    },
+                    10,
+                )
+                .unwrap();
+            }
+            let wait = |id: &str| {
+                let letter = ledger.letters.iter().find(|l| l.id == id).unwrap();
+                (letter.waiting_answer, letter.answer_wait_ended)
+            };
+            let ended = (
+                false,
+                Some(crate::delivery::ledger::AnswerWaitEnd::PartyEnded),
+            );
+            assert_eq!(wait(&to_b), ended, "by_pane={by_pane}");
+            assert_eq!(wait(&from_b), ended, "by_pane={by_pane}");
+            assert_eq!(wait(&elsewhere), (true, None), "by_pane={by_pane}");
+        }
+    }
+
+    /// Repeating `hide agent end` on a registration that already ended must not
+    /// end the waits of the live registration that took its pane and session.
+    #[test]
+    fn ending_an_already_ended_registration_again_leaves_the_new_ones_waits() {
+        let mut ledger = Ledger::default();
+        let (a, b) = (
+            record("pane-a", "session-a", None),
+            record("pane-b", "session-b", None),
+        );
+        register(&mut ledger, a.clone(), &a.actor);
+        let old = register(&mut ledger, b.clone(), &b.actor);
+        let end = |ledger: &mut Ledger, id: &str, now: u64| {
+            apply(
+                ledger,
+                &b.actor,
+                &Mutation::End {
+                    id: id.into(),
+                    actor: None,
+                },
+                now,
+            )
+            .unwrap()
+        };
+        end(&mut ledger, &old, 3);
+        let renewed = register(&mut ledger, b.clone(), &b.actor);
+        assert_ne!(renewed, old);
+        let id = crate::delivery::mailbox::send(
+            &mut ledger,
+            &a.actor,
+            &b.actor,
+            "ask",
+            "body",
+            "request",
+            None,
+            4,
+        )
+        .unwrap()
+        .id;
+        crate::delivery::mailbox::apply(
+            &mut ledger,
+            &b.actor,
+            None,
+            &crate::delivery::Command::Confirm {
+                ids: vec![id.clone()],
+            },
+            4,
+        )
+        .unwrap();
+        end(&mut ledger, &old, 5);
+        let letter = ledger.letters.iter().find(|l| l.id == id).unwrap();
+        assert!(letter.waiting_answer && letter.answer_wait_ended.is_none());
+        end(&mut ledger, &renewed, 6);
+        assert!(!ledger.letters[0].waiting_answer);
     }
 
     /// `here` is the caller's own live registration, and a caller with
@@ -1301,7 +1427,7 @@ mod tests {
                 let gone = gone_registrations(&ledger, device, &read, None)
                     .into_iter()
                     .collect();
-                assert_eq!(end_gone(&mut ledger, &gone).len(), 1);
+                assert_eq!(end_gone(&mut ledger, &gone, 1).len(), 1);
                 let ended = ledger.agents.iter().find(|r| r.id == child_id).unwrap();
                 assert!(ended.ended);
                 assert_eq!(ended.parent, expected_parent);
@@ -1328,7 +1454,7 @@ mod tests {
                 let gone = gone_registrations(&ledger, device, &read, None)
                     .into_iter()
                     .collect();
-                assert_eq!(end_gone(&mut ledger, &gone).len(), 1);
+                assert_eq!(end_gone(&mut ledger, &gone, 1).len(), 1);
                 assert!(ledger.agents.iter().find(|r| r.id == origin).unwrap().ended);
                 let child = ledger.agents.iter().find(|r| r.id == child_id).unwrap();
                 assert!(!child.ended);
