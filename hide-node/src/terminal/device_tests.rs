@@ -357,51 +357,138 @@ fn a_pane_past_its_unsent_keys_reads_ended_while_other_panes_keys_go_on() {
     });
 }
 
-/// The cap counts keys, not the frames they travel in: 10,000 one-byte keys
-/// typed while the link takes nothing stay far under it, and go down in
-/// order as a few lines, the waiting run carrying its last key's time.
+/// Every key line the link wrote, as (pane, bytes, typed at).
+fn key_lines(link: &GatedLink) -> Vec<(String, Vec<u8>, u64)> {
+    link.lines()
+        .into_iter()
+        .filter_map(|line| match line {
+            TerminalDown::Key {
+                target: KeyTarget::Pane(pane),
+                data,
+                typed_at_unix_ms,
+            } => Some((pane, decode_base64(&data).unwrap(), typed_at_unix_ms)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Holds the writer on a first control line, so everything after it waits.
+fn stall(proxy: &DeviceTerminals) {
+    proxy.control(TerminalControl::Release {
+        pane: "w9:p9".into(),
+        message: "stall".into(),
+    });
+}
+
+/// The cap counts keys, not the frames they travel in (D-18, B18): with the
+/// link stalled a pane takes 256 KiB of one-byte keys, the next byte
+/// refuses only that pane, another pane's keys still go, and once the link
+/// drains every key taken arrives, in order.
 #[test]
-fn keys_waiting_on_a_stalled_link_count_as_keys_and_go_down_as_one_run() {
+fn a_stalled_link_takes_256_kib_of_one_byte_keys_and_refuses_only_the_next() {
     let (proxy, link, heard) = proxy();
-    let typed: Vec<u8> = (0..10_000).map(|index| b'a' + (index % 26) as u8).collect();
+    stall(&proxy);
+    let typed: Vec<u8> = (0..MAX_UNSENT_KEY_BYTES)
+        .map(|index| b'a' + (index % 26) as u8)
+        .collect();
     for (index, key) in typed.iter().enumerate() {
-        proxy.key(
-            KeyTarget::Pane("w1:p1".into()),
-            vec![*key],
-            1_000 + index as u64,
-        );
+        proxy.key(KeyTarget::Pane("w1:p1".into()), vec![*key], index as u64);
     }
     assert!(
         heard.reports.lock().unwrap().is_empty(),
         "no key was refused"
     );
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"z".to_vec(), u64::MAX);
+    let refused: Vec<String> = heard
+        .reports
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|(_, report)| match report {
+            TerminalReport::Error { pane, kind, .. } => Some(format!("{pane} {kind}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refused, ["w1:p1 terminal.device_input_overflow"]);
+    proxy.key(KeyTarget::Pane("w1:p2".into()), b"other".to_vec(), 1);
     link.release();
-    let joined = || {
-        link.lines()
-            .iter()
-            .filter_map(|line| match line {
-                TerminalDown::Key { data, .. } => Some(decode_base64(data).unwrap()),
-                _ => None,
-            })
-            .flatten()
-            .collect::<Vec<u8>>()
+    let arrived = |pane: &str| -> Vec<u8> {
+        key_lines(&link)
+            .into_iter()
+            .filter(|(owner, _, _)| owner == pane)
+            .flat_map(|(_, bytes, _)| bytes)
+            .collect()
     };
-    wait_for(|| joined().len() == typed.len());
-    assert_eq!(joined(), typed);
-    let lines = link.lines();
-    // The first key may already have been taken alone when the link stalled.
-    assert!(
-        lines.len() <= 2,
-        "{} lines for one run of keys",
-        lines.len()
-    );
-    let TerminalDown::Key {
-        typed_at_unix_ms, ..
-    } = lines.last().unwrap()
-    else {
-        panic!("a key line");
+    wait_for(|| arrived("w1:p2") == b"other");
+    assert_eq!(arrived("w1:p1"), typed);
+    // Runs are bounded: 256 KiB went down in 16 KiB lines.
+    let lines = key_lines(&link);
+    assert!(lines.iter().all(|(_, bytes, _)| bytes.len() <= 16 * 1024));
+    assert_eq!(lines.len(), MAX_UNSENT_KEY_BYTES / (16 * 1024) + 1);
+}
+
+/// A run of waiting keys never crosses a pane, a control line, an Enter or
+/// an escape, so the node's submit rule reads the chunks it would have
+/// read; a merged run carries its last key's time.
+#[test]
+fn a_waiting_run_of_keys_stops_at_a_pane_a_control_an_enter_and_an_escape() {
+    let (proxy, link, _heard) = proxy();
+    stall(&proxy);
+    let key = |pane: &str, bytes: &[u8], at: u64| {
+        proxy.key(KeyTarget::Pane(pane.into()), bytes.to_vec(), at)
     };
-    assert_eq!(*typed_at_unix_ms, 1_000 + 9_999);
+    key("w1:p1", b"a", 1);
+    key("w1:p1", b"b", 2);
+    key("w1:p1", b"\r", 3);
+    key("w1:p1", b"c", 4);
+    key("w1:p2", b"x", 5);
+    key("w1:p1", b"d", 6);
+    proxy.control(TerminalControl::Attach {
+        pane: "w1:p3".into(),
+        size: None,
+        manual: false,
+    });
+    key("w1:p1", b"e", 7);
+    key("w1:p1", b"\x1b", 8);
+    key("w1:p1", b"\r", 9);
+    key("w1:p1", b"f", 10);
+    key("w1:p1", b"g", 11);
+    link.release();
+    wait_for(|| key_lines(&link).len() == 9);
+    let lines: Vec<(String, Vec<u8>, u64)> = key_lines(&link);
+    let expected: Vec<(String, Vec<u8>, u64)> = [
+        ("w1:p1", &b"ab"[..], 2),
+        ("w1:p1", b"\r", 3),
+        ("w1:p1", b"c", 4),
+        ("w1:p2", b"x", 5),
+        ("w1:p1", b"d", 6),
+        ("w1:p1", b"e", 7),
+        ("w1:p1", b"\x1b", 8),
+        ("w1:p1", b"\r", 9),
+        ("w1:p1", b"fg", 11),
+    ]
+    .into_iter()
+    .map(|(pane, bytes, at)| (pane.to_owned(), bytes.to_vec(), at))
+    .collect();
+    assert_eq!(lines, expected);
+    // The control went down between `d` and `e`.
+    let all = link.lines();
+    let control = all
+        .iter()
+        .position(|line| {
+            matches!(
+                line,
+                TerminalDown::Control {
+                    control: TerminalControl::Attach { .. }
+                }
+            )
+        })
+        .unwrap();
+    let d = all
+        .iter()
+        .position(|line| matches!(line, TerminalDown::Key { data, .. } if decode_base64(data).unwrap() == b"d"))
+        .unwrap();
+    assert_eq!(control, d + 1);
 }
 
 #[test]

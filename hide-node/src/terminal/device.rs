@@ -11,9 +11,12 @@
 //! On the core's side, [`DeviceTerminals`] is the device's [`TerminalNode`]:
 //! it writes controls and keys down the link in the order they were given
 //! and keeps at most [`MAX_UNSENT_KEY_BYTES`] of one pane's keys unsent,
-//! counted as the keys' own bytes. Keys for one pane that wait behind each
-//! other go down as one line carrying the last key's time, so a link that
-//! falls behind costs one frame per run of keys, not one per key. A pane
+//! counted as the keys' own bytes. Plain keys (no carriage return and no
+//! escape) for one pane that wait behind each other go down as one line
+//! carrying the last key's time, so a link that falls behind costs one frame
+//! per run of keys, not one per key; an Enter or an escape always goes as
+//! its own line, so the node's submit rule reads the same chunks it would
+//! have, and a control or another pane's key ends a run. A pane
 //! past the cap reads ended and refuses keys until it is attached again;
 //! the keys it already took are written in order, or, when the link fails,
 //! named in the log as unwritten. A link that ends takes every flow with it
@@ -419,11 +422,13 @@ const MAX_KEY_LINE_BYTES: usize = 16 * 1024;
 enum Waiting {
     Line(Vec<u8>),
     /// A run of one pane's keys, typed back to back while the link was
-    /// behind, and when the last of them was typed.
+    /// behind, and when the last of them was typed. Only a plain run takes
+    /// more keys.
     Keys {
         pane: String,
         bytes: Vec<u8>,
         typed_at_unix_ms: u64,
+        plain: bool,
     },
 }
 
@@ -444,15 +449,18 @@ struct ProxyState {
 }
 
 impl ProxyState {
-    /// Queues `bytes` for `pane`, onto the run of its keys already waiting
-    /// last in line when there is one.
+    /// Queues `bytes` for `pane`, onto the plain run of its keys waiting
+    /// last in line when both are plain.
     fn queue_keys(&mut self, pane: String, bytes: Vec<u8>, typed_at_unix_ms: u64) {
         *self.key_bytes.entry(pane.clone()).or_default() += bytes.len();
-        if let Some(Waiting::Keys {
-            pane: waiting_pane,
-            bytes: waiting,
-            typed_at_unix_ms: waiting_at,
-        }) = self.lines.back_mut()
+        let plain = !bytes.iter().any(|byte| matches!(byte, b'\r' | 0x1b));
+        if plain
+            && let Some(Waiting::Keys {
+                pane: waiting_pane,
+                bytes: waiting,
+                typed_at_unix_ms: waiting_at,
+                plain: true,
+            }) = self.lines.back_mut()
             && *waiting_pane == pane
             && waiting.len() + bytes.len() <= MAX_KEY_LINE_BYTES
         {
@@ -464,6 +472,7 @@ impl ProxyState {
             pane,
             bytes,
             typed_at_unix_ms,
+            plain,
         });
     }
 }
@@ -711,6 +720,7 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
                 pane,
                 bytes,
                 typed_at_unix_ms,
+                ..
             } => {
                 let line = line_of(TerminalDown::Key {
                     target: KeyTarget::Pane(pane.clone()),
