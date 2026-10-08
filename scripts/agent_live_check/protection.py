@@ -228,20 +228,21 @@ class ConfigGuard:
     def finish(self) -> dict:
         changes = []
         failures = []
-        for index, path in enumerate(self.known):
+
+        def recover(index, path):
             original = self.before[path]
             current = stamp(path)
             if current == original:
-                continue
+                return
             if path not in self.writes or current != self.writes[path]:
                 failures.append({"path": str(path), "reason": "unattributed_or_concurrent_change_preserved"})
-                continue
+                return
             # No replace is authorized merely because its bytes happen to match.
             # The owner has ended its writer before calling finish. A competing
             # writer after this check is outside the available filesystem CAS.
             if current != stamp(path):
                 failures.append({"path": str(path), "reason": "concurrent_change_preserved"})
-                continue
+                return
             if original is None:
                 if current is not None:
                     path.unlink()
@@ -256,7 +257,7 @@ class ConfigGuard:
                     os.chmod(temporary, original.mode)
                     if current != stamp(path):
                         failures.append({"path": str(path), "reason": "concurrent_change_preserved"})
-                        continue
+                        return
                     os.replace(temporary, path)
                 finally:
                     temporary.unlink(missing_ok=True)
@@ -265,6 +266,13 @@ class ConfigGuard:
                 failures.append({"path": str(path), "reason": "restore_failed"})
             else:
                 changes.append({"path": str(path), "result": "restored"})
+        for index, path in enumerate(self.known):
+            try:
+                recover(index, path)
+            except (OSError, ProtectionError) as error:
+                # An alias, unreadable file or failed restore names its
+                # subject and cannot skip the other safe comparisons.
+                failures.append({"path": str(path), "reason": str(error)})
         after = fingerprint(self.roots, self.histories)
         directory_changes = [{"path": key, "kind": "added" if key not in self.inventory else "removed" if key not in after else "changed"}
                              for key in sorted(self.inventory.keys() | after.keys())
