@@ -845,6 +845,39 @@ mod scope_tests {
 
     const FUNCTIONAL_HOOK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
+    #[test]
+    fn an_unknown_session_provider_is_unavailable_before_its_locator_is_read() {
+        let temp = tempdir().unwrap();
+        let row = crate::model::SessionRowSnapshot {
+            id: "unknown-session".to_owned(),
+            provider: "future-provider".to_owned(),
+            provider_label: "Future provider".to_owned(),
+            locator: temp
+                .path()
+                .join("missing-session")
+                .to_string_lossy()
+                .into_owned(),
+            checkout_path: temp.path().to_string_lossy().into_owned(),
+            first_human_request: None,
+            started_at_unix_ms: None,
+            updated_at_unix_ms: 1,
+            title: None,
+            unavailable_reason: None,
+        };
+
+        let result = load_session_detail(
+            &hide_node::Local::new(Some(temp.path().to_path_buf())),
+            &temp.path().join("missing.sqlite3"),
+            "project-1",
+            row,
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Unsupported session provider: future-provider"
+        );
+    }
+
     fn functional_hook_output(
         runtime: AgentRuntime,
         event: HookEvent,
@@ -2312,6 +2345,9 @@ pub(super) fn load_session_detail(
             memory: None,
         });
     }
+    let agent = Agent::from_kind(&row.provider)
+        .filter(|agent| agent.has_session_file())
+        .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
     let contents: String = call_as(
         sessions_node,
         Call::SessionText {
@@ -2323,9 +2359,6 @@ pub(super) fn load_session_detail(
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
-    let agent = Agent::from_kind(&row.provider)
-        .filter(|agent| agent.has_session_file())
-        .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
     let parsed = hide_session::parse_events(agent, &contents);
     let events = parsed
         .events
