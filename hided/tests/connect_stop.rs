@@ -67,6 +67,17 @@ fn json(command: &mut Command) -> (bool, Value) {
     (ok, line)
 }
 
+/// Whether the process that started at `started` under `pid` has not ended.
+/// A Linux process that ended keeps its pid and start time in `/proc` until
+/// its parent, or init once it is orphaned, reaps it, so a daemon `hide stop`
+/// has ended still answers `start_time` for a while; `is_alive` is the
+/// platform's account of a process that has not ended, and is what `hide`
+/// itself asks of the daemon its state file names.
+fn still_running(pid: u32, started: u64) -> bool {
+    hide_platform::process::is_alive(pid)
+        && hide_platform::process::start_time(pid).is_ok_and(|at| at == started)
+}
+
 /// Stops whatever daemon the test started, however it ends.
 struct StopOnDrop<'a> {
     home: &'a Path,
@@ -114,9 +125,8 @@ fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
     // names the process that started then.
     let (stopped, _) = run(isolated(&home, &state).arg("stop"));
     assert!(stopped, "hide stop failed");
-    assert_ne!(
-        hide_platform::process::start_time(pid).ok(),
-        Some(started),
+    assert!(
+        !still_running(pid, started),
         "hide stop leaves no daemon running"
     );
     let (_, after) = json(isolated(&home, &state).args(["status", "--json"]));
@@ -176,11 +186,7 @@ fn stop_and_status_json_ignore_a_key_they_do_not_read() {
     unrelated_invalid(&mut stop, &home);
     let (code, _, err) = finished(&mut stop);
     assert_eq!(code, Some(0), "hide stop refused: {err}");
-    assert_ne!(
-        hide_platform::process::start_time(pid).ok(),
-        Some(started),
-        "hide stop ended the daemon"
-    );
+    assert!(!still_running(pid, started), "hide stop ended the daemon");
 }
 
 #[test]

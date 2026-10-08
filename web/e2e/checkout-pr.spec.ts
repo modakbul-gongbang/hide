@@ -314,7 +314,10 @@ test("a checkout's card names the checkout by its real path", { tag: "@platform"
       [project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) }), worktree],
     ] as const) {
       // The card opens on keyboard focus (B9), once the row's purpose and age are on line two.
-      await expect(row.locator("[data-checkout-age]")).toHaveText(/.+/);
+      // The age is drawn once the core's background Git read has answered (a lookup alone has a
+      // ten-second deadline, `REPOSITORY_TIMEOUT`), so this waits for that signal as
+      // `worktree-delete.spec.ts` does, not for the default five seconds.
+      await expect(row.locator("[data-checkout-age]")).toHaveText(/.+/, { timeout: 30_000 });
       await rest(page);
       await expect(plain).toHaveCount(0);
       await page.keyboard.press("Shift");
