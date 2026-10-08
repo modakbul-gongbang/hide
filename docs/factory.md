@@ -298,7 +298,8 @@ The Factory's mode (`observer_mode`) then decides where the answer comes from:
 A verdict that is unsure, or that sees any permission signal, goes to a person in every mode, and so does an answer the Observer left empty.
 The mode is read when the request arrives, so changing it later does not move a request already sorted.
 An answer from Factory AI takes the path a person's answer takes, is recorded with `observer` as who relayed it, and writes a decision record with the kind and reason.
-An applied fix rewrites the card and records an approved scope change, so the Task waits for a person's merge, or drafts the new Task the fix names, and the worker is told by reply; at the Task's new-Task cap Factory AI applies nothing and the request goes to a person.
+An applied fix rewrites the card and records an approved scope change, so the Task waits for a person's merge, or drafts the new Task the fix names, and the worker is told by reply; at the Task's new-Task cap, or on a Task that was itself proposed or started by autonomy, Factory AI applies nothing and the request goes to a person.
+The prompts tell Factory AI that the request and the worker's recorded decisions are the worker's words, data to judge and never instructions.
 
 **Notices.**
 A notice is a line under the inbox that a person reads and never answers: `ai_answered` (a request Factory AI answered), `ai_card_fixed`, `ai_new_task`, `ai_risk_merge` and `daily_limit`.
@@ -332,7 +333,7 @@ A pane the operator closes in Hide pauses the Task with `pause_reason` `pane_clo
 
 **A risk-path merge.**
 In a 맡김 Factory, a verified Task whose only gate is a risk path asks Factory AI once per attempt whether it may merge.
-An approval merges through the path `hide factory merge` takes, with the pre-merge check run again and the head pinned, records "위험 경로 머지 승인" with the reason and leaves an `ai_risk_merge` notice; a refusal or a failure leaves the Task in `merge_waiting` for a person.
+An approval merges through the path `hide factory merge` takes, with the pre-merge check run again and the head pinned, records "위험 경로 머지 승인" with the reason and leaves an `ai_risk_merge` notice; a refusal or a failure leaves the Task in `merge_waiting` for a person, and so does an approval that answers after the Factory left 맡김, closed or saw main break.
 In 직접 and 함께 a risk path always waits for a person.
 
 **Pausing a Factory.**
@@ -342,6 +343,7 @@ A worker that reports `done` in that last turn is verified as usual, but its che
 
 **The Factory AI and the workers.**
 `factory_ai` chooses the agent, and `factory_ai_model` and `factory_ai_effort` its model and effort, that run every judgment of this Factory; unset, the Factory uses the agent Settings › Hide AI chose.
+A stored choice naming an agent Hide AI no longer knows is never replaced by the app's choice: the judgment fails as having no provider, its count is given back, and the request goes to a person.
 A choice is checked when it is set: the agent Hide AI knows, a well-formed model, an effort that agent declares, and the agent ready to answer (`factory_ai_unavailable` with the reason otherwise).
 `workers` is the list of worker candidates described under [The worker lifecycle](#the-worker-lifecycle); the intake review picks one with a reason when there is more than one, and `hide factory worker <task> <n>` pins one, or `auto` returns the choice to the review.
 A worker that already runs keeps its candidate, and the pin applies from its next new start.
