@@ -272,6 +272,14 @@ it("keeps a control for every per-Factory value hide factory config sets, the re
   expect([...advanced.querySelectorAll("[data-factory-settings-subhead]")].map((node) => node.getAttribute("data-factory-settings-subhead"))).toEqual(["verification", "merge", "run", "checks", "autonomy"]);
 });
 
+it("names a card's worker by the agent's name the engine gives, not its id (B43)", async () => {
+  const running = factory({ columns: [{ column: "moving", label: "moving", cards: [card("T-1", "running", { column: "moving", worker_runtime: "claude", worker_label: "Claude Code" })] }] });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [running], inbox: [] }, { tab: "board" });
+  const mark = container.querySelector(".factory-card-logo")!;
+  expect(mark.getAttribute("aria-label")).toBe("Claude Code");
+  expect(mark.getAttribute("title")).toBe("Claude Code");
+});
+
 it("treats a Factory whose cards are all archived as empty, not as a filter that matches nothing (B15)", async () => {
   const archived = factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done", archived: true, folded: true })] }] });
   const { container } = await mount({ my_turn: 0, notices: 0, factories: [archived], inbox: [] }, { tab: "board" });
