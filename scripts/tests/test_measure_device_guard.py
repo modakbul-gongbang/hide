@@ -75,7 +75,8 @@ class MeasureDeviceGuard(unittest.TestCase):
         options = result.stdout.splitlines()
         self.assertEqual(options[:2], ['-F', '/dev/null'])
         for option in ('HostName=127.0.0.1', 'Port=22841', 'User=me',
-                       f'UserKnownHostsFile={self.known_hosts}', 'StrictHostKeyChecking=yes'):
+                       f'UserKnownHostsFile={self.known_hosts}', 'GlobalKnownHostsFile=/dev/null',
+                       'StrictHostKeyChecking=yes'):
             self.assertIn(option, options)
 
     def test_every_other_target_is_refused_before_dialing(self):
@@ -112,6 +113,9 @@ class MeasureDeviceGuard(unittest.TestCase):
             ({'MEASURE_DEVICE_KNOWN_HOSTS': str(authority)}, 'another host or port'),
             ({'MEASURE_DEVICE_KNOWN_HOSTS': str(empty)}, 'records no key'),
             ({'MEASURE_DEVICE_KNOWN_HOSTS': '/tmp/hcn/absent'}, 'not a readable file'),
+            ({'MEASURE_DEVICE_KNOWN_HOSTS': f'{self.known_hosts} /tmp/other'},
+             'not an absolute path without spaces'),
+            ({'MEASURE_DEVICE_KNOWN_HOSTS': 'known_hosts'}, 'not an absolute path without spaces'),
         ]
         for changes, refusal in refusals:
             with self.subTest(changes=changes):

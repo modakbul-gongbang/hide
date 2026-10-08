@@ -19,7 +19,8 @@
 # _USER, _IDENTITY) and writes the one configuration hided reads
 # (device_guard_config); this harness's own ssh calls pass the same parts
 # with no configuration file. The recorded host key (MEASURE_DEVICE_KNOWN_HOSTS)
-# names that host and port only, so no other sshd's key is trusted.
+# names that host and port only and is the only key file read (no global
+# one), so no other sshd's key is trusted.
 
 device_guard_refuse() { echo "device guard: $*" >&2; exit 2; }
 
@@ -59,6 +60,8 @@ done
 device_guard_under_tmp "$MEASURE_DEVICE_SOCKET" || device_guard_refuse "MEASURE_DEVICE_SOCKET $MEASURE_DEVICE_SOCKET is not a private path under /tmp"
 # Every recorded key is for the private sshd's host and port, written out
 # (a hashed name cannot be read, a marker line widens trust).
+# ssh splits a known-hosts path at spaces into several files.
+[[ "$MEASURE_DEVICE_KNOWN_HOSTS" == /* && "$MEASURE_DEVICE_KNOWN_HOSTS" != *[[:space:]]* ]] || device_guard_refuse "MEASURE_DEVICE_KNOWN_HOSTS $MEASURE_DEVICE_KNOWN_HOSTS is not an absolute path without spaces"
 [[ -f "$MEASURE_DEVICE_KNOWN_HOSTS" && -r "$MEASURE_DEVICE_KNOWN_HOSTS" ]] || device_guard_refuse "MEASURE_DEVICE_KNOWN_HOSTS $MEASURE_DEVICE_KNOWN_HOSTS is not a readable file"
 device_guard_keys=0
 while IFS= read -r device_guard_line || [[ -n "$device_guard_line" ]]; do
@@ -85,6 +88,7 @@ device_guard_ssh=(
   -o IdentitiesOnly=yes
   -o IdentityAgent=none
   -o "UserKnownHostsFile=$MEASURE_DEVICE_KNOWN_HOSTS"
+  -o GlobalKnownHostsFile=/dev/null
   -o StrictHostKeyChecking=yes
   -o BatchMode=yes
 )
