@@ -750,9 +750,19 @@ mod pi {
             .unwrap();
         }
         assert_eq!(
-            route(&native).unwrap_err(),
+            hide_session::session_activity::read(
+                native.home.path(),
+                &hide_session::session_activity::SessionActivityRequest {
+                    agent: Agent::Pi,
+                    reference_kind: "path".into(),
+                    reference_value: native.path.display().to_string(),
+                    cwd: native.cwd.to_str().map(str::to_owned),
+                    exact_route: true,
+                }
+            )
+            .unwrap_err(),
             "session_route_capacity",
-            "the whole candidate set shares one metadata budget"
+            "a proven path still requires a bounded whole-candidate routing audit"
         );
     }
 
