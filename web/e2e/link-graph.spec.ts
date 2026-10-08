@@ -235,7 +235,7 @@ test("a Pi archive resume keeps its selected source and uses the current control
     fs.writeFileSync(session, source);
     herdr.run(["workspace", "create", "--cwd", repo, "--label", "repo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
     const gh = fakeGh(herdr.root);
-    daemon = await startHided(herdr, "pi-archive", undefined, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "pi-archive", herdr.env.HOME, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
