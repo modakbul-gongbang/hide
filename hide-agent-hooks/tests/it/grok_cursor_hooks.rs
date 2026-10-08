@@ -223,7 +223,10 @@ fn inside_grok_the_claude_code_hook_and_cursors_entries_say_and_ask_nothing() {
 }
 
 #[test]
-fn a_grok_question_tool_of_the_current_factory_worker_is_redirected() {
+fn a_grok_question_tool_stays_native_until_its_tools_are_confirmed_to_reach_the_hook() {
+    // Grok's `direct_ask` is Unconfirmed in the adapter table (PRD D-14): the
+    // hook asks no Factory guard for it, even in the current worker pane.
+    assert_eq!(hide_agent_adapter::direct_ask_kind("grok"), None);
     for tool in ["ask_user_question", "exit_plan_mode"] {
         let machine = Machine::new("worker");
         let payload = json!({
@@ -232,18 +235,9 @@ fn a_grok_question_tool_of_the_current_factory_worker_is_redirected() {
         })
         .to_string();
         let run = machine.run_event("grok", "PreToolUse", &payload, Some(PANE), GROK);
-        assert!(machine.reason(&run).contains("hide factory ask"), "{tool}");
-        assert_eq!(
-            machine.calls(),
-            ["workspace factory-question-guard --session grok-session --runtime grok"]
-        );
-        assert!(!machine.guard_log().contains("private-question-text"));
-
-        // Another Grok pane keeps its native question (B13).
-        let machine = Machine::new("nonworker");
-        let run = machine.run_event("grok", "PreToolUse", &payload, Some(PANE), GROK);
-        assert!(run.status_ok);
+        assert!(run.status_ok, "{tool}");
         assert_eq!(run.stdout, "", "{tool}");
+        assert!(machine.calls().is_empty(), "{tool}");
     }
 }
 

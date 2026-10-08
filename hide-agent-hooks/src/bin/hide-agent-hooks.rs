@@ -288,10 +288,13 @@ fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Op
         .ok()
         .filter(|value| !value.is_empty())?;
     let (payload, truncated) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
-    // Question tools have no shell command and take their own readonly route.
-    if let Some(question) = guard::may_hold_question(&payload)
-        .then(|| guard::read_question(&payload, truncated, dialect))
-        .flatten()
+    // Question tools have no shell command and take their own readonly route,
+    // for an agent whose question tools are confirmed to reach this hook
+    // (Grok's are not yet, so its questions stay native).
+    if let Some(question) = (guard::may_hold_question(&payload)
+        && hide_agent_adapter::direct_ask_kind(runtime_id).is_some())
+    .then(|| guard::read_question(&payload, truncated, dialect))
+    .flatten()
     {
         let home = home_directory()?;
         let program = workspace_context::cli_program()?;

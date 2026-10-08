@@ -328,7 +328,7 @@ Grok's `Stop` from inside a subagent leaves the count alone, and the main sessio
 Cursor's `stop` sets working to zero, since its subagents end with the turn.
 The core judges a Grok or Cursor pane instrumented by that agent's hook piece in the kit (`herdr_core::agent_hooks::CountingHook`), not by a Claude Code or Codex component.
 
-Grok's question tools `ask_user_question` and `exit_plan_mode` go through the Factory question guard as Claude Code's do ([Native questions from Factory workers](#native-questions-from-factory-workers)), with `--runtime grok`; whether Grok fires `PreToolUse` for them is measured on a live Grok before its Factory `direct_ask` is declared.
+Grok's question tools `ask_user_question` and `exit_plan_mode` are in its `PreToolUse` matcher, but the hook routes them to the Factory question guard ([Native questions from Factory workers](#native-questions-from-factory-workers)) only for an agent whose `direct_ask` the adapter table declares, and Grok's stays Unconfirmed until a live Grok shows `PreToolUse` firing for them; until then Grok's questions stay native.
 
 `hide-agent-hooks/tests/it/grok_cursor_hooks.rs` runs the built helper with each agent's documented payloads beside a stand-in `hide` and a stand-in Herdr socket, and asserts the answers, the counts Herdr is told, and a single count when Grok runs all three of Hide's hooks for one subagent.
 
