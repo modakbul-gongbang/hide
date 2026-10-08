@@ -1,5 +1,5 @@
 //! Programs a test runs against a product deadline, ready before the
-//! deadline starts (issue 813). Built only into tests: hide-platform's
+//! deadline starts (issues 813 and 824). Built only into tests: hide-platform's
 //! integration tests, and by `#[path]` hide-agent-hooks' unit and integration
 //! tests and hide-kit's unit tests, so a change here plans every crate that
 //! runs it.
@@ -135,9 +135,13 @@ pub fn place(program: &Path, at: &Path) {
 }
 
 /// Starts `program` once in this process, unless it already was, and waits
-/// for it to end. It runs with `--help` and a `HOME` in a folder of its own,
-/// so a stand-in that writes under or beside its `HOME` writes into that
-/// folder.
+/// for it to end. It runs with `--help`, a `HOME` in a folder of its own and,
+/// on Unix, no other variable but `PATH`, so a stand-in that writes under or
+/// beside its `HOME`, or under a folder a variable names (`CODEX_HOME`),
+/// writes into that folder or nowhere. A program checked into the repository
+/// is a new file in every checkout, so it is made ready the same way; its
+/// interpreter may refuse a `HOME` it does not know, which costs nothing,
+/// because the check is of the file and is paid as it starts.
 pub fn ready(program: &Path) {
     let id = hide_platform::fs::identity::file_id(program).unwrap();
     let mut started = READY.lock().unwrap_or_else(PoisonError::into_inner);
@@ -148,6 +152,10 @@ pub fn ready(program: &Path) {
     let deadline = Instant::now() + READY_GUARD;
     loop {
         let mut command = Command::new(program);
+        #[cfg(unix)]
+        command
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default());
         command
             .arg("--help")
             .env(
