@@ -1141,23 +1141,23 @@ impl Runtime {
     pub(super) fn sync_pane_lineage(&mut self) -> bool {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
-        let local_kit = self.kit_states.get(self.node.as_str()).cloned();
+        let local_kit = self.kit_states.get(self.node.as_str());
         // Claude Code's and Codex's hooks are read from their files; OpenCode's
-        // plugin from this Mac's kit, the one place that judges it.
+        // plugin from this Mac's kit, the one place that judges it, read here
+        // once rather than holding the kit across the pass.
+        let opencode = local_kit.and_then(|kit| {
+            crate::agent_hooks::kit_hook_status(kit, hide_agent_adapter::HookDialect::OpenCode)
+        });
+        let codex_daemon_on = local_kit.is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let status_of = |dialect: hide_agent_adapter::HookDialect| {
             match hide_agent_hooks::AgentRuntime::from_dialect(dialect) {
                 Some(runtime) => diagnosis
                     .as_ref()
                     .and_then(|diagnosis| diagnosis.status_of(runtime))
                     .cloned(),
-                None => local_kit
-                    .as_ref()
-                    .and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect)),
+                None => opencode.clone(),
             }
         };
-        let codex_daemon_on = local_kit
-            .as_ref()
-            .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;

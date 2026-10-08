@@ -110,7 +110,17 @@ impl Runtime {
                     if batch.is_empty() {
                         return;
                     }
-                    record_receipts(&node, sessions_node.as_ref(), &database, batch);
+                    // A defect in one batch must not leave the flag set, which
+                    // would stop every later batch from starting a worker.
+                    let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        record_receipts(&node, sessions_node.as_ref(), &database, batch)
+                    }));
+                    if recorded.is_err() {
+                        crate::diagnostic!(json!({
+                            "component": "memory",
+                            "kind": "receipts.worker_panicked",
+                        }));
+                    }
                 }
             });
         if let Err(error) = spawn {
@@ -1906,7 +1916,12 @@ fn record_receipts(
             &receipt.injection(),
         ) {
             Ok(_) => recorded += 1,
-            Err(_) => refused += 1,
+            Err(error) => crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.write_failed",
+                "provider": sighted.provider,
+                "message": error.to_string(),
+            })),
         }
     }
     if refused > 0 {
