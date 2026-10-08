@@ -757,6 +757,7 @@ mod tests {
             bell_attempts: Some(0),
             human_notified: false,
             watch_warning: None,
+            answer_wait_ended: None,
         }
     }
 

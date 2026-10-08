@@ -35,7 +35,7 @@ Do not copy those contracts here.
 
 - Put focused unit tests at the end of the owning module in `#[cfg(test)] mod tests`.
 - Use a separate `*_tests.rs` file only for a large regression suite that the owning module explicitly includes.
-- Put crate-boundary coverage in `herdr-core/tests/` and stable input data in `herdr-core/tests/fixtures/`.
+- Put crate-boundary coverage in `herdr-core/tests/it/`, as a module of the crate's one integration test binary, and stable input data in `herdr-core/tests/fixtures/`.
 - Name tests as snake_case statements of the observable result or rejected transition.
 - Keep test doubles inside the test module.
 

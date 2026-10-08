@@ -15,6 +15,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
+import { dumpOnFailure } from "./failure-dump";
 import { onDisk, quietFor } from "./wait";
 
 const SOURCE = "export const answer = 41;\n";
@@ -1113,7 +1114,18 @@ test("a dropped file reaches the terminal as an attachment", async ({ page }) =>
     // in the log of the pane it was dropped on (`inputLogs` follows `panes`).
     const [log] = herdr.inputLogs;
     const read = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "");
-    await expect.poll(read, { timeout: 15_000 }).toContain("dropped.png");
+    // The drop's paste reaches the shim's PTY only through the core: if it never shows, what the shim
+    // log holds, what the pane runs and what the page sent say which hop dropped it.
+    await dumpOnFailure(
+      "s3 dropped file",
+      () => ({
+        log: { exists: fs.existsSync(log), bytes: read().length, tail: read().slice(-200) },
+        sent: Object.fromEntries([...sent]),
+        process: herdr.run(["pane", "process-info", "--pane", target]),
+        screen: herdr.run(["pane", "read", target, "--source", "recent-unwrapped", "--lines", "20"]),
+      }),
+      () => expect.poll(read, { timeout: 15_000 }).toContain("dropped.png"),
+    );
 
     // ⌘V of an image: the same flow, with the image staged at the path the core
     // reads a clipboard attachment from (B14).

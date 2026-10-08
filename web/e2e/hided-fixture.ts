@@ -103,6 +103,9 @@ export function aiSettingsFile(home: string): string {
   return path.join(home, stateUnderHome, "hide", "ai.json");
 }
 
+/** 100 ms ticks a started daemon is given to write its state file and answer /health: 30 s, three times the product's own bound. */
+const START_WAIT_TICKS = 300;
+
 async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string, extraEnv: NodeJS.ProcessEnv, bundledAt?: string): Promise<Daemon> {
   const env = inheritedFixtureEnv();
   const statePath = path.join(dir, "hide", "hided.json");
@@ -187,10 +190,21 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     end();
     herdr.afterStop(removeDir);
   });
-  for (let i = 0; i < 50; i += 1) {
+  // The product itself gives a started daemon `HEALTHY_WITHIN` (10 s, `hided/src/cli.rs`) to answer
+  // /health, and a loaded Windows runner needs most of it, so this waits at least that long. A daemon
+  // that has already exited is named at once instead of after the bound.
+  let exitedWith = null as string | null;
+  child.once("exit", (code, signal) => {
+    exitedWith = signal ? `signal ${signal}` : `code ${code}`;
+  });
+  for (let i = 0; i < START_WAIT_TICKS; i += 1) {
     if (spawnFailed) {
       stop();
       throw new Error(`hided did not start from ${binary}: ${spawnFailed.message}; run cargo build -p hided in this worktree`);
+    }
+    if (exitedWith !== null && !fs.existsSync(statePath)) {
+      stop();
+      throw new Error(`hided exited with ${exitedWith} before it wrote a state file; its output is in hided-${label}-${path.basename(dir)}.log under HIDE_E2E_SCREENSHOT_DIR`);
     }
     if (fs.existsSync(statePath)) {
       try {
@@ -217,7 +231,8 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   stop();
-  throw new Error("hided did not write a state file");
+  const wrote = fs.existsSync(statePath);
+  throw new Error(`hided ${wrote ? "wrote a state file but did not answer /health" : "did not write a state file"} within ${(START_WAIT_TICKS * 100) / 1000} s`);
 }
 
 /**

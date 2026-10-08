@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { fromPage, spelling, toPage, WirePathError, type WireRefusal } from "./wirePath";
 
 // The expected spellings are `hide_platform::path`'s (its unit tests and
-// `hide-platform/tests/path.rs`); the desktop host has to answer the page
+// `hide-platform/tests/it/path.rs`); the desktop host has to answer the page
 // exactly as hided does. The Windows rules are text, so every system checks
 // them, as the Rust crate does.
 

@@ -8,6 +8,7 @@ publish = false
 hide-platform = { path = "../hide-platform" }
 serde = { version = "=1.0.229", features = ["derive"] }
 sha2 = "=0.10.9"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

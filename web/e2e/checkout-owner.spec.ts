@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,6 +6,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 import { chord } from "./chords";
+import { dumpOnFailure, tabsBothSides } from "./failure-dump";
 
 // PRD checkout-workspace-binding B1, B2, B13: a tab Hide creates goes to the
 // checkout's owner Herdr workspace, never to the workspace its other tabs sit
@@ -28,8 +29,15 @@ function tabCount(herdr: HerdrFixture, workspaceId: string): number {
   return listed.result.tabs.length;
 }
 
+/** The agent tab strip holds `count` tabs; if it never does, the failure carries Herdr's tab lists and the strip as drawn. */
+async function expectTabs(page: Page, herdr: HerdrFixture, count: number, timeout?: number): Promise<void> {
+  await dumpOnFailure("agent tabs", () => tabsBothSides(herdr, page), () =>
+    expect(page.locator('[data-agent-tab-bar] [role="tab"]')).toHaveCount(count, timeout === undefined ? undefined : { timeout }),
+  );
+}
+
 /** Two new-tab chords in the fixture's agent pane, the second before the first lands. */
-async function twoQuickNewTabs(page: import("@playwright/test").Page): Promise<void> {
+async function twoQuickNewTabs(page: Page): Promise<void> {
   await page.locator("[data-terminal-host]").first().click();
   await page.keyboard.press(chord("new_tab"));
   await page.keyboard.press(chord("new_tab"));
@@ -60,11 +68,11 @@ test("A new tab in a Git checkout goes to the workspace Herdr binds to it, not t
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const tabs = page.locator('[data-agent-tab-bar] [role="tab"]');
-    await expect(tabs).toHaveCount(2);
+    await expectTabs(page, herdr, 2);
     // Asked from the unbound workspace's own pane.
     await page.locator(`[data-agent-tab-bar] [data-tab="${created.result.tab.tab_id}"]`).click();
     await twoQuickNewTabs(page);
-    await expect(tabs).toHaveCount(4, { timeout: 20_000 });
+    await expectTabs(page, herdr, 4, 20_000);
     expect(workspaces(herdr)).toHaveLength(2);
     expect(tabCount(herdr, ownerId)).toBe(3);
     expect(tabCount(herdr, unboundId)).toBe(1);
@@ -93,10 +101,9 @@ test("With no workspace bound, Herdr binds the unbound one already at the checko
     daemon = await startHided(herdr, "checkout-owner-adopt");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    const tabs = page.locator('[data-agent-tab-bar] [role="tab"]');
-    await expect(tabs).toHaveCount(1);
+    await expectTabs(page, herdr, 1);
     await twoQuickNewTabs(page);
-    await expect(tabs).toHaveCount(3, { timeout: 20_000 });
+    await expectTabs(page, herdr, 3, 20_000);
     // worktree.open answered already_open with the fixture's own workspace.
     const after = workspaces(herdr);
     expect(after).toHaveLength(1);
@@ -169,11 +176,10 @@ test("A new tab in a plain folder opens one marked workspace and the next tab re
     daemon = await startHided(herdr, "checkout-owner-folder");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    const tabs = page.locator('[data-agent-tab-bar] [role="tab"]');
-    await expect(tabs).toHaveCount(1);
+    await expectTabs(page, herdr, 1);
 
     await twoQuickNewTabs(page);
-    await expect(tabs).toHaveCount(3, { timeout: 20_000 });
+    await expectTabs(page, herdr, 3, 20_000);
     const after = workspaces(herdr);
     expect(after).toHaveLength(2);
     const owner = after.find((workspace) => workspace.workspace_id !== unmarked.workspace_id)!;

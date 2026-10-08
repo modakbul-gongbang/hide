@@ -202,6 +202,7 @@ pub const COMMANDS: &[Spec] = &[
         repeats: None,
         options: &[
             optional("--parent", Text),
+            optional("--machine", Text),
             required("--name", Text),
             required("--intent", Text),
             required("--kind", Text),
@@ -213,7 +214,15 @@ pub const COMMANDS: &[Spec] = &[
         ],
         rest: Some("the agent's own arguments"),
         answers: &["agent"],
-        refusals: &[],
+        refusals: &[
+            "spawn_busy",
+            "machine_unknown",
+            "machine_not_permitted",
+            "machine_unavailable",
+            "repository_unavailable",
+            "agent_not_installed",
+            "intent_conflict",
+        ],
     },
     spec(
         &["request", "send"],

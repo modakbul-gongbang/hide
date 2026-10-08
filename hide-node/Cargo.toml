@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 anyhow = "=1.0.104"
 cap-std = "=4.0.3"
+futures-util = "=0.3.34"
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-host = { path = "../hide-host" }
 hide-kit = { path = "../hide-kit" }
@@ -22,11 +23,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
 sha2 = "=0.10.9"
 tokio = { version = "=1.53.1", features = ["io-util", "net", "process", "rt", "rt-multi-thread", "sync", "time", "macros"] }
-
-[features]
-# `RemoteHost::detached`, a link with no device behind it, for another
-# crate's tests of what a link's identity decides.
-test-support = []
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

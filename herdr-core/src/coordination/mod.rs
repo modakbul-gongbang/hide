@@ -9,6 +9,27 @@ use crate::delivery::{Actor, ledger::Ledger, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Separates a refusal code from the detail its next action names. A control
+/// character, because no code and no sentence of a refusal holds one.
+const DETAIL: char = '\u{1f}';
+
+/// A refusal code with the detail its next action names (the device ids a
+/// caller could have used); the daemon splits them again with
+/// [`split_refusal`] and answers the code alone.
+pub(crate) fn refusal(code: &str, detail: &str) -> String {
+    format!("{code}{DETAIL}{detail}")
+}
+
+/// The code of a refusal and the detail it carries, if any.
+pub fn split_refusal(refusal: &str) -> (&str, Option<&str>) {
+    // Only the refusals that build a detail carry one, so text from a device
+    // that happens to hold the separator is never read as a next action.
+    match refusal.split_once(DETAIL) {
+        Some((code @ "machine_unknown", detail)) => (code, Some(detail)),
+        _ => (refusal, None),
+    }
+}
+
 pub(crate) const AGENT_LIMIT: usize = 2048;
 pub(crate) const SPAWN_LIMIT: usize = 4096;
 
@@ -38,6 +59,9 @@ pub enum Command {
     },
     Spawn {
         parent: Option<String>,
+        /// The device the child is created on; absent means the caller's own.
+        /// `repo` and `path` are that device's paths.
+        machine: Option<String>,
         name: String,
         intent: String,
         kind: String,
@@ -92,6 +116,10 @@ pub struct SpawnRecord {
     pub parent: String,
     #[serde(default)]
     pub mode: SpawnMode,
+    /// The device the child lives on when it is not the caller's own. It is
+    /// part of the intent: the same intent never reaches two devices.
+    #[serde(default)]
+    pub machine: Option<String>,
     pub intent: String,
     pub name: String,
     pub kind: String,
@@ -286,6 +314,10 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             ]
             .into_iter()
             .all(|s| key(s))
+            || record
+                .machine
+                .as_deref()
+                .is_some_and(|machine| !key(machine))
             || !ledger
                 .agents
                 .iter()
@@ -296,6 +328,7 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
                         && child.parent == record.mode.responsibility(&record.parent)
                         && child.origin == record.mode.origin(&record.parent)
                         && record.pane.as_ref() == Some(&child.pane)
+                        && Some(child.machine.as_str()) == spawn_machine(ledger, record)
                 })
             })
             || (record.completed
@@ -367,7 +400,7 @@ pub(crate) fn apply(
             }) {
                 return Err("actor_identity_conflict".into());
             }
-            end_record(ledger, id);
+            end_record(ledger, id, now);
             Ok(view(
                 ledger
                     .agents
@@ -379,6 +412,7 @@ pub(crate) fn apply(
         }
         Mutation::Reserve { parent, command } => {
             let Command::Spawn {
+                machine,
                 name,
                 intent,
                 kind,
@@ -410,7 +444,8 @@ pub(crate) fn apply(
                 .iter()
                 .find(|record| &record.parent == parent && &record.intent == intent)
             {
-                if record.name != *name
+                if record.machine != *machine
+                    || record.name != *name
                     || hide_agent_adapter::canonical_kind(&record.kind)
                         != hide_agent_adapter::canonical_kind(kind)
                     || record.repo != *repo
@@ -430,6 +465,7 @@ pub(crate) fn apply(
                 id: allocate(ledger, "spawn")?,
                 parent: parent.clone(),
                 mode,
+                machine: machine.clone(),
                 intent: intent.clone(),
                 name: name.clone(),
                 kind: kind.clone(),
@@ -505,6 +541,7 @@ pub(crate) fn apply(
             }
             if record.parent != spawn.mode.responsibility(&spawn.parent)
                 || record.origin != spawn.mode.origin(&spawn.parent)
+                || Some(record.machine.as_str()) != spawn_machine(ledger, &spawn)
                 || spawn.pane.as_ref() != Some(&record.pane)
                 || record.name != spawn.name
                 || hide_agent_adapter::canonical_kind(&record.actor.kind)
@@ -607,6 +644,18 @@ pub(crate) fn apply(
     }
 }
 
+/// The device a spawn's child lives on: the one the caller named, else the
+/// caller's own, which its parent registration names.
+fn spawn_machine<'a>(ledger: &'a Ledger, spawn: &'a SpawnRecord) -> Option<&'a str> {
+    spawn.machine.as_deref().or_else(|| {
+        ledger
+            .agents
+            .iter()
+            .find(|parent| parent.id == spawn.parent)
+            .map(|parent| parent.machine.as_str())
+    })
+}
+
 fn validate_registration_name(caller: &Actor, record: &AgentRecord) -> Result<(), String> {
     // Only a Factory registers under its own reserved name (D-14).
     if (record.actor.code_owned() && !record.actor.same_identity(caller))
@@ -658,8 +707,9 @@ fn insert_record(ledger: &mut Ledger, record: &AgentRecord, check: bool) -> Resu
     Ok(view(&record, ledger))
 }
 
-/// Ends a registration and the watches on it. Returns whether it was live.
-fn end_record(ledger: &mut Ledger, id: &str) -> bool {
+/// Ends a registration, the watches on it and the answer waits of the letters
+/// it sent or received, in one transition. Returns whether it was live.
+fn end_record(ledger: &mut Ledger, id: &str, now: u64) -> bool {
     let Some(record) = ledger.agents.iter_mut().find(|record| record.id == id) else {
         return false;
     };
@@ -668,6 +718,9 @@ fn end_record(ledger: &mut Ledger, id: &str) -> bool {
     ledger
         .watches
         .retain(|watch| !watch.target.same_identity(&target));
+    if live {
+        ledger.end_answer_waits_of(&target, now);
+    }
     live
 }
 
@@ -753,6 +806,7 @@ pub(crate) fn gone_registrations(
 pub(crate) fn end_gone(
     ledger: &mut Ledger,
     gone: &std::collections::BTreeMap<String, PaneGone>,
+    now: u64,
 ) -> Vec<(AgentRecord, PaneGone)> {
     let mut ended = Vec::new();
     for (id, reason) in gone {
@@ -760,7 +814,7 @@ pub(crate) fn end_gone(
             .agents
             .iter()
             .any(|record| &record.id == id && !record.ended)
-            && end_record(ledger, id)
+            && end_record(ledger, id, now)
             && let Some(record) = ledger.agents.iter().find(|record| &record.id == id)
         {
             ended.push((record.clone(), *reason));
@@ -775,6 +829,8 @@ fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
     Ok(format!("{prefix}-{id}"))
 }
 
+#[cfg(test)]
+pub(crate) use executor::{SPAWN, SPAWN_TURN};
 pub(crate) use executor::{link_fork, register_code_owned, run};
 
 #[cfg(test)]
@@ -821,6 +877,7 @@ mod tests {
     fn command(intent: &str) -> Command {
         Command::Spawn {
             parent: Some("here".into()),
+            machine: None,
             name: "worker".into(),
             intent: intent.into(),
             kind: "codex".into(),
@@ -844,6 +901,127 @@ mod tests {
             },
             1,
         )
+    }
+
+    /// Both ways a registration ends, `hide agent end` and the core finding
+    /// its pane gone, end the answer waits of the letters it sent or received.
+    #[test]
+    fn a_registration_that_ends_ends_the_answer_waits_of_its_letters() {
+        for by_pane in [false, true] {
+            let mut ledger = Ledger::default();
+            let (a, b, c) = (
+                record("pane-a", "session-a", None),
+                record("pane-b", "session-b", None),
+                record("pane-c", "session-c", None),
+            );
+            register(&mut ledger, a.clone(), &a.actor);
+            let b_id = register(&mut ledger, b.clone(), &b.actor);
+            register(&mut ledger, c.clone(), &c.actor);
+            let ask = |ledger: &mut Ledger, from: &Actor, to: &Actor, intent: &str| {
+                let id = crate::delivery::mailbox::send(
+                    ledger, from, to, intent, "body", "request", None, 2,
+                )
+                .unwrap()
+                .id;
+                // The recipient took it in; a letter still awaiting intake
+                // is left to the delivery deadline.
+                crate::delivery::mailbox::apply(
+                    ledger,
+                    to,
+                    None,
+                    &crate::delivery::Command::Confirm {
+                        ids: vec![id.clone()],
+                    },
+                    2,
+                )
+                .unwrap();
+                id
+            };
+            let to_b = ask(&mut ledger, &a.actor, &b.actor, "to-b");
+            let from_b = ask(&mut ledger, &b.actor, &c.actor, "from-b");
+            let elsewhere = ask(&mut ledger, &a.actor, &c.actor, "elsewhere");
+            if by_pane {
+                let gone = [(b_id, PaneGone::Left)].into();
+                assert_eq!(end_gone(&mut ledger, &gone, 10).len(), 1);
+            } else {
+                apply(
+                    &mut ledger,
+                    &b.actor,
+                    &Mutation::End {
+                        id: b_id,
+                        actor: None,
+                    },
+                    10,
+                )
+                .unwrap();
+            }
+            let wait = |id: &str| {
+                let letter = ledger.letters.iter().find(|l| l.id == id).unwrap();
+                (letter.waiting_answer, letter.answer_wait_ended)
+            };
+            let ended = (
+                false,
+                Some(crate::delivery::ledger::AnswerWaitEnd::PartyEnded),
+            );
+            assert_eq!(wait(&to_b), ended, "by_pane={by_pane}");
+            assert_eq!(wait(&from_b), ended, "by_pane={by_pane}");
+            assert_eq!(wait(&elsewhere), (true, None), "by_pane={by_pane}");
+        }
+    }
+
+    /// Repeating `hide agent end` on a registration that already ended must not
+    /// end the waits of the live registration that took its pane and session.
+    #[test]
+    fn ending_an_already_ended_registration_again_leaves_the_new_ones_waits() {
+        let mut ledger = Ledger::default();
+        let (a, b) = (
+            record("pane-a", "session-a", None),
+            record("pane-b", "session-b", None),
+        );
+        register(&mut ledger, a.clone(), &a.actor);
+        let old = register(&mut ledger, b.clone(), &b.actor);
+        let end = |ledger: &mut Ledger, id: &str, now: u64| {
+            apply(
+                ledger,
+                &b.actor,
+                &Mutation::End {
+                    id: id.into(),
+                    actor: None,
+                },
+                now,
+            )
+            .unwrap()
+        };
+        end(&mut ledger, &old, 3);
+        let renewed = register(&mut ledger, b.clone(), &b.actor);
+        assert_ne!(renewed, old);
+        let id = crate::delivery::mailbox::send(
+            &mut ledger,
+            &a.actor,
+            &b.actor,
+            "ask",
+            "body",
+            "request",
+            None,
+            4,
+        )
+        .unwrap()
+        .id;
+        crate::delivery::mailbox::apply(
+            &mut ledger,
+            &b.actor,
+            None,
+            &crate::delivery::Command::Confirm {
+                ids: vec![id.clone()],
+            },
+            4,
+        )
+        .unwrap();
+        end(&mut ledger, &old, 5);
+        let letter = ledger.letters.iter().find(|l| l.id == id).unwrap();
+        assert!(letter.waiting_answer && letter.answer_wait_ended.is_none());
+        end(&mut ledger, &renewed, 6);
+        assert!(!ledger.letters[0].waiting_answer);
     }
 
     /// `here` is the caller's own live registration, and a caller with
@@ -1301,7 +1479,7 @@ mod tests {
                 let gone = gone_registrations(&ledger, device, &read, None)
                     .into_iter()
                     .collect();
-                assert_eq!(end_gone(&mut ledger, &gone).len(), 1);
+                assert_eq!(end_gone(&mut ledger, &gone, 1).len(), 1);
                 let ended = ledger.agents.iter().find(|r| r.id == child_id).unwrap();
                 assert!(ended.ended);
                 assert_eq!(ended.parent, expected_parent);
@@ -1328,7 +1506,7 @@ mod tests {
                 let gone = gone_registrations(&ledger, device, &read, None)
                     .into_iter()
                     .collect();
-                assert_eq!(end_gone(&mut ledger, &gone).len(), 1);
+                assert_eq!(end_gone(&mut ledger, &gone, 1).len(), 1);
                 assert!(ledger.agents.iter().find(|r| r.id == origin).unwrap().ended);
                 let child = ledger.agents.iter().find(|r| r.id == child_id).unwrap();
                 assert!(!child.ended);
