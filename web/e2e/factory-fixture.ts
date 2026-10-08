@@ -28,10 +28,10 @@ export type FactoryStack = {
 };
 
 type Question = { text: string; suggestion: string; default_action: string };
-export type Review = { summary: string; questions: Question[]; dependencies: string[]; split: []; flags: string[]; fits_scope: null };
+export type Review = { summary: string; questions: Question[]; dependencies: string[]; split: []; flags: string[]; fits_scope: null; worker: number; worker_reason: string };
 
-/** A review that leaves nothing open: the Task is Ready. */
-export const READY: Review = { summary: "Fixture task summary", questions: [], dependencies: [], split: [], flags: [], fits_scope: null };
+/** A review that leaves nothing open: the Task is Ready. Hide AI checks an answer against the review's schema, which asks for the worker pick too. */
+export const READY: Review = { summary: "Fixture task summary", questions: [], dependencies: [], split: [], flags: [], fits_scope: null, worker: 0, worker_reason: "" };
 
 /** A review that asks one question, so the Task drafts with an item in 내 차례. */
 export function asking(text: string, suggestion: string, defaultAction: string): Review {
