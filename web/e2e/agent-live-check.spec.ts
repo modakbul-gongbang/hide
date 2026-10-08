@@ -19,7 +19,7 @@ sys.path.insert(0,str(Path('../scripts').resolve()))
 from agent_live_check.cli import main
 from agent_live_check import cli
 from agent_live_check.runtime import Runtime
-from agent_live_check.processes import ProcessSafetyError
+from agent_live_check.processes import ProcessError,ProcessSafetyError
 from agent_live_check.integration import prepare,observe
 from agent_live_check.protection import private_directory,write_private
 original=Runtime.__init__
@@ -48,8 +48,9 @@ original_workspace=Runtime.new_workspace
 original_command=Runtime.command
 original_prepare=cli.prepare_integration
 original_close=Runtime.close_workspace
+integration_cases=('integrity','integrity-fatal','integrity-native-error')
 def integration_preparation(self,recipe,overlay):
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE')!='integrity': return original_prepare(self,recipe,overlay)
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE') not in integration_cases: return original_prepare(self,recipe,overlay)
  # Real pinned installer bytes, but a deliberately synthetic native emitter.
  # This tests CLI evidence retention and makes no authenticated-load claim.
  overlay['env']['CODEX_HOME']=str(self.probe/'fixture-codex-config')
@@ -65,12 +66,23 @@ def integration_preparation(self,recipe,overlay):
  self.integration_closes=0
  return plan
 def integration_close(self,workspace):
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE')!='integrity': return original_close(self,workspace)
+ scenario=os.environ.get('LIVE_CHECK_FIXTURE_CASE')
+ if scenario not in integration_cases: return original_close(self,workspace)
  recipe,plan=self.integration_fixture
  self.integration_closes+=1
- if self.integration_closes<=3:
+ if self.integration_closes==1 or (scenario=='integrity' and self.integration_closes<=3):
   self.integration_observations.append(observe(self,self.integration_pane,recipe,plan))
  original_close(self,workspace)
+ if scenario in ('integrity-fatal','integrity-native-error'):
+  if self.integration_closes==1:
+   import json
+   write_private(self.run/'integration-observations.json',json.dumps(self.integration_observations).encode())
+   first,later=plan['artifacts'][:2]
+   first['file'].write_bytes(b'changed private fixture integration')
+   if scenario=='integrity-fatal':
+    later['file'].unlink()
+    later['file'].symlink_to(self.home/'.codex/config.toml')
+  return
  if self.integration_closes==1:
   self.changed_artifact=next(item for item in plan['artifacts']
    if item['version'] is None and item['file'].is_relative_to(self.probe/'fixture-codex-config'))
@@ -80,6 +92,11 @@ def integration_close(self,workspace):
  elif self.integration_closes==3:
   import json
   write_private(self.run/'integration-observations.json',json.dumps(self.integration_observations).encode())
+def integration_observation(self,pane,recipe,plan):
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='integrity-native-error' and self.integration_closes>=1:
+  with patch.object(self,'agent',side_effect=ProcessError('injected_native_query_after_integrity_loss')):
+   return observe(self,pane,recipe,plan)
+ return observe(self,pane,recipe,plan)
 def guardian_after_workspace(self,args,**kwargs):
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian' and args[:2]==['agent','start']:
   try:
@@ -89,14 +106,14 @@ def guardian_after_workspace(self,args,**kwargs):
    self.owner.end(child)
    raise
  result=original_command(self,args,**kwargs)
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='integrity' and args[:2]==['agent','start']:
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in integration_cases and args[:2]==['agent','start']:
   self.integration_pane=args[args.index('--pane')+1]
   if args[2].endswith('-startup'):
    assert self.agent(self.integration_pane)['agent']=='codex'
    original_command(self,['pane','report-agent-session',self.integration_pane,'--source','herdr:codex',
     '--agent','codex','--agent-session-id','live-check-synthetic-emitter','--seq','1'])
  return result
-with patch.object(Runtime,'__init__',initialize),patch.object(cli,'prepare_integration',integration_preparation),patch.object(Runtime,'close_workspace',integration_close):
+with patch.object(Runtime,'__init__',initialize),patch.object(cli,'prepare_integration',integration_preparation),patch.object(cli,'observe_integration',integration_observation),patch.object(Runtime,'close_workspace',integration_close):
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian':
   with patch.object(Runtime,'command',guardian_after_workspace): raise SystemExit(main(sys.argv[1:]))
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration','server-loss'):
@@ -241,6 +258,36 @@ test("live check refuses operator socket and state before a server starts", asyn
     }
     clean = true;
   } finally { if (clean) fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("live check retains integrity loss before a later fatal artifact refusal", async () => {
+  test.skip(process.platform === "win32", "Unix private integration and aliases");
+  test.setTimeout(120_000);
+  for (const scenario of ["integrity-fatal", "integrity-native-error"]) {
+    const { root, run, args } = fixtureRoot("codex");
+    let clean = false;
+    try {
+      const result = await runPython(args, { env: { ...process.env, LIVE_CHECK_FIXTURE_CASE: scenario }, timeout: 45_000 });
+      expect(result.error, result.stderr).toBeUndefined();
+      expect(result.status, result.stdout + result.stderr).toBe(2);
+      const report = assertClean(run);
+      const observations = JSON.parse(fs.readFileSync(path.join(run, "integration-observations.json"), "utf8"));
+      expect(observations[0].status).toBe("loaded_version_observed");
+      if (scenario === "integrity-fatal") {
+        expect(report.failures[0]).toMatchObject({ type: "ProtectionError", reason: "config_not_private_regular_file" });
+        expect(report.failures).toEqual(expect.arrayContaining([expect.objectContaining({
+          type: "ProtectionError", reason: "prepared_integration_path_refused", phase: "scene_integration",
+        })]));
+      } else {
+        expect(report.failures[0]).toMatchObject({ type: "ProcessError", reason: "injected_native_query_after_integrity_loss" });
+      }
+      expect(report.agents[0].integration).toMatchObject({ status: "integrity_unproven", integrity: "unproven", loaded_version: null });
+      expect(report.agents[0].integration.integrity_changes).toHaveLength(1);
+      expect(report.agents[0].verdict).toBe("unsafe");
+      expect(fs.readFileSync(path.join(run, "report.md"), "utf8")).toContain('"status": "integrity_unproven"');
+      clean = true;
+    } finally { if (clean) fs.rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 test("live check tears down a started runtime on failure and Ctrl-C", async () => {

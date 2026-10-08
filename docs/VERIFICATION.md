@@ -219,6 +219,7 @@ The loaded-version claim requires an isolated configuration route, unchanged pre
 Prepared files are inventoried separately; the claim does not say every prepared frontend asset loaded.
 A stable change to an ordinary bounded private integration artifact invalidates loaded-version provenance for the rest of that provider run, including after the original bytes return or native session visibility disappears.
 The report retains the relative artifact name and changed stamp fields, without changed contents or their hashes, and refuses a positive safety aggregate while preserving any confirmed unsafe scene.
+Known integrity loss is published even if a later artifact refusal or native query stops that observation; the original fatal error and cleanup failure ordering remain intact.
 Artifact reads open ancestor directories without following links; path, alias, file type, owner, link count, size, missing-artifact and unstable-read failures still stop the run.
 Each integration observation reserves its remaining read budget before opening content: generated originals and routed copies each retain their own 16 MiB aggregate cap, including raced growth.
 A prepared file alone never proves load; Cursor's project hooks and copied OpenCode configuration cannot exclude external-hook or plugin ambiguity, so their loaded versions remain unproven.

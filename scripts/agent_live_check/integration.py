@@ -96,7 +96,6 @@ def project_args(plan, recipe, cwd):
 
 
 def observe(runtime, pane, recipe, plan):
-    rows = []
     changes = plan.setdefault("integrity_changes", {})
     remaining = {"generated": MAX_BACKUP_BYTES, "routed": MAX_BACKUP_BYTES}
     for item in plan["artifacts"]:
@@ -126,11 +125,16 @@ def observe(runtime, pane, recipe, plan):
             changes[name] = {"name": name, "reason": "ordinary_private_artifact_changed",
                              "changed_fields": [field for field in fields
                                                 if getattr(current, field) != getattr(item["stamp"], field)]}
-        if item["version"] is not None:
-            rows.append({"name": str(item["file"].relative_to(runtime.probe)),
-                         "integration_id": item["integration_id"],
-                         "version": item["version"], "sha256": hashlib.sha256(item["content"]).hexdigest()})
-    current = runtime.agent(pane)
+    return provenance(runtime.probe, recipe, plan, runtime.agent(pane))
+
+
+def provenance(probe, recipe, plan, current=None):
+    """Project already established evidence without another file or native query."""
+    rows = [{"name": str(item["file"].relative_to(probe)),
+             "integration_id": item["integration_id"], "version": item["version"],
+             "sha256": hashlib.sha256(item["content"]).hexdigest()}
+            for item in plan["artifacts"] if item["version"] is not None]
+    changes = plan.get("integrity_changes", {})
     session = current.get("agent_session") if current else None
     native = bool(session and session.get("source") == "herdr:" + recipe["kind"])
     versions = {row["version"] for row in rows}

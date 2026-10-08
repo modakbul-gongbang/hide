@@ -17,7 +17,8 @@ from .authentication import AuthenticationRequired, require_no_login
 from .delivery import measure as measure_delivery
 from .overlay import prepare as prepare_overlay
 from .history import LABEL as PREVIOUS_LABEL, seed as seed_history
-from .integration import prepare as prepare_integration, project_args, observe as observe_integration
+from .integration import (prepare as prepare_integration, project_args, observe as observe_integration,
+                          provenance as integration_provenance)
 from .processes import OwnedProcesses, ProcessError, ProcessSafetyError
 from .protection import ConfigGuard, ProtectionError, beneath, private_directory, stamp, write_private
 from .report import save
@@ -249,6 +250,8 @@ def main(argv=None):
                                             not provider["integration"].get("native_source")):
                                         provider["integration"] = current_integration
                                 except Exception as error:
+                                    if integration.get("integrity_changes"):
+                                        provider["integration"] = integration_provenance(runtime.probe, recipe, integration)
                                     finalization_errors.append(("scene_integration", error))
                                 try:
                                     runtime.close_workspace(workspace)
