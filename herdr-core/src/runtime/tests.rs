@@ -1495,6 +1495,7 @@ fn closed_file(key: &str, path: &str) -> ClosedItem {
 
 fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
     live::CloseCaptureRequest {
+        retain_for_reopen: true,
         key: key.to_owned(),
         connection_generation: 0,
         context: ClosedContext {

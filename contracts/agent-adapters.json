@@ -39,7 +39,7 @@
     "doc_url": "https://docs.x.ai/build/features/skills-plugins-marketplaces",
     "install_url": "https://github.com/xai-org/grok-build",
     "logo_id": "grok",
-    "can_start": false,
+    "can_start": true,
     "can_resume": false,
     "sidebar_mark": null,
     "hook_kind": null
@@ -53,7 +53,7 @@
     "doc_url": "https://opencode.ai/docs/skills/",
     "install_url": "https://opencode.ai/docs/",
     "logo_id": "opencode",
-    "can_start": false,
+    "can_start": true,
     "can_resume": false,
     "sidebar_mark": null,
     "hook_kind": "plugin"
@@ -67,7 +67,7 @@
     "doc_url": "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
     "install_url": "https://pi.dev/",
     "logo_id": "pi",
-    "can_start": false,
+    "can_start": true,
     "can_resume": false,
     "sidebar_mark": null,
     "hook_kind": null
@@ -81,7 +81,7 @@
     "doc_url": "https://omp.sh/docs/skills",
     "install_url": "https://omp.sh/docs/quickstart",
     "logo_id": "omp",
-    "can_start": false,
+    "can_start": true,
     "can_resume": false,
     "sidebar_mark": null,
     "hook_kind": null
@@ -95,7 +95,7 @@
     "doc_url": "https://cursor.com/docs/context/skills",
     "install_url": "https://cursor.com/docs/cli/installation",
     "logo_id": "cursor",
-    "can_start": false,
+    "can_start": true,
     "can_resume": false,
     "sidebar_mark": null,
     "hook_kind": "hook"

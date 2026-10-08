@@ -40,6 +40,9 @@ pub(crate) struct PaneRecord {
     /// (`label_reference_token(provider, "id", native id)`).
     #[serde(default)]
     pub(crate) owner: Option<String>,
+    /// Native metadata proven for `owner`; missing on prior helper answers.
+    #[serde(default)]
+    pub(crate) native_session_id: Option<String>,
     /// The Herdr reference under which `owner` was last proven. A path
     /// reference names the same session as its id only once a read has
     /// shown it; an id reference proves itself.
@@ -150,6 +153,7 @@ impl PaneRecord {
     /// A new session in the pane: nothing the old one said or decided stays.
     pub(crate) fn reset_session(&mut self, owner: Option<String>) {
         self.owner = owner;
+        self.native_session_id = None;
         self.proven_reference = None;
         self.goal = None;
         self.line.clear();

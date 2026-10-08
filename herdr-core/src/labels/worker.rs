@@ -813,6 +813,13 @@ impl LabelWorker {
             }
         };
         let mut changed = false;
+        if let Some(id) = transcript.confirmed.native_session_id.as_deref()
+            && label_reference_token(pane.agent.as_str(), "id", id).as_deref()
+                != Some(transcript.confirmed.owner.as_str())
+        {
+            self.log_failure(pane_id, "read.refused", "label_session_id_mismatch");
+            return self.invalidate_turn_read(pane_id);
+        }
         let target = self.target.clone();
         let record = self
             .records
@@ -859,6 +866,8 @@ impl LabelWorker {
             record.proven_reference = Some(reference.to_owned());
             changed = true;
         }
+        changed |= record.native_session_id != transcript.confirmed.native_session_id;
+        record.native_session_id = transcript.confirmed.native_session_id.clone();
         record.read_reference = Some(reference.to_owned());
         record.checkpoint = Some(transcript.checkpoint.clone());
         if from_start || transcript.anchor.is_some() {

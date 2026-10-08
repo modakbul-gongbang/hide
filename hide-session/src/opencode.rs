@@ -77,6 +77,9 @@ pub(crate) fn read(
         return Err("session_kind_unsupported".to_owned());
     }
     let session_id = request.reference_value.as_str();
+    if !crate::label_owner::valid_native_id(session_id) {
+        return Err("label_session_id_invalid".to_owned());
+    }
     let path = database_path(home);
     if !path.is_file() {
         return Err("session_file_missing".to_owned());
@@ -290,6 +293,7 @@ pub(crate) fn read(
     Ok(LabelTranscript {
         confirmed: ConfirmedLabelSession {
             owner,
+            native_session_id: Some(request.reference_value.clone()),
             incarnation: format!("opencode:{created}"),
             bytes: count,
         },

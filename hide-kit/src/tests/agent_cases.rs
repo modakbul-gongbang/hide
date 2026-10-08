@@ -769,7 +769,10 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     // The expected rows come from the PRDs and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18;
     // opencode-plugin D-11: OpenCode takes letters and is refused a launch,
-    // so it is no longer Basic, while no bell rings for it).
+    // so it is no longer Basic, while no bell rings for it). The
+    // session-reader common contract B1/B6 enables starts for the five
+    // agents besides Claude Code and Codex without enabling their future
+    // reader/sleep/fork features.
     let opencode = [
         Skill,
         Guidance,
@@ -778,15 +781,16 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
         Subagents,
         SpawnGuard,
         HerdrIntegration,
+        Start,
     ];
     let expected: [(&str, &[Feature], bool); 7] = [
         ("claude-code", &Feature::ALL, false),
         ("codex", &Feature::ALL, false),
-        ("grok", &[Skill, HerdrIntegration], true),
+        ("grok", &[Skill, HerdrIntegration, Start], true),
         ("opencode", &opencode, false),
-        ("pi", &[Skill, HerdrIntegration], true),
-        ("omp", &[Skill, HerdrIntegration], true),
-        ("cursor", &[Skill, Guidance, HerdrIntegration], true),
+        ("pi", &[Skill, HerdrIntegration, Start], true),
+        ("omp", &[Skill, HerdrIntegration, Start], true),
+        ("cursor", &[Skill, Guidance, HerdrIntegration, Start], true),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),

@@ -71,7 +71,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -97,7 +98,8 @@
       "memory",
       "subagents",
       "spawn_guard",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "available",
@@ -118,7 +120,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -139,7 +142,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -161,7 +165,8 @@
     "features": [
       "skill",
       "guidance",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",

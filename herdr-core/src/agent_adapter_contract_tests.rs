@@ -82,7 +82,10 @@ fn all_core_gates_accept_the_same_aliases_without_enabling_other_agents() {
             );
         }
     }
-    assert_eq!(crate::model::AGENT_KINDS, ["claude", "codex"]);
+    assert_eq!(
+        crate::model::AGENT_KINDS,
+        ["claude", "codex", "grok", "opencode", "pi", "omp", "cursor"]
+    );
     assert_eq!(
         crate::agent_find::agent_find("CLAUDE_CODE").unwrap().open,
         ["ctrl+o", "/"]
@@ -133,6 +136,6 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
-        [Feature::Skill, Feature::HerdrIntegration]
+        [Feature::Skill, Feature::HerdrIntegration, Feature::Start]
     );
 }

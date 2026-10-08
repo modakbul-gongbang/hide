@@ -303,6 +303,7 @@ A launch chained behind another command is refused whole, and a launch inside `b
 A first spawn of a new Codex child can answer `native_identity_unavailable` until that Codex has bound its session after its first turn; running the same `hide agent spawn` again with the same intent converges on the same child.
 
 The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
+Each server's pass reads the registrations recorded under its machine: this machine's are keyed by its node id, the same `machine` that `hide agent list` shows, and a device's by its device id, so a token Herdr drops (a live handoff drops every pane token) is written again on this machine as on a device.
 An unchanged native observation and append-only registration count skip planning; unrelated letter/watch writes and label/process/catalog publications do not start a lineage pass.
 The native pane and positive session select the matching retained registration, including an ended one, independently of append order.
 A positive child-session replacement clears stale tokens; an absent native session or agent end leaves the pane's tokens in place, while unchanged readers reject obsolete session identities.
