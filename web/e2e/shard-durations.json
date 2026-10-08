@@ -64,7 +64,6 @@
   "new-tab.spec.ts › View new tab replaces itself with a file or changed-file diff": 4.8,
   "overview-modal.spec.ts › shared Overview preserves work, returns the keyboard and has direct sidebar commands": 10.6,
   "overview-prs.spec.ts › a project's PRs tab: grouped pull requests, Link issue, Assign and Clean up": 21.6,
-  "overview-requests.spec.ts › the request view: what each agent was asked, what came of it, and what is the operator's": 40.3,
   "overview.spec.ts › a project's Overview: tiles, the Agents graph, and the Issues board": 59.1,
   "palette.spec.ts › ⌘K lists results by kind with a detail beside them, and the sidebar Search icon opens the same palette": 10.8,
   "pane-find-scroll.spec.ts › Cmd+F on a full-screen agent opens the agent's own search instead of the find bar": 8.9,
