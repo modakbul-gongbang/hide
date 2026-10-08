@@ -82,7 +82,6 @@ test("live check retains the full scene matrix and rejects unsafe picker or plan
     expect(result.error, result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(1);
     const report = assertClean(run);
-    clean = true;
     expect(report.fixture).toBe(true);
     expect(report.herdr.manifests.length).toBeGreaterThan(0);
     expect(report.configuration.failures).toEqual([]);
@@ -101,6 +100,7 @@ test("live check retains the full scene matrix and rejects unsafe picker or plan
         && ["selection", "approval", "resumed_session"].includes(row.effect))).toBe(true);
     }
     expect(fs.readFileSync(path.join(run, "report.md"), "utf8")).toContain("unsafe");
+    clean = true;
   } catch (error) {
     // Keep the private tool report and its screen reads beside other CI logs.
     const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
@@ -147,9 +147,9 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
         const result = await runPython(args, { env, timeout: 45_000 });
         expect(result.status, result.stdout + result.stderr).toBe(2);
         const report = assertClean(run);
-        clean = true;
         expect(report.herdr.version).toContain("herdr");
         expect(report.failures[0].reason).toBe("injected_after_registered_private_workspace");
+        clean = true;
       } else {
         args[args.indexOf("--scene-seconds") + 1] = "120";
         running = startPython(args, { env, timeout: 110_000 });
@@ -163,11 +163,11 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
         const result = await running.completed;
         expect(result.status, result.stdout + result.stderr).toBe(2);
         assertClean(run);
-        clean = true;
         assertEnded(fixture.pid);
         assertEnded(daemon.pid);
         expect(fixture.socket.length).toBeGreaterThan(0);
         expect(fs.existsSync(fixture.socket)).toBe(false);
+        clean = true;
       }
     } finally {
       if (running) await running.stop();
