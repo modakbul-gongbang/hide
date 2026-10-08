@@ -175,6 +175,27 @@ impl SessionSyncContext {
         }
     }
 
+    /// The machine this target's agents are recorded under in the delivery
+    /// ledger: the core's own node for the local target, the device id for a
+    /// remote one. `log_target` names the target in diagnostics and is no
+    /// ledger key, because the local target's records carry the node id and
+    /// never `"local"` (issue 772).
+    fn ledger_machine(&self) -> Result<String, String> {
+        match &self.target {
+            SessionSyncTarget::Local { .. } => {
+                let runtime = self
+                    .runtime
+                    .upgrade()
+                    .ok_or_else(|| "the runtime has ended".to_owned())?;
+                let guard = runtime
+                    .lock()
+                    .map_err(|_| "the runtime lock is poisoned".to_owned())?;
+                Ok(guard.node().to_string())
+            }
+            SessionSyncTarget::Remote { target_id, .. } => Ok(target_id.clone()),
+        }
+    }
+
     fn is_local(&self) -> bool {
         matches!(self.target, SessionSyncTarget::Local { .. })
     }
