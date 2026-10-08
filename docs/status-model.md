@@ -512,6 +512,7 @@ Its recorded user/assistant messages feed the existing label worker, while tool 
 Pi records no structured question/plan wait or child identity, so no `UserTurnFact`, structured content or subagent relationship is inferred from text or `parentSession`.
 omp 18.7.0 takes its current automatic/manual title from the physical first title slot or legacy first session header, with explicit empty values clearing stale names and `title_change` remaining audit history.
 Same-length title updates at EOF change no event offset and replay no conversation or native question.
+The existing label reader refreshes native-file titles and questions at a minimum three-second interval without requiring a Herdr lifecycle transition; failed native proofs revoke the row's authority and retry after fifteen seconds.
 Unanswered native `ask` calls supply exact bounded text and choices, and only their correlated result, a later human turn or an abort clears them.
 A failed current omp reread revokes native identity and question authority until a fresh proof, and nested child artifacts supply no root conversation or inferred child relationship.
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.

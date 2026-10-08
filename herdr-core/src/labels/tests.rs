@@ -312,6 +312,21 @@ fn shown(worker: &LabelWorker, agent: &ObservedAgent) -> Option<AgentLabel> {
     payload.agents.remove(0).label
 }
 
+fn shown_facts(
+    worker: &LabelWorker,
+    agent: &ObservedAgent,
+) -> Option<crate::request_view::RowFacts> {
+    let (kind, value) = agent.reference.clone().unwrap();
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id": agent.pane_id, "agent": agent.agent, "agent_status": agent.status,
+        "state_change_seq": agent.state_change_seq,
+        "agent_session": {"kind": kind, "value": value},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    payload.agents.remove(0).facts
+}
+
 fn task(label: Option<AgentLabel>) -> Option<String> {
     label.and_then(|label| label.task)
 }
@@ -1487,6 +1502,144 @@ fn waits(worker: &LabelWorker, agent: &ObservedAgent) -> (Option<Waiting>, Optio
         .facts
         .map(|facts| facts.awaiting_operator);
     (waiting, row)
+}
+
+#[test]
+fn an_omp_title_and_question_refresh_without_state_changes_or_repeated_analysis() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let cwd = hide_platform::fs::identity::canonical(harness.home.path()).unwrap();
+    let folder = crate::fixture::native_session_folder(harness.home.path(), "omp", &cwd);
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("native.jsonl");
+    let slot = |title: &str, source: &str| {
+        let mut value = json!({"type":"title", "v":1, "title":title, "source":source,
+            "updatedAt":"2026-10-03T01:00:00Z", "pad":""});
+        let padding = 255 - value.to_string().len();
+        value["pad"] = Value::String(" ".repeat(padding));
+        format!("{value}\n")
+    };
+    let original = format!(
+        "{}{}\n{}\n{}\n",
+        slot("First title", "auto"),
+        json!({"type":"session", "version":3, "id":"native-omp", "cwd":cwd}),
+        json!({"type":"message", "timestamp":"2026-10-03T01:00:00Z",
+            "message":{"role":"user", "content":"Review the native title"}}),
+        json!({"type":"message", "timestamp":"2026-10-03T01:00:00.100Z",
+            "message":{"role":"assistant", "content":[{"type":"text","text":"Reviewed"}], "stopReason":"stop"}})
+    );
+    std::fs::write(&path, &original).unwrap();
+    let current = ObservedAgent {
+        agent: Some("omp".into()),
+        cwd: Some(cwd.display().to_string()),
+        ..agent(&path, "idle", 1)
+    };
+    observe(&mut worker, &current);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .native_title
+            .as_deref(),
+        Some("First title")
+    );
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    worker.tick(Instant::now() + Duration::from_secs(1));
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1, "no per-tick reread");
+
+    use std::io::Write;
+    for (title, source_kind, expected) in [
+        ("Fresh title", "user", Some("Fresh title")),
+        ("", "auto", None),
+    ] {
+        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.write_all(slot(title, source_kind).as_bytes()).unwrap();
+        drop(file);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            original.len() as u64
+        );
+        worker.tick(Instant::now() + Duration::from_secs(4));
+        settle(&mut worker, &woken);
+        assert_eq!(
+            shown_facts(&worker, &current)
+                .unwrap()
+                .native_title
+                .as_deref(),
+            expected
+        );
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(file, "{}", json!({"type":"message", "timestamp":"2026-10-03T01:00:01Z", "message":{
+        "role":"assistant", "content":[{"type":"toolCall", "id":"ask-a", "name":"ask",
+            "arguments":{"questions":[{"id":"q", "question":"어느 쪽인가요?", "options":[{"label":"첫째"},{"label":"둘째"}]}]}}]
+    }})).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .user_turn
+            .unwrap()
+            .content
+            .unwrap()
+            .text(),
+        "어느 쪽인가요?"
+    );
+    writeln!(file, "{}", json!({"type":"message", "timestamp":"2026-10-03T01:00:02Z", "message":{
+        "role":"toolResult", "toolCallId":"ask-a", "isError":true, "content":[{"type":"text", "text":"Answered"}]
+    }})).unwrap();
+    drop(file);
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert!(shown_facts(&worker, &current).unwrap().user_turn.is_none());
+
+    std::fs::remove_file(&path).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &current).is_none(),
+        "removed source retained authority"
+    );
+    std::fs::write(&path, original).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .native_title
+            .as_deref(),
+        Some("First title")
+    );
+    assert_eq!(harness.backend.calls(), 0);
+    harness.backend.answer("Native title review", "done", "");
+    worker.set_summaries(true, Instant::now());
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+    let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.write_all(slot("Fresh title", "user").as_bytes())
+        .unwrap();
+    drop(file);
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .native_title
+            .as_deref(),
+        Some("Fresh title")
+    );
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        1,
+        "metadata rereads repeated the same analysis"
+    );
 }
 
 #[test]

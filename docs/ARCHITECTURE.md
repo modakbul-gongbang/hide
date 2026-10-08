@@ -668,6 +668,8 @@ The parser reads raw recorded history, including messages on earlier branches, w
 Pi `session_info.name` is the native/manual title; an explicit empty name clears it, while absence on an incremental read preserves the prior name.
 omp's physical first title-v1 slot, or its legacy first session header, supplies the current title and auto/user source.
 The cursor samples that bounded prefix through its existing file descriptor on each omp poll and charges its actual bytes to the existing read allowance, including a refused prefix.
+The label worker rechecks current native-file metadata through its single serialized reader no sooner than three seconds after a successful read, even when Herdr's state is unchanged; a refused or unavailable native read waits fifteen seconds before retrying.
+This adds bounded file reads on the existing worker, with no I/O under Runtime or session-sync, no extra provider request for unchanged events, and no publication or store write for unchanged facts.
 It applies the current title, including an explicit clear or manual-to-auto change, without rewinding the event checkpoint or replaying question marks; `title_change` entries are audit history, not current title authority.
 Only recorded message times and actual tool-result or bash-execution output supply PR sightings; thinking, custom extension context, compaction and branch summaries supply no human request.
 Pi has no structured native wait/content or subagent grant, and authenticated protocol24 facts never acquire its new reader.
