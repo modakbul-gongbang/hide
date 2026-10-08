@@ -4,7 +4,7 @@
 //! hook group is matched by its surviving handlers so mixed ownership also
 //! preserves the operator's command spelling, whitespace and escaping.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::Deserialize;
@@ -139,6 +139,12 @@ impl<'a> Node<'a> {
             _ => return serde_json::to_string(target),
         };
         let mut mapping = vec![None; targets.len()];
+        let object_positions: BTreeMap<_, _> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.key.as_deref().map(|key| (key, index)))
+            .collect();
         // Object members have unique decoded keys, so their source identity
         // does not depend on target iteration order. Array entries retain
         // order, including mixed groups that lost only marked commands.
@@ -146,10 +152,7 @@ impl<'a> Node<'a> {
         let mut next = 0;
         for (slot, (key, value)) in targets.iter().enumerate() {
             let candidate = match key {
-                Some(key) => self
-                    .entries
-                    .iter()
-                    .position(|entry| entry.key.as_deref() == Some(*key)),
+                Some(key) => object_positions.get(key).copied(),
                 None => self
                     .entries
                     .iter()
