@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const DEVICE: &str = "mini";
-const WORKTREE: &str = "/Users/grab/repo.worktrees/topic";
+const WORKTREE: &str = "/srv/repo.worktrees/topic";
 
 /// A device node that answers the two checks a spawn makes before it creates
 /// anything.
@@ -31,8 +31,8 @@ impl NodeLink for Node {
     fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
         Ok(LinkAnswer::Parsed(match call {
             Call::Repository { .. } if self.repository.load(Ordering::SeqCst) => {
-                json!({"root": "/Users/grab/repo", "git_dir": "/Users/grab/repo/.git",
-                       "common_dir": "/Users/grab/repo/.git"})
+                json!({"root": "/srv/repo", "git_dir": "/srv/repo/.git",
+                       "common_dir": "/srv/repo/.git"})
             }
             Call::Repository { .. } => Value::Null,
             Call::AgentInstalled { name } => {
@@ -60,8 +60,8 @@ fn agent_row(session: bool) -> Value {
 fn device_herdr(started: Arc<AtomicBool>) -> FakeHerdr {
     FakeHerdr::start("remote-spawn", move |method, _| match method {
         "worktree.list" => json!({"type": "worktree_list", "source": {
-            "repo_key": "/Users/grab/repo/.git", "repo_name": "repo",
-            "repo_root": "/Users/grab/repo", "source_checkout_path": "/Users/grab/repo",
+            "repo_key": "/srv/repo/.git", "repo_name": "repo",
+            "repo_root": "/srv/repo", "source_checkout_path": "/srv/repo",
             "source_workspace_id": "w1"}, "worktrees": []}),
         "worktree.create" => json!({
             "type": "worktree_created",
@@ -249,7 +249,7 @@ impl Spawner {
                 name: "worker".into(),
                 intent: intent.into(),
                 kind: "codex".into(),
-                repo: "/Users/grab/repo".into(),
+                repo: "/srv/repo".into(),
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
