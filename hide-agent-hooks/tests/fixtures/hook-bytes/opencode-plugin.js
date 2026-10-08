@@ -1,4 +1,4 @@
-// hide-opencode-plugin@1 sha256=3208b280afb16bd2cec67f6840bf72f73842015cd3d093d8ba3f0a5faeddb2c0
+// hide-opencode-plugin@1 sha256=59c5676f9f789813e2114ca8f1753497c24837b7b11bed64345d4dfba5727040
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -22,6 +22,8 @@ const OUTPUT_LIMIT = 64 * 1024;
 const PROMPT_TEXT_LIMIT = 32 * 1024;
 const RUNNING_LIMIT = 8;
 const SESSION_LIMIT = 512;
+// Any spelling of the reminder tag OpenCode's model reads as one, opening or closing.
+const REMINDER_TAG = /<(\s*\/?\s*system-reminder)/gi;
 const PENDING_LIMIT = 16;
 const PENDING_AGE_MS = 10 * 60 * 1000;
 
@@ -313,7 +315,8 @@ async function onPrompt(state, client, directory, input, output) {
   if (sections.length === 0) return;
   const id = partId(state);
   // Synthetic: OpenCode's screen leaves it out of the operator's message, and the reminder tags tell the model it is not the operator's text.
-  const text = `<system-reminder>\n${sections.join("\n\n")}\n</system-reminder>`;
+  // Hide writes those tags itself, so a letter or Memory line cannot close them and speak as the operator.
+  const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   parts.push({ id, sessionID, messageID: message.id, type: "text", text, synthetic: true });
   const letters = Array.isArray(answer?.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
   if (letters.length === 0) return;
