@@ -103,6 +103,7 @@ class Runtime:
             self.expected_version = manifest["version"]
             base = clean_env()
             base.update(HOME=str(self.home), SHELL="/bin/zsh", ZDOTDIR=str(self.home),
+                        skip_global_compinit="1",
                         XDG_CONFIG_HOME=str(self.home / "config"),
                         XDG_STATE_HOME=str(self.home / "state"),
                         XDG_DATA_HOME=str(self.home / "data"),

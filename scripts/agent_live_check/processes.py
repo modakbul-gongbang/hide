@@ -394,6 +394,25 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
         observed.update(table)
         return table
 
+    def signal_proven(table, signum, *, skip_group=True):
+        errors = []
+        # Every retained identity already has group/token proof. Recheck each
+        # birth independently so an unavailable peer cannot abandon the rest.
+        for process in table.values():
+            if (skip_group and process.group == group) or process.zombie:
+                continue
+            try:
+                actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
+                          else snapshot().get(process.pid) if sys.platform.startswith("linux") else None)
+                if actual and actual.birth == process.birth:
+                    os.kill(process.pid, signum)
+            except ProcessLookupError:
+                pass
+            except Exception as error:
+                errors.append({"pid": process.pid, "type": type(error).__name__,
+                               "reason": str(error)[:MAX_FAILURE_REASON]})
+        return errors
+
     def signal_owned(signum):
         def signal_group():
             try:
@@ -404,27 +423,27 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                 raise ProcessError("owned_group_signal:" + json.dumps(
                     {"group": group, "signal": signum, "errno": error.errno},
                     separators=(",", ":"))) from error
+        errors = []
         try:
             table = collect()
-        except BaseException:
+            needs_group = any(process.group == group and not process.zombie for process in table.values())
+            skip_group = True
+        except Exception as error:
             # Metadata failure still ends the reserved group and remains a
-            # failure; it cannot turn unknown membership into a safe skip.
-            signal_group()
-            raise
-        if any(process.group == group and not process.zombie for process in table.values()):
-            signal_group()
+            # failure. Retained positive identities get independent attempts.
+            table = dict(observed)
+            needs_group, skip_group = True, False
+            errors.append({"type": type(error).__name__, "reason": str(error)[:MAX_FAILURE_REASON]})
+        if needs_group:
+            try:
+                signal_group()
+            except Exception as error:
+                errors.append({"type": type(error).__name__, "reason": str(error)[:MAX_FAILURE_REASON]})
         # Group signals are atomic with respect to membership. Escaped marked
         # helpers require a fresh birth check before each individual signal.
-        for process in table.values():
-            if process.group == group or process.zombie:
-                continue
-            actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
-                      else snapshot().get(process.pid) if sys.platform.startswith("linux") else None)
-            if actual and actual.birth == process.birth:
-                try:
-                    os.kill(process.pid, signum)
-                except ProcessLookupError:
-                    pass
+        errors.extend(signal_proven(table, signum, skip_group=skip_group))
+        if errors:
+            raise ProcessError("owned_signal_failures:" + json.dumps(errors, separators=(",", ":")))
 
     try:
         child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker},
@@ -486,16 +505,15 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                 while True:
                     if sys.platform.startswith("linux"):
                         linux_children_remain()
-                    remaining = collect(include_group=False)
+                    try:
+                        remaining = collect(include_group=False)
+                    except Exception:
+                        signal_proven(dict(observed), signal.SIGKILL, skip_group=False)
+                        raise
                     live_extras = [p for p in remaining.values() if p.group != group and not p.zombie]
-                    for process in live_extras:
-                        actual = (process if sys.platform == "darwin" and darwin_candidate_current(process)
-                                  else snapshot().get(process.pid) if sys.platform.startswith("linux") else None)
-                        if actual and actual.birth == process.birth:
-                            try:
-                                os.kill(process.pid, signal.SIGKILL)
-                            except ProcessLookupError:
-                                pass
+                    errors = signal_proven({p.pid: p for p in live_extras}, signal.SIGKILL)
+                    if errors:
+                        raise ProcessError("owned_signal_failures:" + json.dumps(errors, separators=(",", ":")))
                     if not group_exists(group) and not any(p.group != group for p in remaining.values()):
                         confirmed = True
                         break
