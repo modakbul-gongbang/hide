@@ -8,32 +8,29 @@
 #![cfg(unix)]
 
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use hide_platform::process::OwnedChild;
 
+use crate::programs;
+use crate::stand_ins;
+
 const PANE: &str = "w1:p1";
 
-/// A freshly copied executable pays a first-exec validation cost on macOS
-/// that would eat the hook's 1.65 second intake budget, so each is run once
-/// under its own bound before the hook is measured against it.
-fn warm_first_exec(program: &Path) {
-    let mut command = Command::new(program);
-    command
-        .arg("--help")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = OwnedChild::spawn(&mut command).unwrap();
-    child
-        .capture_until(Instant::now() + Duration::from_secs(5), 1)
-        .expect("first-exec warming must finish within its own bound");
-}
+/// The stand-in `hide`: it hands over one letter, confirms it, and records
+/// every call beside the test's HOME.
+const FAKE_HIDE: &str = r#"#!/bin/sh
+echo "$@" >> "${HOME%/*}/hide-calls"
+case "$2" in
+  --hook) echo '{"ok":true,"result":{"context":"LETTER-FOR-THIS-PANE","ids":["letter-1"]}}' ;;
+  --confirm) echo '{"ok":true,"result":{"confirmed":["letter-1"]}}' ;;
+  *) exit 1 ;;
+esac
+"#;
 
-/// The helper copied beside a fake `hide`, since the hook asks its sibling.
+/// The helper linked beside a fake `hide`, since the hook asks its sibling.
 struct Machine {
     _dir: tempfile::TempDir,
     home: PathBuf,
@@ -50,21 +47,9 @@ impl Machine {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&bin).unwrap();
         let hook = bin.join("hide-agent-hooks");
-        std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &hook).unwrap();
+        stand_ins::place(programs::hook(), &hook);
+        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
         let calls = root.join("hide-calls");
-        let fake = bin.join("hide");
-        std::fs::write(
-            &fake,
-            format!(
-                "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$2\" in\n  --hook) echo '{{\"ok\":true,\"result\":{{\"context\":\"LETTER-FOR-THIS-PANE\",\"ids\":[\"letter-1\"]}}}}' ;;\n  --confirm) echo '{{\"ok\":true,\"result\":{{\"confirmed\":[\"letter-1\"]}}}}' ;;\n  *) exit 1 ;;\nesac\n",
-                calls.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        warm_first_exec(&hook);
-        warm_first_exec(&fake);
-        std::fs::remove_file(&calls).ok();
         Self {
             _dir: dir,
             home,
