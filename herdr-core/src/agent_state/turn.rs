@@ -54,6 +54,7 @@ pub struct RowLine {
 /// but its chip still follows its own axes, and every demand remains visible.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct RowState {
+    pub session: super::sessions::Row,
     pub attention: bool,
     pub needs_you: bool,
     pub root: bool,
@@ -92,6 +93,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let chip_kind = match demand {
         "error" => "error",
         "question" | "approval" => "warning",
+        _ if agent.escalation.is_some() => "warning",
         _ if activity == "working" => "working",
         _ if activity == "stopped" && agent.emphasized => "success",
         _ => "subtle",
@@ -108,7 +110,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     } else {
         chip_tone
     };
-    let line = agent
+    let mut line = agent
         .detail
         .as_deref()
         .map(str::trim)
@@ -137,6 +139,19 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                 },
             }
         });
+    if let Some(child) = agent.raised_children.first() {
+        line = Some(RowLine {
+            text: child.reason.as_ref().map_or_else(
+                || format!("↳ {}", child.title),
+                |reason| format!("↳ {}: {reason}", child.title),
+            ),
+            mode: "raised_child",
+            tone: Tone {
+                kind: "warning",
+                read: false,
+            },
+        });
+    }
     let bucket = if needs_you || group == "done" {
         "turn"
     } else if agent.waiting_on_descendants {
@@ -168,6 +183,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             | RequestVerb::Result
     );
     RowState {
+        session: super::sessions::row(agent, verb),
         attention,
         needs_you,
         root: !agent.delegated,
@@ -253,7 +269,9 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         verb,
         request_todo,
         descendant_asking: agent.descendant_counts.question + agent.descendant_counts.approval,
-        request_since: if request_todo {
+        request_since: if let Some(escalation) = &agent.escalation {
+            escalation.since_unix_ms
+        } else if request_todo {
             agent
                 .request
                 .as_ref()
@@ -384,6 +402,20 @@ pub fn agent_group_for(
     } else {
         AgentGroup::Seen
     }
+}
+
+/// An intentionally closed execution has no live parent or unread demand.
+/// Only an explicit sleep-id wake action can create its next execution.
+pub(crate) fn dormant_group() -> AgentGroup {
+    agent_group_for(
+        AgentDemand::None,
+        AgentActivity::Stopped,
+        false,
+        false,
+        false,
+        Ownership::Operator,
+        false,
+    )
 }
 
 /// The one short word a row shows. A reported completion the operator has not
@@ -521,6 +553,11 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         ownership_of(agent),
         waiting,
     );
+    let group = if agent.escalation.is_some() {
+        AgentGroup::NeedsYou
+    } else {
+        group
+    };
     agent.group = group.name().to_owned();
     agent.symbol = RowMark::of(agent).symbol().to_owned();
     // A row the operator still has to deal with is drawn bright; everything
@@ -585,7 +622,7 @@ pub(crate) fn verb_of(
     pull_requests: &[AgentPullRequestSnapshot],
     result_opened: Option<u64>,
 ) -> RequestVerb {
-    if row.demand != "none" {
+    if row.blocked || (row.demand == "question" && row.unread) || row.demand == "error" {
         return RequestVerb::Answer;
     }
     if row.activity == "working" {
@@ -710,44 +747,27 @@ pub mod push {
         pub place: String,
     }
 
-    /// Each root agent's effective state: its own group, raised to Needs You
-    /// when a descendant asks for something (delegated rows stay Working or
-    /// Seen themselves, docs/status-model.md), plus what its notification says.
+    /// Root rows and escalated children use their core group. Ordinary child
+    /// questions stay with their parent. Existing human delivery notices own
+    /// undelivered-letter and unconfirmed-watch notifications.
     fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
         let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
         for agent in projection.agents() {
-            if agent.root_pane_id == agent.pane_id {
-                let place = agent
-                    .place
-                    .as_deref()
-                    .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
-                    .unwrap_or_default();
-                let entry = roots.entry(agent.key()).or_insert((
-                    Effective::Other,
-                    String::new(),
-                    String::new(),
-                ));
-                let raised = entry.0 == Effective::NeedsYou;
-                entry.0 = if raised {
-                    Effective::NeedsYou
-                } else {
-                    Effective::from_group(&agent.group)
-                };
-                entry.1 = agent.title.clone();
-                entry.2 = place;
-            }
-        }
-        for agent in projection.agents() {
-            if agent.root_pane_id != agent.pane_id
-                && matches!(agent.demand.as_str(), "question" | "approval" | "error")
-            {
-                let entry = roots.entry(agent.root_key()).or_insert((
-                    Effective::Other,
-                    String::new(),
-                    String::new(),
-                ));
-                entry.0 = Effective::NeedsYou;
-            }
+            let place = agent
+                .place
+                .as_deref()
+                .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
+                .unwrap_or_default();
+            let state = if agent.root_pane_id != agent.pane_id && !agent.escalated {
+                // Still present, but no longer the operator's responsibility:
+                // clear its previous escalation without a disappearance grace.
+                Effective::Seen
+            } else if agent.human_notice {
+                Effective::Other
+            } else {
+                Effective::from_group(&agent.group)
+            };
+            roots.insert(agent.key(), (state, agent.title.clone(), place));
         }
         roots
     }

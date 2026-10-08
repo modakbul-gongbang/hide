@@ -19,6 +19,14 @@ export const REVEAL_CHANNEL = "hide:reveal";
 export const PROBE_PATHS_CHANNEL = "hide:probe-paths";
 export const OPEN_PATH_CHANNEL = "hide:open-path";
 
+/**
+ * Factory notifications (PRD factory-observer D-50): the shell asks for a
+ * macOS notification about one item (renderer -> main), and a click on it
+ * hands that item's id back (main -> renderer).
+ */
+export const NOTIFY_CHANNEL = "hide:notify";
+export const NOTIFY_OPEN_CHANNEL = "hide:notify-open";
+
 /** Add a project's Browse folder: the native folder picker, answered with the chosen folder or null (invoke). */
 export const PICK_FOLDER_CHANNEL = "hide:pick-folder";
 

@@ -11,7 +11,7 @@ pub fn push_bounded(stack: &mut VecDeque<ClosedItem>, item: ClosedItem) {
     stack.push_back(item);
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ClosedContext {
     pub workspace_id: String,
     pub workspace_label: String,
@@ -314,6 +314,11 @@ pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
             Some(vec!["--resume".into(), session_id.clone()])
         }
         hide_agent_adapter::LaunchDialect::Codex => Some(vec!["resume".into(), session_id.clone()]),
+        hide_agent_adapter::LaunchDialect::Grok
+        | hide_agent_adapter::LaunchDialect::OpenCode
+        | hide_agent_adapter::LaunchDialect::Pi
+        | hide_agent_adapter::LaunchDialect::Omp
+        | hide_agent_adapter::LaunchDialect::Cursor => None,
     }
 }
 

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +14,14 @@ const UI_STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StoredUiState {
+    #[serde(default)]
+    resolved_sessions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    #[serde(default)]
+    session_resolution_inputs: BTreeMap<String, u64>,
+    #[serde(default)]
+    session_collapsed_checkout_ids: Vec<String>,
+    #[serde(default)]
+    session_open_folds: Vec<String>,
     schema_version: u32,
     #[serde(default = "default_panel_visible")]
     left_sidebar_visible: bool,
@@ -266,6 +273,10 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
     };
     (
         UiStateSnapshot {
+            resolved_sessions: stored.resolved_sessions,
+            session_resolution_inputs: stored.session_resolution_inputs,
+            session_collapsed_checkout_ids: stored.session_collapsed_checkout_ids,
+            session_open_folds: stored.session_open_folds,
             left_sidebar_visible: stored.left_sidebar_visible,
             device_rail_visible: stored.device_rail_visible,
             right_panel_visible: stored.right_panel_visible,
@@ -352,9 +363,22 @@ pub fn save(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .ok_or_else(|| "UI state path has no parent directory".to_owned())?;
+    // Existence alone cannot authorize a destructive close. Reuse the
+    // platform's checked ancestor barriers, outside the runtime lock.
+    // An unsupported platform or an untrusted directory refuses the receipt.
+    if !state.agent_sleep.dormant.is_empty() {
+        hide_platform::fs::private::establish_dir_durability(parent).map_err(|_| {
+            "UI state directory persistence could not be confirmed; no new close or start was sent"
+                .to_owned()
+        })?;
+    }
     fs::create_dir_all(parent)
         .map_err(|_| "UI state directory could not be prepared".to_owned())?;
     let stored = StoredUiState {
+        resolved_sessions: state.resolved_sessions.clone(),
+        session_resolution_inputs: state.session_resolution_inputs.clone(),
+        session_collapsed_checkout_ids: state.session_collapsed_checkout_ids.clone(),
+        session_open_folds: state.session_open_folds.clone(),
         schema_version: UI_STATE_SCHEMA_VERSION,
         left_sidebar_visible: state.left_sidebar_visible,
         device_rail_visible: state.device_rail_visible,
@@ -410,24 +434,27 @@ pub fn save(
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
-    let temporary = temporary_path(path);
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&temporary)
-        .map_err(|_| "UI state temporary file could not be opened".to_owned())?;
-    output
-        .write_all(&bytes)
-        .and_then(|_| output.sync_all())
-        .map_err(|_| "UI state temporary file could not be written".to_owned())?;
-    fs::rename(&temporary, path).map_err(|_| "UI state file could not be replaced".to_owned())
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".next");
-    path.with_file_name(name)
+    hide_platform::fs::atomic::write_file_durable(path, &bytes, hide_platform::fs::Access::Private)
+        .map(|_| ())
+        .map_err(|error| {
+            let phase = match error {
+                hide_platform::fs::atomic::DurableWriteError::BeforeReplace { .. } => {
+                    "before_replace"
+                }
+                hide_platform::fs::atomic::DurableWriteError::ReplacementUncertain { .. } => {
+                    "replacement_uncertain"
+                }
+                hide_platform::fs::atomic::DurableWriteError::ReplacedNotDurable { .. } => {
+                    "replaced_not_durable"
+                }
+            };
+            crate::diagnostic!(serde_json::json!({
+                "component": "ui_state",
+                "kind": "ui_state.durable_save_failed",
+                "phase": phase,
+            }));
+            "UI state persistence could not be confirmed".to_owned()
+        })
 }
 
 #[cfg(test)]

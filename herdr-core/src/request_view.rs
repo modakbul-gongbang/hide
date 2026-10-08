@@ -22,12 +22,16 @@ use crate::display_text;
 use crate::issues::IssueReference;
 use crate::labels::analysis::LabelEnd;
 use crate::labels::facts::{Reply, Request, Requester};
-use crate::model::{GithubSnapshot, PullRequestBadge, PullRequestChecks, SidebarAgentSnapshot};
+use crate::model::{
+    GithubSnapshot, PullRequestBadge, PullRequestChecks, ReviewDecision, SidebarAgentSnapshot,
+};
 
 /// What the label worker's facts give a row, laid on by the overlay only
 /// while the pane's reference proves the session they were read from.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RowFacts {
+    /// Available only from a current reference-proven native read.
+    pub(crate) native_session_id: Option<String>,
     pub(crate) native_title: Option<String>,
     pub(crate) operator_request: Option<Request>,
     pub(crate) other_request: Option<Request>,
@@ -84,6 +88,7 @@ pub struct AgentPullRequestSnapshot {
     pub url: String,
     pub badge: PullRequestBadge,
     pub checks: PullRequestChecks,
+    pub review: Option<ReviewDecision>,
     pub head_branch: String,
     pub closing_issues: Vec<IssueReference>,
     /// Drawn as the row's chip or counted in its `+N` (D-43): open, or

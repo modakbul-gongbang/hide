@@ -671,7 +671,6 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
   try {
     const betaRoot = `${path.posix.dirname(stack.root)}/beta`;
     const choose = async (target: Page, project: string) => {
-      await target.locator('[data-sidebar-mode="projects"]').click();
       await target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
     };
     // Each Workspace numbers its own views, so both hold a1 with d2 and d3.
@@ -1195,8 +1194,7 @@ test("a narrow body shows one column, File Views with one area and a way to the 
 
     // An agent chosen from the sidebar gives the body back to Agent Views,
     // and nothing narrow was sent or stored (B27, B28).
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const agent = page.locator("[data-agent-list] [data-agent-open]").first();
+    const agent = page.locator("nav[data-sidebar] [data-agent-open]").first();
     const pane = await agent.getAttribute("data-agent-open");
     await agent.click();
     await expect(workspace).toHaveAttribute("data-file-views", "hidden");
@@ -1411,7 +1409,7 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     await expect(page.locator("[data-workspace-toolbar] [data-column-toggle]")).toHaveCount(2);
     await expect(page.locator("[data-workspace-toolbar] [data-tool-tab]")).toHaveCount(0);
     await expect(page.locator("[data-layout-choice]")).toHaveCount(0);
-    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(2);
+    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(3);
 
     // The first file turns File Views on with one View area (B2).
     await expect(workspace).toHaveAttribute("data-file-views", "off");

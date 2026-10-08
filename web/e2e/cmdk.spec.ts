@@ -235,7 +235,6 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator(`[data-checkout][aria-label^="${BRANCH}"]`).first().click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await focusAgent(page, agent);
@@ -516,6 +515,8 @@ test("⌘K lists a typed URL as unavailable in a browser tab, and opens it as a 
         pickFolder: async () => null,
         probePaths: async () => [],
         openPath: () => undefined,
+        notify: () => undefined,
+        onNotificationOpen: () => () => undefined,
         browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: () => () => undefined },
       };
     }, process.platform);

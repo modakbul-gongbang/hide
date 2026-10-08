@@ -845,3 +845,34 @@ fn find_opens_the_agents_own_search_only_where_herdr_holds_no_history() {
         None
     );
 }
+
+/// Terminal bytes never reach the core, so no frame rebuilds every pane's
+/// operator state under the runtime lock, and a node repeating a pane's
+/// state derives nothing; an actual transport or scroll-control transition
+/// derives the headers once.
+#[test]
+fn transport_and_scroll_transitions_derive_pane_headers_once_each() {
+    let mut runtime = runtime();
+    let id = "w-frame:p1";
+    runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+        pane_id: id.into(),
+        transport_state: "controlling".into(),
+        ..Default::default()
+    }];
+    report_terminal(&mut runtime, id, terminal_state("controlling", 1));
+    let before = runtime.pane_header_derivations;
+    for _ in 0..100 {
+        report_terminal(&mut runtime, id, terminal_state("controlling", 1));
+    }
+    assert_eq!(runtime.pane_header_derivations, before);
+    runtime.panes_scroll_held.insert(id.into());
+    runtime.sync_transport_projection(id);
+    assert!(runtime.snapshot.terminal.panes[0].scroll_held_elsewhere);
+    assert_eq!(runtime.pane_header_derivations, before + 1);
+    report_terminal(&mut runtime, id, terminal_state("unavailable", 1));
+    assert_eq!(
+        runtime.snapshot.terminal.panes[0].transport_state,
+        "unavailable"
+    );
+    assert_eq!(runtime.pane_header_derivations, before + 2);
+}

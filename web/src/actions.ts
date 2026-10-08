@@ -26,7 +26,7 @@ import {
   type CloseWatchFrame,
 } from "./buffers";
 import { NO_GRAPH_FILTER } from "./agentGraph";
-import { createCatalogObserver } from "./agentPicker";
+import { createCatalogObserver, type AgentKind, type ProviderKind } from "./agentPicker";
 import { closeScope, closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
@@ -934,6 +934,15 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_wake", payload: { pane_id: paneId, fresh } });
     },
 
+    /** A closed pane has no input/focus address. Wake the saved conversation explicitly. */
+    wakeSleepingSession(sleepId: string) {
+      dispatch({ schema_version: 2, kind: "wake_sleeping_session", payload: { sleep_id: sleepId } });
+    },
+
+    checkSleepingSession(sleepId: string) {
+      dispatch({ schema_version: 2, kind: "check_sleeping_session", payload: { sleep_id: sleepId } });
+    },
+
     /** Reopen a pane Hide cannot hear, in place and on the same conversation (the Not connected popover, B29). */
     reopenPane(paneId: string) {
       dispatch({ schema_version: 2, kind: "pane_reopen", payload: { pane_id: paneId } });
@@ -1204,7 +1213,7 @@ export function createActions(send: DispatchFn) {
     startAgent(request: {
       target: { checkoutPath: string } | { home: true };
       deviceId?: string;
-      provider: "claude" | "codex" | "terminal";
+      provider: AgentKind;
       model?: string | null;
       prompt?: string | null;
       requestId?: string;
@@ -1297,7 +1306,7 @@ export function createActions(send: DispatchFn) {
     },
 
     /** An agent started on a pull request's branch with `prompt` (D-12); it reports through `task_operation`. */
-    delegatePullRequest(workspaceId: string, prNumber: number, provider: "claude" | "codex", model: string | null, prompt: string) {
+    delegatePullRequest(workspaceId: string, prNumber: number, provider: ProviderKind, model: string | null, prompt: string) {
       dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, ...(model ? { model } : {}), prompt } });
     },
 
@@ -1313,6 +1322,15 @@ export function createActions(send: DispatchFn) {
     /** The panel went away; an answer still on its way is dropped. */
     closeLinks() {
       dispatch({ schema_version: 2, kind: "links_close", payload: {} });
+    },
+
+    /** A session link retains repository identity even when its maker moved projects. */
+    openSessionPullRequest(pull: {workspace_id: string; url: string; number: number}) {
+      const projects = catalogWorkspaces(rest());
+      const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.url === pull.url))
+        ?? projects.find((row) => row.pull_requests?.some((pr) => pr.url === pull.url));
+      if (project) this.openPullRequestRow(project.id, pull.number);
+      else this.openLink(pull.url, false);
     },
 
     /** A pull request's row on its Project's PRs tab with its panel open (PRD overview-lenses-prs B21, link-graph B36); ⌘-click stays GitHub's. */
@@ -1387,6 +1405,10 @@ export function createActions(send: DispatchFn) {
     },
 
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
+    resolveSession(paneId: string) {
+      dispatch({ schema_version: 2, kind: "resolve_session", payload: { pane_id: paneId } });
+    },
+
     openAgent(paneId: string) {
       beginOpening({ paneId });
       const node = localDeviceId(rest());
@@ -1798,6 +1820,10 @@ export function createActions(send: DispatchFn) {
 
     focusCheckout,
 
+    toggleSessionFold(key: string) {
+      dispatch({ schema_version: 2, kind: "session_fold_toggle", payload: { key } });
+    },
+
     toggleInactiveCheckouts(projectPath: string) {
       dispatch({ schema_version: 2, kind: "inactive_checkouts_toggle", payload: { project_path: projectPath } });
     },
@@ -1858,6 +1884,7 @@ export function createActions(send: DispatchFn) {
     },
 
     focusSidebarMode(mode: SidebarMode) {
+      if (mode === "agents") return this.openAgentsOverview();
       useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null, sidebarMode: mode, sidebarFocus: ui().sidebarFocus + 1 });
       if (!rest()?.ui_state?.left_sidebar_visible) setLeftSidebarVisible(true);
     },
@@ -1887,6 +1914,12 @@ export function createActions(send: DispatchFn) {
     openOverviewEntry() {
       if (ui().screen?.kind === "main") return;
       this.toggleOverview();
+    },
+
+    openAgentsOverview() {
+      ui().setLens({ tab: "agents" });
+      ui().setMainView("agents");
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
     openHome(deviceId?: string) {
@@ -1951,7 +1984,8 @@ export function createActions(send: DispatchFn) {
     openRequests() {
       ui().setOverviewProject(null);
       ui().setScreen({ kind: "main" });
-      ui().setMainView("requests");
+      ui().setMainView("agents");
+      showTool("agent_sessions");
     },
 
     /** Asks the engine for a Task page's detail; it follows the engine in `factory_task` until closed. */

@@ -322,7 +322,7 @@ mod tests {
         AgentRecord {
             id: id.into(),
             name: id.into(),
-            machine: "local".into(),
+            machine: crate::node::TEST_NODE.into(),
             host_scope: "fixture".into(),
             native_machine: "fixture-machine".into(),
             session: session.into(),
@@ -335,7 +335,7 @@ mod tests {
                 pane_id: pane.into(),
                 name: id.into(),
                 kind: "codex".into(),
-                device_id: "local".into(),
+                device_id: crate::node::TEST_NODE.into(),
                 session: crate::wire::session_digest(session),
             },
             ended: false,
@@ -418,16 +418,16 @@ mod tests {
             agent(&first, first_tokens.clone()),
             agent(&second, second_tokens.clone()),
         ];
-        assert!(plan(&ledger, "local", &observed).is_empty());
+        assert!(plan(&ledger, crate::node::TEST_NODE, &observed).is_empty());
         let mut changed = observed.clone();
         changed[1].tokens.remove("parent_session");
-        let patches = plan(&ledger, "local", &changed);
+        let patches = plan(&ledger, crate::node::TEST_NODE, &changed);
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].pane, second.pane);
         changed[0].lineage_session = None;
-        assert_eq!(plan(&ledger, "local", &changed).len(), 1);
+        assert_eq!(plan(&ledger, crate::node::TEST_NODE, &changed).len(), 1);
         changed[0].lineage_session = crate::wire::session_digest("replacement");
-        let patches = plan(&ledger, "local", &changed);
+        let patches = plan(&ledger, crate::node::TEST_NODE, &changed);
         assert_eq!(patches.len(), 2);
         assert!(
             patches
@@ -461,7 +461,7 @@ mod tests {
             Writer {
                 sender: Some(sender),
                 worker: None,
-                device: "local".into(),
+                device: crate::node::TEST_NODE.into(),
                 in_flight: HashMap::new(),
                 acknowledged: HashMap::new(),
                 generation: 0,
@@ -587,7 +587,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         observations.push(agent(&child, BTreeMap::new()));
-        let patches = plan(&ledger, "local", &observations);
+        let patches = plan(&ledger, crate::node::TEST_NODE, &observations);
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].pane, child.pane);
         assert_eq!(
@@ -618,7 +618,7 @@ mod tests {
             ..Default::default()
         };
         let observations = vec![observed; super::super::AGENT_LIMIT + 1];
-        let patches = plan(&ledger, "local", &observations);
+        let patches = plan(&ledger, crate::node::TEST_NODE, &observations);
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].pane, child.pane);
     }
@@ -667,14 +667,25 @@ mod tests {
     fn current_session_registration_wins_in_both_append_orders() {
         for stale_last in [false, true] {
             let mut fixture = replacement_fixture(stale_last);
-            let patches = plan(&fixture.ledger, "local", &[fixture.native.clone()]);
+            let patches = plan(
+                &fixture.ledger,
+                crate::node::TEST_NODE,
+                &[fixture.native.clone()],
+            );
             assert_eq!(patches.len(), 1);
             assert_eq!(patches[0].pane, fixture.native.pane_id);
             assert_eq!(patches[0].tokens, fixture.expected);
             // A settled replacement must never be cleared by a late stale
             // registration, including a stale registration that has ended.
             fixture.native.tokens = fixture.expected;
-            assert!(plan(&fixture.ledger, "local", &[fixture.native.clone()]).is_empty());
+            assert!(
+                plan(
+                    &fixture.ledger,
+                    crate::node::TEST_NODE,
+                    &[fixture.native.clone()]
+                )
+                .is_empty()
+            );
             fixture
                 .ledger
                 .agents
@@ -682,7 +693,7 @@ mod tests {
                 .find(|record| record.id == "agent-4")
                 .unwrap()
                 .ended = true;
-            assert!(plan(&fixture.ledger, "local", &[fixture.native]).is_empty());
+            assert!(plan(&fixture.ledger, crate::node::TEST_NODE, &[fixture.native]).is_empty());
         }
     }
 
@@ -704,11 +715,15 @@ mod tests {
             .unwrap()
             .ended = true;
         fixture.ledger.validate().unwrap();
-        let patches = plan(&fixture.ledger, "local", &[fixture.native.clone()]);
+        let patches = plan(
+            &fixture.ledger,
+            crate::node::TEST_NODE,
+            &[fixture.native.clone()],
+        );
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].tokens, fixture.expected);
         fixture.native.tokens = fixture.expected;
-        assert!(plan(&fixture.ledger, "local", &[fixture.native]).is_empty());
+        assert!(plan(&fixture.ledger, crate::node::TEST_NODE, &[fixture.native]).is_empty());
     }
 
     #[test]
@@ -720,14 +735,18 @@ mod tests {
             .tokens
             .insert("unrelated".into(), json!("keep"));
         fixture.native.lineage_session = crate::wire::session_digest("unregistered-replacement");
-        let patches = plan(&fixture.ledger, "local", &[fixture.native.clone()]);
+        let patches = plan(
+            &fixture.ledger,
+            crate::node::TEST_NODE,
+            &[fixture.native.clone()],
+        );
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].pane, fixture.native.pane_id);
         assert_eq!(patches[0].tokens.len(), 4);
         assert!(patches[0].tokens.values().all(Value::is_null));
         assert!(!patches[0].tokens.contains_key("unrelated"));
         fixture.native.lineage_session = None;
-        assert!(plan(&fixture.ledger, "local", &[fixture.native]).is_empty());
+        assert!(plan(&fixture.ledger, crate::node::TEST_NODE, &[fixture.native]).is_empty());
     }
 
     #[test]
@@ -752,7 +771,7 @@ mod tests {
         let untouched = agent(&fixture.ledger.agents[0], fixture.expected);
         let patches = plan(
             &fixture.ledger,
-            "local",
+            crate::node::TEST_NODE,
             &[fixture.native.clone(), untouched],
         );
         assert_eq!(patches.len(), 1);

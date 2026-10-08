@@ -14,11 +14,12 @@ export type StatusTone = { kind: "error" | "warning" | "working" | "success" | "
 
 /** Agent decisions are projected by herdr-core::agent_state, never reconstructed by the shell. */
 export type AgentState = {
+  session: { group: SessionGroup; tag: SessionTag | null };
   attention: boolean; needs_you: boolean; root: boolean;
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
   chip_tone: StatusTone; mark_tone: StatusTone;
-  line: { text: string; mode: "request" | "news" | "quiet"; tone: StatusTone } | null;
+  line: { text: string; mode: "request" | "news" | "quiet" | "raised_child"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
   attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
@@ -30,6 +31,10 @@ export type AgentState = {
 };
 
 export type AgentRow = {
+  resolved?: { at_unix_ms: number; source: "operator" | "automatic"; local_date: string } | null;
+  resolved_today?: boolean;
+  escalation?: { cause: "parent_blocked" | "draft" | "bell_exhausted" | "undelivered" | "child_blocked" | "observer_unconfirmed"; letter_id: string | null; since_unix_ms: number | null; human_notice: boolean } | null;
+  raised_children?: { pane_id: string; title: string; tag: SessionTag; reason: string | null; since_unix_ms: number | null }[];
   state: AgentState;
   id: string;
   pane_id: string;
@@ -61,7 +66,7 @@ export type AgentRow = {
   unknown?: boolean;
   demand?: string;
   activity?: string;
-  /** Work another agent delegated; it is only ever Working or Seen (docs/status-model.md). */
+  /** Work another agent delegated; ordinary children are Working or Seen, with core escalation as the exception (docs/status-model.md). */
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
   lineage_child_pane_ids?: string[];
@@ -69,6 +74,7 @@ export type AgentRow = {
   close_descendant_pane_ids?: string[];
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
+  direct_child_counts?: DescendantCounts;
   /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */
   waiting_on_descendants?: boolean;
   /** How deep under its lineage root; a root is 0. */
@@ -99,6 +105,9 @@ export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished
 /** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
 export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
 
+export type SessionGroup = "my_turn" | "review_merge" | "in_progress" | "resting" | "resolved_today";
+export type SessionTag = "answer" | "approval" | "fix" | "review" | "merge" | "stopped" | "result" | "working" | "ci_wait" | "waiting" | "idle";
+
 /** Who sent the request a row shows (`RequestSender`). */
 export type RequestSender = { kind: "operator" } | { kind: "named"; name: string } | { kind: "agent" };
 
@@ -128,6 +137,7 @@ export type AgentPullRequest = {
   url: string;
   badge: PullRequest["badge"];
   checks: NonNullable<PullRequest["checks"]>;
+  review?: PullRequest["review"];
   head_branch: string;
   closing_issues: IssueReference[];
   /** Drawn as the row's chip or counted in its `+N` (D-43). */
@@ -327,8 +337,8 @@ export type IssueSettings = {
  * model mean the CLI's own default.
  */
 export type AgentStartChoice = {
-  kind: "claude" | "codex" | null;
-  models: Partial<Record<"claude" | "codex", string>>;
+  kind: string | null;
+  models: Partial<Record<string, string>>;
 };
 
 /** A label as the issue's source colours it (`TaskLabel`); `color` is six hex digits. */
@@ -590,6 +600,7 @@ export type Workspace = {
   removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
+  session_folds?: { empty: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
@@ -715,6 +726,14 @@ export type PaneLayout = {
   zoomed: boolean;
   root: LayoutNode;
 };
+
+export type PaneHeader = {
+  working: boolean;
+  pull: PaneHeaderAction | null;
+  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; child_tag: SessionTag | null; facts?: {kind: "approval_command_unavailable"} | {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
+};
+export type PaneHeaderTone = "muted" | "warning" | "error" | "success" | "pr";
+export type PaneHeaderAction = {kind: "pr"; workspace_id: string; url: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
 
 export type TerminalPane = {
   pane_id: string;
@@ -1432,6 +1451,21 @@ export type LinkSummaries = {
   filling: boolean;
 };
 
+/** A durable conversation intent, never a current pane or delivery target. */
+export type SleepingSession = {
+  sleep_id: string;
+  node_id: string;
+  checkout_path: string;
+  kind: string;
+  identity_label: string;
+  group: string;
+  phase: "saving_close" | "saving_close_ready" | "closing" | "close_unknown" | "sleeping" | "saving_wake" | "creating" | "saving_start" | "starting" | "wake_unknown" | "failed";
+  since_unix_ms: number;
+  reason: string | null;
+  wake_available: boolean;
+  checking: boolean;
+};
+
 export type SnapshotRest = {
   git_worktrees_loading?: boolean;
   navigator?: {
@@ -1445,6 +1479,7 @@ export type SnapshotRest = {
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
+    sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
     /** Each provider's weekly window, typed by the contract (`providerUsage`). */
@@ -1464,7 +1499,7 @@ export type SnapshotRest = {
     operator_focus?: { client_id: string; sequence: number }[];
   };
   pane_layouts?: PaneLayout[];
-  terminal?: { pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
+  terminal?: { headers?: Record<string, PaneHeader>; pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
     device_rail_visible?: boolean;
@@ -1480,6 +1515,7 @@ export type SnapshotRest = {
     collapsed_workspace_ids?: string[];
     /** Checkouts whose agent rows the Projects list opened; absence is closed, where line two names the agents. */
     expanded_checkout_ids?: string[];
+    session_collapsed_checkout_ids?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;

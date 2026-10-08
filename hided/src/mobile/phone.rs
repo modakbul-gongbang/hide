@@ -5,7 +5,8 @@
 //! After that the phone may only: open one agent's detail, choose its
 //! conversation or its terminal, ask for older messages or more rows, close
 //! it, send that pane a reply or one key, open the start sheet and start an
-//! agent from it, and register or report its push subscription. Anything else is refused and recorded.
+//! agent from it, wake or inspect a listed sleeping conversation, and register
+//! or report its push subscription. Anything else is refused and recorded.
 //! It never receives a file, a path, a setting or the core's snapshot; the one
 //! exception is the interface language, which rides each `agents` frame so the
 //! phone speaks the language the operator chose.
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
+use herdr_core::agent_state::phone::{DormantPhase, SleepId};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -612,6 +614,9 @@ async fn handle(
             None
         }
         "input" => Some(input(mobile, phone_id, message, projection).await),
+        "wake_sleeping_session" | "check_sleeping_session" => {
+            Some(sleeping_session(mobile, phone_id, message, projection).await)
+        }
         "start_sheet" => {
             let Some(shown) = message.get("open").and_then(Value::as_bool) else {
                 refusal_logged("scope.refused", Some(phone_id), "start_sheet");
@@ -684,6 +689,78 @@ async fn handle(
                 json!({"type": "refused_request", "request": other.chars().take(64).collect::<String>(), "reason": "not_allowed"}),
             )
         }
+    }
+}
+
+/// The phone supplies a stable intent, never a pane, path or arbitrary event.
+/// The core repeats the current-generation and exact-record checks at effect.
+async fn sleeping_session(
+    mobile: &Arc<Mobile>,
+    phone_id: &str,
+    message: &Value,
+    projection: &Projection,
+) -> Value {
+    let answer = |ok: bool, reason: Option<&str>| {
+        json!({
+            "type": "sleep_result", "request_id": message.get("request_id"),
+            "sleep_id": message.get("sleep_id"), "ok": ok, "reason": reason,
+        })
+    };
+    let Some(_) = request_id_of(message) else {
+        return answer(false, Some("invalid_request"));
+    };
+    let Some((id, event)) = sleep_action(message, projection, mobile.node().as_str()) else {
+        refusal_logged("scope.refused", Some(phone_id), "sleep_not_available");
+        return answer(false, Some("unavailable"));
+    };
+    if mobile.still_admitted(phone_id).is_err() {
+        return answer(false, Some("unavailable"));
+    }
+    let bytes = json!({"schema_version": herdr_core::SCHEMA_VERSION, "kind": event, "payload": {"sleep_id": id}})
+        .to_string()
+        .into_bytes();
+    let (mobile, phone_id) = (Arc::clone(mobile), phone_id.to_owned());
+    let dispatched = tokio::task::spawn_blocking(move || {
+        mobile.still_admitted(&phone_id).map_err(str::to_owned)?;
+        mobile.config.core.dispatch(bytes)
+    })
+    .await;
+    match dispatched {
+        Ok(Ok(())) => answer(true, None),
+        _ => answer(false, Some("unavailable")),
+    }
+}
+
+fn sleep_action<'a>(
+    message: &'a Value,
+    projection: &Projection,
+    node: &str,
+) -> Option<(SleepId, &'a str)> {
+    // Reject hidden address/lineage overrides instead of silently dropping them.
+    if !message
+        .as_object()?
+        .keys()
+        .all(|key| matches!(key.as_str(), "type" | "sleep_id" | "request_id"))
+    {
+        return None;
+    }
+    let id = serde_json::from_value::<SleepId>(message.get("sleep_id")?.clone()).ok()?;
+    let row = projection
+        .sleeping(&id)
+        .filter(|row| row.device_id == node)?;
+    let event = message.get("type")?.as_str()?;
+    match event {
+        "wake_sleeping_session" if row.wake_available => Some((id, event)),
+        "check_sleeping_session"
+            if !row.checking
+                && matches!(
+                    row.phase,
+                    DormantPhase::CloseUnknown | DormantPhase::WakeUnknown
+                ) =>
+        {
+            Some((id, event))
+        }
+        _ => None,
     }
 }
 
@@ -782,6 +859,37 @@ async fn input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phone_can_act_only_on_a_current_local_sleep_intent() {
+        let mut row = json!({
+            "sleep_id": "sleep-a-1", "node_id": "local", "kind": "pi",
+            "identity_label": "Review parser", "group": "seen", "phase": "sleeping",
+            "since_unix_ms": 1, "wake_available": true, "checking": false, "reason": null,
+        });
+        let projection = |row: &Value| {
+            super::super::projection::project(
+                &json!({"navigator": {"agents": [], "sleeping_sessions": [row]}}),
+                "local",
+            )
+        };
+        let mut message = json!({"type": "wake_sleeping_session", "sleep_id": "sleep-a-1", "request_id": "request-1"});
+        assert!(sleep_action(&message, &projection(&row), "local").is_some());
+        assert!(sleep_action(&message, &projection(&row), "other").is_none());
+        message["pane_id"] = json!("retired-pane");
+        assert!(sleep_action(&message, &projection(&row), "local").is_none());
+        message.as_object_mut().unwrap().remove("pane_id");
+        message["sleep_id"] = json!("sleep-a-2");
+        assert!(sleep_action(&message, &projection(&row), "local").is_none());
+        message["sleep_id"] = json!("sleep-a-1");
+        row["wake_available"] = json!(false);
+        row["phase"] = json!("wake_unknown");
+        assert!(sleep_action(&message, &projection(&row), "local").is_none());
+        message["type"] = json!("check_sleeping_session");
+        assert!(sleep_action(&message, &projection(&row), "local").is_some());
+        row["checking"] = json!(true);
+        assert!(sleep_action(&message, &projection(&row), "local").is_none());
+    }
 
     #[test]
     fn the_agents_frame_carries_the_interface_language() {

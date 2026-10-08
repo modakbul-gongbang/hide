@@ -2312,6 +2312,10 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        self.snapshot
+            .ui_state
+            .session_open_folds
+            .retain(|key| key != workspace_id);
         // The project's checkouts leave the recent list with it; their ids
         // are read before the catalog drops the rows that name them. A
         // device that is not connected has no rows to read, so the
@@ -3033,7 +3037,7 @@ impl Runtime {
         self.set_task_agent_launch(
             id,
             prompt,
-            agent_choice::agent_arguments(model.as_deref(), &[]),
+            agent_choice::agent_arguments(payload.agent_kind.as_deref(), model.as_deref(), &[]),
         );
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.device_id = device.clone();
@@ -3377,7 +3381,11 @@ impl Runtime {
         }
         self.remember_agent_choice(agent_kind.as_deref(), model.as_deref());
         let mut arguments = resume.unwrap_or_default();
-        arguments.extend(agent_choice::agent_arguments(model.as_deref(), &[]));
+        arguments.extend(agent_choice::agent_arguments(
+            agent_kind.as_deref(),
+            model.as_deref(),
+            &[],
+        ));
         self.set_task_agent_launch(id, prompt, arguments);
         let request = live::CheckoutTabRequest {
             id,

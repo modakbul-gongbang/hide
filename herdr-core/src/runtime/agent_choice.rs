@@ -44,18 +44,28 @@ pub(crate) fn chosen_model(
 }
 
 /// The agent CLI's own arguments for a start: the model, and each folder a
-/// Home agent may write through its links (D-08). Claude Code and Codex both
-/// take `--model <id>` and a repeated `--add-dir <dir>`; each folder goes as
-/// its own flag so a variadic parser never reads the next flag as a folder.
-pub(crate) fn agent_arguments(model: Option<&str>, add_dirs: &[String]) -> Vec<String> {
+/// Home agent may write through its links (D-08). Every supported start
+/// takes `--model <id>`; extra roots are passed only to a launch dialect
+/// that accepts them, independently of the checkout cwd.
+pub(crate) fn agent_arguments(
+    kind: Option<&str>,
+    model: Option<&str>,
+    add_dirs: &[String],
+) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(model) = model {
         args.push("--model".to_owned());
         args.push(model.to_owned());
     }
-    for dir in add_dirs {
-        args.push("--add-dir".to_owned());
-        args.push(dir.clone());
+    if kind
+        .and_then(hide_agent_adapter::adapter)
+        .and_then(|row| row.start)
+        .is_some_and(|dialect| dialect.accepts_extra_directories())
+    {
+        for dir in add_dirs {
+            args.push("--add-dir".to_owned());
+            args.push(dir.clone());
+        }
     }
     args
 }

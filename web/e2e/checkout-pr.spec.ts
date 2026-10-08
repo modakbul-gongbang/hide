@@ -111,7 +111,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
 
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^repo/ }) });
     const primary = project.locator("[data-checkout-row]", { hasText: /^main/ });
@@ -305,7 +304,6 @@ test("a checkout's card names the checkout by its real path", { tag: "@platform"
     daemon = await startHided(herdr, "checkout-path");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
 
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^repo/ }) });
     const plain = page.locator('[data-checkout-card="plain"]');

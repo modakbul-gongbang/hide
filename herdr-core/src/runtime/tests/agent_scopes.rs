@@ -594,6 +594,7 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
             url: pr.url.clone(),
             badge: pr.badge,
             checks: pr.checks,
+            review: pr.review,
             head_branch: pr.head_branch.clone(),
             closing_issues: pr.closing_issues.clone(),
             live: true,
@@ -781,6 +782,7 @@ fn request_work_keeps_current_chips_and_expanded_history_in_source_order() {
         url: format!("https://github.com/acme/app/pull/{n}"),
         badge: crate::model::PullRequestBadge::Open,
         checks: PullRequestChecks::None,
+        review: None,
         head_branch: "feature".into(),
         closing_issues: issues
             .iter()

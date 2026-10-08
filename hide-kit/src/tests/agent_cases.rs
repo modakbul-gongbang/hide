@@ -40,26 +40,6 @@ fn install(fixture: &Fixture, program: &str, folder: &str) {
     set_up(fixture, folder);
 }
 
-/// A program the kit will run for its version. A script written a moment ago
-/// cannot be executed while another test thread's fork still holds the file
-/// open for writing (ETXTBSY), so this waits until it can be.
-fn version_program(path: &Path, body: &str) {
-    executable(path, body);
-    for _ in 0..20_000 {
-        let started = std::process::Command::new(path)
-            .arg("--executable-probe")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        match started {
-            Err(error) if error.raw_os_error() == Some(26) => std::thread::yield_now(),
-            _ => return,
-        }
-    }
-    panic!("{} stayed busy", path.display());
-}
-
 fn record(fixture: &Fixture) -> Value {
     serde_json::from_str(
         &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
@@ -587,12 +567,9 @@ fn a_report_from_a_build_that_predates_chosen_reads_as_no_choice() {
 /// search as in every other test.
 fn grok_login_shell(fixture: &Fixture) -> PathBuf {
     let shell = fixture.root.join("bin/login-shell");
-    version_program(
+    program(
         &shell,
-        &format!(
-            "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho x >> '{}'\necho 'Last login: today'\nPATH=\"$HOME/.grok/bin\"\nexport PATH\neval \"$2\"\n",
-            fixture.root.join("shell-asked").display()
-        ),
+        "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho x >> \"${HOME%/*}/shell-asked\"\necho 'Last login: today'\nPATH=\"$HOME/.grok/bin\"\nexport PATH\neval \"$2\"\n",
     );
     shell
 }
@@ -768,14 +745,16 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRD and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18).
+    // The session-reader common contract B1/B6 enables starts for the five
+    // partial agents without enabling their future reader/sleep/fork features.
     let expected: [(&str, &[Feature]); 7] = [
         ("claude-code", &Feature::ALL),
         ("codex", &Feature::ALL),
-        ("grok", &[Skill, HerdrIntegration]),
-        ("opencode", &[Skill, HerdrIntegration]),
-        ("pi", &[Skill, HerdrIntegration]),
-        ("omp", &[Skill, HerdrIntegration]),
-        ("cursor", &[Skill, Guidance, HerdrIntegration]),
+        ("grok", &[Skill, HerdrIntegration, Start]),
+        ("opencode", &[Skill, HerdrIntegration, Start]),
+        ("pi", &[Skill, HerdrIntegration, Start]),
+        ("omp", &[Skill, HerdrIntegration, Start]),
+        ("cursor", &[Skill, Guidance, HerdrIntegration, Start]),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),

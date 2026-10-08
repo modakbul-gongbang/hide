@@ -1038,6 +1038,15 @@ mod tests {
 
     struct ActivityPeer(std::sync::atomic::AtomicU64);
     impl crate::node_access::NodeLink for ActivityPeer {
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+                std::sync::LazyLock::new(|| {
+                    serde_json::from_str(r#"[{"provider":"codex","features":["activity"]}]"#)
+                        .unwrap()
+                });
+            Some(&READERS)
+        }
+
         fn call(
             &self,
             call: hide_node_link::protocol::Call,

@@ -32,8 +32,35 @@ pub fn label_reference_token(provider: &str, kind: &str, value: &str) -> Option<
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfirmedLabelSession {
     pub owner: String,
+    /// Native metadata, never the reported path. Older helpers omit it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_native_id"
+    )]
+    pub native_session_id: Option<String>,
     pub incarnation: String,
     pub bytes: u64,
+}
+
+fn deserialize_native_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    let id = Option::<String>::deserialize(deserializer)?;
+    if id.as_deref().is_some_and(|id| !valid_native_id(id)) {
+        return Err(serde::de::Error::custom("label_session_id_invalid"));
+    }
+    Ok(id)
+}
+
+pub(crate) fn valid_native_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= crate::turns::NATIVE_ID_LIMIT_BYTES
+        && id != "."
+        && id != ".."
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 /// Read at most one incremental-read budget of metadata from a regular file.
@@ -87,6 +114,9 @@ pub fn confirm_label_session(
         }
     }
     let id = native_id.ok_or_else(|| anyhow!("label_session_metadata_unconfirmed"))?;
+    if !valid_native_id(&id) {
+        return Err(anyhow!("label_session_id_invalid"));
+    }
     if reported_id.is_some_and(|reported| reported != id) {
         return Err(anyhow!("label_session_id_mismatch"));
     }
@@ -95,6 +125,7 @@ pub fn confirm_label_session(
     let physical = FileIdentity::from_metadata(&metadata);
     Ok(ConfirmedLabelSession {
         owner,
+        native_session_id: Some(id),
         incarnation: format!("{}:{}", physical.first, physical.second),
         bytes: metadata.len(),
     })
@@ -124,6 +155,7 @@ mod tests {
             let id = confirm_label_session(agent, &path, Some("native-a")).unwrap();
             let by_path = confirm_label_session(agent, &path, None).unwrap();
             assert_eq!(id.owner, by_path.owner);
+            assert_eq!(by_path.native_session_id.as_deref(), Some("native-a"));
             assert_eq!(id.owner.len(), 67);
             assert!(!id.owner.contains("native-a"));
             assert_eq!(
@@ -200,5 +232,22 @@ mod tests {
                 .to_string(),
             "label_session_not_regular"
         );
+    }
+
+    #[test]
+    fn previous_answers_omit_native_id_and_malformed_native_ids_are_refused() {
+        let old: ConfirmedLabelSession = serde_json::from_value(serde_json::json!({
+            "owner":"v1:old", "incarnation":"1:2", "bytes":10
+        }))
+        .unwrap();
+        assert!(old.native_session_id.is_none());
+        for id in ["", "..", "outside/session", "bad\nvalue", &"a".repeat(257)] {
+            assert!(
+                serde_json::from_value::<ConfirmedLabelSession>(serde_json::json!({
+                    "owner":"v1:old", "native_session_id":id, "incarnation":"1:2", "bytes":10
+                }))
+                .is_err()
+            );
+        }
     }
 }

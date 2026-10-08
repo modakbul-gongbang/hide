@@ -74,6 +74,44 @@ mod tests {
     }
 
     #[test]
+    fn sleeping_conversations_have_no_pane_or_native_reference_on_the_phone() {
+        let input = json!({"navigator": {"agents": [], "sleeping_sessions": [{
+            "sleep_id": "sleep-a-1", "node_id": "local", "kind": "pi",
+            "identity_label": "Review parser", "group": "seen", "phase": "sleeping",
+            "since_unix_ms": 12, "wake_available": true, "checking": false, "reason": null,
+            "checkout_path": "/private/never-send", "native_session_id": "native-secret",
+            "old_pane_id": "retired-pane", "label_owner": "private-proof",
+        }, {
+            "sleep_id": "sleep-a-2", "node_id": "another-device", "kind": "pi",
+            "identity_label": "Other device", "group": "seen", "phase": "sleeping",
+            "since_unix_ms": 12, "wake_available": true, "checking": false, "reason": null,
+        }]}});
+        let projection = project(&input, "local");
+        assert_eq!(projection.groups.len(), 1);
+        assert_eq!(projection.groups[0].group, "seen");
+        assert_eq!(projection.groups[0].count, 1);
+        assert_eq!(projection.agents().count(), 0);
+        assert_eq!(
+            projection.groups[0].sleeping_sessions[0].title,
+            "Review parser"
+        );
+        let sent = serde_json::to_string(&projection).unwrap();
+        for private in [
+            "path",
+            "native",
+            "retired-pane",
+            "private-proof",
+            "pane_id",
+            "another-device",
+        ] {
+            assert!(
+                !sent.contains(private),
+                "private field reached phone: {private}"
+            );
+        }
+    }
+
+    #[test]
     fn groups_come_in_the_sidebar_order_with_devices_included() {
         let projection = project(&rest(), "local");
         let order: Vec<_> = projection

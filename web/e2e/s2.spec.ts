@@ -109,7 +109,6 @@ async function startFlow(page: Page): Promise<Flow> {
 
     // Two checkouts in the Projects sidebar. Which one the core focuses at
     // boot is its own choice, so the flow starts by choosing the first.
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await expect(page.locator("[data-checkout]")).toHaveCount(2);
     // The core names projects by directory, not by Herdr's label or id.
     const firstRow = page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first();
@@ -496,7 +495,7 @@ test("of three panes the focused one is outlined, and zoom hides the other two b
     await page.locator("[data-pane-zoom]").click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "false");
     await expect.poll(() => sent.get("toggle_zoom")).toBe(2);
-    await expect(page.locator("[data-pane-zoom]")).toHaveCount(0);
+    await expect(page.locator('[data-pane-zoom]:not([data-pane-zoom="false"])')).toHaveCount(0);
   } finally {
     flow.stop();
   }
@@ -571,7 +570,7 @@ test("the shortcut sheet marks the moved chords and ⌘F reaches the agent's own
     // The two numbered families each fold into one row and have no browser chord;
     // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
     await expect(page.locator("[data-shortcut]")).toHaveCount(44);
-    for (const title of ["Overview", "Projects sidebar", "Agents sidebar"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
+    for (const title of ["Overview", "Focus sidebar", "Agents overview"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
     // #349's Agents chord also moves on PC: Chrome reserves Alt+Shift+A.
     // Assert the exact moved commands, including the unchanged platform exceptions.
     const movedCommands = [

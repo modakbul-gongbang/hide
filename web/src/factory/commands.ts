@@ -13,12 +13,16 @@ export function taskRef(factory: string, task: string): string {
 
 export type FactoryCommand =
   | { verb: "init"; project: string; verification: VerificationChoice | null; merge_mode: MergeMode | null; confirm: boolean }
-  | { verb: "answer"; task: string; question: string | null; choice: string | null; text: string | null }
+  | { verb: "answer"; task: string; question: string | null; choice: string | null; text: string | null; change?: boolean }
   | { verb: "priority"; task: string; priority: number }
   | { verb: "dep"; task: string; on: string; remove: true }
   | { verb: "pause"; task: string }
   | { verb: "resume"; task: string }
   | { verb: "retry"; task: string }
+  | { verb: "pause_factory"; project: string | null }
+  | { verb: "resume_factory"; project: string | null }
+  | { verb: "ack_notices"; project: string | null }
+  | { verb: "worker"; task: string; worker: number | null }
   | { verb: "merge"; task: string }
   | { verb: "request_changes"; task: string; comment: string }
   | { verb: "cancel"; task: string }

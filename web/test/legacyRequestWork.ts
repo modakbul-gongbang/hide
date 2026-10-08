@@ -1,6 +1,6 @@
 // Frozen request work selection from main 9f144877. Fixture data only.
 import type { AgentPullRequest, Task, Workspace } from "../src/snapshot";
-import type { RequestRow } from "../src/requestList";
+import type { RequestRow } from "./legacyRequestList";
 import type { LensAgent } from "../src/overviewLens";
 import type { RowWork } from "../src/agentScope";
 /** The row's chip and how many other live pull requests its `+N` counts; the core put the chip first. */

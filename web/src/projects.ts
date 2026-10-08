@@ -79,7 +79,7 @@ export function projectRows(
 }
 
 export function activeCheckouts(workspace: Workspace): Checkout[] {
-  const inactive = new Set(workspace.inactive_checkouts.checkout_ids);
+  const inactive = new Set([...workspace.inactive_checkouts.checkout_ids, ...(workspace.session_folds?.empty ?? []), ...(workspace.session_folds?.cleanup ?? [])]);
   return workspace.checkouts.filter((row) => !inactive.has(row.id));
 }
 

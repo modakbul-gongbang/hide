@@ -14,7 +14,7 @@ import { useFactoryRequest } from "./request";
 import { boardColumns, cancelledCards } from "./view";
 
 function cardInboxItem(inbox: InboxItem[], factory: string, card: CardView) {
-  const preferred = card.state === "merge_waiting" ? "merge" : card.state === "stopped" ? "stopped" : null;
+  const preferred = card.state === "merge_waiting" ? "merge" : card.state === "stopped" ? "stopped" : card.state === "paused" ? "paused" : null;
   let fallback: InboxItem | undefined;
   for (const item of inbox) {
     if (item.factory !== factory || item.task !== card.task || item.kind === "notice") continue;

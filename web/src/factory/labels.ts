@@ -4,7 +4,7 @@
 // writing fails to compile here before it reaches a screen unlabelled.
 
 import type { MessageKey } from "../i18n/catalogs";
-import type { AttemptOutcome, AttemptStage, CardView, Column, DiscoveryClass, EnvHold, Gate, InboxGroup, InboxItem, QuestionKind, QuestionOrigin, ResultCode, StopReason, TaskState, WaitingFor } from "./model";
+import type { AttemptOutcome, AttemptStage, CardView, Column, DecisionKind, DiagnosisSource, DiscoveryClass, EnvHold, Gate, InboxGroup, InboxItem, Notice, ObserverMode, PauseReason, QuestionOrigin, ResultCode, StopReason, TaskState, WaitingFor } from "./model";
 
 export const STATE_LABEL: Record<TaskState, MessageKey> = {
   drafting: "factory.state.drafting",
@@ -36,7 +36,7 @@ export const GROUP_LABEL: Record<InboxGroup, MessageKey> = {
   notice: "factory.group.notice",
 };
 
-export const KIND_LABEL: Record<QuestionKind | "merge" | "stopped", MessageKey> = {
+export const KIND_LABEL: Record<InboxItem["kind"], MessageKey> = {
   intake: "factory.kind.intake",
   split: "factory.kind.split",
   default: "factory.kind.default",
@@ -50,6 +50,7 @@ export const KIND_LABEL: Record<QuestionKind | "merge" | "stopped", MessageKey> 
   notice: "factory.kind.notice",
   merge: "factory.kind.merge",
   stopped: "factory.kind.stopped",
+  paused: "factory.kind.paused",
 };
 
 export const ORIGIN_LABEL: Record<QuestionOrigin, MessageKey> = {
@@ -94,6 +95,11 @@ export const ACTION_LABEL: Record<string, MessageKey> = {
   revive: "factory.action.revive",
 };
 
+/** An action's words; resuming a Task paused by a closed pane starts its worker again (D-26), so it reads 다시 시작. */
+export function actionKey(value: string, paused = false): MessageKey {
+  return paused && value === "resume" ? "factory.resume" : (ACTION_LABEL[value] ?? "factory.turn.send");
+}
+
 /** How a state reads at a glance: the person's turn in the warning tone, work in the working tone, finished work as done. */
 export type StateTone = "turn" | "working" | "done" | "quiet";
 
@@ -130,6 +136,7 @@ export const STOP_LABEL: Record<StopReason, MessageKey> = {
   environment_repeated: "factory.stop.environment_repeated",
   worker_start: "factory.stop.worker_start",
   publish_refused: "factory.stop.publish_refused",
+  worker_gone: "factory.stop.worker_gone",
 };
 
 export const GATE_LABEL: Record<Gate, MessageKey> = {
@@ -157,6 +164,57 @@ export const RESULT_LABEL: Record<ResultCode, MessageKey> = {
   acknowledge: "factory.result.acknowledge",
   merge: "factory.result.merge",
   restart_worker: "factory.result.restart_worker",
+  resume_worker: "factory.result.resume_worker",
+};
+
+/** A notice's line; the engine's own words follow it. */
+export const NOTICE_LABEL: Record<Notice, MessageKey> = {
+  ai_answered: "factory.notice.ai_answered",
+  ai_card_fixed: "factory.notice.ai_card_fixed",
+  ai_new_task: "factory.notice.ai_new_task",
+  ai_risk_merge: "factory.notice.ai_risk_merge",
+  daily_limit: "factory.notice.daily_limit",
+};
+
+/** The Observer's five kinds of decision request (D-14). */
+export const DECISION_KIND_LABEL: Record<DecisionKind, MessageKey> = {
+  A: "factory.decision.A",
+  B: "factory.decision.B",
+  C: "factory.decision.C",
+  D: "factory.decision.D",
+  E: "factory.decision.E",
+};
+
+/** What Factory AI read to diagnose a quiet worker, said after its diagnosis (D-37). */
+export const DIAGNOSIS_SOURCE_LABEL: Record<DiagnosisSource, MessageKey> = {
+  user_turn: "factory.diagnosisSource.user_turn",
+  last_answer: "factory.diagnosisSource.last_answer",
+  screen: "factory.diagnosisSource.screen",
+};
+
+export const PAUSE_REASON_LABEL: Record<PauseReason, MessageKey> = {
+  person: "factory.pauseReason.person",
+  pane_closed: "factory.pauseReason.pane_closed",
+};
+
+/** The three choices of who answers (D-03): 직접, 함께, 맡김. */
+export const MODE_LABEL: Record<ObserverMode, MessageKey> = {
+  manual: "factory.mode.manual",
+  assist: "factory.mode.assist",
+  autonomous: "factory.mode.autonomous",
+};
+
+export const MODE_LINE: Record<ObserverMode, MessageKey> = {
+  manual: "factory.mode.line.manual",
+  assist: "factory.mode.line.assist",
+  autonomous: "factory.mode.line.autonomous",
+};
+
+/** Why a decision the Observer sorted is still a person's, in the Factory's mode. */
+export const MODE_MINE: Record<ObserverMode, MessageKey> = {
+  manual: "factory.decision.mine.manual",
+  assist: "factory.decision.mine.assist",
+  autonomous: "factory.decision.mine.autonomous",
 };
 
 /**
@@ -167,6 +225,9 @@ export const RESULT_LABEL: Record<ResultCode, MessageKey> = {
  */
 export const REFUSAL_REASONS = [
   "action_not_allowed_in_state",
+  "agent_not_installed",
+  "agent_not_startable",
+  "already_answered",
   "answer_required",
   "attachment_failed",
   "auto_needs_verification",
@@ -182,6 +243,8 @@ export const REFUSAL_REASONS = [
   "dependency_cycle",
   "discovery_not_found",
   "factory_agent_unbound",
+  "factory_ai_required",
+  "factory_ai_unavailable",
   "factory_ambiguous",
   "factory_closed",
   "factory_has_running_tasks",
@@ -203,6 +266,7 @@ export const REFUSAL_REASONS = [
   "merge_failed",
   "new_task_limit",
   "no_open_question",
+  "out_of_range",
   "project_required",
   "proposal_depth_exceeded",
   "question_required",
@@ -214,14 +278,20 @@ export const REFUSAL_REASONS = [
   "suggestion_required",
   "task_ambiguous",
   "task_cancelled",
+  "task_finished",
   "task_not_found",
   "text_required",
   "verify_command_required",
+  "worker_description_too_long",
+  "worker_out_of_range",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
 export const REFUSAL_LABEL: Record<RefusalReason, MessageKey> = {
   action_not_allowed_in_state: "factory.refusal.action_not_allowed_in_state",
+  agent_not_installed: "factory.refusal.agent_not_installed",
+  agent_not_startable: "factory.refusal.agent_not_startable",
+  already_answered: "factory.refusal.already_answered",
   answer_required: "factory.refusal.answer_required",
   attachment_failed: "factory.refusal.attachment_failed",
   auto_needs_verification: "factory.refusal.auto_needs_verification",
@@ -237,6 +307,8 @@ export const REFUSAL_LABEL: Record<RefusalReason, MessageKey> = {
   dependency_cycle: "factory.refusal.dependency_cycle",
   discovery_not_found: "factory.refusal.discovery_not_found",
   factory_agent_unbound: "factory.refusal.factory_agent_unbound",
+  factory_ai_required: "factory.refusal.factory_ai_required",
+  factory_ai_unavailable: "factory.refusal.factory_ai_unavailable",
   factory_ambiguous: "factory.refusal.factory_ambiguous",
   factory_closed: "factory.refusal.factory_closed",
   factory_has_running_tasks: "factory.refusal.factory_has_running_tasks",
@@ -258,6 +330,7 @@ export const REFUSAL_LABEL: Record<RefusalReason, MessageKey> = {
   merge_failed: "factory.refusal.merge_failed",
   new_task_limit: "factory.refusal.new_task_limit",
   no_open_question: "factory.refusal.no_open_question",
+  out_of_range: "factory.refusal.out_of_range",
   project_required: "factory.refusal.project_required",
   proposal_depth_exceeded: "factory.refusal.proposal_depth_exceeded",
   question_required: "factory.refusal.question_required",
@@ -269,9 +342,12 @@ export const REFUSAL_LABEL: Record<RefusalReason, MessageKey> = {
   suggestion_required: "factory.refusal.suggestion_required",
   task_ambiguous: "factory.refusal.task_ambiguous",
   task_cancelled: "factory.refusal.task_cancelled",
+  task_finished: "factory.refusal.task_finished",
   task_not_found: "factory.refusal.task_not_found",
   text_required: "factory.refusal.text_required",
   verify_command_required: "factory.refusal.verify_command_required",
+  worker_description_too_long: "factory.refusal.worker_description_too_long",
+  worker_out_of_range: "factory.refusal.worker_out_of_range",
 };
 
 type Translate = (key: MessageKey, options?: Record<string, unknown>) => string;
@@ -293,8 +369,27 @@ export function waitingText(card: CardView, t: Translate): string | null {
 /** Why an item is the person's (B9): a question's own words, or a merge's gates and a stop's reason from their codes. */
 export function itemWhy(item: InboxItem, t: Translate): string {
   if (item.group === "merge") return item.gates.length > 0 ? t("factory.turn.mergeGates", { gates: item.gates.map((gate) => t(GATE_LABEL[gate])).join(", ") }) : t("factory.turn.mergeWhy");
-  if (item.group === "stopped" && item.question === null) return t("factory.turn.stopWhy", { reason: item.stop ? t(STOP_LABEL[item.stop]) : t("factory.state.stopped") });
+  if (item.kind === "paused") return t("factory.turn.pausedWhy");
+  if (item.group === "stopped" && item.question === null) {
+    const stop = t("factory.turn.stopWhy", { reason: item.stop ? t(STOP_LABEL[item.stop]) : t("factory.state.stopped") });
+    // Factory AI's reading of a quiet worker, or what a vanished one did (D-23, D-25).
+    if (item.observer_reason) return `${stop} · ${t("factory.turn.diagnosis", { text: item.observer_reason })}`;
+    if (item.stop === "worker_gone") return `${stop} · ${t("factory.turn.goneWhy")}`;
+    return stop;
+  }
   return item.text;
+}
+
+/** What a notice says: its code's line with the engine's words; the daily cap is said whole. */
+export function noticeText(item: InboxItem, t: Translate, limit: number | null = null): string {
+  if (item.notice === "daily_limit") return limit === null ? t("factory.notice.daily_limit") : t("factory.notice.dailyLimitCount", { limit });
+  return item.notice ? t(NOTICE_LABEL[item.notice], { text: item.text }) : item.text;
+}
+
+/** Why a request the Observer sorted is the person's: its kind, and who decides it in this mode (D-14, D-21). */
+export function decisionWhy(kind: DecisionKind, mode: ObserverMode | null, t: Translate): string {
+  const who = kind === "D" ? t("factory.decision.permission") : mode ? t(MODE_MINE[mode]) : null;
+  return who ? `${t(DECISION_KIND_LABEL[kind])} · ${who}` : t(DECISION_KIND_LABEL[kind]);
 }
 
 /** What sending the suggestion does, and the Tasks it frees (B9). */

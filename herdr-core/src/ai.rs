@@ -610,6 +610,7 @@ pub(crate) fn suggest_worktree_name(
         }),
         deadline: Duration::from_secs(30),
         schema_version: "1".into(),
+        pick: None,
     };
     let router = memory_router(node, settings);
     let answer = router

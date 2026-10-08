@@ -1927,6 +1927,7 @@ fn established_with_terminals() -> hide_node_link::device::Established {
             machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
                 reason: "test".to_owned(),
             },
+            reader_features: None,
         },
         installed: false,
         helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),

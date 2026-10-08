@@ -102,7 +102,7 @@ impl AiBackend for GeminiCliBackend {
         let run = runner::run(
             &Spec {
                 binary: &binary,
-                args: &Self::print_arguments(&self.config.model),
+                args: &Self::print_arguments(request.model(&self.config.model)),
                 cwd: system.dir(),
                 stdin: Some(&request.input),
                 environment: Environment::Inherit,

@@ -354,6 +354,7 @@ impl Runtime {
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);
         changed |= self.tick_device_hosts(now_unix_ms);
+        changed |= self.tick_session_day(now_unix_ms);
         // Agents fall asleep and closes end on paths of their own; their
         // nodes hear of it here at the latest.
         changed |= self.sync_terminal_intents();
@@ -1022,7 +1023,7 @@ impl Runtime {
         })
     }
 
-    fn geometry_tab_busy(&self, scope_id: &str) -> bool {
+    pub(super) fn geometry_tab_busy(&self, scope_id: &str) -> bool {
         self.geometry_in_flight(scope_id)
             || self
                 .pane_operations

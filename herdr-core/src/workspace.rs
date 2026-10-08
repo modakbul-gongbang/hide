@@ -607,6 +607,7 @@ fn inspect_space(node: &NodeId, space: &SessionSpace, paths: &PathIndex) -> Vec<
                     pinned: false,
                     is_home: false,
                     inactive_checkouts: Default::default(),
+                    session_folds: Default::default(),
                     removal: Default::default(),
                     disk: Default::default(),
                     cleanup: None,
@@ -799,6 +800,12 @@ impl CountingNode {
 
 #[cfg(test)]
 impl NodeLink for CountingNode {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+            std::sync::LazyLock::new(hide_node_link::sessions::ReaderFeatures::implemented);
+        Some(&READERS)
+    }
+
     fn call(
         &self,
         call: Call,
@@ -914,6 +921,7 @@ fn inspect(
         is_home: false,
         checkouts,
         inactive_checkouts: Default::default(),
+        session_folds: Default::default(),
         removal: Default::default(),
         disk: Default::default(),
         cleanup: None,
@@ -1483,6 +1491,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,
@@ -1546,6 +1555,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,

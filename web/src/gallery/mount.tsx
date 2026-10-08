@@ -8,11 +8,16 @@ import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
 import { AgentOnboardingScene } from "./AgentOnboardingScene";
 import { FactoryScene, factorySceneParams } from "./FactoryScene";
+import { SessionWorkflowScene } from "./SessionWorkflowScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
   const scene = params.get("scene");
   if (scene !== null) {
+    if (scene === "session-panel" || scene === "pane-header") {
+      root.render(<StrictMode><SessionWorkflowScene scene={scene} {...sceneParams(params)} /></StrictMode>);
+      return;
+    }
     if (scene === "area-focus") {
       root.render(<StrictMode><AreaFocusScene theme={params.get("theme") === "light" ? "light" : "dark"} /></StrictMode>);
       return;

@@ -342,6 +342,87 @@ impl Runtime {
         let pane = self.terminal_pane_snapshot(pane_id);
         self.snapshot.terminal.panes.push(pane);
     }
+    pub(super) fn refresh_pane_headers(&mut self) -> bool {
+        #[cfg(test)]
+        {
+            self.pane_header_derivations += 1;
+        }
+        let mut headers = BTreeMap::new();
+        let devices = &self.snapshot.navigator.devices;
+        let local = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .map(|workspace| (workspace, None));
+        let remote = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .filter_map(|remote| remote.session.as_ref().map(|session| (remote, session)))
+            .flat_map(|(remote, session)| {
+                session.workspaces.iter().map(move |workspace| {
+                    (
+                        workspace,
+                        (remote.state != "connected").then_some(
+                            devices
+                                .iter()
+                                .find(|device| device.id == remote.target_id)
+                                .map_or(remote.target_id.as_str(), |device| device.label.as_str()),
+                        ),
+                    )
+                })
+            });
+        let agents: HashMap<_, _> = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.agents),
+            )
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect();
+        let transports: HashMap<_, _> = self
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .map(|pane| (pane.pane_id.as_str(), pane))
+            .collect();
+        for (workspace, offline) in local.chain(remote) {
+            for pane in workspace
+                .checkouts
+                .iter()
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+            {
+                headers.insert(
+                    pane.id.clone(),
+                    crate::agent_state::header::of(
+                        pane,
+                        agents.get(pane.id.as_str()).copied(),
+                        transports.get(pane.id.as_str()).copied(),
+                        workspace,
+                        offline,
+                    ),
+                );
+            }
+        }
+        if self.snapshot.terminal.headers == headers {
+            false
+        } else {
+            self.snapshot.terminal.headers = headers;
+            true
+        }
+    }
+
     pub(super) fn terminal_pane_snapshot(&self, pane_id: &str) -> TerminalPaneSnapshot {
         let idle = PaneTerminalState {
             state: "idle".to_owned(),
@@ -371,6 +452,7 @@ impl Runtime {
     }
     pub(super) fn sync_transport_projection(&mut self, pane_id: &str) {
         let projected = self.terminal_pane_snapshot(pane_id);
+        let mut header_changed = false;
         if let Some(pane) = self
             .snapshot
             .terminal
@@ -378,14 +460,23 @@ impl Runtime {
             .iter_mut()
             .find(|pane| pane.pane_id == pane_id)
         {
+            header_changed = pane.transport_state != projected.transport_state
+                || pane.scroll_held_elsewhere != projected.scroll_held_elsewhere;
             *pane = TerminalPaneSnapshot {
                 closed: pane.closed,
                 exit_code: pane.exit_code,
                 ..projected
             };
         }
+        if header_changed {
+            self.refresh_pane_headers();
+        }
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
+        let previous = (
+            self.snapshot.terminal.closed,
+            self.snapshot.terminal.exit_code,
+        );
         let Some(pane_id) = self.snapshot.terminal.pane_id.as_deref() else {
             self.snapshot.terminal.closed = false;
             self.snapshot.terminal.exit_code = None;
@@ -400,6 +491,14 @@ impl Runtime {
         {
             self.snapshot.terminal.closed = pane.closed;
             self.snapshot.terminal.exit_code = pane.exit_code;
+        }
+        if previous
+            != (
+                self.snapshot.terminal.closed,
+                self.snapshot.terminal.exit_code,
+            )
+        {
+            self.refresh_pane_headers();
         }
     }
     /// Applies a background pane-control result to the owner-thread snapshot.

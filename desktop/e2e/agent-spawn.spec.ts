@@ -9,7 +9,7 @@ import { HIDE_CLI, isolate, launchShell, nodeOf, screenshot, test } from "./fixt
 import { captureNativeWindow } from "./native-window";
 import { installSpawnProvider, nativeSpawnCommand, waitForSpawnShell, type SpawnedAgent } from "./agent-spawn-fixture";
 
-type NativeAgent = { pane_id: string; terminal_id: string; agent_session?: { value: string }; tokens: Record<string, unknown> };
+type NativeAgent = { pane_id: string; terminal_id: string; agent_session?: { value: string }; tokens?: Record<string, unknown> };
 
 test("a spawned child appears in the native delegation tree", async () => {
   const herdr = await startHerdr({ agents: false });
@@ -55,22 +55,26 @@ test("a spawned child appears in the native delegation tree", async () => {
       await expect(keyboard).toBeFocused();
       expect(herdrHasFocus(herdr, parent)).toBe(true);
       expect(spawned.watch).toBeTruthy();
-      expect(agents().find((agent) => agent.pane_id === spawned.pane)?.tokens.parent_pane).toBe(parent);
+      expect(agents().find((agent) => agent.pane_id === spawned.pane)?.tokens?.parent_pane).toBe(parent);
       children.push(spawned);
     }
     const child = children[1]!;
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
+    // Tokens Herdr drops (a live handoff drops them all) are written again from
+    // the ledger on this machine too, whose records carry its node id (issue 772).
+    execFileSync(herdr.bin, ["pane", "report-metadata", child.pane, "--source", "hide", ...["parent_pane", "parent_session", "child_session"].flatMap((key) => ["--clear-token", key])], { env: herdr.env, timeout: 20_000 });
+    await expect.poll(() => agents().find((agent) => agent.pane_id === child.pane)?.tokens?.parent_pane).toBe(parent);
+    const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-delegated", "false");
-    const toggle = parentRow.locator(`[data-agent-tree-toggle="${parent}"]`);
-    await expect(toggle).toBeVisible();
-    if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
-    const childRow = page.locator(`[data-agent-list] [data-pane="${child.pane}"]`);
-    await expect(childRow).toHaveAttribute("data-delegated", "true");
-    await expect(childRow).toHaveAttribute("data-depth", "1");
+    const badge = parentRow.locator("[data-descendant-badge]");
+    await expect(badge).toBeVisible();
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${child.pane}"]`)).toHaveCount(0);
+    await badge.click();
+    const childRow = page.locator(`[data-agent-child="${child.pane}"]`);
     await expect(childRow.locator('[data-branch-chip="child-task"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(badge).toBeFocused();
     await parentRow.locator(`[data-agent-open="${parent}"]`).click();
-    await expect(page.locator(`[data-pane-children="${parent}"] [data-child-chip="${child.pane}"]`)).toBeVisible();
+    await expect(page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`)).toBeVisible();
     await screenshot(page, "agent-spawn-delegation");
     await captureNativeWindow(app, "agent-spawn-delegation-native", { parent, children, state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" }).trim(), provider: "synthetic native CLI" });
   } catch (error) {

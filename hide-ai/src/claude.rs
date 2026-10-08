@@ -45,6 +45,10 @@ use crate::{
 /// thinking took 56 to 81 s. Measured 2026-10-02 on claude 2.1.287.
 pub const DEFAULT_MODEL: &str = "sonnet";
 
+/// The reasoning efforts `--effort` takes (claude 2.1.294 `--help`). A picked
+/// effort is the caller asking for thinking, so it replaces [`THINKING_OFF`].
+pub const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
 /// The variable and value that turn thinking off for a model turn.
 ///
 /// Print mode thinks by default, and a background answer is a short JSON
@@ -148,8 +152,13 @@ impl ClaudeCliBackend {
     /// The exact argument vector one request is started with. The prompt body
     /// is not here: it goes on stdin, so no transcript reaches an argument
     /// list, a process listing, or the argv length limit.
-    pub fn print_arguments(model: &str, system: &str, output_schema: &Value) -> Vec<String> {
-        vec![
+    pub fn print_arguments(
+        model: &str,
+        effort: Option<&str>,
+        system: &str,
+        output_schema: &Value,
+    ) -> Vec<String> {
+        let mut arguments = vec![
             "-p".to_owned(),
             "--model".to_owned(),
             model.to_owned(),
@@ -170,7 +179,11 @@ impl ClaudeCliBackend {
             output_schema.to_string(),
             "--output-format".to_owned(),
             "json".to_owned(),
-        ]
+        ];
+        if let Some(effort) = effort {
+            arguments.extend(["--effort".to_owned(), effort.to_owned()]);
+        }
+        arguments
     }
 
     /// The argument vector the availability probe is started with.
@@ -394,19 +407,26 @@ impl AiBackend for ClaudeCliBackend {
         let binary = self
             .resolved_binary()
             .ok_or_else(|| AiError::ProviderUnavailable("claude_not_installed".to_owned()))?;
+        let thinking_off = [(THINKING_OFF.0, THINKING_OFF.1.to_owned())];
         let run = runner::run(
             &Spec {
                 binary: &binary,
                 args: &Self::print_arguments(
-                    &self.config.model,
+                    request.model(&self.config.model),
+                    request.effort(),
                     &request.system,
                     &request.output_schema,
                 ),
                 cwd: &self.config.cwd,
                 stdin: Some(&request.input),
                 environment: Environment::Inherit,
-                // Print mode thinks by default; see `THINKING_OFF`.
-                set: &[(THINKING_OFF.0, THINKING_OFF.1.to_owned())],
+                // Print mode thinks by default; see `THINKING_OFF`. A picked
+                // effort is a request for thinking, so it is left on.
+                set: if request.effort().is_some() {
+                    &[]
+                } else {
+                    &thinking_off
+                },
                 deadline: request.deadline,
             },
             cancel,
@@ -520,7 +540,7 @@ mod tests {
     /// assertion would catch.
     #[test]
     fn the_argument_vector_carries_the_three_flags_that_decide_correctness() {
-        let args = ClaudeCliBackend::print_arguments("haiku", "classify this", &schema());
+        let args = ClaudeCliBackend::print_arguments("haiku", None, "classify this", &schema());
         assert!(
             args.windows(2)
                 .any(|pair| pair == ["--system-prompt", "classify this"]),
@@ -553,10 +573,21 @@ mod tests {
     /// The transcript is the one thing that must not be in argv.
     #[test]
     fn the_prompt_body_is_absent_from_the_argument_vector() {
-        let args = ClaudeCliBackend::print_arguments("haiku", "sys", &schema());
+        let args = ClaudeCliBackend::print_arguments("haiku", None, "sys", &schema());
         assert!(
             !args.iter().any(|arg| arg.contains("the user's transcript")),
             "{args:?}"
+        );
+    }
+
+    #[test]
+    fn a_picked_effort_reaches_the_argument_vector_and_none_adds_nothing() {
+        let plain = ClaudeCliBackend::print_arguments("opus", None, "sys", &schema());
+        assert!(!plain.iter().any(|arg| arg == "--effort"));
+        let picked = ClaudeCliBackend::print_arguments("opus", Some("max"), "sys", &schema());
+        assert!(
+            picked.windows(2).any(|pair| pair == ["--effort", "max"]),
+            "{picked:?}"
         );
     }
 
@@ -701,6 +732,7 @@ mod tests {
             output_schema: schema(),
             deadline: Duration::from_secs(1),
             schema_version: "v1".into(),
+            pick: None,
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),

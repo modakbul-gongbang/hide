@@ -21,6 +21,11 @@ impl ForkableAgent {
         match hide_agent_adapter::adapter(agent_kind)?.fork? {
             hide_agent_adapter::LaunchDialect::Claude => Some(Self::Claude),
             hide_agent_adapter::LaunchDialect::Codex => Some(Self::Codex),
+            hide_agent_adapter::LaunchDialect::Grok
+            | hide_agent_adapter::LaunchDialect::OpenCode
+            | hide_agent_adapter::LaunchDialect::Pi
+            | hide_agent_adapter::LaunchDialect::Omp
+            | hide_agent_adapter::LaunchDialect::Cursor => None,
         }
     }
 

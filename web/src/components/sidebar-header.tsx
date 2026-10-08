@@ -1,16 +1,16 @@
 import { useInterfaceTranslation } from "../i18n/client";
-import { ChevronDownIcon, FactoryIcon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon, SparkleIcon } from "lucide-react";
+import { ChevronDownIcon, CirclePauseIcon, FactoryIcon, FolderGit2Icon, LaptopIcon, LayoutDashboardIcon, PlusIcon, SearchIcon, ServerIcon, SparkleIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Kbd } from "./ui/kbd";
-import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { SIDEBAR_MODES, type SidebarMode } from "../ui";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Hint } from "./ui/tooltip";
 
-const MODE_LABEL: Record<SidebarMode, "overview.projects" | "overview.agents"> = { projects: "overview.projects", agents: "overview.agents" };
 
 /** A device the hidden rail's menu lists. */
+
+/** One Factory under the Factory row: its project, its 내 차례 number and whether it is paused (PRD factory-observer B34). */
+export type FactoryProjectRow = { id: string; name: string; count: number; paused: boolean; selected: boolean; onOpen: () => void };
 export type MenuDevice = { id: string; label: string; remote: boolean; connected: boolean };
 
 /** What the top-line name opens while the rail is hidden: the way to every device and back to the rail. */
@@ -26,7 +26,7 @@ export type DeviceMenu = {
  * The top of the sidebar (quick device-rail-badges, replacing PRD
  * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
  * the name of the device in front (`This Mac`, `mini Remote`) with Add project
- * and Search at its right end, the shared Overview row, then `Projects | Agents`. While
+ * and Search at its right end, the shared Overview row, with the project tree directly below. While
  * the rail is hidden the name is a menu that lists the devices, Add device
  * and Show rail, since the rail is no longer the way to another device. A
  * device that cannot be read shows its name alone: it has no list to switch.
@@ -37,17 +37,12 @@ export function SidebarHeader({
   rail,
   title,
   addProject,
-  tabs,
-  mode,
-  projectChord,
-  agentChord,
   overview,
   factory,
   compact = false,
   searchChord,
   newWorkspaceChord,
   deviceMenu,
-  onMode,
   onSearch,
   onNewWorkspace,
 }: {
@@ -57,24 +52,17 @@ export function SidebarHeader({
   title: { name: string; note: string | null };
   /** Add project is offered on this line (not on the Agents tab). */
   addProject: boolean;
-  /** The Projects | Agents strip is drawn (not for a device that cannot be read). */
-  tabs: boolean;
-  mode: SidebarMode;
   compact?: boolean;
-  /** The current direct Projects and Agents shortcuts. */
-  projectChord?: string | null;
-  agentChord?: string | null;
   overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };
   /**
    * The Factory place (PRD software-factory-ui D-02, B1, B12, B23): its row
    * with the 내 차례 number, and the secretary's row under it once a Factory
    * exists; `status` is the secretary agent's mark while its pane is listed.
    */
-  factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; secretary: { status: ReactNode; onOpen: () => void } | null };
+  factory?: { selected: boolean; count: number; chord: string | null; onOpen: () => void; projects: FactoryProjectRow[]; secretary: { status: ReactNode; onOpen: () => void } | null };
   searchChord: string | null;
   newWorkspaceChord: string | null;
   deviceMenu: DeviceMenu;
-  onMode: (mode: SidebarMode) => void;
   onSearch: () => void;
   /** Add project; null where the host cannot pick a folder (a browser tab). */
   onNewWorkspace: (() => void) | null;
@@ -137,6 +125,17 @@ export function SidebarHeader({
               {factory.chord && !compact ? <Kbd className="sidebar-command-keycap">{factory.chord}</Kbd> : null}
             </button>
           </Hint>
+          {factory.projects.map((project) => (
+            <Hint key={project.id} label={project.paused ? `${project.name} · ${t("factory.pausedChip")}` : project.name}>
+              <button type="button" aria-current={project.selected ? "page" : undefined} data-sidebar-factory-project={project.id} data-factory-paused={project.paused ? "true" : undefined} onClick={project.onOpen}
+                className={`flex h-(--size-tab-strip) shrink-0 items-center gap-sm pr-md pl-xl text-body outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${project.selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"}`}>
+                <FolderGit2Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                {project.paused ? <CirclePauseIcon aria-label={t("factory.pausedChip")} className="size-(--size-icon-sm) shrink-0 text-muted-foreground" /> : null}
+                {project.count > 0 ? <span className="text-caption text-warning">{project.count}</span> : null}
+              </button>
+            </Hint>
+          ))}
           {factory.secretary ? (
             <button type="button" data-sidebar-secretary="true" onClick={factory.secretary.onOpen}
               className="flex h-(--size-tab-strip) shrink-0 items-center gap-sm border-b border-border pr-md pl-xl text-body text-subtle-foreground outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
@@ -146,21 +145,7 @@ export function SidebarHeader({
           ) : null}
         </>
       ) : null}
-      {tabs ? (
-        <Tabs value={mode} onValueChange={(value) => onMode(value as SidebarMode)} className="shrink-0 border-b border-border px-xs py-xxs" data-sidebar-strip="true">
-          <TabsList aria-label={t("overview.sidebarView")} className="w-full bg-transparent">
-            {SIDEBAR_MODES.map((candidate) => {
-              const chord = candidate === "projects" ? projectChord : agentChord;
-              return <ModeHint key={candidate} label={t(MODE_LABEL[candidate])} chord={chord ?? null}>
-                <TabsTrigger value={candidate} data-sidebar-mode={candidate} className="min-w-0 flex-1 gap-xs px-xs text-caption">
-                  <span className="truncate">{t(MODE_LABEL[candidate])}</span>
-                  {chord && !compact ? <Kbd className="sidebar-command-keycap">{chord}</Kbd> : null}
-                </TabsTrigger>
-              </ModeHint>;
-            })}
-          </TabsList>
-        </Tabs>
-      ) : null}
+
     </>
   );
 }
@@ -211,11 +196,4 @@ function HiddenRailMenu({ title, menu }: { title: { name: string; note: string |
 }
 
 /** A tab's hint exists only to show the switch chord, so a tab without one has none. */
-function ModeHint({ label, chord, children }: { label: string; chord: string | null; children: ReactNode }) {
-  if (!chord) return children;
-  return (
-    <Hint label={label} shortcut={chord}>
-      {children}
-    </Hint>
-  );
-}
+

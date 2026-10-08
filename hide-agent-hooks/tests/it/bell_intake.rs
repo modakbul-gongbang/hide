@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 use hide_agent_hooks::delivery::BELL_PROMPT;
 use hide_platform::process::OwnedChild;
 
+use crate::programs;
+use crate::stand_ins;
+
 const FAKE_HIDE: &str = r#"#!/bin/sh
 echo "$@" >> "$FAKE_HIDE_LOG"
 case "$*" in
@@ -34,29 +37,8 @@ impl Kit {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
-        std::fs::copy(
-            env!("CARGO_BIN_EXE_hide-agent-hooks"),
-            bin.join("hide-agent-hooks"),
-        )
-        .unwrap();
-        let hide = bin.join("hide");
-        std::fs::write(&hide, FAKE_HIDE).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hide, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // The first launch of a freshly copied executable can wait seconds on
-        // the system's code check under load, and the hook's own budget is
-        // measured from its start; pay that wait here, before the run that
-        // asserts what the hook asked.
-        let status = Command::new(bin.join("hide-agent-hooks"))
-            .arg("hook")
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let status = Command::new(&hide)
-            .env("FAKE_HIDE_LOG", "/dev/null")
-            .status()
-            .unwrap();
-        assert!(status.success());
+        stand_ins::place(programs::hook(), &bin.join("hide-agent-hooks"));
+        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
         Self { root }
     }
 

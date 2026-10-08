@@ -37,6 +37,7 @@ struct OverlayPane {
 #[derive(Clone, Debug, PartialEq)]
 struct ProvenLabel {
     owner: Option<String>,
+    native_session_id: Option<String>,
     proven_reference: Option<String>,
     /// `None` while the operator has turned agent summaries off (D-11): the
     /// row stands on its facts alone.
@@ -66,6 +67,7 @@ impl LabelOverlay {
             .map(|(pane_id, record)| {
                 let label = labels_shown.then(|| ProvenLabel {
                     owner: record.owner.clone(),
+                    native_session_id: record.native_session_id.clone(),
                     proven_reference: record.proven_reference.clone(),
                     summary: summaries.then(|| Summary {
                         goal: record.goal.clone(),
@@ -139,6 +141,15 @@ impl LabelOverlay {
                 continue;
             }
             let mut facts = label.facts.clone();
+            facts.native_session_id = label
+                .native_session_id
+                .as_ref()
+                .filter(|id| {
+                    label_reference_token(agent.agent.as_deref().unwrap_or_default(), "id", id)
+                        .as_deref()
+                        == label.owner.as_deref()
+                })
+                .cloned();
             facts.awaiting_operator = awaiting_operator;
             facts.user_turn = label.user_turn.as_ref().and_then(|(seq, fact)| {
                 (agent.state_change_seq == Some(*seq)).then(|| fact.clone())
@@ -167,6 +178,7 @@ impl LabelOverlay {
 /// The part of a session's facts a row is built from.
 fn row_facts(facts: &SessionFacts) -> RowFacts {
     RowFacts {
+        native_session_id: None,
         native_title: facts.custom_title.clone().or_else(|| facts.title.clone()),
         operator_request: facts.operator_request.clone(),
         other_request: facts.other_request.clone(),

@@ -132,13 +132,10 @@ fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() 
     };
     let shown = |runtime: &Runtime| {
         let workspace = &runtime.snapshot.navigator.workspaces[0];
-        (
-            workspace.checkouts[0].landed,
-            workspace.inactive_checkouts.checkout_ids.clone(),
-        )
+        workspace.checkouts[0].landed
     };
     in_base(&mut runtime, true);
-    assert_eq!(shown(&runtime), (false, Vec::<String>::new()));
+    assert!(!shown(&runtime));
 
     let summary = |paths: &[&str]| {
         std::collections::BTreeMap::from([(
@@ -150,7 +147,7 @@ fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() 
         )])
     };
     assert!(runtime.ingest_link_summaries(summary(&["/repo/task"])));
-    assert_eq!(shown(&runtime), (true, vec!["c".to_owned()]));
+    assert!(shown(&runtime));
     let wire = serde_json::to_value(runtime.snapshot()).unwrap();
     assert_eq!(
         wire["navigator"]["workspaces"][0]["checkouts"][0]["landed"],
@@ -164,7 +161,7 @@ fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() 
     );
 
     in_base(&mut runtime, false);
-    assert_eq!(shown(&runtime), (false, Vec::<String>::new()));
+    assert!(!shown(&runtime));
 }
 
 fn claude_session(home: &Path, id: &str, printed_at: u64) {
@@ -330,10 +327,15 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         Some(vec!["resume".to_owned(), "019a-session".to_owned()])
     );
 
-    // B22: OpenCode has no resume start; an id that is not one token never
-    // reaches a command line.
+    // Common starts do not grant resume support before each complete reader
+    // slice lands; an id that is not one token never reaches a command line.
     for (provider, session, kind) in [
-        ("opencode", "ses_1", "agent_start.unknown_provider"),
+        ("opencode", "ses_1", "agent_start.invalid_resume"),
+        ("pi", "native-one", "agent_start.invalid_resume"),
+        ("omp", "native-one", "agent_start.invalid_resume"),
+        ("grok", "native-one", "agent_start.invalid_resume"),
+        ("cursor", "native-one", "agent_start.invalid_resume"),
+        ("unknown", "native-one", "agent_start.unknown_provider"),
         ("claude", "a b", "agent_start.invalid_resume"),
         ("claude", "--dangerous", "agent_start.invalid_resume"),
     ] {
@@ -349,5 +351,6 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
             Some(kind),
             "{provider} {session}"
         );
+        assert!(runtime.snapshot.task_operation.is_none());
     }
 }
