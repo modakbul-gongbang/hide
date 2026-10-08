@@ -143,6 +143,8 @@ Omitting `--agents` selects every adapter declared by the current source.
 Confirm the cheapest suitable model for the logged-in account and pass `--model ID=MODEL`; recipe defaults can become unavailable.
 Fetch the pinned binary with `scripts/fetch-herdr-runtime.sh` first, and build this worktree's `hided` and `hide` with `bash scripts/verify-cargo.sh build -p hided`.
 The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
+An unclassified startup menu remains measurable when the pinned CLI's readiness wait expires: the exact owned agent identity and its actual menu must both match before observation continues.
+Other startup refusals retain their screen and agent evidence without being counted as arrival.
 
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
 It never opens a renderer or controls the installed app.

@@ -20,17 +20,21 @@ from agent_live_check.scenes import startup_blocker
 
 class ScenePreparation(unittest.TestCase):
     def test_blocked_startup_is_observed_only_for_the_owned_matching_native_agent(self):
-        recipe = {"id": "pi", "kind": "pi"}
+        recipe = {"id": "pi", "kind": "pi", "scenes": {"startup": {"arrived": "Do you trust"}}}
         actual = {"pane_id": "owned", "agent": "pi", "name": "live-pi-startup", "agent_status": "blocked"}
         error = json.dumps({"error": {"code": "agent_not_ready"}})
         result = (1, "", error)  # Pinned CLI puts structured failures on stderr.
-        self.assertTrue(startup_blocker("startup", recipe, "owned", result, actual))
-        self.assertFalse(startup_blocker("rest", recipe, "owned", result, actual))
-        self.assertFalse(startup_blocker("startup", recipe, "other", result, actual))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", result, {**actual, "agent": "codex"}))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", (0, error, ""), actual))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, error, "not JSON"), actual))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, "", '{"error":{"code":"agent_pane_busy"}}'), actual))
+        screen = "Do you trust this folder?"
+        self.assertTrue(startup_blocker("startup", recipe, "owned", result, actual, screen))
+        self.assertTrue(startup_blocker("startup", recipe, "owned", (1, "", '{"error":{"code":"timeout"}}'),
+                                        {**actual, "agent_status": "unknown"}, screen))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", result, actual, "ordinary input"))
+        self.assertFalse(startup_blocker("rest", recipe, "owned", result, actual, screen))
+        self.assertFalse(startup_blocker("startup", recipe, "other", result, actual, screen))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", result, {**actual, "agent": "codex"}, screen))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", (0, error, ""), actual, screen))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, error, "not JSON"), actual, screen))
+        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, "", '{"error":{"code":"agent_pane_busy"}}'), actual, screen))
 
     def test_non_jsonl_providers_seed_real_completed_native_prompts_for_resume(self):
         checkout = Path(__file__).resolve().parents[2]

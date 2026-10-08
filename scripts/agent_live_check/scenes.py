@@ -22,16 +22,19 @@ def arrived(data: dict, screen: str, bell: str) -> bool:
         not data.get("controls") or matches(data["controls"], screen, bell))
 
 
-def startup_blocker(scene, recipe, pane, result, actual):
+def startup_blocker(scene, recipe, pane, result, actual, screen):
     code, _, error = result
     try:
         refusal = json.loads(error).get("error", {}).get("code")
     except (ValueError, AttributeError):
         return False
-    return bool(code and scene == "startup" and refusal == "agent_not_ready" and actual
+    # Startup readiness can time out on the very unclassified dialog this
+    # tool measures. Fresh identity plus the actual menu proves arrival;
+    # Herdr's blocked classification is an observation, never a prerequisite.
+    return bool(code and scene == "startup" and refusal in ("agent_not_ready", "timeout") and actual
                 and actual.get("pane_id") == pane and actual.get("agent") == recipe["kind"]
                 and actual.get("name") == "live-" + recipe["id"] + "-" + scene
-                and actual.get("agent_status") == "blocked")
+                and arrived(recipe["scenes"]["startup"], screen, ""))
 
 
 def transcript(home: Path, kind: str, session: dict | None, session_root: Path | None = None) -> Path | None:

@@ -181,11 +181,13 @@ def main(argv=None):
                             if code:
                                 write_private(run / (recipe["id"] + "-" + scene + "-start-error.json"),
                                               json.dumps({"exit_code": code, "stdout": output, "stderr": err}).encode())
-                                # A real startup blocker makes the CLI wait
-                                # return nonzero even though it started the
-                                # requested named agent in our owned pane.
                                 actual = runtime.agent(pane)
-                                if not startup_blocker(scene, recipe, pane, (code, output, err), actual):
+                                refused_screen = runtime.screen(pane)
+                                require_no_login(refused_screen)
+                                if not startup_blocker(scene, recipe, pane, (code, output, err), actual, refused_screen):
+                                    write_private(evidence, json.dumps({"reason": "agent_start_refused_" + str(code),
+                                        "samples": [{"phase": "startup_refusal", "screen": refused_screen,
+                                                     "agent": actual}]}).encode())
                                     raise ProcessError("agent_start_refused_" + str(code))
                             startup_screen = runtime.screen(pane)
                             require_no_login(startup_screen)

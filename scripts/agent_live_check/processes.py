@@ -454,10 +454,15 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
             raise ProcessError("owned_group_unconfirmed")
         while not cancelled.is_set():
             table = collect()
-            if (any(p.rss < 0 and not p.zombie for p in table.values())
-                    or len(table) > MAX_DESCENDANTS
-                    or sum(max(0, p.rss) for p in table.values()) > MAX_RSS_BYTES):
-                raise ProcessError("owned_processes_over_budget")
+            unavailable = [{"pid": p.pid, "birth": p.birth} for p in table.values()
+                           if p.rss < 0 and not p.zombie]
+            if unavailable:
+                raise ProcessError("owned_process_rss_unavailable:" + json.dumps(
+                    {"count": len(unavailable), "identities": unavailable[:16]}, separators=(",", ":")))
+            rss = sum(max(0, p.rss) for p in table.values())
+            if len(table) > MAX_DESCENDANTS or rss > MAX_RSS_BYTES:
+                raise ProcessError("owned_processes_over_budget:" + json.dumps(
+                    {"descendants": len(table), "rss_bytes": rss}, separators=(",", ":")))
             root = table.get(child.pid)
             if root is None:
                 raise ProcessError("unreaped_owned_root_missing")
