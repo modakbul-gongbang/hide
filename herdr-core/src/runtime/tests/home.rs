@@ -172,7 +172,7 @@ fn device_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
             phase: hosts::HostPhase::Ready {
                 host: machine.helper(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },
@@ -549,7 +549,7 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
         runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
             host: machine.helper(),
             platform: "macos aarch64".to_owned(),
-            helper_path: "/fake/hide-host-helper".to_owned(),
+            helper_path: "/fake/hided".to_owned(),
         };
         runtime.home_helper_ready(DEVICE);
     }

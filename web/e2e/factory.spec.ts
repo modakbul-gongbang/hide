@@ -128,21 +128,25 @@ test("Enter answers the top item, the arrows open another, and the badge stays t
   });
 });
 
-test("the board lifts the person's cards to the top of their column, and a flow cell filters it (B7, B15)", async ({ page }) => {
+test("movement columns match the engine, and a card answer uses the inbox command (board B1, B2, B17, B20)", async ({ page }) => {
   await withStack(page, "factory-board", async (stack) => {
     const dag = await seedDag(stack);
     await openFactory(page);
     await page.locator('[data-factory-tab="board"]').click();
-    const drafting = page.locator('[data-factory-column="drafting"]');
-    await expect(drafting.locator("[data-factory-card]").first()).toHaveAttribute("data-factory-card-turn", "true");
-    const waiting = page.locator('[data-factory-column="waiting"]');
-    await expect(waiting.locator(`[data-factory-card="${dag.c}"]`)).toBeVisible();
-    // C waits on A and B, neither finished, and the card says so from the engine's code.
-    await expect(waiting.locator(`[data-factory-card="${dag.c}"] [data-factory-waiting-for]`)).toHaveAttribute("data-factory-waiting-for", "predecessors");
-
-    await page.locator('[data-factory-flow-cell="waiting"]').click();
+    const before = page.locator('[data-factory-column="before"]');
+    await expect(before.locator("[data-factory-card]")).toHaveCount(5);
+    await expect(before.locator("[data-factory-card]").first()).toHaveAttribute("data-factory-card-turn", "true");
+    expect((await status(stack)).factories[0]!.columns.map((column) => column.column)).toEqual(["before", "moving", "stuck", "done"]);
+    // The never-run tasks are all before; filtering widens their own cards.
+    await page.locator('[data-factory-flow-cell="before"]').click();
     await expect(page.locator("[data-factory-column]")).toHaveCount(1);
-    await expect(page.locator('[data-factory-column="waiting"]')).toBeVisible();
+    await expect(before.locator(`[data-factory-card="${dag.c}"] [data-factory-problem]`)).toBeVisible();
+    const answer = before.locator(`[data-factory-card="${dag.a}"] [data-factory-card-send]`);
+    await answer.click();
+    await expect(before.locator(`[data-factory-card="${dag.a}"] [data-factory-card-send]`)).toHaveCount(0, { timeout: 20_000 });
+    const after = await status(stack);
+    expect(after.inbox.some((item) => item.task === dag.a)).toBe(false);
+    expect(after.factories[0]!.columns[0]!.cards.find((card) => card.task === dag.a)?.state).toBe("waiting");
     await page.locator("[data-factory-column-filter]").click();
     await expect(page.locator("[data-factory-column]")).toHaveCount(4);
   });
@@ -180,6 +184,9 @@ test("the graph draws A to B to C without the A to C arrow, and a node opens its
     await expect(graph).toHaveAttribute("data-dependency-edges", "3");
     // The layered layout comes from its worker in a real browser; the columns are only its fallback.
     await expect(graph).toHaveAttribute("data-dependency-layout", "layered");
+    const dimensions = await graph.locator("[data-factory-card]").evaluateAll((cards) => cards.map((card) => ({ width: card.getBoundingClientRect().width, height: card.getBoundingClientRect().height })));
+    expect(dimensions.every((size) => size.width < 240)).toBe(true);
+    expect(new Set(dimensions.map((size) => size.height)).size).toBe(1);
     await expect(edge(dag.a, dag.b)).toHaveCount(1);
     await expect(page.locator(`[data-factory-graph-unrelated] [data-factory-card="${dag.e}"]`)).toBeVisible();
     await graph.locator(`[data-factory-card="${dag.c}"]`).click();

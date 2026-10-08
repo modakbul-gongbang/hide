@@ -17,7 +17,6 @@ use crate::model::{Attachment, Factory, Task, UnixMs};
 
 pub const SCHEMA_VERSION: i64 = 1;
 /// A PRD attachment larger than this is refused.
-pub const ATTACHMENT_LIMIT: u64 = 4 * 1024 * 1024;
 /// Events kept per Factory; the oldest are dropped past it.
 pub const EVENT_LIMIT: i64 = 20_000;
 /// A kept judgment or letter body is cut to its first this many bytes.
@@ -318,23 +317,17 @@ impl Store {
             .optional()?)
     }
 
-    /// Copies a PRD into the private folder under its hash (D-10, B16).
+    /// Keeps a PRD, read from `source` on the node, in the private folder
+    /// under its hash (D-10, B16).
     pub fn attach(
         &self,
         factory: &str,
         task: &str,
         source: &Path,
+        bytes: &[u8],
         version: u32,
     ) -> Result<Attachment, StoreError> {
-        let metadata = fs::metadata(source)?;
-        if !metadata.is_file() {
-            return Err(StoreError("attachment_not_a_file".into()));
-        }
-        if metadata.len() > ATTACHMENT_LIMIT {
-            return Err(StoreError("attachment_too_large".into()));
-        }
-        let bytes = fs::read(source)?;
-        let digest = hex(&Sha256::digest(&bytes));
+        let digest = hex(&Sha256::digest(bytes));
         let folder = self.files.join(factory).join(task);
         fs::create_dir_all(&folder)?;
         private_dir(&folder)?;
@@ -345,7 +338,7 @@ impl Store {
             .unwrap_or("md");
         let path = folder.join(format!("{digest}.{extension}"));
         if !path.exists() {
-            write_private(&path, &bytes)?;
+            write_private(&path, bytes)?;
             read_only(&path)?;
         }
         Ok(Attachment {
@@ -533,8 +526,7 @@ mod tests {
         )
         .unwrap();
         let source = folder.path().join("prd.md");
-        fs::write(&source, "# PRD\n").unwrap();
-        let attachment = store.attach("f", "T-1", &source, 1).unwrap();
+        let attachment = store.attach("f", "T-1", &source, b"# PRD\n", 1).unwrap();
         assert_eq!(attachment.sha256, sha256_hex(b"# PRD\n"));
         assert!(
             attachment
@@ -543,8 +535,7 @@ mod tests {
         );
         let copy = Path::new(&attachment.path);
         assert!(fs::metadata(copy).unwrap().permissions().readonly());
-        fs::write(&source, "# PRD v2\n").unwrap();
-        let second = store.attach("f", "T-1", &source, 2).unwrap();
+        let second = store.attach("f", "T-1", &source, b"# PRD v2\n", 2).unwrap();
         assert_ne!(second.path, attachment.path);
         assert_eq!(fs::read_to_string(copy).unwrap(), "# PRD\n");
     }

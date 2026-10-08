@@ -160,6 +160,34 @@ fn a_pair_is_two_connected_ends() {
     assert_eq!(read_line(&mut left), "to the left\n");
 }
 
+/// A relay reads one direction while it writes the other: the reader blocks
+/// on a duplicate while the original writes, and each direction's bytes
+/// arrive whole.
+#[test]
+fn a_duplicate_reads_while_the_original_writes() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let payload: Vec<u8> = (0..256 * 1024).map(|index| (index % 251) as u8).collect();
+    let expected = payload.clone();
+    let server = thread::spawn(move || {
+        let mut stream = listener.accept().unwrap();
+        let mut echoed = vec![0_u8; expected.len()];
+        stream.read_exact(&mut echoed).unwrap();
+        stream.write_all(&echoed).unwrap();
+    });
+    let client = LocalStream::connect(&path).unwrap();
+    let mut reader = client.duplicate();
+    let reading = thread::spawn(move || {
+        let mut back = Vec::new();
+        reader.read_to_end(&mut back).unwrap();
+        back
+    });
+    let mut writer = client;
+    writer.write_all(&payload).unwrap();
+    server.join().unwrap();
+    assert_eq!(reading.join().unwrap(), payload);
+}
+
 #[test]
 fn a_closing_peer_ends_the_read_with_zero() {
     let (_folder, path) = endpoint();

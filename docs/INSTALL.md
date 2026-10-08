@@ -60,7 +60,7 @@ open /Applications/hide.app
 
 The Windows and Linux packages are not signed.
 Each is a folder in an archive: `hide-win32-x64` in `hide-v<version>-windows-x64.zip`, and `hide-linux-x64` in `hide-v<version>-linux-x64.tar.gz`, each with a `.sha256` file beside it on the Releases page.
-The folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks`, device helper, pinned Herdr the macOS app carries; on Windows those are `.exe` files, and Herdr's ConPTY runtime is the `conpty` folder beside `herdr.exe`.
+The folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks` and pinned Herdr the macOS app carries; on Windows those are `.exe` files, and Herdr's ConPTY runtime is the `conpty` folder beside `herdr.exe`.
 
 ### Install on Windows
 
@@ -110,7 +110,7 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
   Keep the unpacked package folder in place while using it.
 - Opening a newer package replaces a running daemon of another build and refreshes the command and hook paths, as on macOS.
   A development or standalone `hide` still refuses to replace a packaged daemon.
-- A package carries the device helper for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
+- A package's `hided` is also the node it installs on a device, for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
 - Nothing updates itself, and uninstalling is deleting the folder; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
 
 ### What each system supports
@@ -124,7 +124,7 @@ Unverified means the feature is written to work there, but no check on that syst
 | Daemon, Herdr, install kit, agent hooks | supported | supported (CI runs them against the pinned Herdr) | supported (the web shell's whole e2e suite runs against the pinned Herdr) |
 | Desktop app window and menu | supported (desktop e2e) | unverified (no desktop e2e runs on Windows) | unverified (no desktop e2e runs on Linux) |
 | Keyboard shortcuts | supported | supported by registry tests; the table is in [UI_BEHAVIOR.md](UI_BEHAVIOR.md#keyboard-shortcuts-per-system) | same as Windows |
-| Device helper (a remote machine's files and Git) | supported | not supported | supported |
+| Device node (a remote machine's files and Git) | supported | not supported | supported |
 
 Unverified on Windows and Linux (the macOS assumptions below are left as they are, and no check on those systems has proved them):
 
@@ -156,7 +156,7 @@ HIDE_VERSION=<version> pnpm --dir desktop package
 `HIDE_VERSION` sets the version the packaged app reports.
 Omit it to build from a checkout that a Git tag matching `v[0-9]*` already describes; the packaging script fails rather than ship a version nothing was released under.
 
-Packaging builds the web shell, builds the release `hided`, `hide`, `hide-agent-hooks` and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
+Packaging builds the web shell, builds the release `hided`, `hide` and `hide-agent-hooks` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
 It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
 The same command on Windows x64 writes `desktop/out/hide-win32-x64/` and `hide-v<version>-windows-x64.zip`, and on Linux x64 `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256` and unsigned; each system builds only its own package.
 
@@ -255,7 +255,7 @@ Everything Hide owns on a machine is under `~/.hide`:
 | `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`) and the link record (`links.sqlite3`), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
 | `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
-| `~/.hide/host-helper` | On a device: Hide's helper builds |
+| `~/.hide/host-helper` | On a device: the `hided` builds that serve it as a node |
 
 Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.
 macOS's own places (`~/Library/Application Support/hide-desktop`, `~/Library/Application Support/hide` with the AI settings and Project Memory), the Home folder `~/hide`, and the label generator lock beside the Herdr socket are not moved.

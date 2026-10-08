@@ -240,8 +240,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(page.locator("[data-sessions-provider]")).toHaveAttribute("data-sessions-provider", "all");
 
     // A session whose file went away after the list was read fails where it
-    // opens; Retry reads the history again, and the session stays listed as
-    // unavailable with its last location instead of vanishing (B5, D-04).
+    // opens as missing; Retry reads the history again, and the session stays
+    // listed as unavailable with its last location instead of vanishing (B5, D-04).
     fs.rmSync(files["codex-login"]);
     // The copy note belongs to the session that was copied, not to the next
     // one opened: copy, open another at once, and look once.
@@ -251,7 +251,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     const header = page.locator('[data-session-header="codex-login"]');
     await expect(header).toBeVisible();
     expect(await header.textContent()).not.toContain("Copied");
-    await expect(page.locator('[data-session-failure="codex-login"]')).toContainText("The session file could not be read: No such file or directory (os error 2)", {
+    await expect(page.locator('[data-session-failure="codex-login"]')).toContainText("The session file is missing.", {
       timeout: 15_000,
     });
     await screenshot(page, "s8-detail-failed");

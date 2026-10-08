@@ -12,7 +12,7 @@ use hide_host::protocol::{Call, KitAction, PROTOCOL_VERSION};
 use hide_platform::process::{OwnedChild, kill_tree, start_time, terminate};
 use serde_json::{Value, json};
 
-const HELPER: &str = env!("CARGO_BIN_EXE_hide-host-helper");
+const HELPER: &str = env!("CARGO_BIN_EXE_hided");
 const DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 64 * 1024;
 // Only this test binary's explicitly selected owner fixture consumes this key.
@@ -75,7 +75,7 @@ fn serve(
     let started = Instant::now();
     let deadline = started + DEADLINE;
     let mut command = command(executable, home);
-    command.arg("serve");
+    command.args(["node", "serve"]);
     let mut child = if guarded {
         OwnedChild::spawn_guarded(command, deadline).unwrap()
     } else {
@@ -266,7 +266,7 @@ fn owner_fixture() {
     let home = PathBuf::from(std::env::var_os(OWNER_HOME).expect("fixture home"));
     let mut command = command(Path::new(HELPER), &home);
     command
-        .arg("serve")
+        .args(["node", "serve"])
         .stdin(Stdio::inherit())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

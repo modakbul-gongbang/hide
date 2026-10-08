@@ -28,7 +28,6 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         host_helper_root: None,
         host_cli_dir: None,
         pane_id: None,
-        workspace_bridge_dir: None,
         // A missing path: no test here reaches a real Tailscale.
         tailscale_bin: Some(dir.path().join("no-tailscale")),
         search_path: None,

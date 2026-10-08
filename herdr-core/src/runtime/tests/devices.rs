@@ -221,7 +221,6 @@ pub(super) fn runtime_with_home() -> Runtime {
             .join("state.json")
             .to_string_lossy()
             .into_owned(),
-        host_helper_dir: None,
         host_helper_root: None,
         host_cli_dir: None,
         workspace_views_path: None,
@@ -236,6 +235,7 @@ pub(super) fn runtime_with_home() -> Runtime {
             codex_home: None,
         },
         std::sync::Arc::new(hide_node::Local::new(Some(folder.path().join("home")))),
+        crate::node::test_devices(),
     );
     runtime.test_dirs.push(folder);
     runtime
@@ -512,7 +512,7 @@ fn a_consent_from_before_the_hide_command_asks_again() {
         .expect("registration")
         .host_consent = Some(crate::model::HostConsent {
         contract: 1,
-        helper_root: crate::remote::host::DEFAULT_HELPER_ROOT.to_owned(),
+        helper_root: crate::remote::DEFAULT_HELPER_ROOT.to_owned(),
         cli_dir: None,
         granted_at_unix_ms: 1,
         identity: None,
@@ -535,6 +535,6 @@ fn a_consent_from_before_the_hide_command_asks_again() {
     assert_eq!(host.consent, "granted");
     assert_eq!(
         host.cli_dir.as_deref(),
-        Some(crate::remote::host::DEFAULT_CLI_DIR)
+        Some(crate::remote::DEFAULT_CLI_DIR)
     );
 }

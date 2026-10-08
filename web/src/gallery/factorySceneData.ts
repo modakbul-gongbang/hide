@@ -5,6 +5,8 @@
 // An issue number is written through `issue()` because a bare hash and digits
 // in web source read as a hex color to the design contract.
 
+import type { AgentRow } from "../snapshot";
+import { galleryAgentState } from "./agentStates";
 import type { FactoryConfig } from "../factory/FactorySettings";
 import type { CardView, Column, FactorySummary, FactoryView, InboxItem, TaskDetail, TaskState } from "../factory/model";
 import type { SceneContent } from "./sceneData";
@@ -19,6 +21,10 @@ const taskId = (number: number) => `t-${number}`;
 type CardSpec = {
   number: number;
   title: string;
+  summary?: string;
+  pr?: number;
+  runtime?: string;
+  resume?: boolean;
   state: TaskState;
   column: Column;
   /** How long ago the Task last changed. */
@@ -44,6 +50,14 @@ function card(spec: CardSpec, now: number): CardView {
     display_id: spec.draft ? `T-${spec.draft}` : issue(spec.number),
     column: spec.state === "cancelled" ? null : spec.column,
     title: spec.title,
+    summary: spec.summary ?? `${spec.title}을 끝낸다.`,
+    issue: spec.draft ? null : issue(spec.number),
+    issue_url: spec.draft ? null : `https://example.invalid/issues/${spec.number}`,
+    pr: spec.pr ? { number: spec.pr, url: `https://example.invalid/pull/${spec.pr}`, head: "example", by_factory: spec.state !== "outside", open: spec.state !== "done" } : null,
+    worker_runtime: spec.runtime ?? (spec.worker ? "codex" : null),
+    resume_at: spec.resume ? now + 50 * MINUTE : null,
+    waiting_group: spec.column === "stuck" ? spec.needsPerson ? "person" : "other" : null,
+    stage: spec.state === "done" ? 4 : ["outside", "merge_waiting", "landed"].includes(spec.state) ? 3 : ["verifying", "stopped"].includes(spec.state) ? 2 : spec.state === "drafting" || (spec.state === "waiting" && !spec.resume) ? 0 : 1,
     state: spec.state,
     state_label: spec.state,
     needs_person: spec.needsPerson ?? false,
@@ -70,34 +84,35 @@ const LONG_TITLE = "Task 상세 API 응답 형식을 정하고 기존 snapshot �
 function herdrSpecs(content: SceneContent): CardSpec[] {
   const long = content === "long";
   return [
-    { draft: 7, number: 0, title: "알림 설정 화면 정리", state: "drafting", column: "drafting", ago: 12 * MINUTE },
-    { number: 421, title: "Task 상세 화면", state: "waiting", column: "waiting", ago: 3 * HOUR, waitingFor: issue(420) },
-    { number: 422, title: "보드에서 Task 상세 패널 열기", state: "waiting", column: "waiting", ago: 3 * HOUR, waitingFor: issue(421) },
-    { number: 431, title: "문서 깨진 링크 정리", state: "waiting", column: "waiting", ago: 5 * HOUR, priority: 1 },
-    { number: long ? 123456 : 420, title: long ? LONG_TITLE : "Task 상세 API 응답 형식", state: "blocked", column: "running", ago: 3 * DAY, needsPerson: true },
-    { number: 412, title: "Issues 보드에 정렬 추가", state: "running", column: "running", ago: 2 * MINUTE, worker: "worker-412", failures: 1 },
-    { number: 415, title: "보드 정렬 상태 기억", state: "running", column: "running", ago: MINUTE, worker: "worker-415" },
-    { number: 417, title: "디스크 정리 표 다시 그리기", state: "stopped", column: "running", ago: 40 * MINUTE, needsPerson: true, failures: 3 },
-    { number: 405, title: "hide-ai 호출 상한 조정", state: "merge_waiting", column: "running", ago: HOUR, needsPerson: true },
-    { number: 398, title: "Sessions 검색 속도 개선", state: "verifying", column: "running", ago: 20 * MINUTE },
-    { number: 430, title: "flaky: pane-focus 테스트", state: "outside", column: "running", ago: 6 * MINUTE, external: ["sasu/gate-cache"] },
-    { number: 410, title: "정렬 API: tasks.rs에 updated_at", state: "done", column: "done", ago: 2 * HOUR, unread: true },
-    { number: 409, title: "Task 목록 정렬 키 문서화", state: "landed", column: "done", ago: 5 * HOUR },
-    { number: 401, title: "Task 저장소를 별도 crate로", state: "landed", column: "done", ago: 4 * DAY, folded: true },
-    { number: 399, title: "Factory 설정 기본값 정리", state: "landed", column: "done", ago: 6 * DAY, folded: true },
+    { draft: 7, number: 0, summary: "설정 페이지에서 알림 항목을 한 곳에 모은다", title: "알림 설정 화면 정리", state: "drafting", column: "before", ago: 12 * MINUTE },
+    { number: 421, summary: "Task 상세 패널에 목표와 진행 상황을 보인다", title: "Task 상세 화면", state: "waiting", column: "before", ago: 3 * HOUR, waitingFor: issue(420) },
+    { number: 422, summary: "보드 카드를 누르면 Task 상세를 연다", title: "보드에서 Task 상세 패널 열기", state: "waiting", column: "before", ago: 3 * HOUR, waitingFor: issue(421) },
+    { number: 431, summary: "docs/ 안의 깨진 링크를 고친다", title: "문서 깨진 링크 정리", state: "waiting", column: "before", ago: 5 * HOUR, priority: 1 },
+    { number: long ? 123456 : 420, summary: "Task 상세를 읽는 API 형식을 정한다", title: long ? LONG_TITLE : "Task 상세 API 응답 형식", state: "blocked", column: "stuck", worker: "worker-420", runtime: "claude", ago: 3 * DAY, needsPerson: true },
+    { number: 412, summary: "Issues 보드에서 정렬 기준을 고르게 한다", title: long ? "FactorySnapshotDependencyGraphProjectionWithAnUnbrokenIdentifierThatMustWrapWithoutOverflowAtEveryCardWidth" : "Issues 보드에 정렬 추가", state: "running", column: "moving", ago: 2 * MINUTE, worker: "worker-412", pr: 563, failures: 1 },
+    { number: 415, summary: "마지막 정렬 기준을 다음 실행에도 유지한다", title: "보드 정렬 상태 기억", state: "running", column: "moving", ago: MINUTE, worker: "worker-415", pr: 564, runtime: "claude" },
+    { number: 417, summary: "디스크 정리 표를 크기순으로 다시 그린다", title: "디스크 정리 표 다시 그리기", state: "stopped", column: "stuck", worker: "worker-417", runtime: "claude", pr: 560, ago: 40 * MINUTE, needsPerson: true, failures: 3 },
+    { number: 405, summary: "hide-ai가 하루에 호출하는 횟수를 제한한다", title: "hide-ai 호출 상한 조정", state: "merge_waiting", column: "stuck", pr: 561, worker: "worker-405", runtime: "claude", ago: HOUR, needsPerson: true },
+    { number: 426, title: "단축키 도움말 시트", summary: "⌘/로 여는 단축키 목록 시트를 만든다", state: "waiting", column: "stuck", ago: 50 * MINUTE, resume: true },
+    { number: 398, summary: "Sessions 검색의 첫 응답 시간을 줄인다", title: "Sessions 검색 속도 개선", state: "verifying", column: "moving", ago: 20 * MINUTE, pr: 552, worker: "worker-398", runtime: "claude" },
+    { number: 430, summary: "pane-focus e2e가 가끔 실패하는 원인을 찾는다", title: "flaky: pane-focus 테스트", state: "outside", column: "stuck", pr: 566, ago: 6 * MINUTE, external: ["sasu/gate-cache"] },
+    { number: 410, pr: 558, summary: "tasks.rs가 updated_at으로 정렬할 수 있게 한다", title: "정렬 API: tasks.rs에 updated_at", state: "done", column: "done", ago: 2 * HOUR, unread: true },
+    { number: 409, pr: 557, summary: "정렬 키 세 개를 docs/factory.md에 적는다", title: "Task 목록 정렬 키 문서화", state: "done", column: "done", ago: 5 * HOUR },
+    { number: 401, title: "Task 저장소를 별도 crate로", state: "done", column: "done", ago: 4 * DAY, folded: true },
+    { number: 399, title: "Factory 설정 기본값 정리", state: "done", column: "done", ago: 6 * DAY, folded: true },
   ];
 }
 
 function sasuSpecs(): CardSpec[] {
   return [
-    { number: 88, title: "gate 결과 요약 보기", state: "running", column: "running", ago: 8 * MINUTE, needsPerson: false, worker: "worker-88" },
-    { number: 91, title: "implement 단계 로그 정리", state: "waiting", column: "waiting", ago: 2 * HOUR },
+    { number: 88, title: "gate 결과 요약 보기", state: "running", column: "moving", ago: 8 * MINUTE, needsPerson: false, worker: "worker-88" },
+    { number: 91, title: "implement 단계 로그 정리", state: "waiting", column: "before", ago: 2 * HOUR },
     { number: 86, title: "verify 리포트 한 줄 요약", state: "done", column: "done", ago: 50 * MINUTE },
   ];
 }
 
-const COLUMN_LABEL: Record<Column, string> = { drafting: "정리 중", waiting: "대기", running: "실행 중", done: "완료" };
-const COLUMN_ORDER: Column[] = ["drafting", "waiting", "running", "done"];
+const COLUMN_LABEL: Record<Column, string> = { before: "시작 전", moving: "진행 중", stuck: "멈춤", done: "완료" };
+const COLUMN_ORDER: Column[] = ["before", "moving", "stuck", "done"];
 
 function view(options: {
   id: string;
@@ -119,7 +134,7 @@ function view(options: {
     // The person's cards first, longest waiting first; then the engine's priority order.
     cards: cards
       .filter((value) => value.column === column)
-      .sort((a, b) => Number(b.needs_person) - Number(a.needs_person) || (a.needs_person ? a.since - b.since : b.priority - a.priority || a.since - b.since)),
+      .sort((a, b) => Number(b.needs_person) - Number(a.needs_person) || Number(b.state === "stopped") - Number(a.state === "stopped") || (a.needs_person ? a.since - b.since : b.priority - a.priority || a.since - b.since)),
   }));
   const count = (column: Column) => columns.find((value) => value.column === column)!.cards.filter((value) => !value.folded).length;
   const linked = new Set(options.dependencies.flat());
@@ -131,9 +146,9 @@ function view(options: {
     verification: options.verification,
     closed: false,
     flow: {
-      drafting: count("drafting"),
-      waiting: count("waiting"),
-      running: count("running"),
+      before: count("before"),
+      stuck: count("stuck"),
+      moving: count("moving"),
       done_today: cards.filter((value) => value.column === "done" && now - value.since < DAY).length,
     },
     my_turn: cards.filter((value) => value.needs_person).length,
@@ -172,6 +187,7 @@ function inboxItem(item: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" |
 
 export type FactorySceneFixture = {
   summary: FactorySummary;
+  workers: AgentRow[];
   /** A Task page's detail by Task id, for the page the scene opens. */
   detail: (task: string) => TaskDetail | null;
   config: { config: FactoryConfig; machine: { max_workers: number } };
@@ -227,7 +243,7 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
         title: long ? LONG_TITLE : "Task 상세를 새 REST 엔드포인트로 낼까요, 기존 WS snapshot에 합칠까요?",
         project: "herdr-ide",
         question: "q-blocking",
-        text: "WS에 합치면 Task마다 snapshot이 약 2 KB 커지고, REST는 hided에 route가 하나 생깁니다.",
+        text: "Task 상세를 새 REST 엔드포인트로 낼까요, 기존 WS snapshot에 합칠까요?",
         suggestion: "WS snapshot에 합치기",
         choices: ["REST 엔드포인트"],
         result_code: "wake_worker",
@@ -389,5 +405,18 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
     macos_notifications: false,
     worker_args: {},
   };
-  return { summary, detail, config: { config, machine: { max_workers: 4 } } };
+  const workers: AgentRow[] = [...herdrCards, ...sasuCards].flatMap((value) => {
+    if (!value.worker_pane) return [];
+    const pane = value.worker_pane;
+    const delegated = value.task === taskId(415);
+    const blocked = value.state === "blocked" || value.state === "stopped";
+    const row: AgentRow = { state: galleryAgentState(pane, null, value.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: value.worker_runtime ?? "codex", emphasized: false, unread: false, demand: "none", activity: blocked ? "idle" : "working", group: "seen", symbol: blocked ? "○" : "●", status_code: blocked ? "idle" : "working", changed_at_unix_ms: value.since,
+      request: { verb: "working", verb_since_unix_ms: value.since, request: null, later_by: null, reply: null, pull_requests: [], line: value.state === "stopped" ? "web-e2e 세 번째 실패 뒤 멈춤" : value.state === "blocked" ? "Task 상세 API 선택을 기다리는 중" : "변경을 구현하고 검증하는 중" },
+      lineage_child_pane_ids: delegated ? [`${pane}:child-1`, `${pane}:child-2`] : [],
+      close_descendant_pane_ids: delegated ? [`${pane}:child-1`, `${pane}:child-2`] : [],
+    };
+    const children: AgentRow[] = delegated ? [1, 2].map((index) => ({ ...row, state: galleryAgentState(`${pane}:child-${index}`, null, value.since), id: `${pane}:child-${index}`, pane_id: `${pane}:child-${index}`, identity_label: `하위 작업 ${index}`, lineage_child_pane_ids: [], close_descendant_pane_ids: [], request: undefined })) : [];
+    return [row, ...children];
+  });
+  return { summary, workers, detail, config: { config, machine: { max_workers: 4 } } };
 }

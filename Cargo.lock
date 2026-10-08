@@ -1175,9 +1175,6 @@ dependencies = [
  "regex",
  "regress 0.12.0",
  "rusqlite",
- "russh",
- "russh-config",
- "russh-sftp",
  "schemars",
  "serde",
  "serde_json",
@@ -1232,7 +1229,9 @@ dependencies = [
 name = "hide-factory"
 version = "0.1.0"
 dependencies = [
- "hide-platform",
+ "base64 0.23.1",
+ "hide-node",
+ "hide-node-link",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1306,13 +1305,20 @@ dependencies = [
 name = "hide-node"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cap-std",
  "hide-herdr-client",
  "hide-host",
+ "hide-kit",
  "hide-node-link",
  "hide-platform",
  "libc",
+ "russh",
+ "russh-config",
+ "russh-sftp",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
 ]
@@ -1324,6 +1330,7 @@ dependencies = [
  "base64 0.23.1",
  "hide-agent-hooks",
  "hide-ai",
+ "hide-herdr-client",
  "hide-kit",
  "hide-platform",
  "hide-project",
@@ -1377,6 +1384,7 @@ dependencies = [
 name = "hided"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "base64 0.23.1",
  "cap-std",
@@ -1384,6 +1392,7 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-agent-hooks",
  "hide-factory",
  "hide-herdr-client",
  "hide-host",
@@ -1398,6 +1407,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "ring",
+ "russh",
  "serde",
  "serde_json",
  "subtle",

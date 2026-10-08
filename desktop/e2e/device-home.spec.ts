@@ -12,7 +12,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { HIDE_CLI, isolate, nodeOf, relaunch, shellPage, test } from "./fixture";
 import { animationsFinished, compositorPresents } from "../../web/e2e/wait";
@@ -109,8 +109,6 @@ test("a device's Home is made on its first start, the rail follows registration,
   fs.rmSync(path.join(deviceHome, ".local", "bin", "herdr"), { force: true });
   fs.symlinkSync(device.bin, path.join(deviceHome, ".local", "bin", "herdr"));
   const run = isolate(local, "device-home");
-  const bridge = fs.mkdtempSync("/tmp/hide-dh-");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
   run.env.HIDE_HOST_HELPER_ROOT = path.join(run.root, "remote-helper");
   run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "remote-bin");
   run.env.PATH = `${path.join(local.root, "bin")}:${run.env.PATH ?? "/usr/bin:/bin"}`;
@@ -195,14 +193,15 @@ test("a device's Home is made on its first start, the rail follows registration,
     await expect.poll(() => paneRunning(device, "체크아웃 지시 확인")?.info ?? "", { timeout: 60_000 }).toContain("claude");
     await expect(page.locator(`[data-device-band="${DEVICE}"]`)).toBeVisible();
 
-    // B3: the device's Agents tab lists only its own agents with no device chip, and its tile counts them.
+    // The raw shim starts idle; give its Home pane a real detected question for the counts and rail mark.
+    setFixtureSession(device, homeAgent.pane, `device-home-${process.pid}`);
+    await setFixtureLifecycle(device, homeAgent.pane, "blocked");
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator("[data-agent-list]")).toBeVisible();
     await expect(page.locator("[data-agent-list] [data-device-chip]")).toHaveCount(0);
     await expect(page.locator("[data-agent-counts]")).toContainText(/Working|Needs You|Done/);
     await expect(page.locator(`[data-rail-tile="${DEVICE}"] [data-rail-badge]`).first()).toBeVisible();
     await capture(page, app, "device-home-device-agents");
-
     // B10: removing the device in front moves the front to This Mac; the rail stays with its one tile, and the device keeps ~/hide and its agents.
     await sendFrame(page, state, { kind: "remove_device", payload: { device_id: DEVICE } });
     await expect(page.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 30_000 });
@@ -221,6 +220,5 @@ test("a device's Home is made on its first start, the rail follows registration,
     run.cleanup();
     local.stop();
     device.stop();
-    fs.rmSync(bridge, { recursive: true, force: true });
   }
 });

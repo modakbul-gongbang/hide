@@ -16,7 +16,8 @@ Each queued command revalidates the caller's pane against the prepared Workspace
 Mailbox callers and new recipients require a positive native-session binding; a missing binding returns `native_identity_required`.
 Two missing native references in the same pane never authorize retained mail.
 Target names and pane IDs resolve against the daemon's current observations.
-A connected device recipient uses the existing reverse-forwarded Workspace bridge; the capability fixes its pane, sender and kind, and the only ledger remains on the controlling daemon.
+A connected device recipient uses its node's pane service over that device's existing SSH link; the credential fixes its device, link, pane, sender and kind, and losing the link revokes that credential immediately.
+The only ledger remains on the controlling daemon.
 A disconnected device hook finishes within its two-second budget with no letters, leaving them pending in that ledger.
 
 ```sh

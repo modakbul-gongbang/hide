@@ -159,7 +159,9 @@ fn device_runtime(
                     phase: hosts::HostPhase::Ready {
                         host: helper,
                         platform: "macos aarch64".to_owned(),
-                        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hide-host-helper".to_owned(),
+                        helper_path:
+                            "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided"
+                                .to_owned(),
                     },
                     generation: 1,
                 },
@@ -235,7 +237,7 @@ fn a_connected_device_shows_its_kit_and_retirement_failure_with_recovery() {
         helper.calls(),
         vec![(
             KitAction::Apply,
-            crate::remote::host::DEFAULT_CLI_DIR.to_owned(),
+            crate::remote::DEFAULT_CLI_DIR.to_owned(),
             Some("~/.config/herdr/other.sock".to_owned()),
         )]
     );
@@ -793,7 +795,7 @@ fn a_device_on_an_unsupported_platform_shows_why() {
 #[test]
 fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
     let probe = device_runtime(None, None);
-    let identity = crate::model::HostIdentity {
+    let identity = hide_node_link::device::HostIdentity {
         user: "me".to_owned(),
         hostname: "studio.local".to_owned(),
         port: 22,
@@ -818,7 +820,7 @@ fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
         .find(|registration| registration.id == DEVICE)
         .and_then(|registration| registration.host_consent.clone())
         .unwrap();
-    assert_eq!(carried.contract, crate::remote::host::HOST_CONSENT_CONTRACT);
+    assert_eq!(carried.contract, crate::remote::HOST_CONSENT_CONTRACT);
     assert_eq!(carried.identity, Some(identity));
 
     let mut elsewhere = consent;
@@ -848,7 +850,7 @@ fn a_contract_2_consent_is_carried_to_the_kit_on_its_next_connection() {
 fn a_consent_for_the_old_default_root_moves_to_the_new_one_without_asking() {
     use hide_kit::layout::{HELPER_ROOT, LEGACY_HELPER_ROOT};
     let probe = device_runtime(None, None);
-    let identity = crate::model::HostIdentity {
+    let identity = hide_node_link::device::HostIdentity {
         user: "me".to_owned(),
         hostname: "studio.local".to_owned(),
         port: 22,
@@ -1031,12 +1033,13 @@ fn removing_one_of_two_registrations_of_the_same_account_keeps_the_kit() {
             .iter_mut()
             .find(|registration| registration.id == DEVICE)
             .unwrap();
-        device.host_consent.as_mut().unwrap().identity = Some(crate::model::HostIdentity {
-            user: "me".to_owned(),
-            hostname: "studio.local".to_owned(),
-            port: 22,
-            host_key_sha256: "SHA256:studio".to_owned(),
-        });
+        device.host_consent.as_mut().unwrap().identity =
+            Some(hide_node_link::device::HostIdentity {
+                user: "me".to_owned(),
+                hostname: "studio.local".to_owned(),
+                port: 22,
+                host_key_sha256: "SHA256:studio".to_owned(),
+            });
         let mut twin = device.clone();
         twin.id = "studio-second-herdr".to_owned();
         twin.ssh_alias = Some("studio-by-address".to_owned());
@@ -1797,4 +1800,62 @@ fn a_standalone_own_node_installs_nothing_and_says_why() {
         0,
         "nothing is written into the node's home"
     );
+}
+
+/// Letter-720: a device link that was lost or could not start is tried
+/// again on its own after two seconds, the wait doubling to a minute; a read
+/// before then starts nothing, and the operator's Retry tries at once and
+/// begins the schedule over.
+#[test]
+fn a_failed_device_link_is_tried_again_after_a_doubling_wait() {
+    let probe = device_runtime(None, None);
+    let shared = device_runtime(Some(granted(&probe)), None);
+    // Held throughout, so an attempt's own answer never lands; each failure
+    // is ingested here instead.
+    let mut runtime = shared.lock().unwrap();
+    runtime.start_device_host(DEVICE);
+    let mut waits = Vec::new();
+    for _ in 0..7 {
+        let generation = runtime.device_host_generation(DEVICE);
+        let before = super::unix_milliseconds();
+        runtime.ingest_host_established(
+            DEVICE,
+            generation,
+            Err(hide_node_link::device::EstablishError::Helper(
+                "the device did not answer".to_owned(),
+            )),
+        );
+        let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
+        waits.push((at - before) / 1_000);
+        // A read before the wait is over starts nothing.
+        assert!(runtime.node_link(DEVICE).is_err());
+        assert_eq!(runtime.device_host_generation(DEVICE), generation);
+        assert!(!runtime.tick_device_hosts(at - 1));
+        assert_eq!(runtime.device_host_generation(DEVICE), generation);
+        runtime.tick_device_hosts(at);
+        assert_eq!(runtime.device_host_generation(DEVICE), generation + 1);
+    }
+    assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60]);
+
+    let generation = runtime.device_host_generation(DEVICE);
+    runtime.ingest_host_established(
+        DEVICE,
+        generation,
+        Err(hide_node_link::device::EstablishError::Helper(
+            "again".to_owned(),
+        )),
+    );
+    runtime.retry_device_host_now(DEVICE);
+    assert_eq!(runtime.device_host_generation(DEVICE), generation + 1);
+    let generation = runtime.device_host_generation(DEVICE);
+    let before = super::unix_milliseconds();
+    runtime.ingest_host_established(
+        DEVICE,
+        generation,
+        Err(hide_node_link::device::EstablishError::Helper(
+            "again".to_owned(),
+        )),
+    );
+    let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
+    assert_eq!((at - before) / 1_000, 2);
 }

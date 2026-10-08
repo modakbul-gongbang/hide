@@ -13,13 +13,13 @@ Two facts make the default location the only correct one.
 Cargo names a workspace member's artifacts by its path relative to the workspace root, so two checkouts sharing one target directory read each other's build as fresh and run the other checkout's test binary.
 Cargo also holds an exclusive lock on the directory, so sharing serializes the parallel builds the worktree layout exists to allow.
 
-The release binaries are `target/release/{hided,hide,hide-host-helper,hide-agent-hooks}`, and `desktop/scripts/package.mjs` reads every one of them from that fixed relative path.
+The release binaries are `target/release/{hided,hide,hide-agent-hooks}`, and `desktop/scripts/package.mjs` reads every one of them from that fixed relative path.
 Redirecting a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-path` leaves the packager reading a path nothing wrote.
 `scripts/verify-cargo.sh` therefore sets `CARGO_TARGET_DIR` to the worktree's own `target/` on every invocation, whatever the caller carried.
 
 The cost of this layout is one full build cache per worktree, which is why a worktree is removed when its branch lands rather than kept around.
 
-A release `hided` carries `web/dist` inside the binary: `hided/build.rs` embeds every file under it when the profile is `release` and fails the build when `web/dist/index.html` is missing, so a release build is always `pnpm --dir web build` first, then `cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks` (`scripts/verify-cargo.sh release`).
+A release `hided` carries `web/dist` inside the binary: `hided/build.rs` embeds every file under it when the profile is `release` and fails the build when `web/dist/index.html` is missing, so a release build is always `pnpm --dir web build` first, then `cargo build --release --locked -p hided --bins -p hide-agent-hooks --bin hide-agent-hooks` (`scripts/verify-cargo.sh release`).
 `desktop/scripts/package.mjs` performs that build before staging the release binaries into the app bundle, so a packaged app's SessionStart probe has a matching `hide-agent-hooks` executable even without a separate CLI on `PATH`.
 A debug `hided` embeds nothing and reads `web/dist` from disk at run time (`HIDED_UI_DIR` overrides the lookup), so a rebuilt web shell shows up without a cargo rebuild.
 The web measurement (`MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh`, `docs/PERFORMANCE_TESTING.md`) needs that release `hided` at `target/release/hided` inside the worktree it measures; it is never redirected, for the same reason as the release binaries.
@@ -32,6 +32,7 @@ An agent worktree is built a few times and discarded, which never repays an incr
 Debug output is what makes a stale worktree expensive, because nothing strips it: a debug `hided` measures around 115 MB against 24 MB for the release binary.
 The workspace's own crates build with `debug = "line-tables-only"` (one `[profile.dev.package.<crate>]` entry per member): a panic's backtrace keeps its files and lines, and the rest of their debug info, which is most of what their build writes and links, is left out.
 Dependencies keep the default, so changing it would not invalidate the dependency builds CI restores from its cache.
+The one exception is the SSH transport's crates (`russh`, `russh-sftp` and the ciphers and hashes it runs), built at `opt-level = 3` in dev builds too: a development daemon installs its own debug `hided` on a device over SSH, and unoptimized those crates moved about 4 MiB a second, so the remote mailbox lane's device was not ready within its bound; optimized, its install takes about 6 seconds.
 
 ## The toolchain is never copied
 
@@ -65,8 +66,8 @@ A check script calls these scripts rather than cargo or pnpm directly, so the ta
 | --- | --- | --- |
 | test | `bash scripts/verify-cargo.sh test` | `target/debug`; locked workspace tests |
 | lint | `bash scripts/verify-cargo.sh lint` | `cargo fmt --check` then `cargo clippy -D warnings` over every target |
-| release | `bash scripts/verify-cargo.sh release` | `target/release/{hided,hide,hide-host-helper,hide-agent-hooks}`, the binaries the desktop packager ships |
-| cli | `bash scripts/verify-cargo.sh cli` | `target/debug/{hide,hided,hide-host-helper,hide-agent-hooks}` for isolated CLI, daemon, SessionStart and install kit checks |
+| release | `bash scripts/verify-cargo.sh release` | `target/release/{hided,hide,hide-agent-hooks}`, the binaries the desktop packager ships |
+| cli | `bash scripts/verify-cargo.sh cli` | `target/debug/{hide,hided,hide-agent-hooks}` for isolated CLI, daemon, SessionStart and install kit checks |
 | web | `bash scripts/verify-web.sh` | `pnpm install --frozen-lockfile`, then typecheck, lint, test and build for both `web` and `desktop`: `web/dist` and `desktop/dist` |
 
 The Cargo `test` mode forwards trailing test arguments, so an explicitly configured live probe can run as `verify-cargo.sh test <test-name> -- --ignored` without bypassing worktree isolation or toolchain ownership.
@@ -106,7 +107,7 @@ An acquisition failure blocks the suite at that prerequisite and retains the ups
 | `pnpm --dir desktop dev` | Bundles `desktop/dist/` with esbuild and launches the app unpackaged; it finds this worktree's `target/{debug,release}/hide` itself |
 | `pnpm --dir desktop typecheck`, `lint`, `test` | The desktop CI lane |
 | `pnpm --dir desktop e2e` | Playwright `_electron` against a private hided and pinned Herdr; needs `web/dist`, `target/debug/hide` and `hided`, and the pinned `herdr` as the web e2e does |
-| `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` into `Contents/Resources`, ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed. On Windows x64 and Linux x64 the same command builds that system's package, unsigned: the folder `desktop/out/hide-win32-x64/` or `hide-linux-x64/` with the same binaries (`.exe` on Windows, with Herdr's `conpty/` beside `herdr.exe`) and `hide-host-helper-<windows\|linux>-x86_64` in its `resources/`, archived to `hide-v<version>-windows-x64.zip` (the system's `tar.exe`) or `hide-v<version>-linux-x64.tar.gz` beside a `.sha256`. Each system packages only itself, and a machine of another architecture than its pinned Herdr asset is refused |
+| `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks` and `herdr` into `Contents/Resources`, ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed. On Windows x64 and Linux x64 the same command builds that system's package, unsigned: the folder `desktop/out/hide-win32-x64/` or `hide-linux-x64/` with the same binaries (`.exe` on Windows, with Herdr's `conpty/` beside `herdr.exe`) in its `resources/`, archived to `hide-v<version>-windows-x64.zip` (the system's `tar.exe`) or `hide-v<version>-linux-x64.tar.gz` beside a `.sha256`. Each system packages only itself, and a machine of another architecture than its pinned Herdr asset is refused |
 | `node desktop/scripts/smoke-package.mjs <archive>` | On Windows or Linux only: checks a package against its `.sha256`, unpacks it into a temporary folder, and with a private home (stand-in `claude` and `codex` programs in `~/.local/bin`, so both agents are installed) and state folder runs the bundled `herdr --version`, the device helper, `hide-agent-hooks doctor`, and `hide connect`, `/health`, the embedded shell, first-launch CLI and hooks, a command from a fresh shell, the completed retirement row, replacement by a second package fixture, refreshed paths, same-build reuse, standalone refusal and `hide stop`, then waits for each daemon pid it started to end (ten seconds, a named failure beyond that) before it removes the folder, with no removal retry; `.github/workflows/package.yml` runs it after each package. It refuses macOS, where first-launch kit behavior is covered by the isolated desktop suite |
 
 Every build of `hide` carries the version and commit `hide version` reports (`hided/build.rs`): `HIDE_VERSION` if it was set for the build, else the crate's version, and `HIDE_COMMIT`, else for a release build the checkout's `HEAD`.

@@ -30,7 +30,16 @@
     "remote:mini:working:2": 9,
     "p-parent": 9,
     "p-child": 8,
-    "p-dag": 9
+    "p-dag": 9,
+    "worker-412": 10,
+    "worker-415": 10,
+    "worker-405": 10,
+    "worker-398": 10,
+    "worker-88": 10,
+    "worker-420": 11,
+    "worker-417": 11,
+    "worker-415:child-1": 12,
+    "worker-415:child-2": 12
   },
   "presets": [
     {
@@ -384,6 +393,108 @@
       "link": "working",
       "descendant_asking": 0,
       "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "graph_chip": "resting",
+      "graph_resting": true,
+      "link_rank": 2,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "graph_chip": "resting",
+      "graph_resting": true,
+      "link_rank": 2,
+      "edge": "rest",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "graph_chip": "resting",
+      "graph_resting": true,
+      "link_rank": 2,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "idle",
       "request_todo": false,
       "request_since": null
     }

@@ -106,6 +106,40 @@ pub fn is_search_call(arguments: &[&str]) -> bool {
 /// `run_gh` lets it ask for.
 pub const PR_FEEDBACK_FIELDS: &str = "body,statusCheckRollup,reviews";
 
+/// What the list of every pull request asks for. `statusCheckRollup` is
+/// left out: asking GitHub for the checks of all 200 pull requests, merged
+/// and closed ones included, is what made one read take 11 - 14 seconds
+/// against the 15-second limit, and nothing draws a settled pull request's
+/// checks as news.
+pub const PULL_REQUEST_FIELDS: &str = "number,title,headRefName,headRefOid,isCrossRepository,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences";
+
+/// The second list: only the open pull requests, only their checks.
+pub const OPEN_CHECK_FIELDS: &str = "number,statusCheckRollup";
+
+/// Every pull request `gh` will return in one call. Past this, older pull
+/// requests are simply absent and their branches read as having none; the
+/// limit is stated here so the risk is findable from the code that takes it.
+pub const PULL_REQUEST_LIMIT: &str = "200";
+
+/// The open issues one read lists, one past what the screen shows, so the
+/// last proves there are more.
+pub const ISSUE_LIST_LIMIT: &str = "201";
+pub const ISSUE_LIST_SEARCH: &str = "sort:updated-desc";
+pub const ISSUE_LIST_FIELDS: &str = "number,title,url,state,labels,updatedAt,createdAt,closedAt";
+/// The same list with the projects each issue is in.
+pub const ISSUE_LIST_PROJECT_FIELDS: &str =
+    "number,title,url,state,labels,projectItems,updatedAt,createdAt,closedAt";
+
+/// The merged pull requests of one branch a worktree cleanup reads as proof
+/// the branch landed.
+pub const MERGED_PROOF_LIMIT: &str = "100";
+pub const MERGED_PROOF_FIELDS: &str = "headRefOid,baseRefName";
+
+/// A value `gh` reads as the value of the flag before it, never a flag.
+fn is_value(argument: &str) -> bool {
+    !argument.is_empty() && !argument.starts_with('-')
+}
+
 /// A pull request or issue number as `gh` takes it.
 pub fn is_number(argument: &str) -> bool {
     !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit())
@@ -115,9 +149,22 @@ pub fn is_number(argument: &str) -> bool {
 /// and the two writes (docs/ARCHITECTURE.md), a new issue with a title and a
 /// body, and a pull request's body, nothing else of either.
 pub fn allowed(arguments: &[&str]) -> bool {
-    arguments.starts_with(&["auth", "status"])
-        || arguments.starts_with(&["pr", "list"])
-        || arguments.starts_with(&["issue", "list"])
+    arguments == ["auth", "status"]
+        || matches!(
+            arguments,
+            ["pr", "list", "--state", "open", "--limit", PULL_REQUEST_LIMIT, "--json", OPEN_CHECK_FIELDS]
+                | ["pr", "list", "--state", "all", "--limit", PULL_REQUEST_LIMIT, "--json", PULL_REQUEST_FIELDS]
+        )
+        || matches!(
+            arguments,
+            ["pr", "list", "--state", "merged", "--head", branch, "--limit", MERGED_PROOF_LIMIT, "--json", MERGED_PROOF_FIELDS]
+                if is_value(branch)
+        )
+        || matches!(
+            arguments,
+            ["issue", "list", "--state", "open", "--limit", ISSUE_LIST_LIMIT, "--search", ISSUE_LIST_SEARCH, "--json", fields]
+                if *fields == ISSUE_LIST_FIELDS || *fields == ISSUE_LIST_PROJECT_FIELDS
+        )
         || arguments == ["repo", "view", "--json", "nameWithOwner"]
         || arguments == ["repo", "view", "--json", "nameWithOwner,id"]
         || (arguments.len() == 6
@@ -156,4 +203,230 @@ pub enum GhAnswer {
         category: GithubFailureCategory,
         reason: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_search_takes_its_repositories_the_cap_fixed_fields_and_the_query_words_after_the_dashes() {
+        let prs = |repositories: &[&'static str], words: &[&'static str]| {
+            let mut arguments = vec!["search", "prs"];
+            for repository in repositories {
+                arguments.extend(["--repo", repository]);
+            }
+            arguments.extend(["--limit", "20", "--json", SEARCH_PR_FIELDS, "--"]);
+            arguments.extend(words);
+            arguments
+        };
+        assert!(allowed(&prs(&["acme/app"], &["reader"])));
+        assert!(allowed(&prs(
+            &["acme/app", "acme/other"],
+            &["two", "words"]
+        )));
+        assert!(
+            allowed(&prs(&["acme/app"], &["--web"])),
+            "a word is never a flag"
+        );
+        assert!(allowed(&[
+            "search",
+            "issues",
+            "--repo",
+            "acme/app",
+            "--limit",
+            "20",
+            "--json",
+            SEARCH_ISSUE_FIELDS,
+            "--",
+            "-w",
+        ]));
+        let twenty = ["acme/app"; SEARCH_REPOSITORY_LIMIT];
+        assert!(allowed(&prs(&twenty, &["q"])));
+        let long = "x".repeat(SEARCH_QUERY_LIMIT + 1);
+        let long: &'static str = Box::leak(long.into_boxed_str());
+        let twenty_one = ["acme/app"; SEARCH_REPOSITORY_LIMIT + 1];
+        let refused: Vec<Vec<&str>> = vec![
+            prs(&["acme/app"], &[""]),
+            prs(&["acme/app"], &["  "]),
+            prs(&["acme/app"], &[]),
+            prs(&["acme/app"], &[long]),
+            prs(&["acme/app"], &[&long[..150], &long[..100]]),
+            prs(&twenty_one, &["q"]),
+            prs(&[], &["q"]),
+            prs(&["acme/app/extra"], &["q"]),
+            prs(&["acme"], &["q"]),
+            prs(&["--repo"], &["q"]),
+            prs(&["acme/../app"], &["q"]),
+            // A different limit, field list, flag position or subcommand.
+            vec![
+                "search",
+                "prs",
+                "--repo",
+                "acme/app",
+                "--limit",
+                "21",
+                "--json",
+                SEARCH_PR_FIELDS,
+                "--",
+                "q",
+            ],
+            vec![
+                "search",
+                "prs",
+                "--repo",
+                "acme/app",
+                "--limit",
+                "20",
+                "--json",
+                SEARCH_ISSUE_FIELDS,
+                "--",
+                "q",
+            ],
+            vec![
+                "search",
+                "issues",
+                "--repo",
+                "acme/app",
+                "--limit",
+                "20",
+                "--json",
+                SEARCH_PR_FIELDS,
+                "--",
+                "q",
+            ],
+            vec![
+                "search", "prs", "--repo", "acme/app", "--limit", "20", "--json", "body", "--", "q",
+            ],
+            vec![
+                "search",
+                "prs",
+                "--limit",
+                "20",
+                "--repo",
+                "acme/app",
+                "--json",
+                SEARCH_PR_FIELDS,
+                "--",
+                "q",
+            ],
+            vec![
+                "search",
+                "prs",
+                "--repo",
+                "acme/app",
+                "--limit",
+                "20",
+                "--json",
+                SEARCH_PR_FIELDS,
+                "q",
+                "--",
+            ],
+            vec![
+                "search",
+                "prs",
+                "--repo",
+                "acme/app",
+                "--limit",
+                "20",
+                "--json",
+                SEARCH_PR_FIELDS,
+                "q",
+            ],
+            vec![
+                "search",
+                "code",
+                "--repo",
+                "acme/app",
+                "--limit",
+                "20",
+                "--json",
+                SEARCH_PR_FIELDS,
+                "--",
+                "q",
+            ],
+            vec![
+                "search", "repos", "--limit", "20", "--json", "name", "--", "q",
+            ],
+            vec!["search", "prs", "q"],
+            vec!["search", "prs", "--web", "q"],
+        ];
+        for arguments in &refused {
+            assert!(!allowed(arguments), "{arguments:?} must be refused");
+        }
+    }
+
+    /// The list reads are their exact command lines: no other state, limit,
+    /// field list or flag, and a branch that would read as a flag is refused.
+    #[test]
+    fn a_list_read_is_its_exact_command_line() {
+        let pr_list = |state: &'static str, fields: &'static str| {
+            vec![
+                "pr",
+                "list",
+                "--state",
+                state,
+                "--limit",
+                PULL_REQUEST_LIMIT,
+                "--json",
+                fields,
+            ]
+        };
+        let merged = |branch: &'static str| {
+            vec![
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--head",
+                branch,
+                "--limit",
+                MERGED_PROOF_LIMIT,
+                "--json",
+                MERGED_PROOF_FIELDS,
+            ]
+        };
+        let issues = |fields: &'static str| {
+            vec![
+                "issue",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                ISSUE_LIST_LIMIT,
+                "--search",
+                ISSUE_LIST_SEARCH,
+                "--json",
+                fields,
+            ]
+        };
+        for arguments in [
+            vec!["auth", "status"],
+            pr_list("open", OPEN_CHECK_FIELDS),
+            pr_list("all", PULL_REQUEST_FIELDS),
+            merged("factory/1-task"),
+            issues(ISSUE_LIST_FIELDS),
+            issues(ISSUE_LIST_PROJECT_FIELDS),
+        ] {
+            assert!(allowed(&arguments), "{arguments:?} must be allowed");
+        }
+        let mut with_web = pr_list("all", PULL_REQUEST_FIELDS);
+        with_web.push("--web");
+        let mut token = vec!["auth", "status"];
+        token.push("--show-token");
+        for arguments in [
+            token,
+            with_web,
+            pr_list("closed", PULL_REQUEST_FIELDS),
+            pr_list("open", PULL_REQUEST_FIELDS),
+            pr_list("all", "body"),
+            merged("--web"),
+            merged(""),
+            issues("body"),
+            vec!["issue", "list"],
+            vec!["pr", "list"],
+        ] {
+            assert!(!allowed(&arguments), "{arguments:?} must be refused");
+        }
+    }
 }

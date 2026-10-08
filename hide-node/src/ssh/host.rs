@@ -1,10 +1,10 @@
-//! A device's file host: `hide-host-helper` serving the `hide_host` contract
+//! A device's node: `hided node serve` answering the `hide_host` contract
 //! over one SSH exec channel (PRD S5.5 D-05, D-20, D-23).
 //!
 //! Nothing here runs without the operator's consent for that device, recorded
 //! on its registration and bound to the SSH identity the helper was first
 //! allowed on. The helper is installed (or replaced by a newer build) under the
-//! consented install root, started with `serve` on an exec channel of a
+//! consented install root, started with `node serve` on an exec channel of a
 //! dedicated SSH connection, and ends when that connection does: there is no
 //! daemon, no listening socket and no background install.
 //!
@@ -17,18 +17,19 @@
 use super::*;
 #[path = "retirement.rs"]
 mod retirement;
-use crate::model::{HostConsent, HostIdentity};
-pub use crate::node_access::LinkError;
-use crate::node_access::{LinkAnswer, NodeLink, call_as};
 use hide_node_link::HostError;
+pub use hide_node_link::LinkError;
+use hide_node_link::device::{HostConsent, HostIdentity};
+use hide_node_link::panes::{NodeEvent, PanesStarted};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
+use hide_node_link::{LinkAnswer, NodeLink, call_as};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Condvar;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::mpsc;
 
 /// The longest answer line read from a device helper. The largest answer is
@@ -51,37 +52,54 @@ struct AnswerLine<'a> {
 /// What the reader hands a waiting call: the result's text or the refusal.
 type Answered = Result<Box<RawValue>, HostError>;
 
+/// One report line (`hide_node_link::protocol::Progress`), its report kept as
+/// text.
+#[derive(serde::Deserialize)]
+struct ProgressLine<'a> {
+    progress: u64,
+    #[serde(borrow)]
+    report: &'a RawValue,
+}
+
+/// Reports one call may have waiting for its caller; a call that reads them
+/// slower than they arrive is stopped with an error (engineering rule 15).
+pub const MAX_WAITING_REPORTS: usize = 256;
+
+/// What the reader hands a waiting call.
+enum Delivery {
+    Report(Box<RawValue>),
+    Answer(Answered),
+    /// More than [`MAX_WAITING_REPORTS`] reports waited unread.
+    Overflow,
+}
+
+/// A call waiting for its answer, and, when it hears reports, how many wait
+/// unread.
+struct Waiting {
+    sender: mpsc::Sender<Delivery>,
+    reports: Option<Arc<AtomicUsize>>,
+    /// The call reports until told to stop (`Call::runs_until_stopped`), so
+    /// a draining link stops it rather than wait for its answer.
+    until_stopped: bool,
+}
+
 fn present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<&'de RawValue>, D::Error> {
     serde::Deserialize::deserialize(deserializer).map(Some)
 }
 
-/// The scope the operator agrees to, versioned. A build that needs more than
-/// this contract describes bumps it, and every device asks again (B51).
-/// Contract 2 added the `hide` command installed beside the helper and its
-/// link in the consented command folder. Contract 3 is the whole install kit
-/// (PRD device-parity D-12): the hook entries besides the command
-/// (it also held the labels plugin, which labels-in-hided retired, so the
-/// scope only narrowed); a contract-2 consent with the same folders is
-/// carried to 3 on its next connection without asking (D-13).
-pub const HOST_CONSENT_CONTRACT: u32 = 3;
-
-/// The contract a consent may be carried forward from without asking.
-pub const HOST_CONSENT_CARRIED_FROM: u32 = 2;
-
-/// Where the helper is installed on the device unless the daemon was started
-/// with another root; `~` is the remote account's home.
-pub const DEFAULT_HELPER_ROOT: &str = hide_kit::layout::HELPER_ROOT;
-
-/// Where the device's `hide` command is linked unless the daemon was started
-/// with another folder; `~` is the remote account's home.
-pub const DEFAULT_CLI_DIR: &str = "~/.local/bin";
+pub use hide_node_link::device::{
+    DEFAULT_CLI_DIR, DEFAULT_HELPER_ROOT, EstablishError, Established, HOST_CONSENT_CARRIED_FROM,
+    HOST_CONSENT_CONTRACT, Upload,
+};
 
 pub const MAX_RUNNING: usize = hide_host::serve::CONCURRENCY;
 pub const MAX_QUEUED: usize = 32;
 
-const HELPER_NAME: &str = "hide-host-helper";
+/// This program, which a device runs in its node role (`hided node serve`,
+/// PRD core-host-node D-02).
+const HELPER_NAME: &str = "hided";
 /// The pane-side Workspace CLI, the same `hide` this daemon ships, so a
 /// device's panes can reach this Hide through their return route.
 const CLI_NAME: &str = "hide";
@@ -96,6 +114,9 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// written and again for its answer, and the longest call timeout is 120 s
 /// (an index walk, a worktree removal), so this outlasts both.
 const DRAIN_BOUND: Duration = Duration::from_secs(250);
+/// How long a cancel waits to be written; the call it stops ends on its
+/// own timeout whatever happens to the cancel.
+const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The helper builds this daemon carries, one per device platform.
@@ -110,9 +131,9 @@ impl HelperPackages {
     }
 
     /// The build for `os`/`arch` (Rust's names: `macos`, `aarch64`). A
-    /// `hide-host-helper-<os>-<arch>` file wins; an unsuffixed
-    /// `hide-host-helper` is accepted only for this daemon's own platform,
-    /// which is what a development build produces.
+    /// `hided-<os>-<arch>` file wins; an unsuffixed `hided` is accepted only
+    /// for this daemon's own platform, which is what the package and a
+    /// development build carry: the daemon's own program.
     pub fn find(&self, os: &str, arch: &str) -> Result<PathBuf, String> {
         self.find_named(HELPER_NAME, os, arch).map_err(|()| {
             format!(
@@ -269,57 +290,27 @@ fn platform_of(uname: &str) -> Result<(String, String), String> {
     Ok((os.to_owned(), arch.to_owned()))
 }
 
-#[derive(Debug)]
-pub enum EstablishError {
-    Connect(RemoteError),
-    /// The device answering the alias is not the one consent was given for.
-    IdentityChanged {
-        bound: Box<HostIdentity>,
-        observed: Box<HostIdentity>,
-    },
-    /// This build cannot serve the device; nothing was installed.
-    Unsupported(String),
-    Install(String),
-    Helper(String),
+/// What a device's node sends without being asked: its panes' credential
+/// proofs and `hide` command streams (`hide_node_link::panes`). hided hears
+/// them; the core never does. Both calls come from the link's reader, on the
+/// transport's runtime: an implementation hands the work to its own thread
+/// and returns, and never calls the link from inside them.
+pub trait PaneEvents: Send + Sync {
+    /// `event` arrived on `link`, the link of the device `node`.
+    fn event(&self, node: &str, link: &RemoteHost, event: NodeEvent);
+    /// `link` ended: nothing it vouched for holds any more (B18).
+    fn closed(&self, node: &str, link: &RemoteHost);
 }
 
-impl fmt::Display for EstablishError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Connect(error) => write!(formatter, "{}", error.diagnostic().reason),
-            Self::IdentityChanged { bound, observed } => write!(
-                formatter,
-                "The device now answers as {}, not {} that the helper was allowed on; allow it again in Settings to continue",
-                observed.describe(),
-                bound.describe()
-            ),
-            Self::Unsupported(reason) | Self::Install(reason) | Self::Helper(reason) => {
-                formatter.write_str(reason)
-            }
-        }
-    }
-}
+/// Where a connector's links send their pane events, filled once hided's
+/// server exists; events before that find it empty and are refused.
+pub type PaneEventsSlot = Arc<std::sync::OnceLock<Arc<dyn PaneEvents>>>;
 
-pub struct Established {
-    pub host: RemoteHost,
-    pub identity: HostIdentity,
-    pub hello: Hello,
-    /// The helper was installed or replaced on this connection.
-    pub installed: bool,
-    pub helper_path: String,
-    /// How the build's files reached the device on this connection.
-    pub upload: Upload,
-}
-
-/// What one connection's install did with the build's files: how many it
-/// sent, how many were already there, and the kit parts left out with why.
-/// The kit on the device reports a left-out part on the device's row; this
-/// is the diagnostic detail.
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
-pub struct Upload {
-    pub sent: usize,
-    pub reused: usize,
-    pub missing: Vec<String>,
+/// Which device a link serves and where its pane events go.
+#[derive(Clone)]
+pub struct PaneHook {
+    pub node: String,
+    pub events: PaneEventsSlot,
 }
 
 /// A live helper connection. Cloning shares it; the SSH connection ends when
@@ -446,9 +437,14 @@ impl Gate {
 struct Inner {
     target: String,
     runtime: Arc<RemoteRuntime>,
-    session: Mutex<Option<Handle<KnownHostHandler>>>,
+    /// Wakes the reader to end the helper's channel: on [`RemoteHost::close`]
+    /// and when the last clone is dropped. The device's connection stays,
+    /// since other channels share it.
+    closing: Arc<tokio::sync::Notify>,
+    /// The link's place among the connection's session channels.
+    _session_channel: tokio::sync::OwnedSemaphorePermit,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
-    pending: Mutex<HashMap<u64, mpsc::Sender<Answered>>>,
+    pending: Mutex<HashMap<u64, Waiting>>,
     closed: Mutex<Option<String>>,
     gate: Gate,
     next_id: AtomicU64,
@@ -459,13 +455,7 @@ struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        if let Some(session) = lock_recover(&self.session).take() {
-            self.runtime.spawn(async move {
-                let _ = session
-                    .disconnect(Disconnect::ByApplication, "helper closed", "en")
-                    .await;
-            });
-        }
+        self.closing.notify_one();
     }
 }
 
@@ -474,43 +464,198 @@ impl RemoteHost {
         &self.inner.target
     }
 
+    /// Whether `other` is this same connection, not a later one to the
+    /// same device.
+    pub fn same_link(&self, other: &RemoteHost) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// A number that names this connection while it lives, for keying what
+    /// belongs to it.
+    pub fn identity(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
+    /// A link with no device behind it: it has an identity and can be
+    /// closed, and every call on it times out. For tests of what a link's
+    /// identity decides.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn detached(target: &str) -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a test runtime");
+        let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(tokio::io::sink());
+        RemoteHost {
+            inner: Arc::new(Inner {
+                target: target.to_owned(),
+                runtime: Arc::new(RemoteRuntime(Some(runtime))),
+                closing: Arc::new(tokio::sync::Notify::new()),
+                _session_channel: Arc::new(Semaphore::new(1))
+                    .try_acquire_owned()
+                    .expect("a fresh permit"),
+                writer: tokio::sync::Mutex::new(writer),
+                pending: Mutex::new(HashMap::new()),
+                closed: Mutex::new(None),
+                gate: Gate::new(),
+                next_id: AtomicU64::new(1),
+                roots: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
     /// Why the connection ended, once it has.
     pub fn closed_reason(&self) -> Option<String> {
         lock_recover(&self.inner.closed).clone()
     }
 
-    /// Ends the connection; the helper exits when its input closes. Requests
+    /// Ends the link; the helper exits when its channel closes. Requests
     /// still waiting for an answer become `Unknown`.
     pub fn close(&self, reason: &str) {
         mark_closed(&self.inner, reason.to_owned());
-        if let Some(session) = lock_recover(&self.inner.session).take() {
-            let reason = reason.to_owned();
-            self.inner.runtime.spawn(async move {
-                let _ = session
-                    .disconnect(Disconnect::ByApplication, &reason, "en")
-                    .await;
-            });
-        }
+        self.inner.closing.notify_one();
     }
 
     /// Sends one request and waits at most `timeout` for its answer. Must
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         self.inner.gate.admit(timeout)?;
-        let result = self.send_and_wait(call, timeout);
+        let result = self.send_and_wait(call, timeout, None);
         self.inner.gate.release();
         result
     }
 
-    fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+    /// [`RemoteHost::call`] for a call whose node reports before it
+    /// answers: each report reaches `progress`, and one answered with false,
+    /// or the timeout passing, asks the node to stop the call.
+    pub fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        self.inner.gate.admit(timeout)?;
+        let result = self.send_and_wait(call, timeout, Some(progress));
+        self.inner.gate.release();
+        result
+    }
+
+    fn send_and_wait(
+        &self,
+        call: Call,
+        timeout: Duration,
+        mut progress: Option<&mut dyn FnMut(serde_json::Value) -> bool>,
+    ) -> Result<LinkAnswer, LinkError> {
         let inner = &self.inner;
         let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut line = serde_json::to_vec(&Request { id, call }).map_err(|error| {
-            LinkError::NotConnected(format!("The request could not be encoded: {error}"))
-        })?;
-        line.push(b'\n');
         let (sender, receiver) = mpsc::channel();
-        lock_recover(&inner.pending).insert(id, sender);
+        let reports = progress.is_some().then(Arc::default);
+        lock_recover(&inner.pending).insert(
+            id,
+            Waiting {
+                sender,
+                reports: reports.clone(),
+                until_stopped: call.runs_until_stopped(),
+            },
+        );
+        self.send(id, call, timeout)?;
+        let end = Instant::now() + timeout;
+        let mut stopping = false;
+        loop {
+            let left = end.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(Delivery::Report(raw)) => {
+                    if let Some(waiting) = &reports {
+                        waiting.fetch_sub(1, Ordering::AcqRel);
+                    }
+                    // Reports already on their way after a stop are not the
+                    // caller's: it said it hears no more.
+                    if stopping {
+                        continue;
+                    }
+                    let go_on = match progress.as_mut() {
+                        Some(progress) => serde_json::from_str(raw.get())
+                            .map(&mut **progress)
+                            .unwrap_or(false),
+                        None => true,
+                    };
+                    if !go_on && !stopping {
+                        stopping = true;
+                        self.cancel(id);
+                    }
+                }
+                Ok(Delivery::Answer(Ok(raw))) => return Ok(LinkAnswer::Raw(raw)),
+                Ok(Delivery::Answer(Err(error))) => return Err(LinkError::Refused(error)),
+                Ok(Delivery::Overflow) => {
+                    self.cancel(id);
+                    return Err(LinkError::Unknown(format!(
+                        "The device reported faster than its {MAX_WAITING_REPORTS} waiting reports were read; the call was stopped"
+                    )));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    lock_recover(&inner.pending).remove(&id);
+                    if progress.is_some() {
+                        self.cancel(id);
+                    }
+                    return Err(LinkError::Unknown(
+                        "The device did not answer in time; the result is unknown and nothing was resent"
+                            .to_owned(),
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(LinkError::Unknown(format!(
+                        "The connection to the device ended before it answered ({}); the result is unknown and nothing was resent",
+                        self.closed_reason()
+                            .unwrap_or_else(|| "no reason reported".to_owned())
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Asks the node to stop the reporting call `request`; its answer still
+    /// ends the call. Nobody waits for the cancel's own answer.
+    fn cancel(&self, request: u64) {
+        let inner = &self.inner;
+        let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
+        let (sender, _unheard) = mpsc::channel();
+        lock_recover(&inner.pending).insert(
+            id,
+            Waiting {
+                sender,
+                reports: None,
+                until_stopped: false,
+            },
+        );
+        if let Err(error) = self.send(id, Call::Cancel { request }, CANCEL_TIMEOUT) {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.cancel_unsent",
+                "target": inner.target,
+                "request": request,
+                "error": error.to_string(),
+            }));
+        }
+    }
+
+    /// Writes request `id`, already waiting in `pending`; on any failure it
+    /// is taken out again.
+    fn send(&self, id: u64, call: Call, timeout: Duration) -> Result<(), LinkError> {
+        let inner = &self.inner;
+        // A cancel adds no effect on the device and is how a draining link
+        // ends the reporting calls it waits for.
+        let cancels = matches!(call, Call::Cancel { .. });
+        let encoded = serde_json::to_vec(&Request { id, call });
+        let mut line = match encoded {
+            Ok(line) => line,
+            Err(error) => {
+                lock_recover(&inner.pending).remove(&id);
+                return Err(LinkError::NotConnected(format!(
+                    "The request could not be encoded: {error}"
+                )));
+            }
+        };
+        line.push(b'\n');
         if let Some(reason) = self.closed_reason() {
             lock_recover(&inner.pending).remove(&id);
             return Err(LinkError::NotConnected(reason));
@@ -526,7 +671,7 @@ impl RemoteHost {
             };
             // Admitted before the connection began to drain, but not sent:
             // it is refused now rather than sent after consent was withdrawn.
-            if let Some(reason) = inner.gate.stopped() {
+            if let Some(reason) = inner.gate.stopped().filter(|_| !cancels) {
                 return Err(LinkError::NotConnected(reason));
             }
             Ok(tokio::time::timeout_at(deadline, async {
@@ -563,28 +708,22 @@ impl RemoteHost {
                 ));
             }
         }
-        match receiver.recv_timeout(timeout) {
-            Ok(Ok(raw)) => Ok(LinkAnswer::Raw(raw)),
-            Ok(Err(error)) => Err(LinkError::Refused(error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                lock_recover(&inner.pending).remove(&id);
-                Err(LinkError::Unknown(
-                    "The device did not answer in time; the result is unknown and nothing was resent"
-                        .to_owned(),
-                ))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(LinkError::Unknown(format!(
-                "The connection to the device ended before it answered ({}); the result is unknown and nothing was resent",
-                self.closed_reason()
-                    .unwrap_or_else(|| "no reason reported".to_owned())
-            ))),
-        }
+        Ok(())
     }
 }
 
 impl NodeLink for RemoteHost {
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         RemoteHost::call(self, call, timeout)
+    }
+
+    fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        RemoteHost::call_with_progress(self, call, timeout, progress)
     }
 
     fn close_when_idle(&self, reason: &str) {
@@ -598,6 +737,17 @@ impl NodeLink for RemoteHost {
         let spawned = std::thread::Builder::new()
             .name("remote-host-drain".into())
             .spawn(move || {
+                // A Git watch runs until it is told to stop, so the drain
+                // stops it rather than wait out its bound; a clone or any
+                // other call with an effect settles to its own result.
+                let reporting = lock_recover(&host.inner.pending)
+                    .iter()
+                    .filter(|(_, waiting)| waiting.until_stopped)
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>();
+                for request in reporting {
+                    host.cancel(request);
+                }
                 // Admitted requests are bounded by their own timeouts; this
                 // bound only keeps a wedged count from holding the link open.
                 host.inner.gate.wait_idle(Instant::now() + DRAIN_BOUND);
@@ -650,15 +800,6 @@ fn mark_closed(inner: &Inner, reason: String) {
     inner.gate.stop(&reason);
 }
 
-impl HostIdentity {
-    pub fn describe(&self) -> String {
-        format!(
-            "{}@{}:{} ({})",
-            self.user, self.hostname, self.port, self.host_key_sha256
-        )
-    }
-}
-
 /// Connects, checks consent against the device that answered, installs the
 /// helper when the device lacks this build's, and starts it. Blocking; run
 /// it off the runtime lock.
@@ -667,15 +808,16 @@ pub fn establish(
     packages: &HelperPackages,
     consent: &HostConsent,
     retirement_projects: &[String],
+    panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
-    let observed_key = Arc::new(Mutex::new(None));
-    let handler =
-        KnownHostHandler::new(&client.host, None).with_observed_key(Arc::clone(&observed_key));
+    let since = Instant::now();
+    let target = client.host.host_id.as_str();
+    establish_stage(target, "connect", since);
     let session = client
         .runtime
         .block_on(async {
-            tokio::time::timeout(SSH_OPERATION_TIMEOUT, client.connect(handler))
+            tokio::time::timeout(SSH_OPERATION_TIMEOUT, client.shared_session())
                 .await
                 .unwrap_or_else(|_| {
                     Err(remote_error(
@@ -693,7 +835,7 @@ pub fn establish(
         user: client.host.user.clone(),
         hostname: client.host.hostname.clone(),
         port: client.host.port,
-        host_key_sha256: lock_recover(&observed_key).clone().unwrap_or_default(),
+        host_key_sha256: client.observed_host_key().unwrap_or_default(),
     };
     if identity.host_key_sha256.is_empty() {
         return Err(EstablishError::Helper(
@@ -708,16 +850,16 @@ pub fn establish(
             observed: Box::new(identity),
         });
     }
-    let mut session = session;
     let result = client.runtime.block_on(async {
         tokio::time::timeout(
             INSTALL_TIMEOUT,
             start_helper(
-                &mut session,
+                &session,
                 client,
                 packages,
                 &consent.helper_root,
                 retirement_projects,
+                since,
             ),
         )
         .await
@@ -727,18 +869,24 @@ pub fn establish(
             ))
         })
     });
-    let (channel, installed, helper_path, upload) = match result {
-        Ok(parts) => parts,
-        Err(error) => {
-            let _ = client.runtime.block_on(session.disconnect(
-                Disconnect::ByApplication,
-                "helper setup failed",
-                "en",
-            ));
-            return Err(error);
-        }
-    };
-    let host = spawn_host(client, session, channel, on_close);
+    // A failed setup leaves the device's connection to the channels that
+    // share it; what it opened closed with it.
+    let Started {
+        channel,
+        session_channel,
+        installed,
+        helper_path,
+        upload,
+    } = result?;
+    let host = spawn_host(
+        client,
+        Arc::clone(&client.connection),
+        channel,
+        session_channel,
+        panes.clone(),
+        on_close,
+    );
+    establish_stage(target, "hello", since);
     let hello: Hello = call_as(&host, Call::Hello, HELLO_TIMEOUT).map_err(|error| {
         EstablishError::Helper(format!("The device helper did not start: {error}"))
     })?;
@@ -746,8 +894,13 @@ pub fn establish(
         host.close("helper protocol mismatch");
         return Err(EstablishError::Helper(reason));
     }
+    if panes.is_some() {
+        establish_stage(target, "panes", since);
+        start_panes(client, &host);
+    }
+    establish_stage(target, "ready", since);
     Ok(Established {
-        host,
+        host: Arc::new(host),
         identity,
         hello,
         installed,
@@ -756,13 +909,52 @@ pub fn establish(
     })
 }
 
+/// B30: each step a device's connection reaches, so a connection that
+/// stalls names the step it stalled in.
+fn establish_stage(target: &str, stage: &str, since: Instant) {
+    crate::diagnostic!(json!({
+        "component": "remote_host",
+        "kind": "host.establish_stage",
+        "target": target,
+        "stage": stage,
+        "elapsed_ms": since.elapsed().as_millis() as u64,
+    }));
+}
+
+/// Starts the node's pane service for the device's Herdr, so its panes'
+/// `hide` reaches the core over this link. A device whose Herdr cannot be
+/// found keeps its files and Git; its panes' `hide` answers that the node is
+/// unavailable, and the reason goes to the log.
+fn start_panes(client: &RusshRemoteClient, host: &RemoteHost) {
+    let started = client
+        .herdr_socket_path()
+        .map_err(|error| error.to_string())
+        .and_then(|herdr_socket| {
+            call_as::<PanesStarted>(host, Call::PanesStart { herdr_socket }, HELLO_TIMEOUT)
+                .map_err(|error| error.to_string())
+        });
+    match started {
+        Ok(_) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.panes_started",
+            "target": host.inner.target,
+        })),
+        Err(reason) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.panes_unstarted",
+            "target": host.inner.target,
+            "reason": reason,
+        })),
+    }
+}
+
 /// Why a started helper is not used: one that answers another protocol reads
 /// this build's requests with other shapes (a helper on protocol 8 ignores
 /// the View diffs a `changes` read carries and answers none, PRD S7 A5).
 /// The refusal is the device's unavailable reason. A device always runs the
 /// helper this Hide carries, installed by the digest of its bytes, so only a
 /// rebuilt or reinstalled Hide clears it: a development `hided` carries the
-/// `hide-host-helper` beside its own executable (`host_helper_dir`), and a
+/// `hided` it runs as (`host_helper_dir`), and a
 /// stale build there is installed and refused again on every connection.
 fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
     (hello.protocol != PROTOCOL_VERSION).then(|| {
@@ -773,14 +965,33 @@ fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
     })
 }
 
+/// A started helper: its channel and that channel's place among the
+/// connection's sessions, and what the install did.
+struct Started {
+    channel: Channel<Msg>,
+    session_channel: tokio::sync::OwnedSemaphorePermit,
+    installed: bool,
+    helper_path: String,
+    upload: Upload,
+}
+
 async fn start_helper(
-    session: &mut Handle<KnownHostHandler>,
+    session: &Handle<KnownHostHandler>,
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     helper_root: &str,
     retirement_projects: &[String],
-) -> Result<(Channel<Msg>, bool, String, Upload), EstablishError> {
+    since: Instant,
+) -> Result<Started, EstablishError> {
     let target = client.host.host_id.clone();
+    establish_stage(&target, "platform", since);
+    let admit = |operation: &'static str, stage: RemoteStage| async move {
+        client
+            .session_channel(operation, stage)
+            .await
+            .map_err(EstablishError::Connect)
+    };
+    let permit = admit("remote-host-platform", RemoteStage::Sftp).await?;
     let uname = execute_channel(
         session,
         "uname -s -m",
@@ -796,10 +1007,13 @@ async fn start_helper(
             uname.stderr.trim()
         )));
     }
+    drop(permit);
     let (os, arch) = platform_of(uname.stdout.trim()).map_err(EstablishError::Unsupported)?;
     let payload = packages.payload(&os, &arch)?;
     // The helper inherits this SSH exec environment. Read its path overrides
     // before uploading any candidate; older helpers need no new operation.
+    establish_stage(&target, "environment", since);
+    let permit = admit("remote-retirement-environment", RemoteStage::Sftp).await?;
     let environment = execute_channel(
         session,
         r#"[ "${#HCOORD_HOME}" -le 4096 ] && [ "${#HIDE_STATE_DIR}" -le 4096 ] && [ "${#XDG_STATE_HOME}" -le 4096 ] || exit 65; printf '%s\n' "${HCOORD_HOME-}" "${HIDE_STATE_DIR-}" "${XDG_STATE_HOME-}""#,
@@ -812,8 +1026,11 @@ async fn start_helper(
     if environment.exit_status != 0 {
         return Err(EstablishError::Install("The device retirement paths could not be inspected; check its SSH environment and retry; no helper was uploaded".into()));
     }
+    drop(permit);
     let locations = retirement::Locations::from_environment(&environment.stdout)?;
 
+    establish_stage(&target, "install", since);
+    let permit = admit("remote-host-install", RemoteStage::Sftp).await?;
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Install(format!("The SFTP channel could not be opened: {error}"))
     })?;
@@ -827,19 +1044,29 @@ async fn start_helper(
     raw.set_timeout(30);
     let installed = install(&raw, helper_root, &payload, retirement_projects, &locations).await;
     let _ = raw.close_session();
+    drop(raw);
+    drop(permit);
     let installed = installed?;
     let (helper_path, fresh) = (installed.helper_path, installed.fresh);
 
+    establish_stage(&target, "start", since);
+    let session_channel = admit("remote-host-start", RemoteStage::Ssh).await?;
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Helper(format!("The helper channel could not be opened: {error}"))
     })?;
     channel
-        .exec(true, format!("{} serve", shell_quote(&helper_path)))
+        .exec(true, format!("{} node serve", shell_quote(&helper_path)))
         .await
         .map_err(|error| {
             EstablishError::Helper(format!("The helper could not be started: {error}"))
         })?;
-    Ok((channel, fresh, helper_path, installed.upload))
+    Ok(Started {
+        channel,
+        session_channel,
+        installed: fresh,
+        helper_path,
+        upload: installed.upload,
+    })
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -1122,6 +1349,28 @@ fn private_file(attrs: &FileAttributes, owner: u32) -> bool {
         && attrs.permissions.is_some_and(|mode| mode & 0o022 == 0)
 }
 
+/// Where the private walk to the helper root starts, and the names it
+/// creates from there: below home it starts at home, which it never touches,
+/// and anywhere else at `/`. Both are the device's paths, so they are read
+/// as `/`-spelled names whatever system the core runs on: empty names (`//`,
+/// a trailing `/`) are dropped as the device drops them, and `/home/al` is
+/// not a prefix of `/home/alice`.
+fn private_walk(
+    home: &str,
+    root: &str,
+) -> Result<(String, String), hide_platform::path::PathError> {
+    let plain = |path: &str| {
+        let names: Vec<&str> = path.split('/').filter(|name| !name.is_empty()).collect();
+        format!("/{}", names.join("/"))
+    };
+    let (home, root) = (plain(home), plain(root));
+    match hide_platform::path::wire_relative(&home, &root) {
+        Ok(below) => Ok((home.trim_end_matches('/').to_owned(), below.to_string())),
+        Err(hide_platform::path::PathError::Outside) => Ok((String::new(), root)),
+        Err(error) => Err(error),
+    }
+}
+
 /// Creates and checks the helper root, and answers the real path it resolves
 /// to, which is the one the helper is installed under and started from.
 async fn ensure_private_dirs(
@@ -1130,16 +1379,11 @@ async fn ensure_private_dirs(
     root: &str,
     owner: u32,
 ) -> Result<String, EstablishError> {
-    // Components below home are created private; home itself is not touched.
-    // The prefix is compared by path component, so `/home/al` is not a
-    // prefix of `/home/alice`.
-    let (mut current, relative) = match Path::new(root).strip_prefix(home) {
-        Ok(below) => (
-            home.trim_end_matches('/').to_owned(),
-            below.to_string_lossy().into_owned(),
-        ),
-        Err(_) => (String::new(), root.to_owned()),
-    };
+    let (mut current, relative) = private_walk(home, root).map_err(|error| {
+        EstablishError::Install(format!(
+            "The helper install root is not a plain path: {error}"
+        ))
+    })?;
     for part in relative.split('/').filter(|part| !part.is_empty()) {
         current.push('/');
         current.push_str(part);
@@ -1391,17 +1635,26 @@ async fn remote_digest(
         .collect())
 }
 
+/// Starts the link over `channel`. Its reader keeps `connection`, the
+/// device's connection the channel runs on, until the link ends: a device
+/// removed while a call is still out (its kit coming off) drops its own hold
+/// on the connection, which closes only when its last holder goes, and the
+/// call still gets its answer.
 fn spawn_host(
     client: &RusshRemoteClient,
-    session: Handle<KnownHostHandler>,
+    connection: Arc<Connection>,
     channel: Channel<Msg>,
+    session_channel: tokio::sync::OwnedSemaphorePermit,
+    panes: Option<PaneHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> RemoteHost {
     let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(channel.make_writer());
+    let closing = Arc::new(tokio::sync::Notify::new());
     let inner = Arc::new(Inner {
         target: client.host.host_id.clone(),
         runtime: Arc::clone(&client.runtime),
-        session: Mutex::new(Some(session)),
+        closing: Arc::clone(&closing),
+        _session_channel: session_channel,
         writer: tokio::sync::Mutex::new(writer),
         pending: Mutex::new(HashMap::new()),
         closed: Mutex::new(None),
@@ -1411,6 +1664,7 @@ fn spawn_host(
     });
     let reader = Arc::downgrade(&inner);
     client.runtime.spawn(async move {
+        let _connection = connection;
         let mut channel = channel;
         let mut buffer: Vec<u8> = Vec::new();
         // How far `buffer` has been searched for a line end, so a large
@@ -1418,7 +1672,11 @@ fn spawn_host(
         let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
         let reason = loop {
-            match channel.wait().await {
+            let message = tokio::select! {
+                message = channel.wait() => message,
+                () = closing.notified() => break "this Hide closed the link".to_owned(),
+            };
+            match message {
                 Some(ChannelMsg::Data { data }) => {
                     buffer.extend_from_slice(&data);
                     while let Some(offset) = buffer[scanned..].iter().position(|byte| *byte == b'\n') {
@@ -1426,6 +1684,14 @@ fn spawn_host(
                         scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
+                        if line.starts_with(b"{\"event\":") {
+                            deliver_event(&inner, panes.as_ref(), &line);
+                            continue;
+                        }
+                        if line.starts_with(b"{\"progress\":") {
+                            deliver_report(&inner, &line);
+                            continue;
+                        }
                         // The answer is only tokenized here and kept as its
                         // own text; one nobody waits for is never copied.
                         match serde_json::from_slice::<AnswerLine<'_>>(&line) {
@@ -1435,10 +1701,13 @@ fn spawn_host(
                                     (None, Some(error)) => Some(Err(error)),
                                     _ => None,
                                 };
-                                let sender = lock_recover(&inner.pending).remove(&answer.id);
+                                let sender = lock_recover(&inner.pending)
+                                    .remove(&answer.id)
+                                    .map(|waiting| waiting.sender);
                                 match (sender, outcome) {
                                     (Some(sender), Some(outcome)) => {
-                                        let _ = sender.send(outcome.map(ToOwned::to_owned));
+                                        let _ = sender
+                                            .send(Delivery::Answer(outcome.map(ToOwned::to_owned)));
                                     }
                                     (sender, _) => crate::diagnostic!(json!({
                                         "component": "remote_host",
@@ -1490,6 +1759,10 @@ fn spawn_host(
                 Some(_) => {}
             }
         };
+        // Whatever ended the loop, the helper's channel ends with it, so the
+        // helper reads the end of its input and exits.
+        let _ = channel.eof().await;
+        let _ = channel.close().await;
         if let Some(inner) = reader.upgrade() {
             crate::diagnostic!(json!({
                 "component": "remote_host",
@@ -1499,15 +1772,173 @@ fn spawn_host(
                 "stderr_tail": String::from_utf8_lossy(&stderr).chars().rev().take(400).collect::<String>().chars().rev().collect::<String>(),
             }));
             mark_closed(&inner, reason.clone());
+            if let Some(hook) = &panes
+                && let Some(events) = hook.events.get()
+            {
+                events.closed(&hook.node, &RemoteHost { inner });
+            }
         }
         on_close(reason);
     });
     RemoteHost { inner }
 }
 
+/// Hands one event line to hided's pane events. A node that sends events
+/// on a link nobody listens to, or a line that is not one, is logged and
+/// dropped; the requests on the link go on.
+/// Hands a report to the call that hears it. A call that does not hear
+/// reports, or one gone, drops it; one with [`MAX_WAITING_REPORTS`] unread
+/// is told it overflowed and hears nothing more.
+fn deliver_report(inner: &Arc<Inner>, line: &[u8]) {
+    let report = match serde_json::from_slice::<ProgressLine<'_>>(line) {
+        Ok(report) => report,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.report_unreadable",
+                "target": inner.target,
+                "class": format!("{:?}", error.classify()),
+                "bytes": line.len(),
+            }));
+            return;
+        }
+    };
+    let mut pending = lock_recover(&inner.pending);
+    let Some(waiting) = pending.get(&report.progress) else {
+        return;
+    };
+    let Some(unread) = &waiting.reports else {
+        return;
+    };
+    if unread.fetch_add(1, Ordering::AcqRel) >= MAX_WAITING_REPORTS {
+        if let Some(waiting) = pending.remove(&report.progress) {
+            let _ = waiting.sender.send(Delivery::Overflow);
+        }
+        crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.reports_overflowed",
+            "target": inner.target,
+            "request": report.progress,
+            "cap": MAX_WAITING_REPORTS,
+        }));
+        return;
+    }
+    let _ = waiting
+        .sender
+        .send(Delivery::Report(report.report.to_owned()));
+}
+
+fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
+    let event = match serde_json::from_slice::<NodeEvent>(line) {
+        Ok(event) => event,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.event_unreadable",
+                "target": inner.target,
+                "class": format!("{:?}", error.classify()),
+                "bytes": line.len(),
+            }));
+            return;
+        }
+    };
+    match panes.and_then(|hook| Some((hook, hook.events.get()?))) {
+        Some((hook, events)) => events.event(
+            &hook.node,
+            &RemoteHost {
+                inner: Arc::clone(inner),
+            },
+            event,
+        ),
+        None => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.event_unheard",
+            "target": inner.target,
+        })),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct Heard(Mutex<Vec<(String, NodeEvent)>>);
+
+    impl PaneEvents for Heard {
+        fn event(&self, node: &str, _link: &RemoteHost, event: NodeEvent) {
+            lock_recover(&self.0).push((node.to_owned(), event));
+        }
+
+        fn closed(&self, _node: &str, _link: &RemoteHost) {}
+    }
+
+    /// A call that leaves reports unread past the cap hears that it
+    /// overflowed and nothing more, and a call that hears no reports drops
+    /// them; neither grows without bound.
+    #[test]
+    fn reports_past_the_cap_end_the_call_as_overflowed() {
+        let link = RemoteHost::detached("ssh:reports");
+        let (sender, receiver) = mpsc::channel();
+        let unread = Arc::new(AtomicUsize::new(MAX_WAITING_REPORTS - 1));
+        lock_recover(&link.inner.pending).insert(
+            7,
+            Waiting {
+                sender,
+                reports: Some(Arc::clone(&unread)),
+                until_stopped: false,
+            },
+        );
+        let line = br#"{"progress":7,"report":{"n":1}}"#;
+        deliver_report(&link.inner, line);
+        assert!(matches!(receiver.try_recv(), Ok(Delivery::Report(_))));
+        deliver_report(&link.inner, line);
+        assert!(matches!(receiver.try_recv(), Ok(Delivery::Overflow)));
+        assert!(!lock_recover(&link.inner.pending).contains_key(&7));
+        deliver_report(&link.inner, line);
+        assert!(receiver.try_recv().is_err(), "nothing after the overflow");
+
+        let (sender, receiver) = mpsc::channel();
+        lock_recover(&link.inner.pending).insert(
+            8,
+            Waiting {
+                sender,
+                reports: None,
+                until_stopped: false,
+            },
+        );
+        deliver_report(&link.inner, br#"{"progress":8,"report":null}"#);
+        assert!(
+            receiver.try_recv().is_err(),
+            "a plain call hears no reports"
+        );
+    }
+
+    /// Letter-720: a node cannot speak for another node's panes. The node an
+    /// event belongs to is the link it came up, never a field of the line,
+    /// so a line naming another node reaches the core as this link's.
+    #[test]
+    fn a_link_s_events_carry_its_own_node_whatever_the_line_says() {
+        let link = RemoteHost::detached("ssh:device-a");
+        let heard = Arc::new(Heard::default());
+        let slot: PaneEventsSlot = Arc::default();
+        let _ = slot.set(Arc::clone(&heard) as Arc<dyn PaneEvents>);
+        let hook = PaneHook {
+            node: "node-a".to_owned(),
+            events: slot,
+        };
+        let line = json!({
+            "event": "pane_proof", "request": 7, "pane_id": "w1:p1",
+            "terminal_id": "t1", "shell_pid": 42, "shell_started": 9,
+            "nonce": "n", "one_shot": false,
+            "node": "node-b", "device_id": "node-b",
+        });
+        deliver_event(&link.inner, Some(&hook), line.to_string().as_bytes());
+        let heard = lock_recover(&heard.0);
+        assert_eq!(heard.len(), 1);
+        assert_eq!(heard[0].0, "node-a");
+        assert!(matches!(&heard[0].1, NodeEvent::PaneProof { pane_id, .. } if pane_id == "w1:p1"));
+    }
 
     fn folder(uid: u32, mode: u32) -> FileAttributes {
         FileAttributes {
@@ -1681,8 +2112,23 @@ mod tests {
         assert!(ancestors("relative/helper").is_err());
         assert!(ancestors("/a/../b").is_err());
         assert!(owned_by(&folder(0, 0o755), me) && !owned_by(&folder(502, 0o755), me));
-        // Component-wise: `/home/al` is not a prefix of `/home/alice`.
-        assert!(Path::new("/home/alice/x").strip_prefix("/home/al").is_err());
+        let walk = |home: &str, root: &str| private_walk(home, root).unwrap();
+        let pair = |start: &str, below: &str| (start.to_owned(), below.to_owned());
+        assert_eq!(
+            walk("/home/alice", "/home/alice/.hide/helper"),
+            pair("/home/alice", ".hide/helper")
+        );
+        assert_eq!(walk("/home/alice", "/home/alice"), pair("/home/alice", ""));
+        assert_eq!(walk("/", "/helper"), pair("", "helper"));
+        // Spelled with empty names, it is the same folder and the same walk.
+        assert_eq!(
+            walk("/home/alice/", "/home/alice//.hide/helper/"),
+            pair("/home/alice", ".hide/helper")
+        );
+        // Outside home, and beside it by a shared prefix, it walks from `/`.
+        assert_eq!(walk("/home/alice", "/opt/hide"), pair("", "/opt/hide"));
+        assert_eq!(walk("/home/al", "/home/alice/x"), pair("", "/home/alice/x"));
+        assert!(private_walk("/home/alice", "/home/alice/../bob").is_err());
     }
 
     #[test]
@@ -1775,7 +2221,7 @@ mod tests {
             vec![
                 ("hide".to_owned(), true),
                 ("hide-agent-hooks".to_owned(), true),
-                ("hide-host-helper".to_owned(), true),
+                ("hided".to_owned(), true),
             ]
         );
         assert_ne!(full.version(), bare.version());
@@ -1795,10 +2241,7 @@ mod tests {
             0o755,
         );
         let other = packages.payload(os, other_arch).unwrap();
-        assert_eq!(
-            relative(&other),
-            vec![("hide-host-helper".to_owned(), true),]
-        );
+        assert_eq!(relative(&other), vec![("hided".to_owned(), true),]);
         assert_eq!(other.missing.len(), 2, "{:?}", other.missing);
     }
 
@@ -1858,6 +2301,7 @@ mod probe {
             &packages,
             &consent,
             &[],
+            None,
             Box::new(move |reason| {
                 let _ = seen.send(reason);
             }),
@@ -1875,7 +2319,7 @@ mod probe {
         let timeout = Duration::from_secs(20);
         let root_path = format!("{fixture}/checkout");
         let opened: RootOpened = call_as(
-            &host,
+            &*host,
             Call::RootOpen {
                 root: root_path.clone(),
             },
@@ -1887,7 +2331,7 @@ mod probe {
             identity: opened.identity,
         };
         let listing: hide_node_link::list::Listing = call_as(
-            &host,
+            &*host,
             Call::List {
                 root: root.clone(),
                 path: String::new(),
@@ -1900,7 +2344,7 @@ mod probe {
             "{listing:?}"
         );
         let document: hide_node_link::document::Document = call_as(
-            &host,
+            &*host,
             Call::OpenDocument {
                 root: root.clone(),
                 path: "a.txt".to_owned(),
@@ -1911,7 +2355,7 @@ mod probe {
         assert_eq!(document.contents.as_deref(), Some("old\n"));
         let revision = document.revision.expect("editable revision");
         let saved: hide_node_link::save::Saved = call_as(
-            &host,
+            &*host,
             Call::Save {
                 root: root.clone(),
                 path: "a.txt".to_owned(),

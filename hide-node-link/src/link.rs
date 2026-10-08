@@ -38,10 +38,24 @@ impl fmt::Display for LinkError {
 /// Another machine's answer stays the raw JSON text it sent: materializing an
 /// untrusted line as a generic `Value` costs tens of times its size, so it is
 /// decoded once, straight into the typed answer (`call_as`).
-#[derive(Debug)]
 pub enum LinkAnswer {
     Parsed(Value),
     Raw(Box<serde_json::value::RawValue>),
+}
+
+/// An answer can carry what must never reach a log (a provider's
+/// credentials, a file's contents), so its Debug form names its size only.
+impl fmt::Debug for LinkAnswer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parsed(value) => write!(
+                formatter,
+                "LinkAnswer::Parsed({} bytes)",
+                value.to_string().len()
+            ),
+            Self::Raw(raw) => write!(formatter, "LinkAnswer::Raw({} bytes)", raw.get().len()),
+        }
+    }
 }
 
 impl From<Value> for LinkAnswer {
@@ -150,4 +164,23 @@ fn decode<T: serde::de::DeserializeOwned>(answer: LinkAnswer) -> Result<T, LinkE
             "The device helper answered in an unexpected shape: {error}"
         ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_answer_s_debug_form_names_its_size_never_its_contents() {
+        let secret = serde_json::json!({"access_token": "sk-secret"});
+        let parsed = format!("{:?}", LinkAnswer::Parsed(secret.clone()));
+        let raw = format!(
+            "{:?}",
+            LinkAnswer::Raw(serde_json::value::to_raw_value(&secret).unwrap())
+        );
+        for shown in [parsed, raw] {
+            assert!(!shown.contains("sk-secret"), "{shown}");
+            assert!(shown.contains("bytes"), "{shown}");
+        }
+    }
 }

@@ -33,7 +33,6 @@ pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
 pub const HIDE_HOST_CLI_DIR: &str = "HIDE_HOST_CLI_DIR";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
-pub const HIDE_WORKSPACE_BRIDGE_DIR: &str = "HIDE_WORKSPACE_BRIDGE_DIR";
 pub const HIDE_TAILSCALE_BIN: &str = "HIDE_TAILSCALE_BIN";
 
 pub const REGISTRY: &[EnvKey] = &[
@@ -140,12 +139,6 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "Direct Herdr pane callers try kernel peer bootstrap; detached agent tools require a session-scoped reference",
     },
     EnvKey {
-        key: HIDE_WORKSPACE_BRIDGE_DIR,
-        required: false,
-        format: "absolute owner-only directory path on the SSH device",
-        absent_behavior: "The remote helper and the hide command installed beside it use workspace-bridges in the device's state folder (HIDE_STATE_DIR, $XDG_STATE_HOME/hide, else $HOME/.hide/state); isolated verification may set a separate directory on both ends",
-    },
-    EnvKey {
         key: HIDE_TAILSCALE_BIN,
         required: false,
         format: "absolute path of the tailscale CLI Settings > Mobile runs; a path that does not exist reads as Tailscale not installed",
@@ -193,7 +186,6 @@ pub struct Env {
     /// The pane a Workspace CLI command runs in; the daemon verifies its
     /// live membership and never trusts a caller-supplied Workspace.
     pub pane_id: Option<String>,
-    pub workspace_bridge_dir: Option<PathBuf>,
     /// The only tailscale CLI Mobile runs, when set (`HIDE_TAILSCALE_BIN`).
     pub tailscale_bin: Option<PathBuf>,
     /// PATH as the daemon received it, searched for `tailscale` at each check.
@@ -437,19 +429,6 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
         }
         other => other,
     };
-    let workspace_bridge_dir = match read(HIDE_WORKSPACE_BRIDGE_DIR) {
-        Some(value)
-            if !Path::new(&value).is_absolute() || value.bytes().any(|b| b.is_ascii_control()) =>
-        {
-            errors.push(EnvError {
-                key: HIDE_WORKSPACE_BRIDGE_DIR,
-                kind: "invalid",
-            });
-            None
-        }
-        Some(value) => Some(PathBuf::from(value)),
-        None => None,
-    };
     let tailscale_bin = match read(HIDE_TAILSCALE_BIN) {
         Some(value)
             if !Path::new(&value).is_absolute() || value.bytes().any(|b| b.is_ascii_control()) =>
@@ -479,7 +458,6 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
         host_helper_root,
         host_cli_dir,
         pane_id,
-        workspace_bridge_dir,
         tailscale_bin,
         search_path,
     };

@@ -31,7 +31,7 @@ use crate::recent_closed::{
     ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutBranch, ClosedLayoutNode, ClosedPane,
     PanePlacement, resume_arguments,
 };
-use crate::remote::RusshRemoteClient;
+use crate::remote::DeviceTransport;
 use crate::runtime::{LaneStart, PendingPaneFocusControl, Runtime};
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
@@ -83,7 +83,7 @@ pub struct LiveContext {
 #[derive(Clone)]
 pub struct RemoteTerminalContext {
     target_id: String,
-    client: Arc<RusshRemoteClient>,
+    transport: Arc<dyn DeviceTransport>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
@@ -91,13 +91,13 @@ pub struct RemoteTerminalContext {
 impl RemoteTerminalContext {
     pub(crate) fn new(
         target_id: impl Into<String>,
-        client: Arc<RusshRemoteClient>,
+        transport: Arc<dyn DeviceTransport>,
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
     ) -> Self {
         Self {
             target_id: target_id.into(),
-            client,
+            transport,
             runtime,
             notifier,
         }
@@ -3519,11 +3519,10 @@ impl TerminalSession {
         rows: u16,
         cols: u16,
     ) -> Result<Self, String> {
-        let process = context
-            .client
+        let (reader, transport_writer, shutdown) = context
+            .transport
             .open_terminal_session(source_pane_id, mode.as_str(), rows, cols)
             .map_err(|error| error.to_string())?;
-        let (reader, transport_writer, shutdown) = process.into_parts();
         let writer = match (mode, transport_writer) {
             (TerminalSessionMode::Control, Some(writer)) => {
                 match spawn_terminal_control_writer(
@@ -5366,17 +5365,15 @@ mod tests {
         );
 
         let home = std::env::var_os("HOME").expect("HOME is configured");
-        let alias = crate::remote::SshAlias::from_config_file(
-            &std::path::PathBuf::from(home).join(".ssh/config"),
-            &alias_name,
-        )
-        .expect("SSH alias resolves");
-        let client =
-            crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
-        let connector = client.herdr_api_connector();
+        use crate::remote::DeviceConnector as _;
+        let connector = hide_node::ssh::Connector::new(None)
+            .transport(std::path::Path::new(&home), "probe", &alias_name, None)
+            .expect("SSH alias resolves")
+            .herdr_api_connector();
+        let connector = &*connector;
 
         let response = request_with_connector(
-            &connector,
+            connector,
             "session.snapshot",
             json!({}),
             Duration::from_secs(5),
@@ -5411,14 +5408,14 @@ mod tests {
             .to_owned();
 
         execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::FocusWorkspace {
                 workspace_id: workspace_id.clone(),
             },
         )
         .expect("focus owned fixture workspace");
         execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::FocusTab {
                 tab_id: original_tab_id,
             },
@@ -5429,7 +5426,7 @@ mod tests {
             created_tab_id: Some(created_tab_id),
             created_pane_id: Some(created_root_pane_id),
         } = execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::CreateTab {
                 workspace_id: workspace_id.clone(),
                 cwd: cwd.clone(),
@@ -5447,7 +5444,7 @@ mod tests {
             created_tab_id: None,
             created_pane_id: Some(created_split_pane_id),
         } = execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::Pane(PaneControlAction::Split {
                 pane_id: created_root_pane_id.clone(),
                 direction: PaneSplitDirection::Right,
@@ -5473,11 +5470,11 @@ mod tests {
                 pane_id: created_split_pane_id.clone(),
             }),
         ] {
-            execute_remote_control(&connector, &action).expect("mutate only the fixture pane");
+            execute_remote_control(connector, &action).expect("mutate only the fixture pane");
         }
 
         remote_snapshot_until(
-            &connector,
+            connector,
             "authoritative snapshot did not converge after remote controls",
             |snapshot| {
                 let created_tab_visible = snapshot["tabs"].as_array().is_some_and(|tabs| {

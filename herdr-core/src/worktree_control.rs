@@ -2065,7 +2065,7 @@ mod tests {
     }
     impl GitCommands for ScriptedGit {
         fn run(&self, _cwd: &str, command: GitCommand) -> Result<String, String> {
-            self.calls.lock().unwrap().push(command.args());
+            self.calls.lock().unwrap().push(command.args().unwrap());
             self.replies
                 .lock()
                 .unwrap()
@@ -2126,9 +2126,12 @@ mod tests {
         let calls = git.calls.lock().unwrap();
         assert_eq!(
             calls[0],
-            ["config", "branch.feature.issue", "acme/project#42"]
+            ["config", "--", "branch.feature.issue", "acme/project#42"]
         );
-        assert_eq!(calls[1], ["config", "--unset-all", "branch.feature.issue"]);
+        assert_eq!(
+            calls[1],
+            ["config", "--unset-all", "--", "branch.feature.issue"]
+        );
     }
 
     #[test]
@@ -2157,6 +2160,7 @@ mod tests {
             git.calls.lock().unwrap().as_slice(),
             [vec![
                 "config".to_owned(),
+                "--".to_owned(),
                 "branch.feature.description".to_owned(),
                 "Ship checkout row D".to_owned(),
             ]]
@@ -2327,6 +2331,7 @@ mod tests {
             [vec![
                 "config".to_owned(),
                 "--unset-all".to_owned(),
+                "--".to_owned(),
                 "branch.feature.description".to_owned(),
             ]]
         );
@@ -3127,7 +3132,7 @@ mod tests {
         assert_eq!(outcome.path, path);
         assert_eq!(
             git.calls.lock().unwrap()[2],
-            ["checkout", "--no-overwrite-ignore", "main"]
+            ["checkout", "--no-overwrite-ignore", "main", "--"]
         );
         let requests = server.requests.lock().unwrap();
         let create = requests
@@ -3156,7 +3161,7 @@ mod tests {
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
             git.calls.lock().unwrap()[3],
-            ["checkout", "--no-overwrite-ignore", "feature"]
+            ["checkout", "--no-overwrite-ignore", "feature", "--"]
         );
         assert_eq!(
             server

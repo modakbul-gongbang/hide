@@ -635,7 +635,7 @@ fn a_dependent_starts_only_after_its_predecessor_merged_not_when_it_is_verifying
         TaskState::Waiting,
         "verifying is not merged"
     );
-    let card = h.engine.summary().factories[0].columns[1].cards.clone();
+    let card = h.engine.summary().factories[0].columns[0].cards.clone();
     assert_eq!(card[0].waiting_for.as_deref(), Some("L-1"));
     let card = card_json(&h, &b);
     assert_eq!(card["waiting_code"], "predecessors", "{card}");
@@ -2207,12 +2207,14 @@ fn the_first_edit_to_an_issue_the_factory_wrote_sends_the_task_back_to_review() 
     );
     let issue = h.task(&f, &b).issue.unwrap();
     h.world().outside.push_back(OutsideEvent::BodyEdited {
+        body: "Updated goal sentence. Another sentence.".into(),
         issue,
         body_hash: "edited".into(),
     });
     h.advance(3 * MINUTE_MS);
     h.engine.tick();
     assert_eq!(h.state(&f, &b), TaskState::Drafting, "re-reviewed (B52)");
+    assert_eq!(card_json(&h, &b)["summary"], "Updated goal sentence.");
 }
 
 #[test]
@@ -2940,8 +2942,8 @@ fn the_inbox_orders_blocking_questions_first_then_answers_merges_and_stops() {
     assert_eq!(summary.my_turn, 3);
     assert_eq!(summary.inbox[1].remaining.as_deref(), Some("5시간 남음"));
     let flow = &summary.factories[0].flow;
-    // Merge waiting sits in the running column (D-47).
-    assert_eq!((flow.running, flow.waiting), (3, 0));
+    // A worker with a default question still moves; blocking and merge wait do not.
+    assert_eq!((flow.moving, flow.stuck, flow.before), (1, 2, 0));
 }
 
 // ------------------------------------------------------------ slow worker start
@@ -3374,4 +3376,299 @@ fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {
             .iter()
             .any(|e| e.kind == "watch.capped")
     );
+}
+
+// Movement/stage expectations are the operator's board contract, independent of lifecycle transitions.
+#[test]
+fn person_waits_sort_by_age_even_when_paused_has_higher_priority() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let id = h.ready("Base", &[]);
+    let base = h.task(&f, &id);
+    let factory = h.engine.factory_for_project(PROJECT).unwrap();
+    for reverse_ids in [false, true] {
+        let tasks: Vec<_> = [
+            ("paused", TaskState::Paused, 30, 100),
+            ("blocked", TaskState::Blocked, 10, 0),
+            ("stopped", TaskState::Stopped, 50, -1),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (title, state, since, priority))| {
+            let mut task = base.clone();
+            task.id = format!("task-{}", if reverse_ids { 2 - index } else { index });
+            task.card.title = title.into();
+            task.state = state;
+            task.state_since = since;
+            task.human.priority = priority;
+            task
+        })
+        .collect();
+        let summary = hide_factory::summary::build(
+            &[factory],
+            &tasks.iter().collect::<Vec<_>>(),
+            h.world().now,
+            0,
+            &BTreeMap::new(),
+        );
+        let stuck = &summary.factories[0].columns[2].cards;
+        assert_eq!(
+            stuck
+                .iter()
+                .map(|card| card.title.as_str())
+                .collect::<Vec<_>>(),
+            ["stopped", "blocked", "paused"]
+        );
+        let mut answer = serde_json::to_value(summary).unwrap();
+        answer["ok"] = json!(true);
+        let rendered = hide_factory::command::render_human("status", &answer);
+        assert!(
+            rendered.contains("시작 전 0 · 진행 중 0 · 멈춤 3 · 완료 오늘 0"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("null"), "{rendered}");
+    }
+}
+
+#[test]
+fn movement_columns_and_stages_follow_execution_history_without_changing_state() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let id = h.ready("A", &[]);
+    let running = h.task(&f, &id);
+    let factory = h.engine.summary().factories[0].clone();
+    let cases = [
+        (TaskState::Drafting, false, None, Some("before"), 0, None),
+        (TaskState::Waiting, false, None, Some("before"), 0, None),
+        (
+            TaskState::Waiting,
+            true,
+            None,
+            Some("stuck"),
+            1,
+            Some("other"),
+        ),
+        (TaskState::Running, true, None, Some("moving"), 1, None),
+        (TaskState::Verifying, true, None, Some("moving"), 2, None),
+        (TaskState::Relanding, true, None, Some("moving"), 1, None),
+        (TaskState::Landed, true, None, Some("moving"), 3, None),
+        (
+            TaskState::Blocked,
+            true,
+            None,
+            Some("stuck"),
+            1,
+            Some("person"),
+        ),
+        (
+            TaskState::Paused,
+            true,
+            None,
+            Some("stuck"),
+            1,
+            Some("person"),
+        ),
+        (
+            TaskState::MergeWaiting,
+            true,
+            None,
+            Some("stuck"),
+            3,
+            Some("person"),
+        ),
+        (
+            TaskState::Stopped,
+            true,
+            Some(StopReason::NoReport),
+            Some("stuck"),
+            1,
+            Some("person"),
+        ),
+        (
+            TaskState::Stopped,
+            true,
+            Some(StopReason::VerifyFailed),
+            Some("stuck"),
+            2,
+            Some("person"),
+        ),
+        (
+            TaskState::Stopped,
+            true,
+            Some(StopReason::PublishRefused),
+            Some("stuck"),
+            2,
+            Some("person"),
+        ),
+        (
+            TaskState::Outside,
+            true,
+            None,
+            Some("stuck"),
+            3,
+            Some("other"),
+        ),
+        (TaskState::Done, true, None, Some("done"), 4, None),
+        (TaskState::Cancelled, true, None, None, 1, None),
+    ];
+    // Read the stored Factory through the same public show/status boundary as a client.
+    let owner = h.engine.factory_for_project(PROJECT).unwrap();
+    for (state, has_worker, stop, column, stage, group) in cases {
+        let mut task = running.clone();
+        task.state = state;
+        task.stop = stop;
+        if !has_worker {
+            task.worker = None;
+            task.attempts.clear();
+            task.last_report_at = None;
+        }
+        let tasks = [(id.clone(), task.clone())].into();
+        let card = hide_factory::summary::card_view(owner, &task, &tasks, h.world().now);
+        assert_eq!(
+            (
+                card.column.as_deref(),
+                card.stage,
+                card.waiting_group.as_deref()
+            ),
+            (column, stage, group),
+            "{state:?}"
+        );
+        assert_eq!(task.state, state, "projection changes no lifecycle state");
+    }
+    assert_eq!(
+        factory
+            .columns
+            .iter()
+            .map(|column| column.column.as_str())
+            .collect::<Vec<_>>(),
+        ["before", "moving", "stuck", "done"]
+    );
+}
+
+#[test]
+fn intake_summary_is_persisted_and_goal_edits_replace_it_without_growing_judgment_input() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().intake.insert("Summary".into(), json!({"summary":"검토가 만든 요약", "questions":[],"dependencies":[],"flags":[],"split":[]}));
+    let id = h.ready("Summary", &[]);
+    assert_eq!(card_json(&h, &id)["summary"], "검토가 만든 요약");
+    assert_eq!(
+        h.task(&f, &id).card.summary.as_deref(),
+        Some("검토가 만든 요약")
+    );
+    let mut input = card("Summary", &[]);
+    input.goal = Some("새 목표 첫 문장. 두 번째 문장.".into());
+    h.op(Command::Pause { task: id.clone() });
+    h.op(Command::Add {
+        project: Some(PROJECT.into()),
+        task: Some(id.clone()),
+        issue: None,
+        card: input,
+        producer_pane: None,
+    });
+    // A running scope change remains pending; only approval changes its displayed goal/summary.
+    let question = h
+        .task(&f, &id)
+        .open_questions()
+        .find(|question| matches!(question.kind, QuestionKind::ScopeChange { .. }))
+        .cloned()
+        .unwrap();
+    h.op(Command::Answer {
+        task: id.clone(),
+        question: Some(question.id),
+        choice: Some("approve".into()),
+        text: None,
+    });
+    assert_eq!(card_json(&h, &id)["summary"], "새 목표 첫 문장.");
+    for judgment in &h.world().judged {
+        assert!(
+            !judgment.render_input().contains("\"summary\""),
+            "summary is output-only metadata"
+        );
+    }
+}
+
+#[test]
+fn periodic_watch_keeps_display_metadata_out_of_provider_input() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    h.ready("Watch", &[]);
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let world = h.world();
+    let watches: Vec<_> = world
+        .judged
+        .iter()
+        .chain(&world.submitted)
+        .filter(|judgment| matches!(judgment.input, JudgmentInput::Watch { .. }))
+        .collect();
+    assert!(!watches.is_empty(), "the actual periodic watch ran");
+    for judgment in watches {
+        let input: serde_json::Value = serde_json::from_str(&judgment.render_input()).unwrap();
+        let cards: Vec<_> = input["board"]["factories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|factory| factory["columns"].as_array().unwrap())
+            .flat_map(|column| column["cards"].as_array().unwrap())
+            .collect();
+        assert!(!cards.is_empty());
+        for card in cards {
+            for field in [
+                "summary",
+                "issue",
+                "issue_url",
+                "pr",
+                "worker_runtime",
+                "resume_at",
+                "waiting_group",
+                "stage",
+            ] {
+                assert!(
+                    card.get(field).is_none(),
+                    "display field {field} reached Watch input"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    let added = h.add_card(CardInput {
+        runtime: Some(Runtime::Claude),
+        ..card("Limited", &[])
+    });
+    let id = added["task"]["id"].as_str().unwrap().to_owned();
+    h.engine.tick();
+    let now = h.world().now;
+    h.world()
+        .worker_status
+        .insert(id.clone(), WorkerStatus::Resting { since: now });
+    h.world()
+        .usage_limits
+        .insert(Runtime::Claude, now + HOUR_MS);
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    let resting = card_json(&h, &id);
+    assert_eq!(
+        (
+            resting["column"].as_str(),
+            resting["waiting_group"].as_str()
+        ),
+        (Some("stuck"), Some("other"))
+    );
+    assert_eq!(resting["resume_at"], now + HOUR_MS);
+    assert_eq!(resting["stage"], 1);
+    h.advance(HOUR_MS);
+    h.world().usage_limits.clear();
+    h.world()
+        .worker_status
+        .insert(id.clone(), WorkerStatus::Working);
+    h.engine.tick();
+    assert_eq!(card_json(&h, &id)["column"], "moving");
+    assert_eq!(card_json(&h, &id)["resume_at"], serde_json::Value::Null);
 }

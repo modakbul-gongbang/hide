@@ -108,6 +108,13 @@ pub(crate) fn test_node() -> NodeId {
     NodeId::parse(TEST_NODE).unwrap()
 }
 
+/// The SSH transport a test core reaches devices with; it carries no device
+/// packages, so a device's node stays `unsupported`.
+#[cfg(test)]
+pub(crate) fn test_devices() -> std::sync::Arc<dyn crate::remote::DeviceConnector> {
+    std::sync::Arc::new(hide_node::ssh::Connector::new(None))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -64,13 +64,18 @@ class CoreTouchesNoMachine(unittest.TestCase):
         self.assertEqual(check.test_modules(),
                          {'herdr-core/src/fake.rs', 'herdr-core/src/fixture.rs'})
 
-    def test_the_factory_runner_is_found_however_it_is_named(self):
-        root, check = self.tree({'factory.rs': 'use hide_factory::exec::SystemRunner;\n'
-                                               'use hide_factory::{exec};\n'
-                                               'fn run(r: &mut R) { exec::checked(r, "s", "git", &[], None); }\n'
-                                               'fn sh() { let _ = exec::shell(); }\n'})
-        found = check.findings(root / 'herdr-core/src/factory.rs')
-        self.assertEqual([line.split(':')[1] for line in found], ['1', '3', '4'], found)
+    def test_the_factory_engine_is_scanned_like_the_core(self):
+        root, check = self.tree({'lib.rs': 'fn f() {}\n'})
+        engine = root / 'hide-factory' / 'src' / 'project.rs'
+        engine.parent.mkdir(parents=True)
+        engine.write_text('fn run() { std::process::Command::new("git"); }\n'
+                          '#[cfg(test)]\nmod tests {\n    fn t() { std::fs::read("x").unwrap(); }\n}\n')
+        check.STORES = {}
+        check.LATER_LAYERS = {}
+        check.FIXTURES = {}
+        self.assertEqual(check.main(), 1)
+        found = check.findings(engine)
+        self.assertEqual([line.split(':')[1] for line in found], ['1'], found)
 
     def test_a_new_touch_in_an_excused_store_fails(self):
         root, check = self.tree({'store.rs': 'fn save() { std::fs::write("s", b"x"); }\n'})
