@@ -1864,7 +1864,22 @@ impl Runtime {
         }
         let fetched = fetched.map(|mut raw| {
             self.clamp_device_created_tabs(target_id, &mut raw, None);
-            let mut derived = self.derive_device_session(target_id, &raw);
+            // Keep the complete core projection when Herdr's facts did not
+            // move. Rebuilding raw rows would temporarily discard resolved
+            // state and cross-device lineage, making every idle fetch publish.
+            // Catalog/helper changes already refresh this published session.
+            let previous = (self.device_raw_sessions.get(target_id) == Some(&raw))
+                .then(|| {
+                    self.snapshot
+                        .status
+                        .remote
+                        .iter()
+                        .find(|status| status.target_id == target_id)
+                        .and_then(|status| status.session.clone())
+                })
+                .flatten();
+            let mut derived =
+                previous.unwrap_or_else(|| self.derive_device_session(target_id, &raw));
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
             self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
             self.lay_remote_requests(target_id, &mut derived.agents, true);

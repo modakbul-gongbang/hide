@@ -181,28 +181,61 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
     }
     run(
         &mut rows,
-        &[("question", "ci"), ("read-with-ci", "ci"), ("working-with-ci", "working")],
+        &[
+            ("question", "ci"),
+            ("read-with-ci", "ci"),
+            ("working-with-ci", "working"),
+        ],
         &github(vec![
             pull_request(1, "ci", PullRequestBadge::Open, PullRequestChecks::Failed),
-            pull_request(2, "working", PullRequestBadge::Open, PullRequestChecks::Failed),
+            pull_request(
+                2,
+                "working",
+                PullRequestBadge::Open,
+                PullRequestChecks::Failed,
+            ),
         ]),
     );
-    let states: Vec<_> = rows.iter().map(|row| (row.pane_id.as_str(), row.state.session.group, row.state.session.tag)).collect();
-    assert_eq!(states, [
-        ("approval", Group::MyTurn, Some(Tag::Approval)),
-        ("question", Group::MyTurn, Some(Tag::Answer)),
-        ("read-question", Group::Resting, Some(Tag::Idle)),
-        // The question holder already owns PR 1, so another row cannot also fix it.
-        ("read-with-ci", Group::Resting, Some(Tag::Idle)),
-        ("working-with-ci", Group::InProgress, Some(Tag::Working)),
-    ]);
+    let states: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.pane_id.as_str(),
+                row.state.session.group,
+                row.state.session.tag,
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("approval", Group::MyTurn, Some(Tag::Approval)),
+            ("question", Group::MyTurn, Some(Tag::Answer)),
+            ("read-question", Group::Resting, Some(Tag::Idle)),
+            // The question holder already owns PR 1, so another row cannot also fix it.
+            ("read-with-ci", Group::Resting, Some(Tag::Idle)),
+            ("working-with-ci", Group::InProgress, Some(Tag::Working)),
+        ]
+    );
     rows[1].unread = false;
-    run(&mut rows, &[("question", "ci")], &github(vec![
-        pull_request(1, "ci", PullRequestBadge::Open, PullRequestChecks::Failed),
-    ]));
-    assert_eq!(rows[1].state.session, crate::agent_state::sessions::Row {
-        group: Group::MyTurn, tag: Some(Tag::Fix),
-    }, "reading an AI question skips only the demand rung, not its PR duty");
+    run(
+        &mut rows,
+        &[("question", "ci")],
+        &github(vec![pull_request(
+            1,
+            "ci",
+            PullRequestBadge::Open,
+            PullRequestChecks::Failed,
+        )]),
+    );
+    assert_eq!(
+        rows[1].state.session,
+        crate::agent_state::sessions::Row {
+            group: Group::MyTurn,
+            tag: Some(Tag::Fix),
+        },
+        "reading an AI question skips only the demand rung, not its PR duty"
+    );
 }
 
 #[test]
@@ -210,11 +243,31 @@ fn sessions_only_offer_merge_after_passing_checks_and_an_acceptable_review() {
     use crate::agent_state::sessions::{Group, Tag};
     for (checks, review, expected) in [
         (PullRequestChecks::Passing, None, Tag::Merge),
-        (PullRequestChecks::Passing, Some(ReviewDecision::Approved), Tag::Merge),
-        (PullRequestChecks::Passing, Some(ReviewDecision::ReviewRequired), Tag::Review),
-        (PullRequestChecks::Passing, Some(ReviewDecision::ChangesRequested), Tag::Review),
-        (PullRequestChecks::Unknown, Some(ReviewDecision::Approved), Tag::Review),
-        (PullRequestChecks::None, Some(ReviewDecision::Approved), Tag::Review),
+        (
+            PullRequestChecks::Passing,
+            Some(ReviewDecision::Approved),
+            Tag::Merge,
+        ),
+        (
+            PullRequestChecks::Passing,
+            Some(ReviewDecision::ReviewRequired),
+            Tag::Review,
+        ),
+        (
+            PullRequestChecks::Passing,
+            Some(ReviewDecision::ChangesRequested),
+            Tag::Review,
+        ),
+        (
+            PullRequestChecks::Unknown,
+            Some(ReviewDecision::Approved),
+            Tag::Review,
+        ),
+        (
+            PullRequestChecks::None,
+            Some(ReviewDecision::Approved),
+            Tag::Review,
+        ),
     ] {
         let mut rows = rows(&[("agent", "idle")]);
         rows[0].row_facts.as_mut().unwrap().line = Some("Review changes".into());
@@ -229,7 +282,12 @@ fn sessions_only_offer_merge_after_passing_checks_and_an_acceptable_review() {
 #[test]
 fn sessions_counts_match_their_groups_and_keep_unraised_children_out() {
     use crate::agent_state::sessions::{Group, scope};
-    let mut rows = rows(&[("approval", "blocked"), ("working", "working"), ("idle", "idle"), ("child", "blocked")]);
+    let mut rows = rows(&[
+        ("approval", "blocked"),
+        ("working", "working"),
+        ("idle", "idle"),
+        ("child", "blocked"),
+    ]);
     rows[3].delegated = true;
     run(&mut rows, &[], &github(vec![]));
     let scope = scope(rows.iter().enumerate());
@@ -237,8 +295,139 @@ fn sessions_counts_match_their_groups_and_keep_unraised_children_out() {
     assert_eq!(scope.counts[&Group::InProgress], 1);
     assert_eq!(scope.counts[&Group::Resting], 1);
     assert_eq!(scope.counts[&Group::ReviewMerge], 0);
-    assert_eq!(scope.groups.iter().map(|section| section.members.clone()).collect::<Vec<_>>(), [vec![0], vec![1], vec![2]]);
-    assert!(rows[0].state.session.tag.is_none(), "an unlabelled row does not invent a task tag");
+    assert_eq!(
+        scope
+            .groups
+            .iter()
+            .map(|section| section.members.clone())
+            .collect::<Vec<_>>(),
+        [vec![0], vec![1], vec![2]]
+    );
+    assert!(
+        rows[0].state.session.tag.is_none(),
+        "an unlabelled row does not invent a task tag"
+    );
+}
+
+#[test]
+fn automatic_resolution_waits_for_every_assigned_pr_and_newer_settlement_after_input() {
+    use crate::agent_state::sessions::auto_resolvable;
+    let mut agent = rows(&[("maker", "idle")]);
+    agent[0].row_facts.as_mut().unwrap().created_prs =
+        vec![("acme/app".into(), 1, 1), ("acme/app".into(), 2, 2)];
+    let mut merged = pull_request(
+        1,
+        "one",
+        PullRequestBadge::Merged,
+        PullRequestChecks::Passing,
+    );
+    merged.merged_at_unix_ms = Some(ASKED + 10);
+    let mut closed = pull_request(
+        2,
+        "two",
+        PullRequestBadge::Closed,
+        PullRequestChecks::Passing,
+    );
+    closed.closed_at_unix_ms = Some(ASKED + 20);
+    run(
+        &mut agent,
+        &[("maker", "main")],
+        &github(vec![
+            merged.clone(),
+            pull_request(2, "two", PullRequestBadge::Open, PullRequestChecks::Passing),
+        ]),
+    );
+    assert!(
+        !auto_resolvable(&agent[0], None),
+        "one settled PR cannot hide the remaining duty"
+    );
+    run(
+        &mut agent,
+        &[("maker", "main")],
+        &github(vec![merged, closed]),
+    );
+    assert!(auto_resolvable(&agent[0], None));
+    assert!(
+        !auto_resolvable(&agent[0], Some(ASKED + 10)),
+        "input after a settlement restores the session until all duties settle again"
+    );
+    agent[0].blocked = true;
+    assert!(!auto_resolvable(&agent[0], None));
+    agent[0].blocked = false;
+    agent[0].activity = "working".into();
+    assert!(!auto_resolvable(&agent[0], None));
+}
+
+#[test]
+fn closed_session_prs_need_a_recorded_link_and_never_duplicate_a_live_sessions_chip() {
+    use crate::agent_state::sessions::{Group, Scope, Tag, add_closed_prs};
+    let mut live = rows(&[("live", "idle")]);
+    let pulls = vec![
+        pull_request(
+            1,
+            "live",
+            PullRequestBadge::Open,
+            PullRequestChecks::Passing,
+        ),
+        pull_request(
+            2,
+            "closed-session",
+            PullRequestBadge::Open,
+            PullRequestChecks::Passing,
+        ),
+        pull_request(
+            3,
+            "unlinked",
+            PullRequestBadge::Open,
+            PullRequestChecks::Passing,
+        ),
+        pull_request(
+            4,
+            "settled",
+            PullRequestBadge::Merged,
+            PullRequestChecks::Passing,
+        ),
+    ];
+    run(&mut live, &[("live", "live")], &github(pulls.clone()));
+    let project = crate::model::WorkspaceSnapshot {
+        agent_scope: Default::default(),
+        home_issues: Default::default(),
+        tasks: Default::default(),
+        pull_requests: pulls,
+        id: "app".into(),
+        label: "App".into(),
+        path: ROOT.into(),
+        remote_target_id: None,
+        expanded: true,
+        device_id: "local".into(),
+        repo_name: "App".into(),
+        is_git: true,
+        default_branch: Some("main".into()),
+        branches: vec![],
+        registered: true,
+        temporary: false,
+        session_workspace_ids: vec![],
+        last_activity_unix_ms: None,
+        pinned: false,
+        is_home: false,
+        checkouts: vec![],
+        inactive_checkouts: Default::default(),
+        session_folds: Default::default(),
+        removal: Default::default(),
+        disk: Default::default(),
+        cleanup: None,
+    };
+    let mut scope = Scope::default();
+    add_closed_prs(&mut scope, &project, Some(&[1, 2, 4].into()), &[&live[0]]);
+    assert_eq!(
+        scope
+            .closed_prs
+            .iter()
+            .map(|row| (row.number, row.tag))
+            .collect::<Vec<_>>(),
+        [(2, Tag::Merge)]
+    );
+    assert_eq!(scope.counts[&Group::ReviewMerge], 1);
 }
 
 #[test]

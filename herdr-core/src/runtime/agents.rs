@@ -1052,11 +1052,12 @@ impl Runtime {
         if lineage_pruned {
             self.persist_ui_state();
         }
-        let synced = sync_pane_status(
+        sync_pane_status(
             &mut session.workspaces,
             &session.agents,
             session.focused_pane_id.as_deref(),
-        ) | sync_remote_pane_relations(session);
+        );
+        sync_remote_pane_relations(session);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &session.workspaces,
@@ -1064,7 +1065,10 @@ impl Runtime {
             ReadRecordScope::Remote(&prefix),
         );
         if changes.is_empty() && !pruned && !lineage_pruned {
-            return synced;
+            // These copies were just projected from Herdr, not the previous
+            // published snapshot. The caller compares the completed session;
+            // applying read/status fields alone is not a new runtime change.
+            return false;
         }
         self.record_read_record_changes(&changes);
         true

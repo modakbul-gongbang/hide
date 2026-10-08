@@ -113,3 +113,84 @@ fn session_resolution_expires_at_the_local_day_boundary_without_closing() {
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_some());
     assert!(!runtime.tick_session_day(runtime.session_next_day_unix_ms - 1));
 }
+
+#[test]
+fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
+    use crate::agent_state::{RequestVerb, escalation::RaisedChild, header, sessions::Tag};
+    let runtime = with_session();
+    let mut agent = runtime.snapshot.navigator.agents[0].clone();
+    let pane = pane("session", "/work/app");
+    let project = workspace("app", "App", "/work/app", vec![]);
+    agent.state.verb = RequestVerb::Working;
+    let working = header::of(&pane, Some(&agent), None, &project, None);
+    assert!(working.working);
+    assert!(working.band.is_none());
+    agent.raised_children = ["first", "second"]
+        .map(|id| RaisedChild {
+            pane_id: id.into(),
+            title: format!("Task {id}"),
+            tag: Tag::Answer,
+            reason: Some("Please answer".into()),
+            since_unix_ms: Some(123),
+        })
+        .into();
+    let raised = header::of(&pane, Some(&agent), None, &project, None);
+    let band = raised.band.unwrap();
+    assert_eq!(
+        (band.kind.as_str(), band.more, band.child_tag),
+        ("raised_child", 1, Some(Tag::Answer))
+    );
+    assert_eq!(
+        band.action,
+        Some(header::Action::Child {
+            pane_id: "first".into(),
+            label: "Task first".into()
+        })
+    );
+    assert!(!raised.working);
+    agent.state.verb = RequestVerb::Answer;
+    agent.blocked = true;
+    assert_eq!(
+        header::of(&pane, Some(&agent), None, &project, None)
+            .band
+            .unwrap()
+            .kind,
+        "approval"
+    );
+    let offline = header::of(&pane, Some(&agent), None, &project, Some("mini"))
+        .band
+        .unwrap();
+    assert_eq!(
+        (offline.kind.as_str(), offline.tone, offline.action),
+        ("device_offline", "muted", None)
+    );
+}
+
+#[test]
+fn pane_bands_keep_idle_and_ci_wait_quiet_and_distinguish_failed_exits() {
+    use crate::agent_state::{RequestVerb, header};
+    let runtime = with_session();
+    let mut agent = runtime.snapshot.navigator.agents[0].clone();
+    let pane = pane("session", "/work/app");
+    let project = workspace("app", "App", "/work/app", vec![]);
+    for verb in [RequestVerb::Idle, RequestVerb::Waiting] {
+        agent.state.verb = verb;
+        let result = header::of(&pane, Some(&agent), None, &project, None);
+        assert!(!result.working);
+        assert!(result.band.is_none());
+    }
+    for (code, kind, tone) in [(0, "terminated", "muted"), (7, "exit", "error")] {
+        let terminal = TerminalPaneSnapshot {
+            closed: true,
+            exit_code: Some(code),
+            ..Default::default()
+        };
+        let band = header::of(&pane, Some(&agent), Some(&terminal), &project, None)
+            .band
+            .unwrap();
+        assert_eq!(
+            (band.kind.as_str(), band.tone, band.exit_code),
+            (kind, tone, Some(code))
+        );
+    }
+}
