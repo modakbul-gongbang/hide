@@ -5,18 +5,16 @@
 //! driven through the node link the way the screen's router drives it, and
 //! the probe keeps its fixture variables, markers and assertions.
 //!
-//! It connects with the operator's SSH configuration under `HOME` and
-//! installs this build's node on the device under the folders
-//! `HERDR_TEST_REMOTE_HELPER_ROOT` and `HERDR_TEST_REMOTE_CLI_DIR` name, so
-//! run it only against an isolated device account: a private sshd with its
-//! own HOME and state, never an operator's. Both are absolute: the install
-//! spells `~/` from the SFTP home, which is the account's own home even
-//! where the private sshd gives commands another `HOME`, so a `~/` folder
-//! lands in the operator's real one. The fixture pane must be fresh: the
+//! It connects with the SSH configuration under `HOME` and installs this
+//! build's node on the device, so it runs only against an isolated device
+//! account: a private sshd on its own port whose sessions get a private
+//! HOME, with its own Herdr. Before anything connects, [`isolated_device`]
+//! refuses any other target (see there). The fixture pane must be fresh: the
 //! scroll to the top of its history has to land on the probe's own first
 //! line.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -95,11 +93,201 @@ fn wait_for(receiver: &std::sync::mpsc::Receiver<&'static str>, what: &str, with
     }
 }
 
+/// The isolated device account the probe may reach.
+#[derive(Debug)]
+struct IsolatedDevice {
+    alias: String,
+    helper_root: String,
+    cli_dir: String,
+    herdr_socket: String,
+}
+
+/// Reads the device from `variable` and refuses, before anything connects,
+/// a target that could be an operator's account. The install spells `~/`
+/// from the SFTP home, which is the account's own home even where the
+/// private sshd gives its commands another `HOME`: on 2026-10-09 a probe
+/// with the `~/` defaults uploaded its node into a real account's
+/// `~/.hide/host-helper`. So the alias must resolve to the private sshd's
+/// port, named in `HERDR_TEST_REMOTE_SSH_PORT` and never 22; the private
+/// HOME (`HERDR_TEST_REMOTE_HOME`) lives under `/tmp`, where no account's
+/// own home does; the helper and command folders are absolute and inside
+/// it; and the Herdr socket is named under `/tmp`, so the probe never asks
+/// for the account's default Herdr.
+fn isolated_device(
+    ssh_config: &Path,
+    variable: impl Fn(&str) -> Option<String>,
+) -> Result<IsolatedDevice, String> {
+    let read = |name: &str| {
+        variable(name)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("{name} is not set"))
+    };
+    let alias = read("HERDR_TEST_SSH_ALIAS")?;
+    let port = read("HERDR_TEST_REMOTE_SSH_PORT")?;
+    let port: u16 = port
+        .parse()
+        .map_err(|_| format!("HERDR_TEST_REMOTE_SSH_PORT {port:?} is not a port"))?;
+    if port == 22 {
+        return Err("HERDR_TEST_REMOTE_SSH_PORT is 22, an account's own sshd".to_owned());
+    }
+    let under_tmp = |name: &str| {
+        let path = read(name)?;
+        if plain_inside(&path, "/tmp") || plain_inside(&path, "/private/tmp") {
+            Ok(path)
+        } else {
+            Err(format!("{name} {path:?} is not a private path under /tmp"))
+        }
+    };
+    let home = under_tmp("HERDR_TEST_REMOTE_HOME")?;
+    let inside_home = |name: &str| {
+        let path = read(name)?;
+        if plain_inside(&path, &home) {
+            Ok(path)
+        } else {
+            Err(format!(
+                "{name} {path:?} is not an absolute folder inside HERDR_TEST_REMOTE_HOME"
+            ))
+        }
+    };
+    let helper_root = inside_home("HERDR_TEST_REMOTE_HELPER_ROOT")?;
+    let cli_dir = inside_home("HERDR_TEST_REMOTE_CLI_DIR")?;
+    let herdr_socket = under_tmp("HERDR_TEST_REMOTE_HERDR_SOCKET")?;
+    let resolved = hide_node::ssh::SshAlias::from_config_file(ssh_config, &alias)
+        .map_err(|error| format!("SSH alias {alias:?} does not resolve: {error}"))?;
+    if resolved.port != port {
+        return Err(format!(
+            "SSH alias {alias:?} resolves to port {}, not the private sshd's {port}",
+            resolved.port
+        ));
+    }
+    Ok(IsolatedDevice {
+        alias,
+        helper_root,
+        cli_dir,
+        herdr_socket,
+    })
+}
+
+/// An absolute path strictly inside `folder`, with no empty, `.` or `..`
+/// part that could step out of it.
+fn plain_inside(path: &str, folder: &str) -> bool {
+    !path.chars().any(char::is_control)
+        && path
+            .strip_prefix(folder)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .is_some_and(|rest| {
+                rest.split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..")
+            })
+}
+
+/// One variable set to a value, or unset.
+type Change<'a> = (&'a str, Option<&'a str>);
+
+#[test]
+fn the_probe_refuses_every_device_but_the_isolated_account_before_connecting() {
+    let folder = tempfile::tempdir().unwrap();
+    let config = folder.path().join("config");
+    std::fs::write(
+        &config,
+        "Host private\n  HostName 127.0.0.1\n  Port 22841\n  User me\n\n\
+         Host own\n  HostName 127.0.0.1\n  User me\n",
+    )
+    .unwrap();
+    let isolated = [
+        ("HERDR_TEST_SSH_ALIAS", "private"),
+        ("HERDR_TEST_REMOTE_SSH_PORT", "22841"),
+        ("HERDR_TEST_REMOTE_HOME", "/tmp/hcn/home"),
+        (
+            "HERDR_TEST_REMOTE_HELPER_ROOT",
+            "/tmp/hcn/home/.hide/host-helper",
+        ),
+        ("HERDR_TEST_REMOTE_CLI_DIR", "/tmp/hcn/home/.local/bin"),
+        ("HERDR_TEST_REMOTE_HERDR_SOCKET", "/tmp/hcn/h.sock"),
+    ];
+    let check = |changes: &[Change]| {
+        let mut variables: HashMap<&str, Option<&str>> = isolated
+            .iter()
+            .map(|(name, value)| (*name, Some(*value)))
+            .collect();
+        variables.extend(changes.iter().copied());
+        isolated_device(&config, |name| {
+            variables.get(name).copied().flatten().map(str::to_owned)
+        })
+    };
+
+    let device = check(&[]).expect("the isolated account is accepted");
+    assert_eq!(device.helper_root, "/tmp/hcn/home/.hide/host-helper");
+    assert_eq!(device.cli_dir, "/tmp/hcn/home/.local/bin");
+    assert_eq!(device.herdr_socket, "/tmp/hcn/h.sock");
+
+    let refusals: [(&[Change], &str); 11] = [
+        (
+            &[("HERDR_TEST_REMOTE_HELPER_ROOT", Some("~/.hide/host-helper"))],
+            "HERDR_TEST_REMOTE_HELPER_ROOT",
+        ),
+        (
+            &[("HERDR_TEST_REMOTE_CLI_DIR", Some("~/.local/bin"))],
+            "HERDR_TEST_REMOTE_CLI_DIR",
+        ),
+        (
+            &[(
+                "HERDR_TEST_REMOTE_HELPER_ROOT",
+                Some("/opt/me/.hide/host-helper"),
+            )],
+            "HERDR_TEST_REMOTE_HELPER_ROOT",
+        ),
+        (
+            &[(
+                "HERDR_TEST_REMOTE_HELPER_ROOT",
+                Some("/tmp/hcn/home/../../opt/me/.hide/host-helper"),
+            )],
+            "HERDR_TEST_REMOTE_HELPER_ROOT",
+        ),
+        (
+            &[("HERDR_TEST_REMOTE_HOME", Some("/opt/me"))],
+            "HERDR_TEST_REMOTE_HOME",
+        ),
+        (
+            &[("HERDR_TEST_REMOTE_HOME", None)],
+            "HERDR_TEST_REMOTE_HOME",
+        ),
+        (
+            &[("HERDR_TEST_REMOTE_HERDR_SOCKET", None)],
+            "HERDR_TEST_REMOTE_HERDR_SOCKET",
+        ),
+        (
+            &[(
+                "HERDR_TEST_REMOTE_HERDR_SOCKET",
+                Some("~/.config/herdr/herdr.sock"),
+            )],
+            "HERDR_TEST_REMOTE_HERDR_SOCKET",
+        ),
+        (
+            &[
+                ("HERDR_TEST_SSH_ALIAS", Some("own")),
+                ("HERDR_TEST_REMOTE_SSH_PORT", Some("22")),
+            ],
+            "is 22",
+        ),
+        (
+            &[("HERDR_TEST_SSH_ALIAS", Some("own"))],
+            "resolves to port 22",
+        ),
+        (&[("HERDR_TEST_SSH_ALIAS", Some("absent"))], "absent"),
+    ];
+    for (changes, refusal) in refusals {
+        let error = check(changes).expect_err("refused before connecting");
+        assert!(error.contains(refusal), "{changes:?}: {error}");
+    }
+}
+
 #[test]
 #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_TERMINAL_* variables"]
 fn official_remote_terminal_session_fixture_probe() {
-    let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
-        .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is configured"));
+    let device = isolated_device(&home.join(".ssh/config"), |name| std::env::var(name).ok())
+        .unwrap_or_else(|refusal| panic!("refusing to reach the device: {refusal}"));
     let workspace_id = std::env::var("HERDR_TEST_REMOTE_TERMINAL_WORKSPACE_ID")
         .expect("HERDR_TEST_REMOTE_TERMINAL_WORKSPACE_ID names the owned fixture workspace");
     let pane_id = std::env::var("HERDR_TEST_REMOTE_TERMINAL_PANE_ID")
@@ -111,14 +299,6 @@ fn official_remote_terminal_session_fixture_probe() {
     let helper_dir = PathBuf::from(
         std::env::var_os("HERDR_TEST_REMOTE_HELPER_DIR")
             .expect("HERDR_TEST_REMOTE_HELPER_DIR names the folder of the build the device runs"),
-    );
-    let helper_root = std::env::var("HERDR_TEST_REMOTE_HELPER_ROOT")
-        .expect("HERDR_TEST_REMOTE_HELPER_ROOT names the isolated account's helper folder");
-    let cli_dir = std::env::var("HERDR_TEST_REMOTE_CLI_DIR")
-        .expect("HERDR_TEST_REMOTE_CLI_DIR names the isolated account's command folder");
-    assert!(
-        helper_root.starts_with('/') && cli_dir.starts_with('/'),
-        "the probe installs only into absolute folders of the isolated account"
     );
     assert!(
         cwd.starts_with("/tmp/herdr-ide-verify-"),
@@ -137,10 +317,14 @@ fn official_remote_terminal_session_fixture_probe() {
         states: Mutex::default(),
         progress: Mutex::default(),
     });
-    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is configured"));
     let transport = hide_node::ssh::Connector::new(Some(helper_dir))
         .with_terminals(Arc::clone(&heard) as Arc<dyn DeviceSink>)
-        .transport(&home, "probe", &alias_name, None)
+        .transport(
+            &home,
+            "probe",
+            &device.alias,
+            Some(device.herdr_socket.clone()),
+        )
         .expect("SSH alias resolves");
     let snapshot = hide_herdr_client::request_with_connector(
         &*transport.herdr_api_connector(),
@@ -182,8 +366,8 @@ fn official_remote_terminal_session_fixture_probe() {
     // The device's node link, with its terminal service started.
     let consent = HostConsent {
         contract: HOST_CONSENT_CONTRACT,
-        helper_root,
-        cli_dir: Some(cli_dir),
+        helper_root: device.helper_root.clone(),
+        cli_dir: Some(device.cli_dir.clone()),
         granted_at_unix_ms: 0,
         identity: None,
     };

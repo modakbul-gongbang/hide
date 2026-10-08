@@ -29,10 +29,12 @@
 # its fixture workspace to the front, and types into the device's one
 # pane. The device is an isolated account the caller set up: its SSH alias
 # in MEASURE_DEVICE_SSH_CONFIG and its recorded host key in
-# MEASURE_DEVICE_KNOWN_HOSTS (both copied into the private HOME), its Herdr
-# socket in MEASURE_DEVICE_SOCKET, MEASURE_DEVICE_HERDR the command that
-# runs its Herdr from here, and MEASURE_DEVICE_HELPER_ROOT and
-# MEASURE_DEVICE_CLI_DIR the consent folders inside that account. With
+# MEASURE_DEVICE_KNOWN_HOSTS (both copied into the private HOME), the
+# private sshd's port in MEASURE_DEVICE_PORT, the account's private HOME in
+# MEASURE_DEVICE_HOME (its pinned Herdr in ~/.local/bin there), its Herdr
+# socket in MEASURE_DEVICE_SOCKET, and MEASURE_DEVICE_HELPER_ROOT and
+# MEASURE_DEVICE_CLI_DIR the consent folders inside that HOME;
+# device-guard.sh refuses any other target before anything dials. With
 # MEASURE_DEVICE_DRIVEN_SECONDS set, four more device panes print a line per
 # 8 ms while the key echo runs again (key-echo-device-driven.json).
 # MEASURE_HIDED_BIN measures another hided build, such as a baseline, with
@@ -61,6 +63,7 @@ case "$scenario" in single|multi|keys|device|areas2|areas3|topology) ;; *) echo 
 scale="${MEASURE_SCALE:-none}"
 case "$scale" in none|operator|double) ;; *) echo "MEASURE_SCALE must be none, operator or double" >&2; exit 2;; esac
 [[ "$scale" == none || "$scenario" == topology ]] || { echo "MEASURE_SCALE needs MEASURE_SCENARIO=topology" >&2; exit 2; }
+[[ "$scenario" != device ]] || source "$measure_dir/device-guard.sh"
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 hided_bin="${MEASURE_HIDED_BIN:-$MEASURE_WORKTREE/target/release/hided}"
 [[ -x "$hided_bin" ]] || { echo "build target/release/hided first: pnpm --dir web build, then the release build described in docs/BUILD.md" >&2; exit 1; }
@@ -250,16 +253,14 @@ fi
 
 hided_env=()
 if [[ "$scenario" == device ]]; then
-  for name in MEASURE_DEVICE_ID MEASURE_DEVICE_ALIAS MEASURE_DEVICE_SSH_CONFIG MEASURE_DEVICE_SOCKET MEASURE_DEVICE_HERDR MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
-    [[ -n "${!name:-}" ]] || { echo "the device scenario needs $name" >&2; exit 2; }
-  done
+  [[ -n "${MEASURE_DEVICE_ID:-}" ]] || { echo "the device scenario needs MEASURE_DEVICE_ID" >&2; exit 2; }
   mkdir -p "$MEASURE_PRIVATE/home/.ssh"
   cp "$MEASURE_DEVICE_SSH_CONFIG" "$MEASURE_PRIVATE/home/.ssh/config"
   chmod 600 "$MEASURE_PRIVATE/home/.ssh/config"
   # Hide checks the device's host key against ~/.ssh/known_hosts only.
   [[ -z "${MEASURE_DEVICE_KNOWN_HOSTS:-}" ]] || cp "$MEASURE_DEVICE_KNOWN_HOSTS" "$MEASURE_PRIVATE/home/.ssh/known_hosts"
   hided_env=(HIDE_HOST_HELPER_ROOT="$MEASURE_DEVICE_HELPER_ROOT" HIDE_HOST_CLI_DIR="$MEASURE_DEVICE_CLI_DIR")
-  device_herdr() { eval "$MEASURE_DEVICE_HERDR" '"$@"'; }
+  device_herdr() { bash "$measure_dir/device-herdr.sh" "$@"; }
   device_pane="$(device_herdr api snapshot | python3 "$measure_dir/pane-id.py")"
   device_herdr pane send-keys "$device_pane" ctrl+c >/dev/null
   sleep 0.3
@@ -366,7 +367,7 @@ if [[ "$scenario" == device ]]; then
     sleep 0.5
     note "device: $MEASURE_KEY_COUNT distinct keys counted back from the device's pane"
     MEASURE_PANE_ID="$device_pane" MEASURE_SCREEN_PANE_ID="$scoped_pane" \
-      MEASURE_PANE_READ="$MEASURE_DEVICE_HERDR pane read '$device_pane' --source recent-unwrapped --lines 4000" \
+      MEASURE_PANE_READ="bash $(printf %q "$measure_dir/device-herdr.sh") pane read '$device_pane' --source recent-unwrapped --lines 4000" \
       node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count-device.json"
     cat "$MEASURE_RUN_DIR/key-count-device.json"
   fi
