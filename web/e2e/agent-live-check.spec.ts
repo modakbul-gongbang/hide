@@ -89,9 +89,10 @@ def guardian_after_workspace(self,args,**kwargs):
    self.owner.end(child)
    raise
  result=original_command(self,args,**kwargs)
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='integrity' and args[:2]==['agent','start'] and not result[0]:
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='integrity' and args[:2]==['agent','start']:
   self.integration_pane=args[args.index('--pane')+1]
   if args[2].endswith('-startup'):
+   assert self.agent(self.integration_pane)['agent']=='codex'
    original_command(self,['pane','report-agent-session',self.integration_pane,'--source','herdr:codex',
     '--agent','codex','--agent-session-id','live-check-synthetic-emitter','--seq','1'])
  return result
