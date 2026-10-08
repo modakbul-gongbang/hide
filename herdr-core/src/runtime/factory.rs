@@ -243,11 +243,8 @@ impl Runtime {
             .delivery_observations
             .get(pane)
             .ok_or("factory_guard_native_unavailable")?;
-        let kind = match runtime {
-            "claude-code" => "claude",
-            "codex" => "codex",
-            _ => return Err("factory_guard_runtime_invalid".into()),
-        };
+        let kind =
+            hide_agent_adapter::direct_ask_kind(runtime).ok_or("factory_guard_runtime_invalid")?;
         let actor = &observation.actor;
         actor.require_native_identity()?;
         if actor.device_id != device
