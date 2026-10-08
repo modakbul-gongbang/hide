@@ -126,7 +126,15 @@ impl Machine {
         let started = Instant::now();
         let mut child = OwnedChild::spawn(&mut command).unwrap();
         let mut stdin = child.take_stdin().unwrap();
-        stdin.write_all(payload.as_bytes()).unwrap();
+        // A guard that has already decided (no pane, no checkout) ends without
+        // reading its payload, and an agent writing to it meets a closed pipe
+        // whenever the guard wins that race; what the agent observes is the
+        // guard's answer, not whether its write landed.
+        match stdin.write_all(payload.as_bytes()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => panic!("the payload could not be written to the guard: {error}"),
+        }
         drop(stdin);
         let output = child
             .capture_until(Instant::now() + Duration::from_secs(15), 64 * 1024)
