@@ -524,29 +524,30 @@ impl Runtime {
         if panes.is_empty() {
             return;
         }
-        let sent = match &self.factory_screen {
-            Some(port) => port.panes_closed(panes.to_vec()),
-            None => return,
+        let Some(port) = &self.factory_screen else {
+            return;
         };
-        match sent {
-            // Marked under the same lock as the send, so a tick that reads a
-            // worker after the close guard cleared still sees it closing.
-            Ok(()) => self.factory_closes_sent.extend(panes.iter().cloned()),
-            Err(reason) => crate::diagnostic!(serde_json::json!({
+        // The panes wait here until the engine takes them, so a tick that
+        // reads a worker after the close guard cleared still sees it
+        // closing, and a full queue loses no close: the engine also takes
+        // them before every tick.
+        if port.panes_closed() {
+            self.factory_closes_sent.extend(panes.iter().cloned());
+        } else {
+            crate::diagnostic!(serde_json::json!({
                 "component": "factory",
                 "kind": "worker.close_unsent",
                 "panes": panes,
-                "reason": reason,
-            })),
+                "reason": "factory_unavailable",
+            }));
         }
     }
 
-    /// The engine has taken these closes: its Tasks are paused, so the
-    /// panes need no closing mark any more.
-    pub(crate) fn factory_closes_taken(&mut self, panes: &[String]) {
-        for pane in panes {
-            self.factory_closes_sent.remove(pane);
-        }
+    /// The closes the engine has not taken yet, handed over once.
+    pub(crate) fn factory_closes_take(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.factory_closes_sent)
+            .into_iter()
+            .collect()
     }
 
     /// Puts a worker to sleep through the agent sleep path (D-14, B27).

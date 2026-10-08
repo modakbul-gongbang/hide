@@ -1272,9 +1272,9 @@ pub struct Runtime {
     /// that as a failure is what put "terminal attach ended" on screen for one
     /// frame every time the operator closed a pane.
     panes_closing: HashSet<String>,
-    /// Closed panes sent to the Factory engine and not yet taken by it: a
-    /// worker there reads as closing, never as gone, until the engine has
-    /// paused its Task (D-26). Bounded by the engine's request queue.
+    /// Closed panes the Factory engine has not taken yet: a worker there
+    /// reads as closing, never as gone, until the engine has paused its Task
+    /// (D-26). The engine takes them on its wake-up and before every tick.
     factory_closes_sent: HashSet<String>,
     /// Closes of an agent together with its descendants, deepest first
     /// (`tree_close.rs`). At most `TREE_CLOSE_ACTIVE_LIMIT` at once.

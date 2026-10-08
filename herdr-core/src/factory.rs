@@ -123,8 +123,9 @@ enum Request {
     /// From a Factory screen, through a runtime event (PRD
     /// software-factory-ui); its answer comes back on the snapshot.
     Screen(ScreenRequest),
-    /// Panes the operator closed in Hide (D-26).
-    PanesClosed(Vec<String>),
+    /// The operator closed panes in Hide (D-26): a wake-up only, the panes
+    /// themselves wait in the runtime until the engine takes them.
+    PanesClosed,
 }
 
 /// The runtime's way to the engine thread for the screens and the panes the
@@ -140,8 +141,13 @@ impl ScreenPort {
         self.try_send(Request::Screen(request))
     }
 
-    pub(crate) fn panes_closed(&self, panes: Vec<String>) -> Result<(), &'static str> {
-        self.try_send(Request::PanesClosed(panes))
+    /// Wakes the engine to take closed panes; a full queue still leaves
+    /// them to the next tick. False only when no engine thread is left.
+    pub(crate) fn panes_closed(&self) -> bool {
+        !matches!(
+            self.requests.try_send(Request::PanesClosed),
+            Err(mpsc::TrySendError::Disconnected(_))
+        )
     }
 
     fn try_send(&self, request: Request) -> Result<(), &'static str> {
@@ -643,18 +649,8 @@ fn run_requests(
                 let _ = reply.send(answer);
                 false
             }
-            Ok(Request::PanesClosed(panes)) => {
-                // A closed pane matters only to an engine already running;
-                // either way the close is taken, so its mark goes.
-                if let Some(engine) = engine.as_mut() {
-                    for pane in &panes {
-                        engine.worker_closed(pane);
-                    }
-                    publisher.touched();
-                }
-                if let Some(runtime) = lock(&runtime) {
-                    guard(&runtime).factory_closes_taken(&panes);
-                }
+            Ok(Request::PanesClosed) => {
+                take_closes(engine.as_mut(), publisher, &runtime);
                 false
             }
             Ok(Request::Screen(request)) => {
@@ -681,6 +677,9 @@ fn run_requests(
         };
         if tick_due {
             last_tick = now;
+            // A close whose wake-up found the queue full is taken here, before
+            // the tick could read its worker as gone.
+            take_closes(Some(&mut *engine), publisher, &runtime);
             pump_letters(engine, &runtime);
             engine.tick();
             // A running attempt's log tail grows on the open page between
@@ -718,6 +717,31 @@ fn run_requests(
         // Off the runtime lock; an unchanged summary hands nothing over.
         publisher.publish(Some(&*engine as &dyn ScreenSource), sink);
     }
+}
+
+/// Takes the panes the operator closed since the last take: a worker among
+/// them pauses its Task (D-26). A closed pane matters only to an engine
+/// already running; either way the close is taken.
+fn take_closes(
+    engine: Option<&mut Engine>,
+    publisher: &mut Publisher,
+    runtime: &Weak<Mutex<Runtime>>,
+) {
+    let Some(core) = lock(runtime) else {
+        return;
+    };
+    let panes = guard(&core).factory_closes_take();
+    drop(core);
+    let Some(engine) = engine else {
+        return;
+    };
+    if panes.is_empty() {
+        return;
+    }
+    for pane in &panes {
+        engine.worker_closed(pane);
+    }
+    publisher.touched();
 }
 
 fn request_wait(engine: Option<&Engine>, last_tick: Instant, now: Instant) -> Duration {

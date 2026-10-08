@@ -21,15 +21,14 @@ use crate::model::*;
 use crate::role::Role;
 
 /// Failure classes of a call the provider never received, not counted
-/// against the daily cap (D-34): the engine's own (`paused`, `queue_full`)
-/// and Hide AI's refusals that come before any model turn
-/// (`hide_ai::AiError`). A transient failure or a spent budget can follow
-/// a turn, so it counts.
-const NOT_SENT: [&str; 8] = [
+/// against the daily cap (D-34): the engine's full queue and Hide AI's
+/// refusals that come before any model turn (`hide_ai::AiError`). A
+/// transient failure or a spent budget can follow a turn, so it counts; a
+/// paused Factory charges nothing in the first place.
+const NOT_SENT: [&str; 7] = [
     "disabled",
     "no_provider",
     "unsupported",
-    "paused",
     "queue_full",
     "not_authenticated",
     "usage_limited",
