@@ -357,6 +357,53 @@ fn a_pane_past_its_unsent_keys_reads_ended_while_other_panes_keys_go_on() {
     });
 }
 
+/// The cap counts keys, not the frames they travel in: 10,000 one-byte keys
+/// typed while the link takes nothing stay far under it, and go down in
+/// order as a few lines, the waiting run carrying its last key's time.
+#[test]
+fn keys_waiting_on_a_stalled_link_count_as_keys_and_go_down_as_one_run() {
+    let (proxy, link, heard) = proxy();
+    let typed: Vec<u8> = (0..10_000).map(|index| b'a' + (index % 26) as u8).collect();
+    for (index, key) in typed.iter().enumerate() {
+        proxy.key(
+            KeyTarget::Pane("w1:p1".into()),
+            vec![*key],
+            1_000 + index as u64,
+        );
+    }
+    assert!(
+        heard.reports.lock().unwrap().is_empty(),
+        "no key was refused"
+    );
+    link.release();
+    let joined = || {
+        link.lines()
+            .iter()
+            .filter_map(|line| match line {
+                TerminalDown::Key { data, .. } => Some(decode_base64(data).unwrap()),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<u8>>()
+    };
+    wait_for(|| joined().len() == typed.len());
+    assert_eq!(joined(), typed);
+    let lines = link.lines();
+    // The first key may already have been taken alone when the link stalled.
+    assert!(
+        lines.len() <= 2,
+        "{} lines for one run of keys",
+        lines.len()
+    );
+    let TerminalDown::Key {
+        typed_at_unix_ms, ..
+    } = lines.last().unwrap()
+    else {
+        panic!("a key line");
+    };
+    assert_eq!(*typed_at_unix_ms, 1_000 + 9_999);
+}
+
 #[test]
 fn a_failed_link_refuses_keys_once_per_pane_and_never_keeps_them() {
     let (proxy, link, heard) = proxy();

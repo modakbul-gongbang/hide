@@ -10,8 +10,11 @@
 //!
 //! On the core's side, [`DeviceTerminals`] is the device's [`TerminalNode`]:
 //! it writes controls and keys down the link in the order they were given
-//! and keeps at most [`MAX_UNSENT_KEY_BYTES`] of one pane's keys unsent. A
-//! pane past that reads ended and refuses keys until it is attached again;
+//! and keeps at most [`MAX_UNSENT_KEY_BYTES`] of one pane's keys unsent,
+//! counted as the keys' own bytes. Keys for one pane that wait behind each
+//! other go down as one line carrying the last key's time, so a link that
+//! falls behind costs one frame per run of keys, not one per key. A pane
+//! past the cap reads ended and refuses keys until it is attached again;
 //! the keys it already took are written in order, or, when the link fails,
 //! named in the log as unwritten. A link that ends takes every flow with it
 //! and refuses later keys rather than keep them for another link.
@@ -408,9 +411,25 @@ pub trait LineLink: Send + Sync + 'static {
     fn send_line(&self, line: &[u8]) -> Result<(), String>;
 }
 
+/// The most key bytes one waiting line gathers; a longer run of keys goes
+/// down as several lines, in order.
+const MAX_KEY_LINE_BYTES: usize = 16 * 1024;
+
+/// One thing waiting to go down the link.
+enum Waiting {
+    Line(Vec<u8>),
+    /// A run of one pane's keys, typed back to back while the link was
+    /// behind, and when the last of them was typed.
+    Keys {
+        pane: String,
+        bytes: Vec<u8>,
+        typed_at_unix_ms: u64,
+    },
+}
+
 #[derive(Default)]
 struct ProxyState {
-    lines: VecDeque<(Option<String>, Vec<u8>)>,
+    lines: VecDeque<Waiting>,
     /// Key bytes each pane has waiting in `lines`.
     key_bytes: HashMap<String, usize>,
     /// Panes whose keys passed the cap: they refuse keys until attached.
@@ -422,6 +441,31 @@ struct ProxyState {
     /// Each pane's state as the device last reported it.
     states: HashMap<String, PaneTerminalState>,
     stopping: bool,
+}
+
+impl ProxyState {
+    /// Queues `bytes` for `pane`, onto the run of its keys already waiting
+    /// last in line when there is one.
+    fn queue_keys(&mut self, pane: String, bytes: Vec<u8>, typed_at_unix_ms: u64) {
+        *self.key_bytes.entry(pane.clone()).or_default() += bytes.len();
+        if let Some(Waiting::Keys {
+            pane: waiting_pane,
+            bytes: waiting,
+            typed_at_unix_ms: waiting_at,
+        }) = self.lines.back_mut()
+            && *waiting_pane == pane
+            && waiting.len() + bytes.len() <= MAX_KEY_LINE_BYTES
+        {
+            waiting.extend_from_slice(&bytes);
+            *waiting_at = typed_at_unix_ms;
+            return;
+        }
+        self.lines.push_back(Waiting::Keys {
+            pane,
+            bytes,
+            typed_at_unix_ms,
+        });
+    }
 }
 
 struct ProxyShared {
@@ -464,7 +508,7 @@ impl DeviceTerminals {
         Box::new(move |line| shared.inbound(line))
     }
 
-    fn send(&self, key_pane: Option<&str>, down: TerminalDown) {
+    fn send(&self, down: TerminalDown) {
         let Some(line) = line_of(down) else {
             return;
         };
@@ -472,10 +516,7 @@ impl DeviceTerminals {
         if state.failed.is_some() || state.stopping {
             return;
         }
-        if let Some(pane) = key_pane {
-            *state.key_bytes.entry(pane.to_owned()).or_default() += line.len();
-        }
-        state.lines.push_back((key_pane.map(str::to_owned), line));
+        state.lines.push_back(Waiting::Line(line));
         drop(state);
         self.shared.ready.notify_one();
     }
@@ -501,7 +542,7 @@ impl TerminalNode for DeviceTerminals {
         if let TerminalControl::Forget { pane } = &control {
             lock(&self.shared.state).states.remove(pane);
         }
-        self.send(None, TerminalDown::Control { control });
+        self.send(TerminalDown::Control { control });
     }
 
     fn key(&self, target: KeyTarget, bytes: Vec<u8>, typed_at_unix_ms: u64) {
@@ -525,11 +566,11 @@ impl TerminalNode for DeviceTerminals {
             } else if state.overflowed.contains(&pane) {
                 // Reported once, when the cap was passed.
                 return;
+            } else if state.stopping {
+                return;
             } else {
                 let unsent = state.key_bytes.get(&pane).copied().unwrap_or(0);
-                // A key line carries the bytes as base64 inside its frame.
-                let line_bytes = bytes.len().div_ceil(3) * 4 + 128;
-                if unsent + line_bytes > MAX_UNSENT_KEY_BYTES {
+                if unsent + bytes.len() > MAX_UNSENT_KEY_BYTES {
                     state.overflowed.insert(pane.clone());
                     let ended = state.states.get(&pane).cloned().map(|mut ended| {
                         ended.state = "ended".to_owned();
@@ -539,6 +580,7 @@ impl TerminalNode for DeviceTerminals {
                     });
                     Some(("terminal.device_input_overflow", overflow_message(), ended))
                 } else {
+                    state.queue_keys(pane.clone(), bytes, typed_at_unix_ms);
                     None
                 }
             }
@@ -570,32 +612,21 @@ impl TerminalNode for DeviceTerminals {
             );
             return;
         }
-        let down = TerminalDown::Key {
-            target: KeyTarget::Pane(pane.clone()),
-            data: encode_base64(&bytes),
-            typed_at_unix_ms,
-        };
-        self.send(Some(&pane), down);
+        self.shared.ready.notify_one();
     }
 
     fn view(&self, pane: &str, size: GridSize, new_view: bool) {
-        self.send(
-            None,
-            TerminalDown::View {
-                pane: pane.to_owned(),
-                size,
-                new_view,
-            },
-        );
+        self.send(TerminalDown::View {
+            pane: pane.to_owned(),
+            size,
+            new_view,
+        });
     }
 
     fn redraw(&self, pane: &str) {
-        self.send(
-            None,
-            TerminalDown::Redraw {
-                pane: pane.to_owned(),
-            },
-        );
+        self.send(TerminalDown::Redraw {
+            pane: pane.to_owned(),
+        });
     }
 }
 
@@ -658,7 +689,7 @@ impl ProxyShared {
 
 fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
     loop {
-        let (pane, line) = {
+        let next = {
             let mut state = lock(&shared.state);
             loop {
                 if state.stopping {
@@ -673,12 +704,29 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
             }
         };
+        // A run of keys stays counted against its pane until it is written.
+        let (keys, line) = match next {
+            Waiting::Line(line) => (None, line),
+            Waiting::Keys {
+                pane,
+                bytes,
+                typed_at_unix_ms,
+            } => {
+                let line = line_of(TerminalDown::Key {
+                    target: KeyTarget::Pane(pane.clone()),
+                    data: encode_base64(&bytes),
+                    typed_at_unix_ms,
+                })
+                .unwrap_or_default();
+                (Some((pane, bytes.len())), line)
+            }
+        };
         let sent = link.send_line(&line);
         let mut state = lock(&shared.state);
-        if let Some(pane) = &pane
+        if let Some((pane, written)) = &keys
             && let Some(bytes) = state.key_bytes.get_mut(pane)
         {
-            *bytes = bytes.saturating_sub(line.len());
+            *bytes = bytes.saturating_sub(*written);
             if *bytes == 0 {
                 state.key_bytes.remove(pane);
             }
@@ -687,9 +735,12 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
             // The keys still waiting were taken and will not be written:
             // each pane's count goes to the log, never to another link.
             let mut unwritten = HashMap::<String, usize>::new();
-            for (pane, line) in state.lines.drain(..) {
-                if let Some(pane) = pane {
-                    *unwritten.entry(pane).or_default() += line.len();
+            if let Some((pane, written)) = keys {
+                *unwritten.entry(pane).or_default() += written;
+            }
+            for waiting in state.lines.drain(..) {
+                if let Waiting::Keys { pane, bytes, .. } = waiting {
+                    *unwritten.entry(pane).or_default() += bytes.len();
                 }
             }
             state.key_bytes.clear();
@@ -701,7 +752,7 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
                     "kind": "terminal.keys_unwritten",
                     "device": shared.device,
                     "pane_id": pane,
-                    "line_bytes": bytes,
+                    "key_bytes": bytes,
                     "reason": reason,
                 }));
             }

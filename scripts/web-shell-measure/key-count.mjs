@@ -76,9 +76,11 @@ const lastMarker = sent.match(/m\d{5}/g).pop();
 const deadline = Date.now() + 60_000;
 let content = readPane();
 while (!(content.includes(lastMarker) && content.trimEnd().endsWith("#")) && Date.now() < deadline) {
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   content = readPane();
 }
+// When the last key was seen, within one pane read: how fast keys drained.
+const arrived_ms = performance.now() - started;
 await new Promise((resolve) => setTimeout(resolve, 2000));
 content = readPane();
 
@@ -131,6 +133,7 @@ console.log(JSON.stringify({
   keys_typed: sent.length,
   interval_ms: intervalMs,
   typed_ms: Math.round(typed_ms),
+  arrived_ms: Math.round(arrived_ms),
   exact,
   keys_lost: lostKeys,
   keys_reordered: reorderedKeys,
