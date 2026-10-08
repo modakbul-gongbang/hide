@@ -117,17 +117,17 @@ const MODE_TABLE: Record<ObserverMode, { me: MessageKey[]; ai: MessageKey[] }> =
  * Every value is read from and written through the `config` command, so a
  * change applies from the engine's next judgment.
  */
-export function FactorySettings({ factories, filtered, summary, actions }: { factories: FactoryView[]; filtered: boolean; summary: { inbox: { factory: string; group: string }[] }; actions: Actions }) {
+export function FactorySettings({ factories, filtered, actions }: { factories: FactoryView[]; filtered: boolean; actions: Actions }) {
   if (factories.length === 0) return null;
   return (
     <div className="flex max-w-(--size-settings-sheet-w) flex-col gap-sm px-lg pb-xl" data-factory-settings={filtered ? factories[0]!.id : "all"}>
-      {filtered ? <SettingsBody key={factories[0]!.id} factory={factories[0]!} actions={actions} /> : <FactoryList factories={factories} summary={summary} actions={actions} />}
+      {filtered ? <SettingsBody key={factories[0]!.id} factory={factories[0]!} actions={actions} /> : <FactoryList factories={factories} actions={actions} />}
     </div>
   );
 }
 
 /** Every Factory on one line each, and the one number they share on this Mac (B36). */
-function FactoryList({ factories, summary, actions }: { factories: FactoryView[]; summary: { inbox: { factory: string; group: string }[] }; actions: Actions }) {
+function FactoryList({ factories, actions }: { factories: FactoryView[]; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const read = useFactoryRequest(actions);
   const write = useFactoryRequest(actions);
@@ -144,7 +144,7 @@ function FactoryList({ factories, summary, actions }: { factories: FactoryView[]
     <>
       <Group title={t("factory.settings.factories")} caption={t("factory.settings.factoriesCaption")} data-factory-settings-group="factories">
         {factories.map((view) => {
-          const turn = summary.inbox.filter((item) => item.factory === view.id && item.group !== "notice").length;
+          const turn = view.my_turn;
           return (
             <div key={view.id} className="flex min-w-0 items-center gap-md px-md py-sm" data-factory-list-row={view.id}>
               <span className="w-[calc(var(--size-control-lg)*3)] min-w-0 shrink truncate text-subhead font-semibold">{view.project_name}</span>

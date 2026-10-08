@@ -242,7 +242,7 @@ function useFactoryProjects(actions: Actions, place: string | null | undefined):
     return open.map((view) => ({
       id: view.id,
       name: view.project_name,
-      count: summary!.inbox.filter((item) => item.factory === view.id && item.group !== "notice").length,
+      count: view.my_turn,
       paused: view.paused,
       selected: place === view.id,
       onOpen: () => openFactoryAt(actions, view.id),
