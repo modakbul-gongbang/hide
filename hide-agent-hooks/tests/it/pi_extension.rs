@@ -77,14 +77,12 @@ fn behaves_as_the_host_runs_it(file: &PluginFile, agent: &str) {
     );
 }
 
+/// One host after the other: `cargo test` runs the binary's tests on
+/// parallel threads, and two Node runs at once crowd the hook tests whose
+/// deadline is half a second.
 #[cfg(unix)]
 #[test]
-fn the_extension_behaves_as_pi_runs_it() {
+fn the_extension_behaves_as_pi_and_omp_run_it() {
     behaves_as_the_host_runs_it(&PI, "pi");
-}
-
-#[cfg(unix)]
-#[test]
-fn the_extension_behaves_as_omp_runs_it() {
     behaves_as_the_host_runs_it(&OMP, "omp");
 }
