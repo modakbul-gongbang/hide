@@ -530,6 +530,12 @@ impl Worker {
         };
         Ok((worker, client))
     }
+
+    /// How many timed producers run beside the store.
+    #[cfg(test)]
+    pub(crate) fn producers(&self) -> usize {
+        self.producers.len()
+    }
 }
 
 impl Drop for Worker {

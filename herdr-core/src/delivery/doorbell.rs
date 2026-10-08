@@ -761,6 +761,15 @@ mod tests {
                 path,
             )
             .unwrap();
+            // A timed producer, the doorbell's own loop above all, would
+            // pass on the real clock beside the test's passes and add a
+            // question or a bell whenever a test outlives its cadence
+            // (issues 798, 802, 809, 814, 831).
+            assert_eq!(
+                worker.producers(),
+                0,
+                "a second doorbell would race the test's passes"
+            );
             let sent = client
                 .submit(
                     Effect::Command {
