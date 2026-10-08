@@ -329,6 +329,48 @@ impl hide_herdr_client::ApiConnector for HerdrConnectTransition {
 #[test]
 #[cfg(unix)]
 fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
+    const CHILD: &str = "HIDE_TEST_PI_ARCHIVE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // AgentInstalled reads the process account, whereas the session reader
+        // below has its own home. Give both a private account in an owned child
+        // so cargo test's other threads never see a changed HOME or PATH.
+        let account = tempfile::tempdir().unwrap();
+        let bin = account.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        // FakeHerdr owns agent.start; only the real executable lookup reaches
+        // this stand-in. No operator Pi installation is needed or executed.
+        std::os::unix::fs::symlink("/usr/bin/true", bin.join("pi")).unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "runtime::tests::links::a_pi_archive_worker_refuses_retired_control_before_creation_or_start",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_clear()
+            .env(CHILD, "1")
+            .env("HOME", account.path())
+            .env("PATH", &bin);
+        let output = hide_platform::process::run_to_end(
+            &mut command,
+            Duration::from_secs(60),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(
+            output.succeeded(),
+            "private Pi archive test failed:\n{}\n{}",
+            output.stdout,
+            output.stderr
+        );
+        return;
+    }
+    assert_eq!(
+        hide_platform::programs::find_cli("pi"),
+        Some(std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join("bin/pi")),
+        "Pi availability must come from the private fixture"
+    );
     for case in [
         "current",
         "local-before",
@@ -491,7 +533,12 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
         let runtime = shared.lock().unwrap();
         let operation = runtime.snapshot.task_operation.as_ref().unwrap();
         if case == "current" {
-            assert_eq!(operation.agent_phase.as_deref(), Some("started"));
+            assert_eq!(
+                operation.agent_phase.as_deref(),
+                Some("started"),
+                "current archive start failed: {:?}",
+                operation.agent_message
+            );
         } else {
             let reason = operation
                 .agent_message
