@@ -621,6 +621,7 @@ fn replacement_retry_with_missing_shell_at_capacity_sends_no_effect() {
     let mut context = runtime.close_context(&tab).unwrap();
     context.replacement_shell = true;
     let request = live::CloseCaptureRequest {
+        retain_for_reopen: true,
         key: "retained-close".into(),
         connection_generation: runtime.live_generation,
         context,
@@ -656,6 +657,7 @@ fn capacity_close_request(runtime: &Runtime, key: &str) -> live::CloseCaptureReq
     let mut context = runtime.close_context(tab).unwrap();
     context.replacement_shell = true;
     live::CloseCaptureRequest {
+        retain_for_reopen: true,
         key: key.into(),
         connection_generation: runtime.live_generation,
         context,
@@ -682,6 +684,7 @@ fn replacement_unknown_claim_survives_refusal_and_dismissal() {
     operation.replacement_effect_started = true;
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
+            retain_for_reopen: true,
             key: request.key.clone(),
             connection_generation: runtime.live_generation,
             target: request.target.clone(),

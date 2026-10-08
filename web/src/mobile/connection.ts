@@ -51,6 +51,19 @@ let attempt = 0;
 let retryTimer: number | null = null;
 /** Set when hided refused the phone for good: no retry until the page reloads. */
 let stopped = false;
+/** At most one sleep command from this phone waits for a dispatch answer. */
+let sleepTimer: number | null = null;
+
+function clearSleepTimer(): void {
+  if (sleepTimer !== null) window.clearTimeout(sleepTimer);
+  sleepTimer = null;
+}
+
+function failPendingSleep(): void {
+  clearSleepTimer();
+  const pending = usePhone.getState().sleepAction;
+  if (pending?.requestId) patch({ sleepAction: { ...pending, requestId: null, error: true } });
+}
 
 function socketUrl(): string {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -126,6 +139,11 @@ function connect(): void {
       onStartResult(frame);
       return;
     }
+    if (frame.type === "sleep_result") {
+      if (usePhone.getState().sleepAction?.requestId === frame.request_id) clearSleepTimer();
+      applyFrame(frame);
+      return;
+    }
     applyFrame(frame);
     if (frame.type === "agents") {
       openPending();
@@ -137,6 +155,7 @@ function connect(): void {
   ws.onclose = () => {
     if (socket === ws) socket = null;
     const state = usePhone.getState();
+    failPendingSleep();
     if (state.pendingInput) patch({ pendingInput: null, inputError: inputFailure("offline") });
     if (state.startSheet.pending) patch({ startSheet: { ...state.startSheet, pending: null, error: startFailure("offline") } });
     patch({ connected: false, unreachable: !refused || state.refusal === "mobile_off" });
@@ -145,6 +164,7 @@ function connect(): void {
 }
 
 function onRefused(reason: string): void {
+  failPendingSleep();
   const refusal = refusalOf(reason);
   if (refusal === "mobile_off") {
     // Mobile was switched off on the Mac: the phone stays paired and keeps retrying (B7).
@@ -227,6 +247,15 @@ function newRequestId(): string {
   const random = new Uint8Array(8);
   crypto.getRandomValues(random);
   return `${Date.now().toString(36)}-${requestCounter}-${Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** A retry keeps the SleepId; a lost answer never triggers an automatic resend. */
+export function actOnSleepingSession(sleepId: string, type: "wake_sleeping_session" | "check_sleeping_session"): void {
+  if (usePhone.getState().sleepAction?.requestId) return;
+  const requestId = newRequestId();
+  const sent = send({ type, sleep_id: sleepId, request_id: requestId });
+  patch({ sleepAction: { sleepId, requestId: sent ? requestId : null, error: !sent } });
+  if (sent) sleepTimer = window.setTimeout(failPendingSleep, 10_000);
 }
 
 /** Sends a reply with Enter after it; the caller clears its field only on success (B26, B27). */

@@ -60,6 +60,16 @@ pub enum HumanNoticeKind {
     LetterUndelivered,
 }
 
+impl HumanNoticeKind {
+    /// The code a diagnostic names the notice by.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::ObserverUnconfirmed => "observer_unconfirmed",
+            Self::LetterUndelivered => "letter_undelivered",
+        }
+    }
+}
+
 impl HumanNotice {
     pub fn english_title(&self) -> &'static str {
         match self.kind {
@@ -82,10 +92,13 @@ impl HumanNotice {
     }
 
     /// Runs only after the durable receipt on a daemon request worker.
+    /// `Ok` means Herdr showed it; `Err` is the stable reason code the log
+    /// records: Herdr's own `reason` for a `shown: false` answer, or
+    /// `call_failed` / `answer_unreadable` when there was no usable answer.
     pub fn notify_herdr(
         &self,
         connector: &dyn hide_herdr_client::ApiConnector,
-    ) -> Result<bool, String> {
+    ) -> Result<(), &'static str> {
         // The pinned request schema requires title and accepts body/sound.
         // This outcome is an external effect receipt, never a core input.
         let params =
@@ -96,11 +109,31 @@ impl HumanNotice {
             params,
             Duration::from_millis(500),
         )
-        .map_err(|_| "delivery_notification_unavailable")?;
-        value
-            .get("shown")
-            .and_then(Value::as_bool)
-            .ok_or_else(|| "delivery_notification_format".into())
+        .map_err(|_| "call_failed")?;
+        herdr_notice_answer(&value)
+    }
+}
+
+/// Reads `notification.show`'s answer. Herdr names why nothing showed in
+/// `reason` (`NotificationShowReason`); a reason outside that set is
+/// recorded as `not_shown` rather than echoed into the log.
+fn herdr_notice_answer(value: &Value) -> Result<(), &'static str> {
+    match value.get("shown").and_then(Value::as_bool) {
+        Some(true) => Ok(()),
+        Some(false) => Err(
+            match value
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "disabled" => "disabled",
+                "rate_limited" => "rate_limited",
+                "no_foreground_client" => "no_foreground_client",
+                "busy" => "busy",
+                _ => "not_shown",
+            },
+        ),
+        None => Err("answer_unreadable"),
     }
 }
 
@@ -152,7 +185,7 @@ impl Prepared {
                 authority: self.authority,
                 actor: self.actor,
                 target: self.target.map(Box::new),
-                command: self.command,
+                command: Box::new(self.command),
             },
             timeout,
         )
@@ -191,7 +224,7 @@ pub(crate) enum Effect {
         authority: Authority,
         actor: Actor,
         target: Option<Box<Observation>>,
-        command: Command,
+        command: Box<Command>,
     },
     Tick(Vec<watch::Reading>),
     BellAttempt {
@@ -562,7 +595,7 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             target,
             command,
             ..
-        } => (actor, target, command),
+        } => (actor, target, &**command),
     };
     let value = match command {
         Command::WatchStart { .. } => {
@@ -733,6 +766,7 @@ fn run(
                     target,
                     command,
                 } => {
+                    let command: &Command = command;
                     // The intent lookup uses the owned candidate outside Runtime.
                     // Replays converge even after the original recipient leaves.
                     let target_required = matches!(
@@ -947,8 +981,72 @@ mod tests {
         );
     }
 
+    fn undelivered_notice() -> HumanNotice {
+        HumanNotice {
+            id: "letter-1".into(),
+            actor: Actor {
+                pane_id: "sender".into(),
+                name: "sender".into(),
+                kind: "codex".into(),
+                device_id: crate::node::TEST_NODE.into(),
+                session: None,
+            },
+            kind: HumanNoticeKind::LetterUndelivered,
+            recipient: "lead".into(),
+            about: String::new(),
+        }
+    }
+
+    #[test]
+    fn herdr_notice_names_why_nothing_showed() {
+        for (answer, expected) in [
+            (json!({"shown": true, "reason": "shown"}), Ok(())),
+            (
+                json!({"shown": false, "reason": "disabled"}),
+                Err("disabled"),
+            ),
+            (
+                json!({"shown": false, "reason": "rate_limited"}),
+                Err("rate_limited"),
+            ),
+            (
+                json!({"shown": false, "reason": "no_foreground_client"}),
+                Err("no_foreground_client"),
+            ),
+            (json!({"shown": false, "reason": "busy"}), Err("busy")),
+            (json!({"shown": false}), Err("not_shown")),
+            (json!({"shown": false, "reason": "other"}), Err("not_shown")),
+            (json!({"reason": "disabled"}), Err("answer_unreadable")),
+        ] {
+            assert_eq!(herdr_notice_answer(&answer), expected, "{answer}");
+        }
+    }
+
+    #[test]
+    fn notify_herdr_reports_herdr_reason_or_a_failed_call() {
+        let herdr = crate::fake_herdr::FakeHerdr::start("notice-reason", |method, _| {
+            assert_eq!(method, "notification.show");
+            json!({"type": "notification_show", "shown": false, "reason": "disabled"})
+        });
+        let notice = undelivered_notice();
+        assert_eq!(notice.notify_herdr(&herdr.connector()), Err("disabled"));
+        let gone = hide_herdr_client::LocalSocketConnector::new(
+            herdr.socket_path().with_file_name("absent.sock"),
+        );
+        assert_eq!(notice.notify_herdr(&gone), Err("call_failed"));
+    }
+
     struct ActivityPeer(std::sync::atomic::AtomicU64);
     impl crate::node_access::NodeLink for ActivityPeer {
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+                std::sync::LazyLock::new(|| {
+                    serde_json::from_str(r#"[{"provider":"codex","features":["activity"]}]"#)
+                        .unwrap()
+                });
+            Some(&READERS)
+        }
+
         fn call(
             &self,
             call: hide_node_link::protocol::Call,
@@ -1207,7 +1305,7 @@ mod tests {
                             authority: authority(&target.actor),
                             actor: target.actor.clone(),
                             target: Some(Box::new(target.clone())),
-                            command
+                            command: Box::new(command)
                         },
                         Duration::from_secs(5)
                     )
@@ -1262,7 +1360,7 @@ mod tests {
                             authority: authority(&actor),
                             actor: actor.clone(),
                             target: Some(Box::new(target.clone())),
-                            command: command.clone()
+                            command: Box::new(command.clone())
                         },
                         Duration::from_secs(5)
                     )
@@ -1293,7 +1391,7 @@ mod tests {
                         authority: authority(&actor),
                         actor: actor.clone(),
                         target: Some(Box::new(target)),
-                        command: command.clone(),
+                        command: Box::new(command.clone()),
                     },
                     Duration::from_secs(5),
                 )
@@ -1310,7 +1408,7 @@ mod tests {
                         authority: authority(&actor),
                         actor,
                         target: None,
-                        command,
+                        command: Box::new(command),
                     },
                     Duration::from_secs(5),
                 )
@@ -1344,12 +1442,12 @@ mod tests {
                     authority: authority(&actor),
                     actor,
                     target: Some(Box::new(target)),
-                    command: Command::Send {
+                    command: Box::new(Command::Send {
                         target: "recipient".into(),
                         intent: "send-once".into(),
                         body: "private fixture".into(),
                         kind: "request".into(),
-                    },
+                    }),
                 },
                 Duration::from_secs(5),
             );

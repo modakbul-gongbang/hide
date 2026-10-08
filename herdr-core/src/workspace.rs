@@ -800,6 +800,12 @@ impl CountingNode {
 
 #[cfg(test)]
 impl NodeLink for CountingNode {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+            std::sync::LazyLock::new(hide_node_link::sessions::ReaderFeatures::implemented);
+        Some(&READERS)
+    }
+
     fn call(
         &self,
         call: Call,

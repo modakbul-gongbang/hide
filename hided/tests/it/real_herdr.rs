@@ -10,7 +10,7 @@
 //! home, none of the operator's.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -22,133 +22,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::ORIGIN;
 
+use crate::private_herdr::{PrivateHerdr, herdr_command};
+
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-fn pinned_version() -> String {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../contracts/herdr-bundle.json");
-    let manifest: Value = serde_json::from_slice(&std::fs::read(manifest).unwrap()).unwrap();
-    manifest["version"].as_str().unwrap().to_owned()
-}
-
-fn herdr_command(bin: &Path, home: &Path, socket: &Path, config: &Path) -> Command {
-    let mut command = Command::new(bin);
-    for (key, _) in std::env::vars_os() {
-        let key = key.to_string_lossy().to_uppercase();
-        if key.starts_with("HERDR_") || key.starts_with("HIDE_") {
-            command.env_remove(key);
-        }
-    }
-    command
-        .env("HOME", home)
-        .env("USERPROFILE", home)
-        .env("XDG_CONFIG_HOME", home.join("xdg-config"))
-        .env("XDG_STATE_HOME", home.join("xdg-state"))
-        .env("HERDR_SESSION", "hide-hided-contract")
-        .env("HERDR_SOCKET_PATH", socket)
-        .env("HERDR_CONFIG_PATH", config)
-        .env("HERDR_DISABLE_SOUND", "1");
-    command
-}
-
-/// A Herdr server of the test's own, stopped on drop.
-struct PrivateHerdr {
-    bin: PathBuf,
-    home: PathBuf,
-    socket: PathBuf,
-    config: PathBuf,
-    log: PathBuf,
-    server: Option<Child>,
-}
-
-impl PrivateHerdr {
-    fn start(bin: PathBuf, root: &Path) -> Self {
-        let version = String::from_utf8(
-            Command::new(&bin)
-                .arg("--version")
-                .output()
-                .expect("herdr --version")
-                .stdout,
-        )
-        .unwrap();
-        assert_eq!(
-            version.split_whitespace().last().unwrap(),
-            pinned_version(),
-            "{} is not the pinned Herdr",
-            bin.display()
-        );
-        let home = root.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        let config = root.join("herdr-config.toml");
-        std::fs::write(
-            &config,
-            "[update]\nversion_check = false\nmanifest_check = false\n",
-        )
-        .unwrap();
-        let socket = root.join("herdr.sock");
-        let log = root.join("server.log");
-        let output = std::fs::File::create(&log).unwrap();
-        let server = herdr_command(&bin, &home, &socket, &config)
-            .arg("server")
-            .stdin(Stdio::null())
-            .stdout(output.try_clone().unwrap())
-            .stderr(output)
-            .spawn()
-            .expect("herdr server starts");
-        let herdr = Self {
-            bin,
-            home,
-            socket,
-            config,
-            log,
-            server: Some(server),
-        };
-        herdr.wait_for_ping();
-        herdr
-    }
-
-    /// Asks the starting server `ping` until it answers; the minute only ends
-    /// a server that never comes up, and then its log is the report.
-    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-    fn wait_for_ping(&self) {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while hide_herdr_client::request_with_timeout(
-            &self.socket,
-            "ping",
-            json!({}),
-            Duration::from_secs(2),
-        )
-        .is_err()
-        {
-            assert!(
-                Instant::now() < deadline,
-                "the server never answered ping: {}",
-                std::fs::read_to_string(&self.log).unwrap_or_default()
-            );
-            std::thread::sleep(Duration::from_millis(250));
-        }
-    }
-
-    fn stop(&mut self) -> std::io::Result<()> {
-        if self.server.is_none() {
-            return Ok(());
-        }
-        let _ = herdr_command(&self.bin, &self.home, &self.socket, &self.config)
-            .args(["server", "stop"])
-            .output();
-        let server = self.server.as_mut().expect("the private server is owned");
-        let _ = server.kill();
-        server.wait()?;
-        self.server = None;
-        Ok(())
-    }
-}
-
-impl Drop for PrivateHerdr {
-    fn drop(&mut self) {
-        let _ = self.stop();
-    }
-}
 
 /// Runs the control session the core runs for `pane` once more, by hand,
 /// and says what it answered: only a failure calls it, so the exact command,

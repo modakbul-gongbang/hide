@@ -327,10 +327,15 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         Some(vec!["resume".to_owned(), "019a-session".to_owned()])
     );
 
-    // B22: OpenCode has no resume start; an id that is not one token never
-    // reaches a command line.
+    // Common starts do not grant resume support before each complete reader
+    // slice lands; an id that is not one token never reaches a command line.
     for (provider, session, kind) in [
-        ("opencode", "ses_1", "agent_start.unknown_provider"),
+        ("opencode", "ses_1", "agent_start.invalid_resume"),
+        ("pi", "native-one", "agent_start.invalid_resume"),
+        ("omp", "native-one", "agent_start.invalid_resume"),
+        ("grok", "native-one", "agent_start.invalid_resume"),
+        ("cursor", "native-one", "agent_start.invalid_resume"),
+        ("unknown", "native-one", "agent_start.unknown_provider"),
         ("claude", "a b", "agent_start.invalid_resume"),
         ("claude", "--dangerous", "agent_start.invalid_resume"),
     ] {
@@ -346,5 +351,6 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
             Some(kind),
             "{provider} {session}"
         );
+        assert!(runtime.snapshot.task_operation.is_none());
     }
 }

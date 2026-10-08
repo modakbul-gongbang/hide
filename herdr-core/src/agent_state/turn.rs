@@ -404,6 +404,20 @@ pub fn agent_group_for(
     }
 }
 
+/// An intentionally closed execution has no live parent or unread demand.
+/// Only an explicit sleep-id wake action can create its next execution.
+pub(crate) fn dormant_group() -> AgentGroup {
+    agent_group_for(
+        AgentDemand::None,
+        AgentActivity::Stopped,
+        false,
+        false,
+        false,
+        Ownership::Operator,
+        false,
+    )
+}
+
 /// The one short word a row shows. A reported completion the operator has not
 /// read is `Done`; an ordinary stopped pane and a read completion are `Idle`.
 /// No view ever shows an axis value, so nothing underscored can reach the

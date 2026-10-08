@@ -1900,6 +1900,7 @@ impl Runtime {
                     .collect(),
             );
             self.acknowledge_session_save(&state, result.is_ok());
+            self.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
             return result;
         };
         self.state_save_pending = true;
@@ -1934,19 +1935,28 @@ impl Runtime {
                     // The existing save function serializes and writes outside the
                     // runtime mutex. One pending flag coalesces newer UI state.
                     let result = persistence::save(&path, &state, &sizes);
-                    let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
-                    let resolving = state.resolved_sessions.iter().any(|(pane, record)| {
-                        guard.pending_session_resolutions.get(pane) == Some(record)
-                    });
-                    let changed = guard.acknowledge_session_save(&state, result.is_ok());
-                    if let Err(message) = result {
-                        if resolving {
-                            guard.push_diagnostic("session.resolve.save_failed", message);
-                        } else {
-                            guard.set_error("ui_state.save_failed", message, true);
+                    let changed = {
+                        let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
+                        let resolving = state.resolved_sessions.iter().any(|(pane, record)| {
+                            guard.pending_session_resolutions.get(pane) == Some(record)
+                        });
+                        let resolved_changed =
+                            guard.acknowledge_session_save(&state, result.is_ok());
+                        let dormant_changed =
+                            guard.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+                        if let Err(message) = &result {
+                            if resolving && !dormant_changed {
+                                guard.push_diagnostic(
+                                    "session.resolve.save_failed",
+                                    message.clone(),
+                                );
+                            } else {
+                                guard.set_error("ui_state.save_failed", message.clone(), true);
+                            }
                         }
-                        context.notifier.notify();
-                    } else if changed {
+                        resolved_changed || dormant_changed || result.is_err()
+                    };
+                    if changed {
                         context.notifier.notify();
                     }
                 }

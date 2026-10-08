@@ -8,7 +8,7 @@ import tokensText from "../../design/tokens.json?raw";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Sidebar } from "./sidebar";
-import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
+import type { AgentRow, SleepingSession, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -47,8 +47,8 @@ function project(device: string): { workspace: Workspace; agent: AgentRow; check
   return { workspace, agent, checkoutId };
 }
 
-// docs/UI_BEHAVIOR.md, Projects: both folds are this machine's, so a selected SSH device's tree is drawn with nothing
-// folded, while this Mac's checkouts start closed until the operator opens one.
+// SessionUI B5/B32: both devices start expanded and persist explicit folds.
+// Main's dormant conversation contract retains safe rows without a live pane.
 it("starts both device checkouts open and offers the same persisted fold (session-first-ui B7/B32)", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -92,6 +92,22 @@ it("starts both device checkouts open and offers the same persisted fold (sessio
     await act(async () => useShellStore.setState({ rest: legacyRest(thisMac, [local.agent]), agents: [local.agent] }));
     expect(open(local.checkoutId)?.textContent).toContain("인사에 답하기");
     expect(toggle(local.checkoutId)?.getAttribute("aria-label")).toContain("main");
+
+    const sleeping: SleepingSession = {
+      sleep_id: "sleep-ab-1", node_id: "local", checkout_path: local.workspace.path,
+      kind: "opencode", identity_label: "보관된 대화", group: "seen", phase: "sleeping",
+      since_unix_ms: 1, reason: null, wake_available: false, checking: false,
+    };
+    const dormant = legacyRest({ ...thisMac, navigator: { ...thisMac.navigator, agents: [], sleeping_sessions: [sleeping, { ...sleeping, sleep_id: "sleep-ab-2", node_id: "mini" }] } }, []);
+    await act(async () => useShellStore.setState({ rest: dormant, agents: [] }));
+    expect(open(local.checkoutId)?.textContent).toContain("보관된 대화");
+    expect(container.querySelector('[data-sleeping-session="sleep-ab-2"]')).toBeNull();
+    const retained = container.querySelector('[data-sleeping-session="sleep-ab-1"]');
+    expect(retained?.textContent).toContain("Sleeping");
+    expect(retained?.querySelector("[data-pane], button")).toBeNull();
+    expect(container.querySelector('[data-sidebar-mode="agents"]')).toBeNull();
+    await act(async () => useShellStore.setState({ rest: { ...dormant, ui_state: { ...dormant.ui_state, session_collapsed_checkout_ids: [local.checkoutId] } } }));
+    expect(open(local.checkoutId)).toBeNull();
   } finally {
     await act(async () => root.unmount());
     container.remove();

@@ -184,6 +184,16 @@ fn deserialize_calls<'de, D: serde::Deserializer<'de>>(
 }
 
 impl TurnTracker {
+    /// Keep the native wait while omitting content an older peer cannot read.
+    pub fn clear_user_turn_content(&mut self) {
+        if let Some(last) = &mut self.last {
+            last.plan_content = None;
+        }
+        for question in &mut self.questions {
+            question.content = None;
+        }
+    }
+
     /// Existing records establish the kind of wait, never invented text.
     pub fn user_turn(&self) -> Option<UserTurnFact> {
         match self.waiting()? {

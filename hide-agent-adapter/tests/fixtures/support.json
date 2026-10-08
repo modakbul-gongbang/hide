@@ -71,7 +71,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -92,7 +93,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -113,7 +115,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -134,7 +137,8 @@
     },
     "features": [
       "skill",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",
@@ -156,7 +160,8 @@
     "features": [
       "skill",
       "guidance",
-      "herdr_integration"
+      "herdr_integration",
+      "start"
     ],
     "factory": {
       "direct_ask": "unconfirmed",

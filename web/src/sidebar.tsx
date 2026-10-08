@@ -24,6 +24,7 @@ import { cn } from "./lib/utils";
 import { agentNumber, sidebarAgentNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
+import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentGroupTitle, agentPlaces, allAgents, type ListedAgent } from "./navigation";
@@ -49,7 +50,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
-import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
+import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -508,6 +509,13 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
   );
 }
 
+const NO_SLEEPERS: SleepingSession[] = [];
+
+function useSleepingCheckout(path: string, deviceId: string) {
+  const all = useShellStore((s) => s.rest?.navigator?.sleeping_sessions ?? NO_SLEEPERS);
+  return useMemo(() => all.filter((session) => session.node_id === deviceId && session.checkout_path === path), [all, path, deviceId]);
+}
+
 /** The first snapshot has not arrived: neither an empty list nor a zero is known yet. */
 function ListLoading() {
   const { t } = useInterfaceTranslation();
@@ -958,9 +966,10 @@ function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
-function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">) {
-  const foldable = context.disclosure && agentRows.length > 0;
-  const open = agentRows.length > 0 && !context.openCheckouts.includes(checkout.id);
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, sleepingCount: number) {
+  const hasRows = agentRows.length + sleepingCount > 0;
+  const foldable = context.disclosure && hasRows;
+  const open = hasRows && !context.openCheckouts.includes(checkout.id);
   const purpose = checkout.purpose?.text ?? null;
   const parents = [...new Set(agentRows
     .filter((row) => row.depth === 0)
@@ -1001,7 +1010,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path, localDeviceId(s.rest)));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
+  const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you);
   const marks = checkout.agent_summary?.marks;
   return (
@@ -1067,7 +1077,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1101,7 +1111,8 @@ const FolderRowView = memo(function FolderRowView({
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
+  const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
@@ -1153,7 +1164,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1315,13 +1326,11 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
 }
 
 /**
- * An opened checkout's agent rows, their marks on the name column. A parent
- * folds its descendants with the core's own lineage choice, the one the
- * Agents list folds by, and its badge speaks for them while folded (PRD
- * sidebar-readability D-6, B12). A selected SSH device's tree is drawn with
- * nothing folded, as its checkouts are.
+ * An opened checkout's operator roots and separate dormant conversations.
+ * A live parent's badge opens its children through the shared popover;
+ * a dormant conversation has no pane or numbered shortcut.
  */
-function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; context: ListContext }) {
+function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: ListContext }) {
   const rows = agentRows;
   return (
     <ul data-checkout-agents-open={checkoutId}>
@@ -1343,11 +1352,12 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             onAll={() => context.actions.openAgentsOverview()}
             inset={inset}
             branchShown={row.depth > 0}
-                  number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
+            number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
             menu={context.agentRowMenu}
           />
         );
       })}
+      {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
     </ul>
   );
 }

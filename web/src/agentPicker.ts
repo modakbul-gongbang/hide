@@ -62,7 +62,8 @@ export function catalogFor(ai: BackgroundAi | undefined, kind: ProviderKind): Mo
   }
   const kept = lastLists.get(kind);
   if (kept) return { state: "ready", models: kept };
-  if (!provider || provider.state === "unread") return { state: "loading" };
+  if (!ai || provider?.state === "unread") return { state: "loading" };
+  if (!provider) return { state: "unavailable", reason: null };
   return { state: "unavailable", reason: provider.models_unavailable_reason ?? provider.message ?? null };
 }
 

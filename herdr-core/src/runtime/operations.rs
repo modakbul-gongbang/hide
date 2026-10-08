@@ -1021,7 +1021,7 @@ impl Runtime {
         })
     }
 
-    fn geometry_tab_busy(&self, scope_id: &str) -> bool {
+    pub(super) fn geometry_tab_busy(&self, scope_id: &str) -> bool {
         self.geometry_in_flight(scope_id)
             || self
                 .pane_operations

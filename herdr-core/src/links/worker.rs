@@ -14,8 +14,7 @@ use super::{
     BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, files_present, link_code,
     now_ms,
 };
-use crate::node_access::{NodeLink, call_as};
-use hide_node_link::protocol::Call;
+use crate::node_access::NodeLink;
 use hide_session::links::{self, Candidate, ReadRequest};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -252,17 +251,30 @@ impl Listing {
     }
 
     /// Takes one page, newest first, and sets where the next one ends.
-    fn page(&mut self, page: &[Candidate], until: Option<u64>, device: &str) {
+    fn page(
+        &mut self,
+        page: &hide_node_link::readers::ReaderPage<Candidate>,
+        until: Option<u64>,
+        device: &str,
+    ) {
         self.next = None;
-        if page.len() < links::CANDIDATE_LIMIT {
+        if page.refused > 0 {
+            self.failed = true;
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "listing.reader_refused", "device_id": device,
+                "files": page.refused,
+            }));
+        }
+        if page.scanned < links::CANDIDATE_LIMIT {
             return;
         }
-        let oldest = page
-            .last()
-            .map_or(0, |candidate| candidate.modified_unix_ms);
+        let Some(oldest) = page.oldest_unix_ms else {
+            self.failed = true;
+            return;
+        };
         crate::diagnostic!(serde_json::json!({
             "component": "links", "kind": "listing.capped", "device_id": device,
-            "files": page.len(), "until_unix_ms": oldest,
+            "files": page.scanned, "until_unix_ms": oldest,
         }));
         // A page of files that all share one time cannot move on; what it
         // could not hold is left, and the log says so.
@@ -543,15 +555,8 @@ fn list(store: &LinkStore, own: &dyn NodeLink, paths: &Paths, state: &mut State)
         return;
     };
     let until = listing.next;
-    let page = match call_as::<Vec<Candidate>>(
-        own,
-        Call::LinkFiles {
-            since_unix_ms: listing.since,
-            until_unix_ms: until,
-        },
-        DEVICE_TIMEOUT,
-    )
-    .map_err(|error| link_code(&error, "node"))
+    let page = match hide_node_link::readers::link_files(own, listing.since, until, DEVICE_TIMEOUT)
+        .map_err(|error| link_code(&error, "node"))
     {
         Ok(page) => page,
         Err(code) => {
@@ -565,7 +570,7 @@ fn list(store: &LinkStore, own: &dyn NodeLink, paths: &Paths, state: &mut State)
     };
     listing.page(&page, until, &paths.local_device);
     match store.stamps(&paths.local_device) {
-        Ok(stamps) => state.queue = unread(page, &stamps),
+        Ok(stamps) => state.queue = unread(page.rows, &stamps),
         Err(code) => {
             log_write(&code, "listing");
             listing.failed = true;
@@ -608,6 +613,20 @@ fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &m
         let Some(candidate) = state.queue.pop_front() else {
             break;
         };
+        if let Err(error) = hide_node_link::link::check_reader_support(
+            own,
+            candidate.agent,
+            hide_node_link::sessions::ReaderFeature::Links,
+        ) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "session.reader_refused",
+                "agent": candidate.agent.as_str(), "code": link_code(&error, "node"),
+            }));
+            if let Some(listing) = state.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        }
         let checkpoint = match store.checkpoint(&paths.local_device, &candidate.path) {
             Ok(checkpoint) => checkpoint,
             Err(code) => {
@@ -618,26 +637,18 @@ fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &m
                 continue;
             }
         };
-        let read = call_as::<Vec<links::ReadAnswer>>(
+        let read = hide_node_link::readers::links(
             own,
-            Call::LinkRead {
-                requests: vec![ReadRequest {
-                    agent: candidate.agent,
-                    path: candidate.path.clone(),
-                    checkpoint,
-                }],
-            },
+            vec![ReadRequest {
+                agent: candidate.agent,
+                path: candidate.path.clone(),
+                checkpoint,
+            }],
             DEVICE_TIMEOUT,
         )
-        .map_err(|error| link_code(&error, "node"))
-        .and_then(|answers| {
-            answers
-                .into_iter()
-                .find(|answer| answer.path == candidate.path)
-                .ok_or_else(|| "node_answer_missing".to_owned())
-        });
-        let answer = match read {
-            Ok(answer) => answer,
+        .map_err(|error| link_code(&error, "node"));
+        let batch = match read {
+            Ok(batch) => batch,
             Err(code) => {
                 // The node itself failed, not the file: the listing is read
                 // again from its start on its next turn.
@@ -651,6 +662,27 @@ fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &m
                 }
                 return;
             }
+        };
+        if batch.ignored_answers > 0 {
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "node.reader_answers_refused", "answers": batch.ignored_answers,
+            }));
+        }
+        if let Some(refusal) = batch.refused.first() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "session.reader_refused",
+                "agent": refusal.agent.as_str(), "code": refusal.reason.code(),
+            }));
+            if let Some(listing) = state.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        }
+        let Some(answer) = batch.answers.into_iter().next() else {
+            if let Some(listing) = state.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
         };
         if let Some(code) = answer.error.as_deref() {
             crate::diagnostic!(serde_json::json!({
@@ -776,6 +808,17 @@ fn read_device(
         .collect::<Vec<_>>();
     let mut requests = Vec::with_capacity(batch.len());
     for candidate in &batch {
+        if let Err(error) = hide_node_link::link::check_reader_support(
+            channel,
+            candidate.agent,
+            hide_node_link::sessions::ReaderFeature::Links,
+        ) {
+            log_device(device, "reader", &link_code(&error, "device_helper"));
+            if let Some(listing) = entry.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        }
         match store.checkpoint(device, &candidate.path) {
             Ok(checkpoint) => requests.push(ReadRequest {
                 agent: candidate.agent,
@@ -790,11 +833,7 @@ fn read_device(
             }
         }
     }
-    let answers = match call_as::<Vec<links::ReadAnswer>>(
-        channel,
-        Call::LinkRead { requests },
-        DEVICE_TIMEOUT,
-    ) {
+    let answers = match hide_node_link::readers::links(channel, requests, DEVICE_TIMEOUT) {
         Ok(answers) => answers,
         Err(error) => {
             // The files wait for the device's next try.
@@ -806,8 +845,28 @@ fn read_device(
             return;
         }
     };
+    if answers.ignored_answers > 0 {
+        crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "device.reader_answers_refused", "device_id": device, "answers": answers.ignored_answers,
+        }));
+    }
     for candidate in batch {
-        let Some(answer) = answers.iter().find(|answer| answer.path == candidate.path) else {
+        if let Some(refusal) = answers
+            .refused
+            .iter()
+            .find(|refusal| refusal.path == candidate.path && refusal.agent == candidate.agent)
+        {
+            log_device(device, "reader", refusal.reason.code());
+            if let Some(listing) = entry.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        }
+        let Some(answer) = answers
+            .answers
+            .iter()
+            .find(|answer| answer.path == candidate.path && answer.agent == candidate.agent)
+        else {
             if let Some(listing) = entry.listing.as_mut() {
                 listing.failed = true;
             }
@@ -853,22 +912,15 @@ fn list_device(
     let until = listing.next;
     // A page that could not be listed is files not read: the listing is not
     // recorded as listed through, and the next one starts where it did.
-    let listed = call_as::<Vec<Candidate>>(
-        channel,
-        Call::LinkFiles {
-            since_unix_ms: listing.since,
-            until_unix_ms: until,
-        },
-        DEVICE_TIMEOUT,
-    )
-    .map_err(|error| link_code(&error, "device_helper"))
-    .and_then(|page| Ok((store.stamps(device)?, page)));
+    let listed = hide_node_link::readers::link_files(channel, listing.since, until, DEVICE_TIMEOUT)
+        .map_err(|error| link_code(&error, "device_helper"))
+        .and_then(|page| Ok((store.stamps(device)?, page)));
     let (stamps, page) = listed.inspect_err(|_| {
         listing.failed = true;
         listing.next = None;
     })?;
     listing.page(&page, until, device);
-    entry.queue = unread(page, &stamps);
+    entry.queue = unread(page.rows, &stamps);
     Ok(())
 }
 
@@ -1005,6 +1057,7 @@ mod tests {
     use super::*;
     use crate::links::{FileState, PrFact, ProjectFacts, SessionRole, WorktreeFact};
     use crate::node_access::{LinkAnswer, LinkError};
+    use hide_node_link::protocol::Call;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const CREATED: u64 = 1_790_000_000_000;
@@ -1017,6 +1070,11 @@ mod tests {
     }
 
     impl NodeLink for Device {
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+                std::sync::LazyLock::new(hide_node_link::sessions::ReaderFeatures::implemented);
+            self.connected.load(Ordering::SeqCst).then_some(&READERS)
+        }
         fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
             if !self.connected.load(Ordering::SeqCst) {
                 return Err(LinkError::NotConnected("gone".into()));

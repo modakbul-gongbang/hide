@@ -968,8 +968,8 @@ fn start_task_agent(
 
 /// Starts the agent with its first prompt (PRD home-device-rail D-26).
 ///
-/// The prompt always goes as the CLI's own argument after `--`: Claude Code
-/// and Codex hold it through their startup questions (folder trust, sign-in)
+/// The prompt goes as the CLI's declared argument (`--prompt` for OpenCode,
+/// positional after `--` for the other launch dialects), held through startup questions (folder trust, sign-in)
 /// and send it once those are answered. Nothing is ever typed into the pane,
 /// because Herdr reports an agent on such a question as idle and ready, and a
 /// typed prompt would answer the question. A prompt that cannot be passed,
@@ -988,9 +988,12 @@ fn launch_with_prompt(
         mut args,
         codex_daemon,
     } = start;
+    let Some(dialect) = hide_agent_adapter::adapter(&kind).and_then(|row| row.start) else {
+        return TaskAgentOutcome::Failed("This agent has no supported start dialect".to_owned());
+    };
     if let Some(prompt) = prompt {
         match prompt_argument(&prompt) {
-            Ok(argument) => args.extend(["--".to_owned(), argument]),
+            Ok(argument) => args.extend([dialect.prompt_flag().to_owned(), argument]),
             Err(message) => return TaskAgentOutcome::Failed(message),
         }
     }
@@ -3351,45 +3354,58 @@ mod tests {
             .collect()
     }
 
-    /// PRD home-device-rail D-18, D-26: the model and folders a start names
-    /// reach `agent.start` as the CLI's own arguments, and the first prompt
-    /// goes after `--` as the CLI's own, which holds it through its startup
-    /// questions; nothing is typed into the pane.
+    /// The installed CLI help fixes these expectations independently of the
+    /// adapter. Every first prompt travels in argv, never as PTY input.
     #[test]
     fn a_first_prompt_travels_as_the_agents_own_argument() {
-        let server = server(vec![
-            shell_ready(),
-            json!({"result":{"type":"agent_started","argv":[],"agent":agent("working")}}),
-        ]);
-        let args: Vec<String> = ["--model", "opus", "--add-dir", "/work/my app"]
-            .map(String::from)
-            .into();
-        let outcome = launch_with_prompt(
-            &server,
-            None,
-            7,
-            PendingAgentStart {
-                pane_id: "w1:p1".into(),
-                kind: "claude".into(),
-                prompt: Some("fix the tests".into()),
-                args,
-                codex_daemon: Default::default(),
-            },
-        );
-        assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
-        let requests = requests_of(&server);
-        assert_eq!(methods_of(&requests), ["pane.process_info", "agent.start"]);
-        assert_eq!(
-            requests[1]["params"]["args"],
-            json!([
-                "--model",
-                "opus",
-                "--add-dir",
-                "/work/my app",
-                "--",
-                "fix the tests"
-            ])
-        );
+        for (kind, prompt_flag, extra_roots) in [
+            ("claude", "--", true),
+            ("codex", "--", true),
+            ("grok", "--", false),
+            ("opencode", "--prompt", false),
+            ("pi", "--", false),
+            ("omp", "--", true),
+            ("cursor", "--", true),
+        ] {
+            let server = server(vec![
+                shell_ready(),
+                json!({"result":{"type":"agent_started","argv":[],"agent":agent("working")}}),
+            ]);
+            let args = crate::runtime::agent_choice::agent_arguments(
+                Some(kind),
+                Some("fixture-model"),
+                &["/work/my app".into()],
+            );
+            let outcome = launch_with_prompt(
+                &server,
+                None,
+                7,
+                PendingAgentStart {
+                    pane_id: "w1:p1".into(),
+                    kind: kind.into(),
+                    prompt: Some("fix the tests".into()),
+                    args,
+                    codex_daemon: crate::codex_launch::CodexDaemon::Unsupported,
+                },
+            );
+            assert!(
+                matches!(outcome, TaskAgentOutcome::Started),
+                "{kind}: {outcome:?}"
+            );
+            let requests = requests_of(&server);
+            assert_eq!(
+                methods_of(&requests),
+                ["pane.process_info", "agent.start"],
+                "{kind}"
+            );
+            let mut expected = vec!["--model", "fixture-model"];
+            if extra_roots {
+                expected.extend(["--add-dir", "/work/my app"]);
+            }
+            expected.extend([prompt_flag, "fix the tests"]);
+            assert_eq!(requests[1]["params"]["args"], json!(expected), "{kind}");
+            assert_eq!(requests[1]["params"]["kind"], kind);
+        }
     }
 
     /// PRD overview-request-view D-20: a Codex that has the shared daemon is

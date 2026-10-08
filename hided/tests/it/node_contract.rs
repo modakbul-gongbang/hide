@@ -63,6 +63,10 @@ struct Device {
     state: PathBuf,
     /// What the link's pane events told this process.
     events: Arc<Events>,
+    hello: hide_node_link::protocol::Hello,
+    helper_path: String,
+    local: PathBuf,
+    current_packages: PathBuf,
 }
 
 /// The pane of the device's Herdr whose shell is this test process, so a
@@ -136,6 +140,13 @@ impl Device {
     }
 
     fn start_with_pane_events(pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>) -> Self {
+        Self::start_with_packages(pane_events, None)
+    }
+
+    fn start_with_packages(
+        pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>,
+        retained_packages: Option<PathBuf>,
+    ) -> Self {
         // Socket paths below this folder must fit a Unix socket address.
         let root = tempfile::Builder::new()
             .prefix("nc")
@@ -234,10 +245,12 @@ impl Device {
         let events = Arc::new(Events::default());
         let slot: hide_node::ssh::PaneEventsSlot = Arc::default();
         let _ = slot.set(pane_events.unwrap_or_else(|| events.clone()));
-        let transport = hide_node::ssh::Connector::new(Some(packages))
-            .with_pane_events(slot)
-            .transport(&local, "contract-node", ALIAS, None)
-            .unwrap();
+        let transport = hide_node::ssh::Connector::new(Some(
+            retained_packages.unwrap_or_else(|| packages.clone()),
+        ))
+        .with_pane_events(slot)
+        .transport(&local, "contract-node", ALIAS, None)
+        .unwrap();
         let consent = HostConsent {
             contract: HOST_CONSENT_CONTRACT,
             helper_root: "~/helper".to_owned(),
@@ -245,8 +258,8 @@ impl Device {
             granted_at_unix_ms: 1,
             identity: None,
         };
-        let link = match transport.establish(&consent, &[], Box::new(|_| {})) {
-            Ok(established) => established.host,
+        let established = match transport.establish(&consent, &[], Box::new(|_| {})) {
+            Ok(established) => established,
             Err(error) => panic!("the device's node did not start: {error:?}"),
         };
         Self {
@@ -255,11 +268,248 @@ impl Device {
             project,
             ssh,
             transport,
-            link,
+            link: established.host,
             state,
             events,
+            hello: established.hello,
+            helper_path: established.helper_path,
+            local,
+            current_packages: packages,
         }
     }
+}
+
+#[test]
+fn authenticated_node_advertises_only_its_compiled_readers() {
+    use hide_node_link::sessions::{ReaderFeature, ReaderFeatures};
+    let device = Device::start();
+    assert_eq!(
+        device.hello.protocol,
+        hide_node_link::protocol::PROTOCOL_VERSION
+    );
+    assert_eq!(
+        device.link.reader_features(),
+        Some(&ReaderFeatures::implemented())
+    );
+    assert!(
+        device
+            .link
+            .reader_features()
+            .unwrap()
+            .supports("codex", ReaderFeature::Turns)
+    );
+    assert!(
+        !device
+            .link
+            .reader_features()
+            .unwrap()
+            .supports("pi", ReaderFeature::Conversation)
+    );
+}
+
+// This test-only input names a retained release payload directory. It is
+// deliberately mandatory for this opt-in historical-binary lane and never
+// read by the product or used to fabricate a protocol number.
+const RETAINED_PROTOCOL24_PACKAGES: &str = "HIDE_TEST_PROTOCOL24_PACKAGES";
+
+#[test]
+#[ignore = "requires an actual retained protocol-24 payload in HIDE_TEST_PROTOCOL24_PACKAGES"]
+fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
+    use hide_node_link::sessions::ReaderFeature;
+    use hide_session::Agent;
+    use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
+
+    let retained = PathBuf::from(
+        std::env::var_os(RETAINED_PROTOCOL24_PACKAGES)
+            .expect("supply the actual accepted protocol-24 payload directory"),
+    );
+    let bytes = fs::read(retained.join("hided")).unwrap();
+    assert!(
+        !bytes.starts_with(b"#!"),
+        "retained helper must be the real binary"
+    );
+    let mut device = Device::start_with_packages(None, Some(retained));
+    assert_eq!(device.hello.protocol, 24);
+    assert!(device.hello.reader_features.is_none());
+    let old_helper = device.helper_path.clone();
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../hide-session/tests/fixtures/adapters");
+    fn copy_fixture(source: &Path, target: &Path) {
+        fs::create_dir_all(target).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let destination = target.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_fixture(&entry.path(), &destination);
+            } else {
+                fs::copy(entry.path(), destination).unwrap();
+            }
+        }
+    }
+    copy_fixture(
+        &fixtures.join("claude-2.1.288"),
+        &device.home.join(".claude"),
+    );
+    copy_fixture(&fixtures.join("codex-0.160.0"), &device.home.join(".codex"));
+    let opencode = device.home.join(".local/share/opencode");
+    fs::create_dir_all(&opencode).unwrap();
+    run(Command::new("sqlite3")
+        .arg(opencode.join("opencode.db"))
+        .stdin(fs::File::open(fixtures.join("opencode-1.18.30/opencode.sql")).unwrap()));
+    for (agent, id) in [
+        (Agent::Claude, "a1b2c3d4-0000-4000-8000-000000000001"),
+        (Agent::Codex, "0199a000-0000-7000-8000-000000000002"),
+        (Agent::OpenCode, "ses_0a1b2c3d4e5f60718293a4b5c6"),
+    ] {
+        let transcript: LabelTranscript = call_as(
+            device.link.as_ref(),
+            Call::LabelTranscript {
+                request: LabelTranscriptRequest {
+                    agent,
+                    reference_kind: "id".to_owned(),
+                    reference_value: id.to_owned(),
+                    cwd: Some("/work/app".to_owned()),
+                    checkpoint: None,
+                    subagents: Default::default(),
+                    turns: None,
+                },
+            },
+            TIMEOUT,
+        )
+        .unwrap();
+        assert!(
+            transcript
+                .events
+                .iter()
+                .any(|event| event.text.contains("요청 보기를 만들어줘")),
+            "{} legacy conversation",
+            agent.as_str()
+        );
+        assert!(transcript.title.is_some());
+        if agent == Agent::OpenCode {
+            assert!(
+                !device
+                    .link
+                    .reader_features()
+                    .unwrap()
+                    .supports("opencode", ReaderFeature::Conversation)
+            );
+            assert!(transcript.turns.is_none());
+        }
+    }
+    let listing =
+        hide_node_link::readers::link_files(device.link.as_ref(), 0, None, TIMEOUT).unwrap();
+    assert_eq!(listing.refused, 0);
+    for agent in [Agent::Claude, Agent::Codex, Agent::OpenCode] {
+        let candidate = listing
+            .rows
+            .iter()
+            .find(|row| row.agent == agent)
+            .expect("legacy native session was listed");
+        let batch = hide_node_link::readers::links(
+            device.link.as_ref(),
+            vec![hide_session::links::ReadRequest {
+                agent,
+                path: candidate.path.clone(),
+                checkpoint: None,
+            }],
+            TIMEOUT,
+        )
+        .unwrap();
+        assert!(batch.refused.is_empty());
+        assert!(batch.answers[0].facts.session_id.is_some());
+        if agent.has_session_file() {
+            let stat: hide_node_link::sessions::SessionStat = hide_node_link::link::call_as_reader(
+                device.link.as_ref(),
+                agent,
+                ReaderFeature::Memory,
+                Call::SessionStat {
+                    path: candidate.path.clone(),
+                },
+                TIMEOUT,
+            )
+            .unwrap();
+            assert!(stat.size > 0);
+            let text: String = hide_node_link::link::call_as_reader(
+                device.link.as_ref(),
+                agent,
+                ReaderFeature::Conversation,
+                Call::SessionText {
+                    path: candidate.path.clone(),
+                },
+                TIMEOUT,
+            )
+            .unwrap();
+            assert!(text.contains("요청 보기를 만들어줘"));
+            let indexed: hide_session::search::IndexStep = call_as(
+                device.link.as_ref(),
+                Call::SessionIndexRead {
+                    agent,
+                    path: candidate.path.clone(),
+                    saved: None,
+                },
+                TIMEOUT,
+            )
+            .unwrap();
+            assert!(
+                matches!(indexed, hide_session::search::IndexStep::Read { messages, .. }
+                if messages.iter().any(|message| message.text.contains("요청 보기를 만들어줘")))
+            );
+        }
+    }
+    for provider in ["pi", "omp", "grok", "cursor"] {
+        assert!(
+            !device
+                .link
+                .reader_features()
+                .unwrap()
+                .supports(provider, ReaderFeature::Identity)
+        );
+    }
+    let project: RootOpened = call_as(
+        device.link.as_ref(),
+        Call::RootOpen {
+            root: device.project.to_str().unwrap().to_owned(),
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    let expected: RootOpened = call_as(
+        &hide_node::Local::new(Some(device.home.clone())),
+        Call::RootOpen {
+            root: device.project.to_str().unwrap().to_owned(),
+        },
+        TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(project.identity, expected.identity);
+    device.link.close("ordinary build upgrade");
+    let transport = hide_node::ssh::Connector::new(Some(device.current_packages.clone()))
+        .transport(&device.local, "contract-node", ALIAS, None)
+        .unwrap();
+    let consent = HostConsent {
+        contract: HOST_CONSENT_CONTRACT,
+        helper_root: "~/helper".to_owned(),
+        cli_dir: None,
+        granted_at_unix_ms: 1,
+        identity: None,
+    };
+    let established = transport
+        .establish(&consent, &[], Box::new(|_| {}))
+        .unwrap();
+    assert_eq!(
+        established.hello.protocol,
+        hide_node_link::protocol::PROTOCOL_VERSION
+    );
+    assert!(established.installed);
+    assert_ne!(established.helper_path, old_helper);
+    assert_eq!(
+        established.host.reader_features(),
+        Some(&hide_node_link::sessions::ReaderFeatures::implemented())
+    );
+    device.link = established.host;
+    device.link.close("retained-payload fixture ended");
 }
 
 /// Records only completed production callbacks, so a gate can hold their
