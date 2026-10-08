@@ -1,4 +1,4 @@
-// hide-opencode-plugin@1 sha256=7373fc616ff9d7da475de27610a8bc11335da6f0af3c878d8e29ae1769224923
+// hide-opencode-plugin@1 sha256=3208b280afb16bd2cec67f6840bf72f73842015cd3d093d8ba3f0a5faeddb2c0
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -36,6 +36,8 @@ function managed(env) {
 
 /** The helper's answer, or null when it failed, timed out or said nothing usable. */
 function helper(state, operation, input, budgetMs) {
+  // Once OpenCode disposed of the plugin, a report still waiting starts nothing.
+  if (state.closed) return Promise.resolve(null);
   if (state.running.size >= RUNNING_LIMIT) {
     state.lost += 1;
     return Promise.resolve(null);
@@ -355,6 +357,7 @@ export const HidePlugin = async ({ client, directory }) => {
     pending: new Map(),
     root: null,
     published: null,
+    closed: false,
     counting: null,
     nextCount: null,
     idTime: 0,
@@ -367,6 +370,8 @@ export const HidePlugin = async ({ client, directory }) => {
   });
   void publishCounts(state, true);
   return {
+    // OpenCode 1.18.30 calls this as `void hook["event"]?.(...)` (packages/opencode/src/plugin/index.ts) and never
+    // waits for it, so the reports it awaits hold no other event back.
     event: async ({ event }) => {
       try {
         await onEvent(state, client, event);
@@ -387,6 +392,7 @@ export const HidePlugin = async ({ client, directory }) => {
       if (reason) throw new Error(reason);
     },
     dispose: async () => {
+      state.closed = true;
       for (const child of state.running) child.kill("SIGKILL");
       state.running.clear();
     },

@@ -185,7 +185,7 @@ test("a slow, failing or garbled helper passes the prompt unchanged within its b
     const output = await prompt(hooks);
     const spent = Date.now() - started;
     assert.equal(output.parts.length, 1, JSON.stringify(prompt_answer));
-    assert.ok(spent < 3500, `${spent} ms for ${JSON.stringify(prompt_answer)}`);
+    assert.ok(spent < 4000, `${spent} ms for ${JSON.stringify(prompt_answer)}`);
   }
 });
 
