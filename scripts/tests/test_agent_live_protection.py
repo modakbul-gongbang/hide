@@ -169,6 +169,49 @@ class ConfigurationProtection(unittest.TestCase):
                 self.assertEqual(caught.exception.path, str(shared))
                 self.assertEqual(shared.read_bytes(), content)
 
+    def test_shared_atomic_rewrites_are_unavailable_not_failure_or_absence(self):
+        # A deterministic OS-open boundary, not scheduler timing, forces every
+        # bounded read to see a replacement after its lstat snapshot.
+        for phase in ("before", "after"):
+            with self.subTest(phase=phase):
+                shared = self.home / ("rewrite-" + phase + ".json")
+                key = str(self.run / "probe" / phase)
+                shared.write_text(json.dumps({"projects": {key: {"secret": "private-read-token"}}}))
+                arguments = (self.run / ("backup-rewrite-" + phase), [shared], [self.home])
+                if phase == "after":
+                    guard = ConfigGuard(*arguments, shared={shared: "json"})
+                original_open, replacements = os.open, []
+                def replace_during_open(path, *args, **kwargs):
+                    if Path(path) == shared:
+                        data = json.dumps({"sequence": len(replacements) + 1,
+                                           "projects": {key: {"secret": "private-read-token"}}}).encode()
+                        replacement = shared.with_suffix(".replacement")
+                        replacement.write_bytes(data)
+                        replacement.replace(shared)
+                        replacements.append(data)
+                    return original_open(path, *args, **kwargs)
+                with patch.object(os, "open", replace_during_open):
+                    if phase == "before":
+                        guard = ConfigGuard(*arguments, shared={shared: "json"})
+                    else:
+                        result = guard.finish()
+                if phase == "before":
+                    result = guard.finish()
+                self.assertEqual(len(replacements), 3)
+                self.assertEqual(shared.read_bytes(), replacements[-1])
+                self.assertEqual(result["failures"], [])
+                comparison = result["shared_comparisons"][0]
+                self.assertFalse(comparison["complete"])
+                self.assertEqual(comparison[phase], "unavailable")
+                self.assertNotIn("absent", comparison.values())
+                self.assertEqual(result["shared_leftovers"], [] if phase == "after" else
+                                 [{"path": str(shared), "key": key, "change": "not_compared"}])
+                self.assertNotIn("private-read-token", json.dumps(result))
+                if phase == "before":
+                    index = json.loads((arguments[0] / "index.json").read_text())[0]
+                    self.assertIsNone(index["existed"])
+                    self.assertEqual(index["observation"], "unavailable")
+
     def test_unknown_configuration_is_metadata_only_and_preserved(self):
         # Lead letter 2686: only adapter-listed files have a byte guard.
         unknown = self.home / "unknown-settings.json"

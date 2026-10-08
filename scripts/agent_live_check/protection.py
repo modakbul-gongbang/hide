@@ -11,6 +11,7 @@ import tomllib
 MAX_CONFIG_FILES = 50_000
 MAX_CONFIG_BYTES = 256 * 1024 * 1024
 MAX_BACKUP_BYTES = 16 * 1024 * 1024
+SHARED_READ_ATTEMPTS = 3
 
 
 class ProtectionError(RuntimeError):
@@ -19,6 +20,10 @@ class ProtectionError(RuntimeError):
     def __init__(self, reason: str, *, path: Path | None = None):
         super().__init__(reason)
         self.path = str(path) if path is not None else None
+
+
+class ConfigurationChanged(ProtectionError):
+    """An otherwise ordinary file changed version during observation."""
 
 
 def beneath(path: Path, root: Path) -> bool:
@@ -109,17 +114,21 @@ def configuration_bytes(path: Path) -> tuple[FileStamp, bytes] | None:
     with os.fdopen(fd, "rb") as stream:
         opened = os.fstat(stream.fileno())
         if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid()
-                or opened.st_nlink != 1
-                or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
-            raise ProtectionError("config_changed_during_open")
+                or opened.st_nlink != 1):
+            raise ProtectionError("config_not_private_regular_file")
+        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise ConfigurationChanged("config_changed_during_open")
         if opened.st_size > MAX_BACKUP_BYTES:
             raise ProtectionError("config_file_over_budget")
         data = stream.read(MAX_BACKUP_BYTES + 1)
         after = os.fstat(stream.fileno())
-    if (len(data) > MAX_BACKUP_BYTES
-            or (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns, opened.st_mode, opened.st_nlink)
+    if len(data) > MAX_BACKUP_BYTES:
+        raise ProtectionError("config_file_over_budget")
+    if not stat.S_ISREG(after.st_mode) or after.st_uid != os.getuid() or after.st_nlink != 1:
+        raise ProtectionError("config_not_private_regular_file")
+    if ((opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns, opened.st_mode, opened.st_nlink)
             != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode, after.st_nlink)):
-        raise ProtectionError("config_changed_during_read")
+        raise ConfigurationChanged("config_changed_during_read")
     return (FileStamp(hashlib.sha256(data).hexdigest(), len(data),
                       stat.S_IMODE(opened.st_mode), (opened.st_dev, opened.st_ino)), data)
 
@@ -128,6 +137,19 @@ def stamp(path: Path) -> FileStamp | None:
     """Hash ordinary owned files; reject aliases and unbounded reads."""
     value = configuration_bytes(path)
     return value[0] if value is not None else None
+
+
+def shared_configuration_bytes(path: Path) -> tuple:
+    """Retry only version races; an unavailable observation is not absence."""
+    reason = None
+    for _ in range(SHARED_READ_ATTEMPTS):
+        try:
+            return configuration_bytes(path), None
+        except ConfigurationChanged as error:
+            reason = str(error)
+        except FileNotFoundError:
+            reason = "config_changed_during_open"
+    return None, reason
 
 
 @dataclass
@@ -275,6 +297,7 @@ class ConfigGuard:
                 or (exclusive_root is not None and self.shared)):
             raise ProtectionError("invalid_shared_configuration_declaration")
         self.shared_before = {}
+        self.shared_unavailable = {}
         if exclusive_root is not None and (not beneath(exclusive_root, backup.parent)
                                            or exclusive_root == backup.parent):
             raise ProtectionError("exclusive_recovery_root_must_be_owned_by_run")
@@ -284,7 +307,11 @@ class ConfigGuard:
         total = 0
         for index, path in enumerate(self.known):
             try:
-                value = configuration_bytes(path)
+                if path in self.shared:
+                    value, reason = shared_configuration_bytes(path)
+                    self.shared_unavailable[path] = reason
+                else:
+                    value = configuration_bytes(path)
                 before = value[0] if value is not None else None
                 self.before[path] = before
                 if path in self.shared:
@@ -299,7 +326,8 @@ class ConfigGuard:
                 raise ProtectionError(str(error), path=path) from error
         write_private(backup / "index.json", json.dumps([
             {"path": str(path), "backup": str(index),
-             "existed": self.before[path] is not None}
+             "existed": None if self.shared_unavailable.get(path) else self.before[path] is not None,
+             "observation": "unavailable" if self.shared_unavailable.get(path) else "observed"}
             for index, path in enumerate(self.known)
         ]).encode())
 
@@ -321,18 +349,30 @@ class ConfigGuard:
     def finish(self) -> dict:
         changes = []
         failures = []
-        shared_changes, shared_leftovers = [], []
+        shared_changes, shared_leftovers, shared_comparisons = [], [], []
 
         def observe_shared(path):
-            value = configuration_bytes(path)
+            value, reason = shared_configuration_bytes(path)
+            before_reason = self.shared_unavailable[path]
+            comparison = {"path": str(path), "complete": not reason and not before_reason,
+                          "before": "unavailable" if before_reason else "present" if self.before[path] else "absent",
+                          "after": "unavailable" if reason else "present" if value else "absent"}
+            if before_reason:
+                comparison["before_reason"] = before_reason
+            if reason:
+                comparison["after_reason"] = reason
+            shared_comparisons.append(comparison)
+            if reason:
+                return
             current = value[0] if value is not None else None
             entries = (shared_project_entries(value[1], self.shared[path], self.backup.parent.resolve())
                        if value is not None else {})
-            if current != self.before[path]:
+            if not before_reason and current != self.before[path]:
                 shared_changes.append({"path": str(path), "result": "다른 세션의 변경"})
             before_entries = self.shared_before[path]
             for key, value in sorted(entries.items()):
-                change = "added" if key not in before_entries else "unchanged" if before_entries[key] == value else "changed"
+                change = ("not_compared" if before_reason else "added" if key not in before_entries
+                          else "unchanged" if before_entries[key] == value else "changed")
                 shared_leftovers.append({"path": str(path), "key": key, "change": change})
 
         def recover(index, path):
@@ -388,6 +428,7 @@ class ConfigGuard:
             failures.append({"reason": "configuration_inventory_unavailable", "detail": str(error)})
             return {"restored": changes, "failures": failures,
                     "shared_changes": shared_changes, "shared_leftovers": shared_leftovers,
+                    "shared_comparisons": shared_comparisons,
                     "directory_changes": None, "inventory_checked": False}
         directory_changes, uncompared = [], 0
         before_entries, after_entries = self.inventory.entries, after.entries
@@ -405,6 +446,7 @@ class ConfigGuard:
             directory_changes.append({"path": key, "kind": kind})
         return {"restored": changes, "failures": failures,
                 "shared_changes": shared_changes, "shared_leftovers": shared_leftovers,
+                "shared_comparisons": shared_comparisons,
                 "directory_changes": directory_changes, "inventory_checked": True,
                 "inventory": {"before": self.inventory.summary(), "after": after.summary(),
                               "uncompared_entries": uncompared}}

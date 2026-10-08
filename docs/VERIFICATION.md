@@ -203,6 +203,9 @@ Nonshared declared files retain exact byte guards.
 The declared shared Claude JSON and Codex TOML files are compared read-only and are never restored or rewritten, preserving other live sessions' updates.
 Shared-file changes are reported as other-session changes without failure, and entries in their `projects` tables keyed by this run or its probe descendants are reported by file and key as B6 leftovers without failure.
 Shared parsing uses Python 3.11 or later's standard TOML reader, rejects unreadable tables and caps each project table at 50,000 entries.
+Shared-file version races receive at most three immediate read attempts; persistent races report an unavailable comparison without failure or a claim of absence.
+Unavailable initial observations mark final observed private keys as not compared, while unavailable final observations cannot establish which keys remain.
+File type, ownership, link-count and size refusals remain errors, as do stable unreadable project tables.
 The remaining configuration trees use path, kind, size and mtime metadata only; file contents and link targets are never read or hashed.
 Installation subtrees named `node_modules`, `extensions`, `marketplace`, `marketplaces`, `bundled`, names containing `cache`, and code directories directly beneath `plugins` are excluded; plugin registry files remain observable.
 The inventory stops at 50,000 scanned entries and reports partial coverage, a lower bound on omitted entries and the number of uninspected subtrees, without walking the remainder just to count it.
