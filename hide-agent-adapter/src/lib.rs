@@ -87,6 +87,7 @@ pub enum SessionFormat {
     Claude,
     Codex,
     Pi,
+    Omp,
     OpenCode,
 }
 
@@ -96,15 +97,22 @@ impl SessionFormat {
             Self::Claude => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
+            Self::Omp => AgentId::Omp.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
         }
     }
 
     pub const fn reports_turns(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex)
+        matches!(self, Self::Claude | Self::Codex | Self::Omp)
     }
     pub const fn has_session_file(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Pi)
+        matches!(self, Self::Claude | Self::Codex | Self::Pi | Self::Omp)
+    }
+
+    /// Native file metadata and the default CLI resolver must agree before
+    /// a transcript can authorize a read or a lifecycle effect.
+    pub const fn requires_native_file_proof(self) -> bool {
+        matches!(self, Self::Pi | Self::Omp)
     }
 }
 

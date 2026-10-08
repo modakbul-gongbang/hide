@@ -48,14 +48,15 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         return Err("session_route_owner_changed".into());
     }
     if request.exact_route {
-        if request.agent != Agent::Pi {
+        if !request.agent.requires_native_file_proof() {
             return Err("session_route_unsupported".to_owned());
         }
         let native_id = before
             .native_session_id
             .as_deref()
             .ok_or("session_route_unconfirmed")?;
-        crate::pi::confirm_route(home, &path, native_id).map_err(|error| error.to_string())?;
+        crate::native_file::confirm_route(home, request.agent, &path, native_id)
+            .map_err(|error| error.to_string())?;
     }
     let metadata =
         std::fs::metadata(&path).map_err(|_| "session_activity_stat_failed".to_owned())?;
@@ -105,14 +106,14 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
-            Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
+            Agent::Pi | Agent::Omp | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
         };
         fs::create_dir_all(&root).unwrap();
         let path = root.join("native-a.jsonl");
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
-            Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
+            Agent::Pi | Agent::Omp | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
         };
         // Conversation records are deliberately invalid: activity must not
         // parse or project them after establishing the native owner.

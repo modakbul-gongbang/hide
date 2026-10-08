@@ -257,7 +257,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::Pi | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Pi | Agent::Omp | Agent::OpenCode => parsed.title.clone(),
     };
     let anchor = events
         .iter()

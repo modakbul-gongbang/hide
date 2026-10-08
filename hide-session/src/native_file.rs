@@ -1,4 +1,4 @@
-//! Pi 1.0.4's recorded JSONL history, not its active model context/tree.
+//! Pi 1.0.4 and omp 18.7.0 recorded JSONL histories, not active model context.
 //! Native session-manager metadata is the authority; neither folder encoding
 //! nor a filename suffix identifies a checkout or session.
 
@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 use crate::{
-    ConversationEvent, DiscoveryBudget, EventKind, LineResult, RootRefusal,
+    Agent, ConversationEvent, DiscoveryBudget, EventKind, LineResult, RootRefusal,
     SESSION_LINE_LIMIT_BYTES, SessionError, SessionIdentity,
 };
 
@@ -22,7 +22,49 @@ pub(crate) struct Header {
 /// Routing constraint of Pi's native --session <id>: its default cwd folder
 /// is searched first. Global matches prompt to fork, so they cannot wake an
 /// existing conversation without an operator decision.
-pub(crate) fn default_directory(home: &Path, cwd: &Path) -> PathBuf {
+fn root_suffix(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Pi => crate::PI_SESSIONS,
+        Agent::Omp => crate::OMP_SESSIONS,
+        _ => unreachable!("native-file policy requires a native-file format"),
+    }
+}
+
+fn encode_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .chars()
+        .map(|ch| {
+            if matches!(ch, '/' | '\\' | ':') {
+                '-'
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn default_directory(home: &Path, agent: Agent, cwd: &Path) -> Result<PathBuf> {
+    if agent == Agent::Omp {
+        let canonical_home = hide_platform::fs::identity::canonical(home)
+            .map_err(|_| anyhow!("label_session_default_directory_unconfirmed"))?;
+        let temp = hide_platform::fs::identity::canonical(&std::env::temp_dir())
+            .map_err(|_| anyhow!("label_session_default_directory_unconfirmed"))?;
+        // Native omp checks the temporary root before home, including when
+        // the system temporary directory is nested under the account home.
+        for (root, prefix) in [(temp, "-tmp"), (canonical_home, "-")] {
+            if let Ok(relative) = cwd.strip_prefix(root) {
+                let encoded = encode_path(relative);
+                let bucket = if encoded.is_empty() {
+                    prefix.to_owned()
+                } else if prefix.ends_with('-') {
+                    format!("{prefix}{encoded}")
+                } else {
+                    format!("{prefix}-{encoded}")
+                };
+                return Ok(home.join(root_suffix(agent)).join(bucket));
+            }
+        }
+    }
     let spelling = cwd.to_string_lossy();
     let spelling = spelling.strip_prefix(['/', '\\']).unwrap_or(&spelling);
     let encoded: String = spelling
@@ -35,37 +77,45 @@ pub(crate) fn default_directory(home: &Path, cwd: &Path) -> PathBuf {
             }
         })
         .collect();
-    home.join(crate::PI_SESSIONS).join(format!("--{encoded}--"))
+    Ok(home.join(root_suffix(agent)).join(format!("--{encoded}--")))
 }
 
 /// The home itself may have a platform alias. No component below it may be
 /// a link, including .pi and the sessions root. Inspect native entry identity
 /// rather than relying on canonicalization to hide internal links.
-pub(crate) fn inside_root(home: &Path, path: &Path) -> std::result::Result<PathBuf, RootRefusal> {
+pub(crate) fn inside_root(
+    home: &Path,
+    agent: Agent,
+    path: &Path,
+) -> std::result::Result<PathBuf, RootRefusal> {
     let canonical_home =
         hide_platform::fs::identity::canonical(home).map_err(|_| RootRefusal::Unreadable)?;
     let relative = path
         .strip_prefix(home)
         .or_else(|_| path.strip_prefix(&canonical_home))
         .map_err(|_| RootRefusal::Outside)?;
-    if !relative.starts_with(crate::PI_SESSIONS) || relative == Path::new(crate::PI_SESSIONS) {
+    if !relative.starts_with(root_suffix(agent)) || relative == Path::new(root_suffix(agent)) {
         return Err(RootRefusal::Outside);
     }
-    checked_path(home, path)
+    checked_path(home, agent, path)
 }
 
-pub(crate) fn root(home: &Path) -> std::result::Result<PathBuf, RootRefusal> {
-    checked_path(home, &home.join(crate::PI_SESSIONS))
+pub(crate) fn root(home: &Path, agent: Agent) -> std::result::Result<PathBuf, RootRefusal> {
+    checked_path(home, agent, &home.join(root_suffix(agent)))
 }
 
-fn checked_path(home: &Path, path: &Path) -> std::result::Result<PathBuf, RootRefusal> {
+fn checked_path(
+    home: &Path,
+    agent: Agent,
+    path: &Path,
+) -> std::result::Result<PathBuf, RootRefusal> {
     let canonical_home =
         hide_platform::fs::identity::canonical(home).map_err(|_| RootRefusal::Unreadable)?;
     let relative = path
         .strip_prefix(home)
         .or_else(|_| path.strip_prefix(&canonical_home))
         .map_err(|_| RootRefusal::Outside)?;
-    if !relative.starts_with(crate::PI_SESSIONS) {
+    if !relative.starts_with(root_suffix(agent)) {
         return Err(RootRefusal::Outside);
     }
     let mut checked = canonical_home;
@@ -90,18 +140,23 @@ fn checked_path(home: &Path, path: &Path) -> std::result::Result<PathBuf, RootRe
     hide_platform::fs::identity::canonical(&checked).map_err(|_| RootRefusal::Unreadable)
 }
 
-pub(crate) fn header(path: &Path) -> Result<Header> {
+pub(crate) fn header(agent: Agent, path: &Path) -> Result<Header> {
     let mut remaining = u64::MAX;
-    header_budgeted(path, &mut remaining)
+    header_budgeted(agent, path, &mut remaining)
 }
 
-fn header_budgeted(path: &Path, remaining: &mut u64) -> Result<Header> {
+fn header_budgeted(agent: Agent, path: &Path, remaining: &mut u64) -> Result<Header> {
     let file =
         crate::open_session_file(path).map_err(|_| anyhow!("label_session_file_unavailable"))?;
+    let mut reader = BufReader::new(file);
+    header_from_reader(agent, &mut reader, remaining)
+}
+
+fn header_line(reader: &mut impl BufRead, remaining: &mut u64) -> Result<Value> {
     let limit = ((SESSION_LINE_LIMIT_BYTES + 1) as u64).min(remaining.saturating_add(1));
-    let mut reader = BufReader::new(file.take(limit));
     let mut bytes = Vec::new();
     reader
+        .take(limit)
         .read_until(b'\n', &mut bytes)
         .map_err(|_| anyhow!("label_session_metadata_read_failed"))?;
     if bytes.len() as u64 > *remaining {
@@ -114,8 +169,21 @@ fn header_budgeted(path: &Path, remaining: &mut u64) -> Result<Header> {
     if bytes.last() != Some(&b'\n') {
         return Err(anyhow!("label_session_metadata_unconfirmed"));
     }
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow!("label_session_metadata_unconfirmed"))?;
+    serde_json::from_slice(&bytes).map_err(|_| anyhow!("label_session_metadata_unconfirmed"))
+}
+
+pub(crate) fn header_from_reader(
+    agent: Agent,
+    reader: &mut impl BufRead,
+    remaining: &mut u64,
+) -> Result<Header> {
+    let first = header_line(reader, remaining)?;
+    let value = if agent == Agent::Omp && first["type"] == "title" {
+        title_snapshot(&first).ok_or_else(|| anyhow!("label_session_metadata_unconfirmed"))?;
+        header_line(reader, remaining)?
+    } else {
+        first
+    };
     if value["type"] != "session" || value["version"] != 3 {
         return Err(anyhow!("label_session_metadata_unconfirmed"));
     }
@@ -139,8 +207,9 @@ fn header_budgeted(path: &Path, remaining: &mut u64) -> Result<Header> {
 /// matching header, skips malformed prefixes and falls back to prefix/global
 /// matches. Refuse uncertainty instead of depending on directory enumeration.
 /// This directory scan is action-only, never a snapshot or per-file catalog read.
-pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str) -> Result<()> {
-    let expected = inside_root(home, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
+pub(crate) fn confirm_route(home: &Path, agent: Agent, path: &Path, id: &str) -> Result<()> {
+    let expected =
+        inside_root(home, agent, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
     let directory = path
         .parent()
         .ok_or_else(|| anyhow!("session_route_unconfirmed"))?;
@@ -158,8 +227,8 @@ pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str) -> Result<()> {
         {
             continue;
         }
-        let checked =
-            inside_root(home, &candidate).map_err(|_| anyhow!("session_route_unconfirmed"))?;
+        let checked = inside_root(home, agent, &candidate)
+            .map_err(|_| anyhow!("session_route_unconfirmed"))?;
         let file = crate::open_session_file(&candidate)
             .map_err(|_| anyhow!("session_route_unconfirmed"))?;
         if !file.metadata().is_ok_and(|metadata| metadata.is_file())
@@ -169,14 +238,29 @@ pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str) -> Result<()> {
         }
         // A strict first header is a safe subset of native discovery. Any
         // prefixed, malformed, incomplete or unreadable sibling is uncertain.
-        let header = header_budgeted(&candidate, &mut remaining).map_err(|error| {
+        let header = header_budgeted(agent, &candidate, &mut remaining).map_err(|error| {
             if error.to_string() == "session_discovery_read_capacity" {
                 anyhow!("session_route_capacity")
             } else {
                 anyhow!("session_route_unconfirmed")
             }
         })?;
-        if header.id == id {
+        let native_match = if agent == Agent::Omp {
+            let needle = id.to_ascii_lowercase();
+            let stem = candidate
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| anyhow!("session_route_unconfirmed"))?
+                .to_ascii_lowercase();
+            header.id.to_ascii_lowercase().starts_with(&needle)
+                || stem.starts_with(&needle)
+                || stem
+                    .rsplit_once('_')
+                    .is_some_and(|(_, suffix)| suffix.starts_with(&needle))
+        } else {
+            header.id == id
+        };
+        if native_match {
             matches += 1;
             if matches != 1 || checked != expected {
                 return Err(anyhow!("session_route_ambiguous"));
@@ -191,13 +275,14 @@ pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str) -> Result<()> {
 
 pub(crate) fn locate(
     home: &Path,
+    agent: Agent,
     identity: Option<&SessionIdentity>,
     cwd: Option<&str>,
     budget: &mut DiscoveryBudget,
 ) -> crate::Result<PathBuf> {
     let cwd = cwd.ok_or(SessionError::CwdUnavailable)?;
     if let Some(SessionIdentity::Path(path)) = identity {
-        crate::confirm_session_file(home, crate::Agent::Pi, path, None, Some(cwd))
+        crate::confirm_session_file(home, agent, path, None, Some(cwd))
             .map_err(|error| SessionError::Checkpoint(error.to_string()))?;
         return Ok(path.clone());
     }
@@ -208,22 +293,23 @@ pub(crate) fn locate(
         Some(_) => return Err(SessionError::SessionFileMissing),
         None => None,
     };
-    if self::root(home).is_err() {
+    if self::root(home, agent).is_err() {
         return Err(SessionError::SessionFileMissing);
     }
     let mut candidates = Vec::new();
     let expected_cwd = hide_platform::fs::identity::canonical(Path::new(cwd))
         .map_err(|_| SessionError::CwdUnavailable)?;
-    let directory = default_directory(home, &expected_cwd);
-    if inside_root(home, &directory).is_err() {
+    let directory = default_directory(home, agent, &expected_cwd)
+        .map_err(|error| SessionError::Checkpoint(error.to_string()))?;
+    if inside_root(home, agent, &directory).is_err() {
         return Err(SessionError::SessionFileMissing);
     }
     let mut remaining = crate::SESSION_INCREMENT_READ_LIMIT_BYTES;
     for path in crate::jsonl_files(&directory, budget)? {
-        if inside_root(home, &path).is_err() {
+        if inside_root(home, agent, &path).is_err() {
             continue;
         }
-        let header = match header_budgeted(&path, &mut remaining) {
+        let header = match header_budgeted(agent, &path, &mut remaining) {
             Ok(header) => header,
             Err(error) if error.to_string() == "session_discovery_read_capacity" => {
                 return Err(SessionError::Capacity {
@@ -249,14 +335,50 @@ pub(crate) fn locate(
         .next()
         .map(|(_, path)| path)
         .ok_or(SessionError::SessionFileMissing)?;
-    crate::confirm_session_file(home, crate::Agent::Pi, &path, reported_id, Some(cwd))
+    crate::confirm_session_file(home, agent, &path, reported_id, Some(cwd))
         .map_err(|error| SessionError::Checkpoint(error.to_string()))?;
     Ok(path)
 }
 
-pub(crate) fn parse_line(item: &Value) -> LineResult {
+/// Only the physical first slot/header may be applied by the parser/cursor.
+/// title_change is audit history and never overrides this current snapshot.
+pub(crate) fn title_snapshot(item: &Value) -> Option<(String, String)> {
+    let source = if item["type"] == "title" {
+        if item["v"] != 1 || !item["updatedAt"].is_string() || !item["pad"].is_string() {
+            return None;
+        }
+        item.get("source")
+    } else if item["type"] == "session" && item["version"] == 3 {
+        item.get("titleSource")
+    } else {
+        return None;
+    };
+    if source.is_some_and(|source| source != "auto" && source != "user") {
+        return None;
+    }
+    let title = match item.get("title") {
+        Some(Value::String(title)) => title.clone(),
+        None if item["type"] == "session" => String::new(),
+        _ => return None,
+    };
+    Some(if source.is_some_and(|source| source == "user") {
+        (String::new(), title)
+    } else {
+        (title, String::new())
+    })
+}
+
+pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
+    if agent == Agent::Omp
+        && let Some((title, custom_title)) = title_snapshot(item)
+    {
+        return LineResult::TitleSnapshot {
+            title,
+            custom_title,
+        };
+    }
     match item["type"].as_str() {
-        Some("session_info") => {
+        Some("session_info") if agent == Agent::Pi => {
             return item["name"].as_str().map_or(LineResult::Ignore, |name| {
                 LineResult::CustomTitle(name.to_owned())
             });
