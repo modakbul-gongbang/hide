@@ -102,7 +102,8 @@ const run = {
   const { HidePlugin } = await import(pathToFileURL(config.plugin).href);
   const hooks = await HidePlugin({ client, directory: process.cwd() });
   await hooks.event({ event: { type: "session.created", properties: { sessionID: session, info: sessions[session] } } });
-  fs.writeFileSync(path.join(folder, "ready.json"), JSON.stringify({ session, hooks: Object.keys(hooks) }));
+  fs.writeFileSync(path.join(folder, "ready.json.part"), JSON.stringify({ session, hooks: Object.keys(hooks) }));
+  fs.renameSync(path.join(folder, "ready.json.part"), path.join(folder, "ready.json"));
   process.stdout.write("opencode stand-in ready\n");
   for (let next = 1; ; ) {
     const command = path.join(folder, "command-" + next + ".json");
@@ -152,7 +153,9 @@ export async function openCodeHost(dir: string, pane: string): Promise<Host> {
     send: async (command) => {
       sent += 1;
       const answer = path.join(folder, `answer-${sent}.json`);
-      fs.writeFileSync(path.join(folder, `command-${sent}.json`), JSON.stringify(command));
+      // Written whole, then renamed into place, so the stand-in never reads half a command.
+      fs.writeFileSync(path.join(folder, `command-${sent}.json.part`), JSON.stringify(command));
+      fs.renameSync(path.join(folder, `command-${sent}.json.part`), path.join(folder, `command-${sent}.json`));
       await expect.poll(() => fs.existsSync(answer), { message: `the stand-in in ${pane} answered ${command.op}`, timeout: 20_000 }).toBe(true);
       return JSON.parse(fs.readFileSync(answer, "utf8")) as Record<string, unknown>;
     },

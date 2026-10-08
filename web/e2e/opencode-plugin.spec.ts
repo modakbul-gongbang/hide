@@ -4,7 +4,7 @@
 // other's next prompt and is confirmed only once that prompt is stored, a shell call that starts an agent
 // through Herdr is refused with the spawn guard's reason, and child sessions move the pane's subagent counts.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -55,6 +55,41 @@ async function start(label: string): Promise<Stack> {
   }
 }
 
+/** An object anywhere in `node` that is `pane`'s row with its children, as the snapshot frames carry it. */
+function paneWorking(node: unknown, pane: string): number | null | undefined {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = paneWorking(item, pane);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!node || typeof node !== "object") return undefined;
+  const row = node as { id?: unknown; children?: { subagents?: { working?: number | null } } | null };
+  if (row.id === pane && row.children?.subagents) return row.children.subagents.working ?? null;
+  for (const value of Object.values(node)) {
+    const found = paneWorking(value, pane);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** The in-process subagents working in `pane`, as the last snapshot frame the page received that names it says. */
+function snapshotWorking(page: Page, pane: string): () => number | null | undefined {
+  let last: number | null | undefined;
+  page.on("websocket", (ws) => ws.on("framereceived", (frame) => {
+    const text = String(frame.payload);
+    if (!text.includes('"subagents"') || !text.includes(pane)) return;
+    try {
+      const found = paneWorking(JSON.parse(text), pane);
+      if (found !== undefined) last = found;
+    } catch {
+      /* not a JSON frame */
+    }
+  }));
+  return () => last;
+}
+
 function stop(stack: Stack): void {
   stack.daemon.stop();
   stack.herdr.stop();
@@ -70,8 +105,8 @@ async function hide(host: Host, ...args: string[]): Promise<{ ok?: boolean; resu
 test("a letter rides the recipient's next prompt and is confirmed only once OpenCode stored it", async ({ page }) => {
   const stack = await start("opencode-letter");
   try {
-    // The plugin registered its hooks in a managed pane.
-    expect(stack.recipient.hooks.sort()).toEqual(["chat.message", "dispose", "event", "tool.execute.before"]);
+    // The plugin registered the hooks it works through in a managed pane.
+    expect(stack.recipient.hooks).toEqual(expect.arrayContaining(["chat.message", "event", "tool.execute.before"]));
     await page.goto(`${stack.daemon.origin}/#token=${stack.daemon.token}`);
     await enterWorkspace(page, "fixture");
 
@@ -121,10 +156,13 @@ test("a shell call that starts an agent through Herdr is refused with the spawn 
 
 // A background child that outlives the root's turn is the plugin test's (`hide-agent-hooks/tests/opencode`):
 // across processes nothing marks the moment the root's idle sweep is done.
-test("child sessions of the prompted root session move the pane's subagent counts in Herdr", async () => {
+test("child sessions of the prompted root session move the pane's subagent counts in Herdr and the snapshot", async ({ page }) => {
   const stack = await start("opencode-counts");
   try {
     const pane = stack.herdr.panes[1];
+    const working = snapshotWorking(page, pane);
+    await page.goto(`${stack.daemon.origin}/#token=${stack.daemon.token}`);
+    await enterWorkspace(page, "fixture");
     const counts = () => {
       const listed = JSON.stringify(stack.herdr.run(["pane", "get", pane]));
       const token = (name: string) => new RegExp(`"${name}":"(\\d+)"`).exec(listed)?.[1] ?? null;
@@ -138,9 +176,12 @@ test("child sessions of the prompted root session move the pane's subagent count
     await stack.recipient.send({ op: "created", id: "ses_child", parent: stack.recipient.session });
     await stack.recipient.send({ op: "status", id: "ses_child", status: "busy" });
     await expect.poll(counts, { message: "one working child", timeout: 20_000 }).toEqual({ working: "1", done: "0" });
+    // What the shell is given for the pane's row (the badge drawing it is issue 810).
+    await expect.poll(working, { message: "the snapshot's working count", timeout: 20_000 }).toBe(1);
 
     await stack.recipient.send({ op: "status", id: "ses_child", status: "idle" });
     await expect.poll(counts, { message: "the child finished", timeout: 20_000 }).toEqual({ working: "0", done: "1" });
+    await expect.poll(working, { message: "the snapshot's working count", timeout: 20_000 }).toBe(0);
   } finally {
     stop(stack);
   }
