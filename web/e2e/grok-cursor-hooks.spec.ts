@@ -52,7 +52,12 @@ async function start(label: string, options: { on?: boolean; claude?: boolean } 
   fs.writeFileSync(path.join(home, ".cursor", "hooks.json"), JSON.stringify(CURSOR_FILE));
   fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
   fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [], ...(options.on ? { agents: { grok: true, cursor: true } } : {}) }));
-  return { herdr, daemon: await startHided(herdr, label, home, {}, true), home };
+  try {
+    return { herdr, daemon: await startHided(herdr, label, home, {}, true), home };
+  } catch (error) {
+    herdr.stop();
+    throw error;
+  }
 }
 
 type Piece = { state: string; reason: string | null };
@@ -344,7 +349,6 @@ test("inside Grok, Hide's Claude Code hook, Cursor entry and Grok file count and
     await enterWorkspace(page, "fixture");
     await installedEverywhere(home, true);
     const grok = await agentPane(page, herdr, "grok");
-    const record = path.join(home, ".hide", "agent-hooks", "panes", `${grok.replaceAll(":", "_")}.json`);
     const cwd = path.join(herdr.root, "fixture");
     const start = `herdr agent start worker --kind claude --pane ${grok}`;
     // Each hook gets its own agent's documented payload for the one event, in the environment Grok gives all three.
@@ -360,7 +364,11 @@ test("inside Grok, Hide's Claude Code hook, Cursor entry and Grok file count and
     // hook's own record and in the core's snapshot, and none of them prints anything.
     const started = everyHook("SubagentStart", "subagent_start", payloads("SubagentStart", { subagentType: "explore" }));
     for (const { agent, run } of started) expect({ agent, status: run.status, stdout: run.stdout }).toEqual({ agent, status: 0, stdout: "" });
-    expect(json(record)).toMatchObject({ working: 1, done: 0 });
+    // The pane's record is the only one: no hook counted under another pane.
+    const records = path.join(home, ".hide", "agent-hooks", "panes");
+    const names = fs.readdirSync(records).filter((name) => name.endsWith(".json"));
+    expect(names).toHaveLength(1);
+    expect(json(path.join(records, names[0]!))).toMatchObject({ working: 1, done: 0 });
     await expect.poll(() => wire.counts(grok), { timeout: 20_000 }).toEqual([1, 0]);
 
     // B4: a direct agent start is refused once: only Hide's Grok file answers, and the guard logs one refusal.

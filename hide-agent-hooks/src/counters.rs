@@ -140,7 +140,13 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
         Change::Settled { running } => counters.working = running,
         Change::None => {}
     }
-    fs::write(&path, serde_json::to_vec(&counters)?)?;
+    // Replaced in one step, so a reader outside the lock (the report that
+    // checks whether another event moved the count) never sees half a file.
+    hide_platform::fs::atomic::write_file(
+        &path,
+        &serde_json::to_vec(&counters)?,
+        hide_platform::fs::Access::Private,
+    )?;
     drop(held);
     Ok(counters)
 }

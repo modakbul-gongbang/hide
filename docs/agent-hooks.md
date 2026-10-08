@@ -285,7 +285,7 @@ The helper (`src/bin/hide-agent-hooks.rs`, `run_basic_hook`; the payload and ans
 | Turn end | `Stop`: `subagentType` marks a subagent's own stop, `backgroundTasks` lists what still runs | `stop` |
 
 The refusal's reason and every rule of what is refused are the spawn guard's above, through the same `guard_refusal`.
-Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, so for those two events every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
+Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, and only the CLI's own code, not its documentation, says empty output proceeds, so for those two events every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
 Grok fails open on everything but a refusal, so its hook prints nothing on those paths, as Claude Code's does.
 A failure goes to the guard's log, never to the agent (B5).
 
