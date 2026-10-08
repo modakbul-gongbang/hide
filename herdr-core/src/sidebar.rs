@@ -610,18 +610,19 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let message = label.and_then(agent_message);
 
     let agent_kind = non_empty(agent.agent.as_deref()).unwrap_or("unknown");
-    // The name every surface uses (PRD overview-request-view D-13): the
-    // label's task, else the agent's own title for the session, else what it
-    // is, never the Herdr workspace it happens to run in (PRD
-    // checkout-workspace-binding D-09), which names another checkout as often
-    // as this one.
+    // Every surface uses the adapter's title priority, from proven facts
+    // alone. Herdr's workspace and control names never enter this ladder.
     let native_title = agent
         .facts
         .as_ref()
         .and_then(|facts| line_text(facts.native_title.as_deref(), MAX_LABEL_TEXT_CHARS));
-    let identity_label = task
-        .or(native_title)
-        .unwrap_or_else(|| provider_name(agent.agent.as_deref()));
+    use hide_agent_adapter::TitlePriority;
+    let title = match hide_agent_adapter::adapter(agent_kind).map(|row| row.key.title_priority()) {
+        Some(TitlePriority::NativeFirst) => native_title.or(task),
+        Some(TitlePriority::GoalOnly) => task,
+        Some(TitlePriority::GoalFirst) | None => task.or(native_title),
+    };
+    let identity_label = title.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         state: Default::default(),
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
@@ -660,11 +661,17 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         last_activity,
         state_change_seq: agent.state_change_seq,
         session_id: agent
-            .agent_session
+            .facts
             .as_ref()
-            .filter(|session| session.kind == "id")
-            .map(|session| session.value.clone())
-            .filter(|value| !value.trim().is_empty()),
+            .and_then(|facts| facts.native_session_id.clone())
+            .or_else(|| {
+                agent
+                    .agent_session
+                    .as_ref()
+                    .filter(|session| session.kind == "id")
+                    .map(|session| session.value.clone())
+                    .filter(|value| !value.trim().is_empty())
+            }),
         own_find: crate::agent_find::agent_find(agent_kind).is_some(),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         declared_parent_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
@@ -1581,6 +1588,58 @@ mod tests {
             labels.into_values().collect::<Vec<_>>(),
             ["hook 보고 경로 수정", "Claude", "Codex", "gemini", "Agent"]
         );
+    }
+
+    /// Product title rules are fixed independently of adapter capabilities.
+    /// Summaries may be absent; Cursor has no native title authority.
+    #[test]
+    fn all_shared_surfaces_receive_the_providers_title_priority() {
+        for (kind, both, without_goal, without_native) in [
+            (
+                "claude",
+                "generated goal",
+                "native rename",
+                "generated goal",
+            ),
+            ("codex", "generated goal", "native rename", "generated goal"),
+            ("grok", "native rename", "native rename", "generated goal"),
+            (
+                "opencode",
+                "native rename",
+                "native rename",
+                "generated goal",
+            ),
+            ("pi", "native rename", "native rename", "generated goal"),
+            ("omp", "native rename", "native rename", "generated goal"),
+            ("cursor", "generated goal", "cursor", "generated goal"),
+        ] {
+            for (goal, native, expected) in [
+                (Some("generated goal"), Some("native rename"), both),
+                (None, Some("native rename"), without_goal),
+                (Some("generated goal"), None, without_native),
+            ] {
+                let mut agent: SessionAgentPayload = serde_json::from_value(json!({
+                    "pane_id":"p", "id":"control-name", "agent":kind,
+                    "workspace_label":"unrelated checkout", "agent_status":"idle", "state_change_seq":1
+                }))
+                .unwrap();
+                agent.label = Some(AgentLabel {
+                    task: goal.map(str::to_owned),
+                    progress: None,
+                    expected_reply: None,
+                    question: false,
+                });
+                agent.facts = Some(crate::request_view::RowFacts {
+                    native_title: native.map(str::to_owned),
+                    ..Default::default()
+                });
+                assert_eq!(
+                    project_agent(agent).unwrap().identity_label,
+                    expected,
+                    "{kind}"
+                );
+            }
+        }
     }
 
     /// The old `summary` token is not read: a plugin still publishing it

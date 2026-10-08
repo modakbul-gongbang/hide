@@ -1879,15 +1879,18 @@ impl Runtime {
     pub(super) fn write_ui_state(&mut self) -> Result<(), String> {
         let Some(context) = self.worker_context.clone() else {
             // Standalone runtimes have no shared mutex or worker context.
-            return persistence::save(
+            let state = self.ui_state_to_save();
+            let result = persistence::save(
                 &self.state_path,
-                &self.ui_state_to_save(),
+                &state,
                 &self
                     .terminal_sizes
                     .iter()
                     .map(|(id, size)| (id.clone(), *size))
                     .collect(),
             );
+            self.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+            return result;
         };
         self.state_save_pending = true;
         if self.state_save_active {
@@ -1920,12 +1923,17 @@ impl Runtime {
                     };
                     // The existing save function serializes and writes outside the
                     // runtime mutex. One pending flag coalesces newer UI state.
-                    if let Err(message) = persistence::save(&path, &state, &sizes) {
-                        runtime.lock().unwrap_or_else(|e| e.into_inner()).set_error(
-                            "ui_state.save_failed",
-                            message,
-                            true,
-                        );
+                    let result = persistence::save(&path, &state, &sizes);
+                    let changed = {
+                        let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
+                        let changed =
+                            guard.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
+                        if let Err(message) = &result {
+                            guard.set_error("ui_state.save_failed", message.clone(), true);
+                        }
+                        changed || result.is_err()
+                    };
+                    if changed {
                         context.notifier.notify();
                     }
                 }

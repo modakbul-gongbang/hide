@@ -25,6 +25,12 @@ use crate::agent_start::StartError;
 use crate::live::LiveContext;
 use crate::wire;
 
+mod dormant;
+pub(crate) use dormant::{
+    DormantStartOutcome, DormantStatus, DormantTabOutcome, DormantWork,
+    fenced_dormant_close_connector, spawn_dormant_start, spawn_dormant_status, spawn_dormant_tab,
+};
+
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long an ended agent has to hand the terminal back to its shell before
 /// the sleep is given up and the agent is left awake (B8).

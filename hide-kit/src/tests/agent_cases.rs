@@ -774,18 +774,30 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRD and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18).
+    // The session-reader common contract B1/B6 enables starts for the five
+    // partial agents without enabling their future reader/sleep/fork features.
     let expected: [(&str, &[Feature]); 7] = [
         ("claude-code", &Feature::ALL),
         ("codex", &Feature::ALL),
         // PRD grok-cursor-hooks: the spawn guard and the subagent count from
         // their official hooks; Grok discards a session-start hook's output.
-        ("grok", &[Skill, Subagents, SpawnGuard, HerdrIntegration]),
-        ("opencode", &[Skill, HerdrIntegration]),
-        ("pi", &[Skill, HerdrIntegration]),
-        ("omp", &[Skill, HerdrIntegration]),
+        (
+            "grok",
+            &[Skill, Subagents, SpawnGuard, HerdrIntegration, Start],
+        ),
+        ("opencode", &[Skill, HerdrIntegration, Start]),
+        ("pi", &[Skill, HerdrIntegration, Start]),
+        ("omp", &[Skill, HerdrIntegration, Start]),
         (
             "cursor",
-            &[Skill, Guidance, Subagents, SpawnGuard, HerdrIntegration],
+            &[
+                Skill,
+                Guidance,
+                Subagents,
+                SpawnGuard,
+                HerdrIntegration,
+                Start,
+            ],
         ),
     ];
     assert_eq!(
