@@ -100,12 +100,12 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         # startup must not consume the window before its first screen read.
         deadline = Deadline(runtime.owner, seconds)
         while not deadline.expired():
-            screen = runtime.screen(pane, seconds=deadline.command_seconds())
+            screen = runtime.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             sample = {"phase": "arrival", "screen": screen, "agent": None}
             samples = [sample]
             deadline.remaining()
             require_no_login(screen)
-            agent = runtime.agent(pane, seconds=deadline.command_seconds())
+            agent = runtime.agent(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             sample["agent"] = agent
             deadline.remaining()
             previous_visible = (scene != "resume_picker" or runtime.fixture_bin or
@@ -142,12 +142,12 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         effect = "ambiguous"
         reason = "no_positive_effect_evidence"
         while not deadline.expired():
-            screen = runtime.screen(pane, seconds=deadline.command_seconds())
+            screen = runtime.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             sample = {"phase": "after", "screen": screen, "agent": None}
             samples = [samples[0], sample]
             deadline.remaining()
             require_no_login(screen)
-            agent = runtime.agent(pane, seconds=deadline.command_seconds())
+            agent = runtime.agent(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             sample["agent"] = agent
             deadline.remaining()
             if any(stamp(path) != original for path, original in configuration.items()):

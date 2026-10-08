@@ -276,8 +276,9 @@ class OwnedProcesses:
             self.receipts[child] = Path(diagnostic)
         return child
 
-    def run(self, argv, *, env, cwd=None, seconds=COMMAND_SECONDS, check=True):
-        end = min(self.deadline, time.monotonic() + min(COMMAND_SECONDS, seconds))
+    def run(self, argv, *, env, cwd=None, seconds=COMMAND_SECONDS, check=True, deadline=None):
+        end = min(self.deadline, time.monotonic() + min(COMMAND_SECONDS, seconds),
+                  self.deadline if deadline is None else deadline)
         child = self.spawn(argv, env=env, cwd=cwd, deadline=end)
         output = [bytearray(), bytearray()]
         try:

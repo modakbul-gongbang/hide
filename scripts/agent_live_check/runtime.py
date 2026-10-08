@@ -133,15 +133,15 @@ class Runtime:
                 shutil.rmtree(self.probe)
             raise
 
-    def command(self, args, *, check=True, seconds=15):
+    def command(self, args, *, check=True, seconds=15, deadline=None):
         code, out, err = self.owner.run([str(self.herdr_bin), *map(str, args)],
-                                         env=self.env, seconds=seconds, check=False)
+                                         env=self.env, seconds=seconds, check=False, deadline=deadline)
         if code and check:
             raise ProcessError(f"herdr_command_exit_{code}")
         return code, out, err
 
-    def json(self, args, *, seconds=15):
-        _, out, _ = self.command(args, seconds=seconds)
+    def json(self, args, *, seconds=15, deadline=None):
+        _, out, _ = self.command(args, seconds=seconds, deadline=deadline)
         value = json.loads(out)
         if "error" in value or not isinstance(value.get("result"), dict):
             raise ProcessError("herdr_refused_request")
@@ -276,11 +276,12 @@ class Runtime:
             raise ProtectionError("private_pane_reference_not_claimed")
         return workspace, pane, cwd
 
-    def screen(self, pane, *, seconds=15):
-        return self.command(["pane", "read", pane, "--source", "detection", "--lines", "120"], seconds=seconds)[1]
+    def screen(self, pane, *, seconds=15, deadline=None):
+        return self.command(["pane", "read", pane, "--source", "detection", "--lines", "120"],
+                            seconds=seconds, deadline=deadline)[1]
 
-    def agent(self, pane, *, seconds=15):
-        agents = self.json(["agent", "list"], seconds=seconds)["agents"]
+    def agent(self, pane, *, seconds=15, deadline=None):
+        agents = self.json(["agent", "list"], seconds=seconds, deadline=deadline)["agents"]
         return next((agent for agent in agents if agent["pane_id"] == pane), None)
 
     def send(self, pane, text, *, deadline: Deadline | None = None):
@@ -288,10 +289,10 @@ class Runtime:
             require_no_login(self.screen(pane))
             self.command(["pane", "run", pane, text])
             return
-        require_no_login(self.screen(pane, seconds=deadline.command_seconds()))
+        require_no_login(self.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end))
         # The authentication read and mandatory transport cleanup can finish
         # after their budget. Never start input using that expired evidence.
-        self.command(["pane", "run", pane, text], seconds=deadline.command_seconds())
+        self.command(["pane", "run", pane, text], seconds=deadline.command_seconds(), deadline=deadline.end)
         deadline.remaining()
 
     def send_letter(self, pane, intent, body):

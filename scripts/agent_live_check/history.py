@@ -18,10 +18,10 @@ def seed(runtime, pane, recipe, home, overlay, seconds):
     working = False
     try:
         while not deadline.expired():
-            screen = runtime.screen(pane, seconds=deadline.command_seconds())
+            screen = runtime.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             deadline.remaining()
             require_no_login(screen)
-            agent = runtime.agent(pane, seconds=deadline.command_seconds())
+            agent = runtime.agent(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             deadline.remaining()
             if agent and not sent and agent["agent_status"] in ("idle", "done") and matches(
                     recipe["scenes"]["rest"]["arrived"], screen, ""):

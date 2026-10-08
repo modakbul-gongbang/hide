@@ -273,7 +273,7 @@ An open or changing bundle leaves all omp scenes UNKNOWN without launching omp, 
 Alias, integrity and copy-budget failures remain fatal.
 The opener queries and file checks are observations rather than an atomic lock against another process opening the original later.
 Arrival and post-bell observation keep separate windows, starting after their respective input completes.
-Within a window, reads and resulting input share its absolute deadline and retain the existing per-command cap.
+Within a window, reads and resulting input share its absolute deadline through process admission and retain the existing per-command cap.
 Late replies cannot certify arrival, safe effects, previous-session history or model delivery; a received scene frame remains in its evidence even when the next deadline check refuses it.
 The owned pane claims and verifies its exact persistent reference before the native CLI starts, preventing unclaimed-reference expiry during a long scene.
 The Info request used for that claim may return the explicit `renderer_unavailable` refusal in this headless run; the daemon validates the capability first, and the CLI must still complete the claim and leave its claim file.

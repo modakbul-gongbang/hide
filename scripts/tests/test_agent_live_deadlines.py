@@ -18,6 +18,8 @@ from agent_live_check.delivery import measure
 from agent_live_check.history import LABEL, seed
 from agent_live_check.runtime import Runtime
 from agent_live_check.scenes import observe
+from agent_live_check.processes import OwnedProcesses, ProcessError
+from agent_live_check.timing import Deadline
 
 
 class HerdrReplies(Runtime):
@@ -29,7 +31,7 @@ class HerdrReplies(Runtime):
         self.fixture_bin = None
         self.root, self.late, self.effect, self.history = root, late, effect, history
         self.status = status
-        self.counts, self.inputs, self.budgets = {}, [], []
+        self.counts, self.inputs, self.budgets, self.ends = {}, [], [], []
         self.session = {"kind": "path", "source": "herdr:claude", "value": str(root / "native.jsonl")}
         self.after_reply = lambda kind, ordinal: None
 
@@ -38,6 +40,7 @@ class HerdrReplies(Runtime):
         ordinal = self.counts.get(kind, 0) + 1
         self.counts[kind] = ordinal
         self.budgets.append(seconds)
+        self.ends.append(kwargs.get("deadline"))
         if kind == "input":
             self.inputs.append(args[-1])
         self.clock[0] += 1.1 if (kind, ordinal) == self.late else 0.025
@@ -63,6 +66,27 @@ class HerdrReplies(Runtime):
 
 
 class ObservationDeadlines(unittest.TestCase):
+    def test_preemption_before_real_transport_admission_cannot_start_expired_input(self):
+        clock, emitted = [100.0], []
+        owner = OwnedProcesses()
+        owner.deadline = 500
+        # No actual command is launched. An external spawn attempt is itself
+        # the observable failure, rather than a mocked owned-process helper.
+        owner.family = "finite-admission-fixture"
+        runtime = Runtime.__new__(Runtime)
+        runtime.owner, runtime.herdr_bin, runtime.env = owner, Path("/external/herdr"), {}
+        def launch(*args, **kwargs):
+            emitted.append(args)
+            raise AssertionError("expired pane input reached OS spawn")
+        with patch("time.monotonic", lambda: clock[0]), patch("subprocess.Popen", launch):
+            phase = Deadline(owner, 1)
+            seconds = phase.command_seconds()
+            clock[0] = 101.1  # scheduling delay after budget calculation
+            with self.assertRaisesRegex(ProcessError, "command_timeout"):
+                runtime.command(["pane", "run", "owned", "bell"], seconds=seconds, deadline=phase.end)
+        self.assertEqual(emitted, [])
+        self.assertEqual(owner.children, {})
+
     def recipe(self, kind="claude", unsafe="SELECTED"):
         scene = {"send": "", "arrived": "READY", "draft": "DRAFT", "no_match": "NO MATCH", "unsafe": unsafe}
         return {"kind": kind, "scenes": {"model_picker": scene, "rest": scene}}
@@ -130,6 +154,7 @@ class ObservationDeadlines(unittest.TestCase):
                 self.assertEqual((result["arrival"], result["effect"]), ("reached", expected))
                 self.assertEqual(runtime.inputs, ["bell"])
                 self.assertTrue(all(0 < budget <= 1 for budget in runtime.budgets))
+                self.assertTrue(all(end is not None for end in runtime.ends))
 
     def test_large_window_keeps_command_cap_and_global_owner_deadline(self):
         with tempfile.TemporaryDirectory() as name:

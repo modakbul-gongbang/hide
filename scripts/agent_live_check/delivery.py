@@ -28,10 +28,10 @@ def measure(runtime, pane, recipe, home, cwd, bell, seconds, overlay):
     sent = False
     try:
         while not deadline.expired():
-            screen = runtime.screen(pane, seconds=deadline.command_seconds())
+            screen = runtime.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             deadline.remaining()
             require_no_login(screen)
-            current = runtime.agent(pane, seconds=deadline.command_seconds())
+            current = runtime.agent(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             deadline.remaining()
             if not current or current.get("agent_session") != session:
                 return {"outcome": "unknown", "reason": "recipient_identity_changed"}
