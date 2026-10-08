@@ -63,6 +63,8 @@ struct Device {
     state: PathBuf,
     /// What the link's pane events told this process.
     events: Arc<Events>,
+    /// The device's terminals, when its connector carries them.
+    terminals: Option<Arc<dyn hide_node_link::terminal::TerminalNode>>,
 }
 
 /// The pane of the device's Herdr whose shell is this test process, so a
@@ -136,6 +138,13 @@ impl Device {
     }
 
     fn start_with_pane_events(pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>) -> Self {
+        Self::start_with(pane_events, None)
+    }
+
+    fn start_with(
+        pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>,
+        terminals: Option<Arc<dyn hide_node::terminal::device::DeviceSink>>,
+    ) -> Self {
         // Socket paths below this folder must fit a Unix socket address.
         let root = tempfile::Builder::new()
             .prefix("nc")
@@ -234,8 +243,11 @@ impl Device {
         let events = Arc::new(Events::default());
         let slot: hide_node::ssh::PaneEventsSlot = Arc::default();
         let _ = slot.set(pane_events.unwrap_or_else(|| events.clone()));
-        let transport = hide_node::ssh::Connector::new(Some(packages))
-            .with_pane_events(slot)
+        let mut connector = hide_node::ssh::Connector::new(Some(packages)).with_pane_events(slot);
+        if let Some(sink) = terminals {
+            connector = connector.with_terminals(sink);
+        }
+        let transport = connector
             .transport(&local, "contract-node", ALIAS, None)
             .unwrap();
         let consent = HostConsent {
@@ -245,8 +257,8 @@ impl Device {
             granted_at_unix_ms: 1,
             identity: None,
         };
-        let link = match transport.establish(&consent, &[], Box::new(|_| {})) {
-            Ok(established) => established.host,
+        let (link, terminals) = match transport.establish(&consent, &[], Box::new(|_| {})) {
+            Ok(established) => (established.host, established.terminals),
             Err(error) => panic!("the device's node did not start: {error:?}"),
         };
         Self {
@@ -258,6 +270,7 @@ impl Device {
             link,
             state,
             events,
+            terminals,
         }
     }
 }
@@ -576,6 +589,67 @@ fn a_device_s_channels_share_its_one_connection() {
     // Closing the link ends its node and leaves the connection to the rest.
     device.link.close("contract");
     device.transport.herdr_api_connector().connect().unwrap();
+    assert_eq!(device.ssh.accepted(), 1);
+}
+
+/// What a device's terminals sent up its link: each pane's reports.
+#[derive(Default)]
+struct HeardTerminals {
+    reports: std::sync::Mutex<Vec<hide_node_link::terminal::TerminalReport>>,
+    arrived: std::sync::Condvar,
+}
+
+impl hide_node::terminal::device::DeviceSink for HeardTerminals {
+    fn output(&self, _device: &str, _pane: &str, _bytes: &[u8], _full: bool) {}
+
+    fn report(&self, _device: &str, report: hide_node_link::terminal::TerminalReport) {
+        self.reports.lock().unwrap().push(report);
+        self.arrived.notify_all();
+    }
+}
+
+/// B16: a device's panes' terminals ride its one connection. Attaching
+/// several of its panes opens no connection of their own, and each pane's
+/// word comes back up the same link.
+#[test]
+fn a_device_s_terminals_ride_its_one_connection() {
+    use hide_node_link::terminal::{GridSize, TerminalControl, TerminalReport};
+    let heard = Arc::new(HeardTerminals::default());
+    let device = Device::start_with(None, Some(heard.clone()));
+    let terminals = device
+        .terminals
+        .clone()
+        .expect("the device's node runs a terminal service");
+    let panes = (1..=5)
+        .map(|index| format!("w1:p{index}"))
+        .collect::<Vec<_>>();
+    for pane in &panes {
+        terminals.control(TerminalControl::Attach {
+            pane: pane.clone(),
+            size: Some(GridSize { rows: 24, cols: 80 }),
+            manual: false,
+        });
+    }
+    let reports = heard.reports.lock().unwrap();
+    let (reports, _) = heard
+        .arrived
+        .wait_timeout_while(reports, TIMEOUT, |reports| {
+            !panes.iter().all(|pane| {
+                reports.iter().any(|report| {
+                    matches!(report, TerminalReport::State { pane: reported, .. } if reported == pane)
+                })
+            })
+        })
+        .unwrap();
+    for pane in &panes {
+        assert!(
+            reports.iter().any(|report| {
+                matches!(report, TerminalReport::State { pane: reported, .. } if reported == pane)
+            }),
+            "{pane} reported nothing: {reports:?}"
+        );
+    }
+    drop(reports);
     assert_eq!(device.ssh.accepted(), 1);
 }
 

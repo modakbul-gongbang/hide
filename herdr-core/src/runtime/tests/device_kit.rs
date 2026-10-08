@@ -1884,29 +1884,7 @@ fn a_devices_terminals_ride_its_link_and_end_with_it() {
     let terminals = record_terminals(&mut runtime);
     runtime.start_device_host(DEVICE);
     let generation = runtime.device_host_generation(DEVICE);
-    let established = hide_node_link::device::Established {
-        host: KitDevice::answering(Err("not asked".to_owned())),
-        identity: hide_node_link::device::HostIdentity {
-            user: "me".to_owned(),
-            hostname: "studio.local".to_owned(),
-            port: 22,
-            host_key_sha256: "key".to_owned(),
-        },
-        hello: hide_node_link::protocol::Hello {
-            protocol: hide_node_link::protocol::PROTOCOL_VERSION,
-            version: "test".to_owned(),
-            os: "macos".to_owned(),
-            arch: "aarch64".to_owned(),
-            home: None,
-            machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
-                reason: "test".to_owned(),
-            },
-        },
-        installed: false,
-        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
-        upload: Default::default(),
-        terminals: Some(Arc::new(RecordedTerminals::default())),
-    };
+    let established = established_with_terminals();
     runtime.ingest_host_established(DEVICE, generation, Ok(established));
     assert_eq!(terminals.devices(), ["install:studio"]);
 
@@ -1928,4 +1906,108 @@ fn a_devices_terminals_ride_its_link_and_end_with_it() {
         projected.transport_exit_category.as_deref(),
         Some("device_unavailable")
     );
+}
+
+/// A device's connection whose node runs a terminal service.
+fn established_with_terminals() -> hide_node_link::device::Established {
+    hide_node_link::device::Established {
+        host: KitDevice::answering(Err("not asked".to_owned())),
+        identity: hide_node_link::device::HostIdentity {
+            user: "me".to_owned(),
+            hostname: "studio.local".to_owned(),
+            port: 22,
+            host_key_sha256: "key".to_owned(),
+        },
+        hello: hide_node_link::protocol::Hello {
+            protocol: hide_node_link::protocol::PROTOCOL_VERSION,
+            version: "test".to_owned(),
+            os: "macos".to_owned(),
+            arch: "aarch64".to_owned(),
+            home: None,
+            machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
+                reason: "test".to_owned(),
+            },
+        },
+        installed: false,
+        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
+        upload: Default::default(),
+        terminals: Some(Arc::new(RecordedTerminals::default())),
+    }
+}
+
+/// D-19, B17: the device's pane on screen attaches again inside the link
+/// that comes back after one dropped, and its keys go nowhere meanwhile.
+#[test]
+fn a_devices_shown_pane_attaches_again_when_its_link_returns() {
+    let probe = device_runtime(None, None);
+    let shared = device_runtime(Some(granted(&probe)), None);
+    let mut runtime = shared.lock().unwrap();
+    let terminals = record_terminals(&mut runtime);
+    let pane_id = "remote:studio:pane:w1:p1";
+    let workspace_id = "remote:studio:workspace:w1";
+    let checkout_id = "remote:studio:checkout:w1";
+    let tab_id = "remote:studio:tab:w1:t1";
+    let mut device_checkout = checkout(
+        workspace_id,
+        checkout_id,
+        "/tmp/hide-studio-shown",
+        Some(pane(pane_id, "/tmp/hide-studio-shown")),
+    );
+    device_checkout.tabs[0].id = Some(tab_id.to_owned());
+    let mut device_workspace = workspace(
+        workspace_id,
+        "Studio",
+        "/tmp/hide-studio-shown",
+        vec![device_checkout],
+    );
+    device_workspace.remote_target_id = Some(DEVICE.to_owned());
+    device_workspace.device_id = DEVICE.to_owned();
+    let session = RemoteSessionSnapshot {
+        workspaces: vec![device_workspace],
+        agents: Vec::new(),
+        active_tab_ids: [(checkout_id.to_owned(), tab_id.to_owned())]
+            .into_iter()
+            .collect(),
+        focused_workspace_id: Some(workspace_id.to_owned()),
+        focused_checkout_id: Some(checkout_id.to_owned()),
+        focused_tab_id: Some(tab_id.to_owned()),
+        focused_pane_id: Some(pane_id.to_owned()),
+        pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
+    };
+    runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
+    let attaches = |terminals: &RecordedTerminals| {
+        terminals
+            .take()
+            .into_iter()
+            .filter(|control| {
+                matches!(control, TerminalControl::Attach { pane, .. } if pane == pane_id)
+            })
+            .count()
+    };
+
+    runtime.start_device_host(DEVICE);
+    let first = runtime.device_host_generation(DEVICE);
+    runtime.ingest_host_established(DEVICE, first, Ok(established_with_terminals()));
+    runtime.ingest_remote_session(DEVICE, Ok(session));
+    assert_eq!(attaches(&terminals), 1, "the shown pane attached");
+    report_terminal(&mut runtime, pane_id, terminal_state("controlling", 1));
+
+    runtime.ingest_host_closed(DEVICE, first, "the link dropped".to_owned());
+    assert_eq!(attaches(&terminals), 0, "nothing attaches without a link");
+    assert_eq!(
+        terminals.devices(),
+        ["install:studio", "remove:studio"],
+        "the dropped link took its terminals with it"
+    );
+
+    runtime.start_device_host(DEVICE);
+    let second = runtime.device_host_generation(DEVICE);
+    assert_ne!(first, second);
+    runtime.ingest_host_established(DEVICE, second, Ok(established_with_terminals()));
+    assert_eq!(
+        terminals.devices(),
+        ["install:studio", "remove:studio", "install:studio"]
+    );
+    assert_eq!(attaches(&terminals), 1, "the shown pane attached again");
 }
