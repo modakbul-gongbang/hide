@@ -750,7 +750,8 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     // session-reader common contract B1/B6 enables starts for the five
     // agents besides Claude Code and Codex without enabling their future
     // reader/sleep/fork features. The complete Pi slice adds native title
-    // and exact sleep/fork without changing its Basic collaboration grade.
+    // and exact sleep/fork beside the letters and spawn guard of Hide's
+    // extension.
     let opencode = [
         Skill,
         Guidance,

@@ -1515,7 +1515,7 @@ The chip opens a popover with every feature of the kit's feature table, grouped 
 The chip, headings and feature text wrap within the popover in every interface language.
 Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row whose id this build does not know is omitted and its id and device are diagnosed once.
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
-Pi's Basic popover includes native titles, Sleep and Fork from its complete session reader; it retains no hook, structured question/plan wait or collaboration capability.
+Pi has native titles, Sleep and Fork from its complete session reader beside letters and the spawn guard from Hide's extension; it has no structured question/plan wait, Memory or subagent count.
 Pi starts with the existing first-prompt argument boundary and CLI model default, without an extra-folder argument.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Plugin: Outdated: …` for OpenCode's hook piece, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.

@@ -49,9 +49,9 @@ const SEVEN = [
   agent("claude-code", { sessions: 2 }),
   agent("codex", { sessions: 0 }),
   partial("grok"),
-  partial("opencode"),
-  partial("pi", { availability: "not_installed" }),
-  partial("omp", { availability: "not_installed" }),
+  agent("opencode", { enabled: false, sessions: null }),
+  agent("pi", { availability: "not_installed" }),
+  agent("omp", { availability: "not_installed" }),
   partial("cursor", { availability: "not_installed" }),
 ];
 
