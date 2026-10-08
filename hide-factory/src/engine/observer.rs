@@ -1287,7 +1287,8 @@ impl Engine {
     }
 
     /// Resumes a Factory: sleeping workers continue in their worktrees with
-    /// what was answered meanwhile, and cards that arrived are reviewed (D-49).
+    /// what was answered meanwhile, as does a worker that could not sleep and
+    /// was sent something, and cards that arrived are reviewed (D-49).
     pub(super) fn resume_factory(&mut self, factory: &str) {
         let Some(f) = self.factories.get_mut(factory) else {
             return;
@@ -1301,14 +1302,14 @@ impl Engine {
         let asleep: Vec<(String, Vec<String>)> = self
             .tasks_of(factory)
             .filter(|t| matches!(t.state, TaskState::Running | TaskState::Relanding))
-            .filter(|t| t.worker.as_ref().is_some_and(|w| w.asleep))
-            .map(|t| {
-                let pending = t
+            .filter_map(|t| {
+                let asleep = t.worker.as_ref()?.asleep;
+                let pending: Vec<String> = t
                     .flags
                     .iter()
                     .filter_map(|f| f.strip_prefix("pending reply: ").map(str::to_owned))
                     .collect();
-                (t.id.clone(), pending)
+                (asleep || !pending.is_empty()).then(|| (t.id.clone(), pending))
             })
             .collect();
         for (id, pending) in asleep {

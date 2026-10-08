@@ -1276,6 +1276,47 @@ fn a_task_its_merge_check_sends_back_during_a_pause_reaches_its_worker_only_on_r
 }
 
 #[test]
+fn a_worker_whose_agent_cannot_sleep_is_never_counted_asleep_and_hears_a_pause_s_send_back_on_resume()
+ {
+    let mut h = Bench::new(false);
+    let f = h.factory(false);
+    let grok = Runtime::parse("grok").expect("grok declares a start");
+    h.world().sleepless.push(grok);
+    assert_eq!(
+        config(&mut h, "workers", r#"[{"agent":"grok"}]"#)["ok"],
+        true
+    );
+    let t = h.ready("Sleepless", &[]);
+    assert_eq!(h.task(&f, &t).worker.expect("worker").runtime, grok);
+    h.world().hold_judgments = true;
+    h.done(&f, &t);
+    h.op(Command::PauseFactory { project: None });
+    h.world().premerge.insert(
+        t.clone(),
+        [PreMerge::Conflict {
+            files: vec!["src/lib.rs".into()],
+        }]
+        .into_iter()
+        .collect(),
+    );
+    h.world().hold_judgments = false;
+    let letters = letters_to(&h, &t).len();
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    assert!(
+        !h.task(&f, &t).worker.expect("worker").asleep,
+        "its agent kept working"
+    );
+    assert_eq!(letters_to(&h, &t).len(), letters, "held while paused");
+    h.op(Command::ResumeFactory { project: None });
+    let sent: Vec<String> = letters_to(&h, &t).split_off(letters);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(sent[0].contains("rebase"), "{sent:?}");
+}
+
+#[test]
 fn a_task_only_an_automatic_merge_would_take_waits_out_a_pause_without_reading_anything() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

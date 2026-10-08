@@ -130,9 +130,9 @@ const CONFIG = {
 };
 
 /** Answers the settings tab's config read the way the engine does. */
-async function answerConfig(summary: FactorySummary, events: Parameters<DispatchFn>[0][]) {
+async function answerConfig(summary: FactorySummary, events: Parameters<DispatchFn>[0][], config: object = CONFIG) {
   const read = events.find((event) => (event as unknown as { kind: string; payload: { command: { verb: string } } }).payload?.command?.verb === "config") as unknown as { payload: { request_id: string } };
-  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: read.payload.request_id, answer: { ok: true, config: CONFIG, machine: { max_workers: 5 } } }] } }));
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: read.payload.request_id, answer: { ok: true, config, machine: { max_workers: 5 } } }] } }));
 }
 
 it("keeps Close disabled while the Running column holds a Task in any of its states, as the engine refuses then (B22)", async () => {
@@ -532,6 +532,17 @@ it("reads a Factory made before worker candidates as one of its default agent, a
   expect(container.querySelectorAll("[data-factory-worker-candidate]")).toHaveLength(1);
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-worker-add]")!.click());
   expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [["workers", JSON.stringify([{ agent: "claude", description: "" }, { agent: "claude", description: "" }])]] });
+});
+
+it("offers a model menu only for a worker whose agent's start takes a model (B28, D-42)", async () => {
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
+  await answerConfig(summary, events, { ...CONFIG, workers: [{ agent: "claude", description: "" }, { agent: "grok", description: "" }] });
+  const row = (at: number) => container.querySelector(`[data-factory-worker-candidate='${at}']`)!;
+  expect(row(1).querySelector("[data-agent-model]")).not.toBeNull();
+  expect(row(2).querySelector("[data-agent-kind='grok']")).not.toBeNull();
+  expect(row(2).querySelector("[data-agent-model]")).toBeNull();
+  expect(row(2).textContent).toContain(english["factory.settings.cliDefault"]);
 });
 
 it("changes who answers with one of three choices, and dims them while Hide AI is off, when a risk path is the person's again (B33, B10, B37)", async () => {

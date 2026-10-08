@@ -4368,8 +4368,10 @@ impl Engine {
             return;
         };
         let state = self.task(factory, id).map(|t| t.state);
-        if worker.asleep || state == Some(TaskState::Blocked) {
-            // A blocked Task wakes when it gets a slot again.
+        let paused = self.factories.get(factory).is_some_and(|f| f.paused);
+        if worker.asleep || paused || state == Some(TaskState::Blocked) {
+            // A blocked Task wakes when it gets a slot again, and a paused
+            // Factory's resume hands it over, a worker that cannot sleep too.
             self.with_task(factory, id, |task| {
                 task.flags
                     .push(format!("pending reply: {}", judgment::cut(body, 2000)))

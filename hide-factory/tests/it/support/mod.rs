@@ -66,6 +66,8 @@ pub struct World {
     pub spawned: Vec<WorkerSpawn>,
     pub messages: Vec<(String, String)>,
     pub sleeps: Vec<String>,
+    /// Agents whose adapter declares no sleep: their sleep is refused.
+    pub sleepless: Vec<Runtime>,
     pub wakes: Vec<(String, String)>,
     pub stops: Vec<String>,
     pub removed: Vec<String>,
@@ -459,6 +461,9 @@ impl WorkerRuntime for Shared {
         Ok(())
     }
     fn sleep(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
+        if self.world().sleepless.contains(&worker.runtime) {
+            return Err(Failure::task("worker.sleep", "agent_cannot_sleep"));
+        }
         self.world().sleeps.push(task_of(worker));
         Ok(())
     }

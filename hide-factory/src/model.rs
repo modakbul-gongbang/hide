@@ -239,7 +239,9 @@ impl WorkerCandidate {
             .agent
             .launch_options()
             .ok_or_else(|| format!("{} takes no model or effort", self.agent.label()))?;
-        options.arguments(self.model.as_deref(), self.effort.as_deref())
+        options
+            .arguments(self.model.as_deref(), self.effort.as_deref())
+            .map_err(|detail| format!("{}: {detail}", self.agent.label()))
     }
 }
 

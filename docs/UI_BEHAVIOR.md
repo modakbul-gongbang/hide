@@ -1161,7 +1161,7 @@ A start whose default-runtime read is refused, or that gets no answer within 20 
 
 The header holds the Factory name, the project filter, the flow bar and '비서에게 묻기'.
 With one Factory filtered the header also holds its pause: '일시정지' pauses the whole Factory (`pause --factory`), and a paused Factory shows the chip '일시정지됨' beside the filter and '다시 시작' in place of the button.
-While every shown Factory is paused, the flow bar's 진행 중 cell reads 재움, because its workers are asleep.
+While every shown Factory is paused, the flow bar's 진행 중 cell reads 재움, because its workers are asleep; a worker whose agent declares no sleep keeps its turn, though nothing it is sent reaches it before the resume.
 The flow bar shows 시작 전 · 진행 중 · 멈춤 · 완료 오늘 (today in the machine's time zone) and never a person's-turn cell; a cell opens the board filtered to that column.
 The flow bar ends with the time of the last GitHub read, which turns the warning colour after three failed reads in a row and back when a read succeeds; there is no banner.
 The tabs are 내 차례 · 보드 · 그래프 · 설정, and the screen opens on 내 차례; the project filter applies to every tab.
@@ -1183,7 +1183,7 @@ Factory workers are left out of the 요청 view and the Overview's yellow count.
 
 A request Factory AI sorted and handed to the person names, under its question, the kind Factory AI gave it and why the person decides it ('기술 선택 · 직접에서는 내가 정합니다.', '권한은 어느 칸에서도 내가 정합니다.') with Factory AI's reason; where the Factory's mode attached Factory AI's fix to a wrong card, 'AI 제안 적용' is one of the choices.
 A worker whose pane the operator closed in Hide is an item in 멈춤 with '다시 시작' and cancel, and a stop the Observer diagnosed carries its reading.
-In a paused Factory an answer's result line reads '다시 시작하면 작업자에게 전합니다', because the worker sleeps until the Factory resumes.
+In a paused Factory an answer's result line reads '다시 시작하면 작업자에게 전합니다', because the worker gets it when the Factory resumes.
 
 알림 is headed by its count, the line '확인만 하면 되는 것 · 내 차례 숫자에 세지 않음' and '모두 확인', which clears every shown notice at once in one request: the filtered Factory's, or every Factory's, a closed one's included.
 A notice row has a sparkle for something Factory AI did (answered, fixed a card, made a Task, approved a risk-path merge) and a bell for the daily limit, its line, the decision's kind or the mode that let Factory AI act, and '다른 답' while that decision can still be changed, else '보기'.

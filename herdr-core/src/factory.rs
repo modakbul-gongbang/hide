@@ -1351,6 +1351,11 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn sleep(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
+        // An agent whose adapter declares no sleep keeps working, so the
+        // engine must not count it asleep (D-28).
+        if !crate::agent_sleep::sleeps_kind(worker.runtime.as_str()) {
+            return Err(Failure::task("worker.sleep", "agent_cannot_sleep"));
+        }
         let pane = worker
             .pane
             .clone()
@@ -1607,7 +1612,11 @@ fn start_worker(
     let parent = crate::coordination::register_code_owned(&client, &authority, &actor)
         .map_err(|reason| Failure::task("worker.spawn", reason))?;
     let mut args = request.args.clone();
-    args.push(prompt_argument(&request.prompt, &request.task)?);
+    args.extend(prompt_arguments(
+        request.runtime,
+        &request.prompt,
+        &request.task,
+    )?);
     let (intent, path) = match &request.resume {
         Some(previous) => {
             if let Some(agent) = &previous.agent {
@@ -1697,6 +1706,23 @@ fn spawn_failure(reason: &str) -> Failure {
         }
         _ => Failure::task("worker.spawn", reason),
     }
+}
+
+/// The first prompt behind the flag the agent's start declares: `--`, or
+/// OpenCode's `--prompt`, whose positional argument is a project (B28).
+fn prompt_arguments(
+    runtime: AgentRuntime,
+    prompt: &str,
+    task: &str,
+) -> Result<[String; 2], Failure> {
+    let dialect = runtime
+        .adapter()
+        .start
+        .ok_or_else(|| Failure::task("worker.spawn", "agent_not_startable"))?;
+    Ok([
+        dialect.prompt_flag().to_owned(),
+        prompt_argument(prompt, task)?,
+    ])
 }
 
 /// The worker's first prompt as the one argument Herdr types into the pane
@@ -2081,6 +2107,25 @@ mod tests {
     use super::*;
     use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    #[test]
+    fn a_worker_s_first_prompt_follows_the_flag_its_agent_declares() {
+        for (agent, flag) in [
+            ("claude", "--"),
+            ("codex", "--"),
+            ("grok", "--"),
+            ("opencode", "--prompt"),
+            ("pi", "--"),
+            ("omp", "--"),
+            ("cursor", "--"),
+        ] {
+            let runtime = AgentRuntime::parse(agent).expect(agent);
+            let [first, prompt] =
+                prompt_arguments(runtime, "Factory: 이어서 진행하세요.", "T-1").expect(agent);
+            assert_eq!(first, flag, "{agent}");
+            assert!(prompt.contains("이어서 진행하세요"), "{agent}: {prompt}");
+        }
+    }
 
     #[test]
     fn a_factory_ai_hide_ai_does_not_know_is_refused_rather_than_replaced() {
@@ -2533,6 +2578,27 @@ mod tests {
             asleep: false,
             model: None,
             effort: None,
+        }
+    }
+
+    #[test]
+    fn a_worker_whose_agent_declares_no_sleep_is_refused_rather_than_queued() {
+        let state = Arc::new(Mutex::new(WorkerState::default()));
+        let mut port = CoreWorkers {
+            runtime: Weak::new(),
+            state: state.clone(),
+        };
+        let mut job = request("T-1", None);
+        for (agent, sleeps) in [("claude", true), ("codex", true), ("grok", false)] {
+            job.runtime = AgentRuntime::parse(agent).expect(agent);
+            let answer = port.sleep(&worker(&job));
+            assert_eq!(answer.is_ok(), sleeps, "{agent}: {answer:?}");
+            assert_eq!(
+                state.lock().unwrap().pending_sleep.contains("pane-T-1"),
+                sleeps,
+                "{agent}"
+            );
+            state.lock().unwrap().pending_sleep.clear();
         }
     }
 
