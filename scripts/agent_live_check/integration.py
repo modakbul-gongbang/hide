@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import re
 
-from .protection import (MAX_BACKUP_BYTES, ProtectionError, beneath, inventory_directory,
+from .protection import (MAX_BACKUP_BYTES, ProtectionError, beneath, configuration_bytes, inventory_directory,
                          private_directory, stamp, write_private)
 
 
@@ -38,14 +38,19 @@ def prepare(runtime, recipe, overlay):
             continue
         if not file.is_file():
             raise ProtectionError("generated_integration_not_regular")
-        original = stamp(file)
+        try:
+            value = configuration_bytes(file, max_bytes=MAX_BACKUP_BYTES - total)
+        except ProtectionError as error:
+            if str(error) == "config_file_over_budget":
+                raise ProtectionError("generated_integration_bytes_over_budget", path=file) from error
+            raise
+        if value is None:
+            raise ProtectionError("generated_integration_missing", path=file)
+        original, content = value
         total += original.size
-        if total > MAX_BACKUP_BYTES:
-            raise ProtectionError("generated_integration_bytes_over_budget")
-        content = file.read_bytes()
         version = re.search(rb"HERDR_INTEGRATION_ID=(" + kind.encode() + rb"(?:-[a-z0-9-]+)?)\r?\n[^\n]*HERDR_INTEGRATION_VERSION=([0-9]+)", content)
         artifacts.append({"file": file, "content": content, "stamp": original,
-                          "integration_id": version[1].decode() if version else None,
+                          "cohort": "generated", "integration_id": version[1].decode() if version else None,
                           "version": int(version[2]) if version else None})
     if not artifacts or not any(item["version"] is not None for item in artifacts):
         raise ProtectionError("generated_integration_version_missing")
@@ -70,7 +75,7 @@ def prepare(runtime, recipe, overlay):
             target = destination / item["file"].relative_to(root)
             private_directory(target.parent)
             write_private(target, item["content"])
-            copies.append({**item, "file": target, "stamp": stamp(target)})
+            copies.append({**item, "file": target, "stamp": stamp(target), "cohort": "routed"})
         artifacts.extend(copies)
     overlay["settings"].extend(item["file"] for item in artifacts)
     copied_config = kind == "opencode" and any(
@@ -93,6 +98,7 @@ def project_args(plan, recipe, cwd):
 def observe(runtime, pane, recipe, plan):
     rows = []
     changes = plan.setdefault("integrity_changes", {})
+    remaining = {"generated": MAX_BACKUP_BYTES, "routed": MAX_BACKUP_BYTES}
     for item in plan["artifacts"]:
         file = item["file"]
         if (not file.is_relative_to(runtime.probe) or not beneath(file, runtime.probe)
@@ -103,11 +109,17 @@ def observe(runtime, pane, recipe, plan):
         # checking a pathname alone cannot exclude an ancestor replacement.
         directory = inventory_directory(file.parent)
         try:
-            current = stamp(Path(file.name), dir_fd=directory)
+            try:
+                current = stamp(Path(file.name), dir_fd=directory, max_bytes=remaining[item["cohort"]])
+            except ProtectionError as error:
+                if str(error) == "config_file_over_budget":
+                    raise ProtectionError("prepared_integration_bytes_over_budget", path=file) from error
+                raise
         finally:
             os.close(directory)
         if current is None:
             raise ProtectionError("prepared_integration_missing", path=file)
+        remaining[item["cohort"]] -= current.size
         if current != item["stamp"]:
             name = str(file.relative_to(runtime.probe))
             fields = ("digest", "size", "mode", "identity")

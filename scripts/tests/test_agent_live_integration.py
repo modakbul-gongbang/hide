@@ -11,10 +11,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.contracts import recipes, source_contract
 from agent_live_check.integration import observe, prepare, project_args
 from agent_live_check.overlay import prepare as prepare_overlay
-from agent_live_check.protection import ProtectionError, private_directory, write_private
+from agent_live_check.protection import ProtectionError, private_directory, stamp, write_private
 
 
 class IntegrationEvidence(unittest.TestCase):
+    def test_observation_reserves_each_original_or_routed_cohort_before_reading(self):
+        for second_cohort in ("generated", "routed"):
+            with self.subTest(second_cohort=second_cohort), tempfile.TemporaryDirectory() as name:
+                probe = Path(name).resolve()
+                artifacts = []
+                for index, cohort in enumerate(("generated", second_cohort)):
+                    file = probe / str(index)
+                    content = b"prepared fixture"
+                    write_private(file, content)
+                    artifacts.append({"file": file, "content": content, "stamp": stamp(file),
+                                      "cohort": cohort, "integration_id": "codex", "version": 8})
+                    file.write_bytes(b"x" * (9 * 1024 * 1024))
+                queried = []
+                runtime = SimpleNamespace(probe=probe, agent=lambda pane: queried.append(pane))
+                plan = {"artifacts": artifacts, "sole_route": True, "synthetic": True}
+                if second_cohort == "generated":
+                    with self.assertRaisesRegex(ProtectionError, "prepared_integration_bytes_over_budget") as caught:
+                        observe(runtime, "owned", {"kind": "codex"}, plan)
+                    self.assertEqual(caught.exception.path, str(artifacts[1]["file"]))
+                    self.assertEqual(queried, [], "the byte refusal must precede native queries")
+                else:
+                    result = observe(runtime, "owned", {"kind": "codex"}, plan)
+                    self.assertEqual(result["integrity"], "unproven")
+                    self.assertEqual(len(result["integrity_changes"]), 2)
+                    self.assertIsNone(result["loaded_version"])
+
     def test_private_preparation_and_late_binding_never_replace_missing_load_proof(self):
         checkout = Path(__file__).resolve().parents[2]
         data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])

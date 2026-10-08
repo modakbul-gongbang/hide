@@ -98,15 +98,18 @@ class FileStamp:
     identity: tuple[int, int]
 
 
-def configuration_bytes(path: Path, *, dir_fd: int | None = None) -> tuple[FileStamp, bytes] | None:
+def configuration_bytes(path: Path, *, dir_fd: int | None = None,
+                        max_bytes: int = MAX_BACKUP_BYTES) -> tuple[FileStamp, bytes] | None:
     """Read and stamp one bounded ordinary file through the same descriptor."""
+    if not 0 <= max_bytes <= MAX_BACKUP_BYTES:
+        raise ProtectionError("config_read_budget_invalid")
     try:
         info = path.lstat() if dir_fd is None else os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
         raise ProtectionError("config_not_private_regular_file")
-    if info.st_size > MAX_BACKUP_BYTES:
+    if info.st_size > max_bytes:
         raise ProtectionError("config_file_over_budget")
     # A regular pathname can become a FIFO between lstat and open. Do not
     # block on that replacement while trying to inspect its descriptor.
@@ -116,13 +119,13 @@ def configuration_bytes(path: Path, *, dir_fd: int | None = None) -> tuple[FileS
         if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid()
                 or opened.st_nlink not in {0, 1}):
             raise ProtectionError("config_not_private_regular_file")
-        if opened.st_size > MAX_BACKUP_BYTES:
+        if opened.st_size > max_bytes:
             raise ProtectionError("config_file_over_budget")
         if opened.st_nlink == 0 or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
             raise ConfigurationChanged("config_changed_during_open")
-        data = stream.read(MAX_BACKUP_BYTES + 1)
+        data = stream.read(max_bytes + 1)
         after = os.fstat(stream.fileno())
-    if len(data) > MAX_BACKUP_BYTES or after.st_size > MAX_BACKUP_BYTES:
+    if len(data) > max_bytes or after.st_size > max_bytes:
         raise ProtectionError("config_file_over_budget")
     if not stat.S_ISREG(after.st_mode) or after.st_uid != os.getuid() or after.st_nlink not in {0, 1}:
         raise ProtectionError("config_not_private_regular_file")
@@ -135,9 +138,9 @@ def configuration_bytes(path: Path, *, dir_fd: int | None = None) -> tuple[FileS
                       stat.S_IMODE(opened.st_mode), (opened.st_dev, opened.st_ino)), data)
 
 
-def stamp(path: Path, *, dir_fd: int | None = None) -> FileStamp | None:
+def stamp(path: Path, *, dir_fd: int | None = None, max_bytes: int = MAX_BACKUP_BYTES) -> FileStamp | None:
     """Hash ordinary owned files; reject aliases and unbounded reads."""
-    value = configuration_bytes(path, dir_fd=dir_fd)
+    value = configuration_bytes(path, dir_fd=dir_fd, max_bytes=max_bytes)
     return value[0] if value is not None else None
 
 
