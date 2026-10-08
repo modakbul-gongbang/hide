@@ -7,7 +7,6 @@
 //! them, and a model reaches the CLI the same way wherever it was chosen.
 
 use super::*;
-use crate::model::AGENT_KINDS;
 
 /// The longest model id a start may carry. Catalog ids are short
 /// (`gpt-6-astra`, `opus`); anything longer is not one of them.
@@ -66,7 +65,7 @@ impl Runtime {
     /// preselects them next (D-18, D-20). `terminal` is never remembered, and
     /// a start with no model chose the CLI default, which is remembered too.
     pub(super) fn remember_agent_choice(&mut self, agent_kind: Option<&str>, model: Option<&str>) {
-        let Some(kind) = agent_kind.filter(|kind| AGENT_KINDS.contains(kind)) else {
+        let Some(kind) = agent_kind.and_then(hide_agent_adapter::start_kind) else {
             return;
         };
         let choice = &mut self.snapshot.ui_state.agent_start;

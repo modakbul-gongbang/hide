@@ -2137,10 +2137,10 @@ fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> 
     fetch_session_with_connector(connector).is_ok_and(|snapshot| {
         snapshot.agents.iter().any(|agent| {
             agent.pane_id.as_deref() == Some(pane_id)
-                && agent
-                    .agent
-                    .as_deref()
-                    .is_some_and(|agent_kind| agent_kind.eq_ignore_ascii_case(kind))
+                && agent.agent.as_deref().is_some_and(|agent_kind| {
+                    hide_agent_adapter::canonical_kind(agent_kind)
+                        .eq_ignore_ascii_case(hide_agent_adapter::canonical_kind(kind))
+                })
         })
     })
 }
@@ -4020,6 +4020,80 @@ mod tests {
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
+
+    #[test]
+    fn reopen_canonicalizes_alias_starts_and_confirms_only_the_same_pane_agent() {
+        for (kind, canonical, args) in [
+            (" CLAUDE-CODE ", "claude", vec!["--resume", "session"]),
+            (" CLAUDE ", "claude", vec!["--resume", "session"]),
+            (" CLAUDE_CODE ", "claude", vec!["--resume", "session"]),
+            (" CODEX ", "codex", vec!["resume", "session"]),
+        ] {
+            let herdr = FakeHerdr::start("reopen-alias", move |method, params| match method {
+                "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                    "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                    "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": []
+                }}),
+                "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                    "pane_id": "pane", "shell_pid": 42, "foreground_process_group_id": 42,
+                    "foreground_processes": []
+                }}),
+                "agent.start" => {
+                    assert_eq!(params["kind"], canonical);
+                    assert_eq!(params["args"], json!(args));
+                    json!({"type": "agent_started", "argv": [], "agent": {
+                        "pane_id": "pane", "terminal_id": "term", "workspace_id": "w1",
+                        "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1
+                    }})
+                }
+                other => panic!("unexpected {other}"),
+            });
+            let mut notices = Vec::new();
+            start_or_degrade_agent(
+                &herdr.connector(),
+                "key",
+                0,
+                "pane",
+                &ClosedAgent {
+                    kind: kind.into(),
+                    session_id: Some("session".into()),
+                },
+                crate::codex_launch::CodexDaemon::Unsupported,
+                &mut notices,
+            );
+            assert!(notices.is_empty(), "{kind}: {notices:?}");
+            assert_eq!(
+                herdr.methods(),
+                ["session.snapshot", "pane.process_info", "agent.start"]
+            );
+        }
+        let herdr = FakeHerdr::start("reopen-alias-confirm", |method, _| match method {
+            "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": [{
+                    "pane_id": "pane", "terminal_id": "term", "workspace_id": "w1", "tab_id": "w1:t1",
+                    "name": "agent", "agent": "claude", "agent_status": "idle", "focused": false, "revision": 1
+                }]
+            }}),
+            other => panic!("unexpected {other}"),
+        });
+        assert!(agent_is_running(
+            &herdr.connector(),
+            "pane",
+            " CLAUDE_CODE "
+        ));
+        assert!(!agent_is_running(
+            &herdr.connector(),
+            "other-pane",
+            "claude_code"
+        ));
+        assert!(!agent_is_running(&herdr.connector(), "pane", "codex"));
+        assert!(!agent_is_running(
+            &herdr.connector(),
+            "pane",
+            "future-agent"
+        ));
+    }
 
     #[test]
     fn internal_registration_failure_keeps_the_started_fork() {

@@ -551,10 +551,11 @@ pub struct ProviderUsageBucketSnapshot {
 
 impl ProviderUsageSnapshot {
     pub fn initial_rows() -> Vec<Self> {
-        vec![
-            Self::loading("claude", "Claude Code"),
-            Self::loading("codex", "Codex"),
-        ]
+        hide_agent_adapter::ADAPTERS
+            .iter()
+            .filter(|row| row.usage.is_some())
+            .map(|row| Self::loading(row.herdr.name, row.label))
+            .collect()
     }
 
     pub fn loading(provider: impl Into<String>, label: impl Into<String>) -> Self {
@@ -799,29 +800,28 @@ impl KitSnapshot {
         let agents = report
             .agents
             .iter()
-            .map(|agent| KitAgentSnapshot {
-                id: agent.id.clone(),
-                label: agent.label.clone(),
-                availability: agent.availability,
-                enabled: agent.enabled,
-                chosen: agent.chosen,
-                skill: (&agent.skill).into(),
-                hook: agent.hook.as_ref().map(Into::into),
-                herdr: agent.herdr.as_ref().map(Into::into),
-                partial: hide_kit::agents::adapter(&agent.id).is_some_and(|row| row.partial()),
-                features: hide_kit::agents::adapter(&agent.id)
-                    .map(|row| {
-                        hide_kit::agents::Feature::ALL
-                            .into_iter()
-                            .map(|id| KitFeatureSnapshot {
-                                id,
-                                supported: row.supports(id),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                sessions: None,
-                doc_url: agent.doc_url.clone(),
+            .filter_map(|agent| {
+                let row = hide_agent_adapter::adapter(&agent.id)?;
+                Some(KitAgentSnapshot {
+                    id: row.id.to_owned(),
+                    label: agent.label.clone(),
+                    availability: agent.availability,
+                    enabled: agent.enabled,
+                    chosen: agent.chosen,
+                    skill: (&agent.skill).into(),
+                    hook: agent.hook.as_ref().map(Into::into),
+                    herdr: agent.herdr.as_ref().map(Into::into),
+                    partial: row.basic(),
+                    features: hide_agent_adapter::Feature::ALL
+                        .into_iter()
+                        .map(|id| KitFeatureSnapshot {
+                            id,
+                            supported: row.supports(id),
+                        })
+                        .collect(),
+                    sessions: None,
+                    doc_url: agent.doc_url.clone(),
+                })
             })
             .collect::<Vec<_>>();
         Self {
@@ -2915,7 +2915,8 @@ impl Default for IssueSettingsSnapshot {
 
 /// The agents Hide starts in a pane itself. `terminal` (a tab alone) is a
 /// start choice too, but never a remembered one (PRD home-device-rail D-20).
-pub const AGENT_KINDS: [&str; 2] = ["claude", "codex"];
+pub const AGENT_KINDS: [&str; hide_agent_adapter::START_KINDS.len()] =
+    hide_agent_adapter::START_KINDS;
 
 /// The agent kind and each kind's model the operator last chose, kept in the
 /// core's store so every start surface and every window preselects the same

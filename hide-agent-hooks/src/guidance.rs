@@ -97,7 +97,7 @@ impl GuidanceAgent {
             Self::Droid => "factory-droid",
             Self::Copilot => "copilot-cli",
             Self::Kiro => "kiro",
-            Self::Cursor => "cursor",
+            Self::Cursor => hide_agent_adapter::AgentId::Cursor.adapter().id,
             Self::Augment => "augment",
             Self::Junie => "junie",
         }
@@ -114,7 +114,12 @@ impl GuidanceAgent {
     /// The live agent whose id this is; a retired agent's id answers `None`,
     /// so a hook entry an earlier build left in its file runs nothing.
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::LIVE.into_iter().find(|agent| agent.id() == id)
+        match hide_agent_adapter::adapter(id)?.hook {
+            hide_agent_adapter::HookInstall::Guidance(
+                hide_agent_adapter::GuidanceDialect::Cursor,
+            ) => Some(Self::Cursor),
+            _ => None,
+        }
     }
 
     /// Whether `id` names an agent whose hook an earlier build wrote.

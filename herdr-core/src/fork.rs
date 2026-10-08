@@ -18,17 +18,26 @@ pub enum ForkableAgent {
 
 impl ForkableAgent {
     pub fn parse(agent_kind: &str) -> Option<Self> {
-        match agent_kind.trim().to_ascii_lowercase().as_str() {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            _ => None,
+        match hide_agent_adapter::adapter(agent_kind)?.fork? {
+            hide_agent_adapter::LaunchDialect::Claude => Some(Self::Claude),
+            hide_agent_adapter::LaunchDialect::Codex => Some(Self::Codex),
         }
     }
 
     pub fn kind(self) -> &'static str {
         match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
+            Self::Claude => {
+                hide_agent_adapter::LaunchDialect::Claude
+                    .adapter()
+                    .herdr
+                    .name
+            }
+            Self::Codex => {
+                hide_agent_adapter::LaunchDialect::Codex
+                    .adapter()
+                    .herdr
+                    .name
+            }
         }
     }
 

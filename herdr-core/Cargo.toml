@@ -8,6 +8,7 @@ publish = false
 name = "herdr_core"
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-kit = { path = "../hide-kit" }

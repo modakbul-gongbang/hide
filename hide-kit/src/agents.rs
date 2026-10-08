@@ -1,12 +1,12 @@
 //! The agent adapters: which coding agents Hide knows how to reach, and what
 //! it puts where each one reads it (issue #517).
 //!
-//! One data row per agent declares the programs it is found by, where its
-//! skills live, whether it has hooks and
-//! the official page every one of those answers comes from. The content an
+//! The leaf `hide-agent-adapter` crate declares each agent's programs, skill
+//! location, hook dialect and documentation. This module projects those
+//! declarations into kit pieces and owns their installation policy. The content an
 //! agent reads is the same for all of them and is read from the `hide` binary
-//! at run time (`hide browser help`), so a new agent is a row here and a
-//! fixture, never a new text (engineering rule 2, 7).
+//! at run time (`hide browser help`), so a new agent needs a shared declaration
+//! and a fixture, never another copy of this content (engineering rule 2, 7).
 //!
 //! Three things a row can turn on for an agent the operator switched on:
 //!
@@ -26,25 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ComponentId, ComponentState, KitTarget};
 
-/// The operating systems a skill folder is documented for.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Os {
-    Macos,
-    Linux,
-    Windows,
-}
-
-impl Os {
-    pub const CURRENT: Os = if cfg!(target_os = "macos") {
-        Os::Macos
-    } else if cfg!(windows) {
-        Os::Windows
-    } else {
-        Os::Linux
-    };
-
-    const ALL: &'static [Os] = &[Os::Macos, Os::Linux, Os::Windows];
-}
+pub use hide_agent_adapter::{Feature, HerdrIntegration, Os};
 
 /// A folder an agent reads skills from, under the account's home.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -116,17 +98,6 @@ pub enum HookSupport {
     None,
 }
 
-/// The integration Herdr itself ships for an agent
-/// (`herdr integration install <name>`, [`crate::herdr_integration`]).
-#[derive(Clone, Copy, Debug)]
-pub struct HerdrIntegration {
-    /// The target name Herdr's CLI knows the agent by.
-    pub name: &'static str,
-    /// The agent's own configuration folder under the account's home, which
-    /// Herdr's install refuses to create; Hide does not either.
-    pub folder: &'static [&'static str],
-}
-
 /// One agent Hide knows.
 #[derive(Clone, Copy, Debug)]
 pub struct AgentAdapter {
@@ -152,139 +123,52 @@ pub struct AgentAdapter {
     /// Whether the agent is on without the operator choosing, as Claude Code
     /// and Codex have been since their hooks became part of the kit.
     pub default_on: bool,
-    /// Whether the core rings the doorbell for this agent: only kinds whose
-    /// permission and selection menus were observed to read `blocked` in
-    /// Herdr are targets (`docs/delivery.md`, Safe intake). The core's own list
-    /// decides it; `runtime::tests::agent_features` holds this to that list.
-    pub bell: bool,
-    /// Whether Hide reads this agent's own session files, which sleep, fork,
-    /// starting it from Hide's screen and conversation-based titles all need.
-    /// Only Claude Code and Codex have such a reader (PRD settings-cleanup
-    /// D-10); the gates in `herdr-core` that name the same two agents are held
-    /// to this by `runtime::tests::agent_features`.
-    pub session_reader: bool,
+    declaration: &'static hide_agent_adapter::AgentAdapter,
     /// The official page the row's answers come from.
     pub doc_url: &'static str,
 }
 
-const ALL_OS: &[Os] = Os::ALL;
-const UNIX_OS: &[Os] = &[Os::Macos, Os::Linux];
+// The kit keeps its policy types and derives every row from the leaf.
+const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> AgentAdapter {
+    use hide_agent_adapter::{GuidanceDialect, HookDialect, HookInstall, SkillLocation};
+    AgentAdapter {
+        id: declaration.id,
+        label: declaration.label,
+        executables: declaration.executables,
+        skill_dir: match declaration.skill_location {
+            SkillLocation::Shared => SkillDir::Shared,
+            SkillLocation::Claude => SkillDir::Claude,
+        },
+        skill_os: declaration.skill_os,
+        hook: match declaration.hook {
+            HookInstall::Runtime(HookDialect::ClaudeCode) => {
+                HookSupport::Part(ComponentId::ClaudeCodeHook)
+            }
+            HookInstall::Runtime(HookDialect::Codex) => HookSupport::Part(ComponentId::CodexHook),
+            HookInstall::Guidance(GuidanceDialect::Cursor) => {
+                HookSupport::Guidance(GuidanceAgent::Cursor)
+            }
+            HookInstall::None => HookSupport::None,
+        },
+        herdr: declaration.herdr,
+        default_on: declaration.default_on,
+        doc_url: declaration.doc_url,
+        declaration,
+    }
+}
 
-/// Every agent, in the order Settings lists them.
-pub const ADAPTERS: &[AgentAdapter] = &[
-    AgentAdapter {
-        id: "claude-code",
-        label: "Claude Code",
-        executables: &["claude"],
-        skill_dir: SkillDir::Claude,
-        skill_os: ALL_OS,
-        hook: HookSupport::Part(ComponentId::ClaudeCodeHook),
-        herdr: HerdrIntegration {
-            name: "claude",
-            folder: &[".claude"],
-        },
-        default_on: true,
-        bell: true,
-        session_reader: true,
-        doc_url: "https://code.claude.com/docs/en/skills",
-    },
-    AgentAdapter {
-        id: "codex",
-        label: "Codex",
-        executables: &["codex"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Part(ComponentId::CodexHook),
-        herdr: HerdrIntegration {
-            name: "codex",
-            folder: &[".codex"],
-        },
-        default_on: true,
-        bell: true,
-        session_reader: true,
-        doc_url: "https://learn.chatgpt.com/docs/build-skills",
-    },
-    AgentAdapter {
-        id: "grok",
-        label: "Grok",
-        executables: &["grok"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        herdr: HerdrIntegration {
-            name: "grok",
-            folder: &[".grok"],
-        },
-        default_on: false,
-        bell: false,
-        session_reader: false,
-        doc_url: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
-    },
-    AgentAdapter {
-        id: "opencode",
-        label: "OpenCode",
-        executables: &["opencode"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        herdr: HerdrIntegration {
-            name: "opencode",
-            folder: &[".config", "opencode"],
-        },
-        default_on: false,
-        bell: false,
-        session_reader: false,
-        doc_url: "https://opencode.ai/docs/skills/",
-    },
-    AgentAdapter {
-        id: "pi",
-        label: "Pi",
-        executables: &["pi"],
-        skill_dir: SkillDir::Shared,
-        skill_os: ALL_OS,
-        hook: HookSupport::None,
-        herdr: HerdrIntegration {
-            name: "pi",
-            folder: &[".pi", "agent"],
-        },
-        default_on: false,
-        bell: false,
-        session_reader: false,
-        doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
-    },
-    AgentAdapter {
-        id: "omp",
-        label: "omp",
-        executables: &["omp"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        herdr: HerdrIntegration {
-            name: "omp",
-            folder: &[".omp", "agent"],
-        },
-        default_on: false,
-        bell: false,
-        session_reader: false,
-        doc_url: "https://omp.sh/docs/skills",
-    },
-    AgentAdapter {
-        id: "cursor",
-        label: "Cursor",
-        executables: &["cursor-agent"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Cursor),
-        herdr: HerdrIntegration {
-            name: "cursor",
-            folder: &[".cursor"],
-        },
-        default_on: false,
-        bell: false,
-        session_reader: false,
-        doc_url: "https://cursor.com/docs/context/skills",
-    },
-];
+const fn project_all() -> [AgentAdapter; hide_agent_adapter::ADAPTERS.len()] {
+    let mut rows = [project(&hide_agent_adapter::ADAPTERS[0]); hide_agent_adapter::ADAPTERS.len()];
+    let mut index = 0;
+    while index < rows.len() {
+        rows[index] = project(&hide_agent_adapter::ADAPTERS[index]);
+        index += 1;
+    }
+    rows
+}
+
+/// The leaf declaration projected into the kit's installation policy.
+pub const ADAPTERS: &[AgentAdapter] = &project_all();
 
 /// The skill's name, and the folder it lives in.
 pub const SKILL_NAME: &str = "hide-browser";
@@ -297,7 +181,8 @@ const SKILL_MARKER_NAME: &str = "hide-skill";
 pub const SKILL_VERSION: u32 = 1;
 
 pub fn adapter(id: &str) -> Option<&'static AgentAdapter> {
-    ADAPTERS.iter().find(|adapter| adapter.id == id)
+    let declaration = hide_agent_adapter::adapter(id)?;
+    ADAPTERS.iter().find(|row| row.id == declaration.id)
 }
 
 /// The id of the agent whose hook is the kit part `part`, when there is one.
@@ -312,60 +197,6 @@ pub(crate) fn adapter_of_part(part: ComponentId) -> Option<&'static AgentAdapter
         .find(|adapter| adapter.hook == HookSupport::Part(part))
 }
 
-/// One thing Hide does for an agent, as the Partial popover lists it (PRD
-/// settings-cleanup D-10, B18). The ids are stable names the shell localizes;
-/// no sentence lives here.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Feature {
-    /// The `hide-browser` skill stub in the folder the agent reads.
-    Skill,
-    /// The session-start guidance: the purpose instruction and the live
-    /// Workspace commands, written by a hook.
-    Guidance,
-    /// Letters taken in when the operator submits a prompt.
-    Letters,
-    /// The doorbell: Hide types its one-line bell into an idle pane so the
-    /// pending letters are read without the operator typing (PRD
-    /// agent-neutral-doorbell). The core's bell target list decides it.
-    Bell,
-    /// Project Memory put into the session.
-    Memory,
-    /// The count of subagents the session spawned.
-    Subagents,
-    /// Refusing a shell call that starts an agent through Herdr directly and
-    /// answering with the `hide agent spawn` command that keeps the lineage
-    /// (PRD herdr-spawn-guard). The hook's `PreToolUse` entry carries it.
-    SpawnGuard,
-    /// Herdr's own integration, which gives the session identity and an exact
-    /// status. Every supported agent has it.
-    HerdrIntegration,
-    /// Putting the agent to sleep and waking it.
-    Sleep,
-    Fork,
-    /// Starting the agent from Hide's own screen.
-    Start,
-    /// Titles made from the conversation.
-    Titles,
-}
-
-impl Feature {
-    pub const ALL: [Feature; 12] = [
-        Self::Skill,
-        Self::Guidance,
-        Self::Letters,
-        Self::Bell,
-        Self::Memory,
-        Self::Subagents,
-        Self::SpawnGuard,
-        Self::HerdrIntegration,
-        Self::Sleep,
-        Self::Fork,
-        Self::Start,
-        Self::Titles,
-    ];
-}
-
 impl AgentAdapter {
     /// Whether the hook entries Herdr's integration writes for this agent are
     /// covered by Hide's trust for it: only Codex asks the operator to review
@@ -375,34 +206,14 @@ impl AgentAdapter {
         self.hook == HookSupport::Part(ComponentId::CodexHook)
     }
 
-    /// Whether Hide does `feature` for this agent in this build. Every answer
-    /// is read off a field of the row that also drives the behavior, so the
-    /// popover cannot say more than the kit installs: the hooks from
-    /// [`HookSupport`], the integration from [`HerdrIntegration`], the four
-    /// that need a session reader from `session_reader`.
+    /// Capabilities come from the shared declaration, independently.
     pub fn supports(&self, feature: Feature) -> bool {
-        match feature {
-            Feature::Skill => true,
-            Feature::Guidance => !matches!(self.hook, HookSupport::None),
-            // The six-event hook is the one that carries `PreToolUse`, so an agent
-            // has the guard exactly when it has that hook.
-            Feature::Letters | Feature::Memory | Feature::Subagents | Feature::SpawnGuard => {
-                matches!(self.hook, HookSupport::Part(_))
-            }
-            Feature::Bell => self.bell,
-            Feature::HerdrIntegration => true,
-            Feature::Sleep | Feature::Fork | Feature::Start | Feature::Titles => {
-                self.session_reader
-            }
-        }
+        self.declaration.supports(feature)
     }
 
-    /// Whether Hide does only some of what it does for Claude Code, so the
-    /// row wears the Partial chip whether or not the agent is on.
+    /// The existing wire field carries the Basic collaboration grade.
     pub fn partial(&self) -> bool {
-        Feature::ALL
-            .into_iter()
-            .any(|feature| !self.supports(feature))
+        self.declaration.basic()
     }
 
     /// Whether the agent's documentation confirms its skill folder here.

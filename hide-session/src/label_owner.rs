@@ -12,8 +12,8 @@ use std::path::Path;
 /// A compact, path-free token that consumers can compare with Herdr's current
 /// native reference. Unsupported or unreported references prove nothing.
 pub fn label_reference_token(provider: &str, kind: &str, value: &str) -> Option<String> {
-    if !matches!(provider, "codex" | "claude" | "opencode")
-        || !matches!(kind, "id" | "path")
+    let provider = Agent::from_kind(provider)?.as_str();
+    if !matches!(kind, "id" | "path")
         || value.trim().is_empty()
         || value.chars().any(char::is_control)
     {

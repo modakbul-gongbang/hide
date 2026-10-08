@@ -10,6 +10,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import type { KitAgent } from "./snapshot";
 import { useShellStore } from "./store";
 import { useAgentsDemand } from "./settings/useAgentsDemand";
+import { supportedAgents } from "./settings/agentRows";
 
 /**
  * The first-run agent choice: shown while the core says it is pending and
@@ -20,7 +21,7 @@ import { useAgentsDemand } from "./settings/useAgentsDemand";
 export function AgentOnboardingGate({ actions }: { actions: Actions }) {
   const pending = useShellStore((s) => s.rest?.ui_state?.agent_onboarding === "pending");
   const agents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit?.agents);
-  return pending && agents && agents.length > 0 ? <AgentOnboarding actions={actions} agents={agents} /> : null;
+  return pending && agents && agents.length > 0 ? <AgentOnboarding actions={actions} agents={supportedAgents(agents)} /> : null;
 }
 
 function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAgent[] }) {

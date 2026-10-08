@@ -127,9 +127,24 @@ class Selection(unittest.TestCase):
         result = plan("hide-platform/src/process.rs")
         self.assertTrue({"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
         self.assertNotIn("desktop-e2e", result["lanes"])
-        # Every workspace crate depends on the platform layer, hide-project included.
-        self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
+        # The data-only adapter is independent; every other crate consumes the platform layer.
+        self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-agent-adapter"])
         self.assertFalse(result["full"])
+
+    def test_an_adapter_change_tests_its_real_consumers_and_compiles_on_windows(self):
+        # These consumers follow the workspace manifests, independently of the planner.
+        # Factory reaches the adapter through its node-link request types too.
+        consumers = [
+            "herdr-core", "hide-agent-adapter", "hide-agent-hooks", "hide-factory", "hide-host", "hide-kit",
+            "hide-node", "hide-node-link", "hide-session", "hided",
+        ]
+        for path in ("hide-agent-adapter/src/lib.rs", "hide-agent-adapter/Cargo.toml"):
+            with self.subTest(path=path):
+                result = plan(path)
+                self.assertEqual(result["rust_packages"], consumers)
+                self.assertTrue({"rust", "windows-check", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
+                self.assertFalse(set(result["lanes"]) & {"os-contract", "os-contract-macos", "windows-e2e", "desktop-e2e"})
+                self.assertFalse(result["full"])
 
     def test_a_leaf_crate_tests_its_reverse_dependencies_and_compiles_on_windows(self):
         result = plan("hide-session/src/lib.rs")

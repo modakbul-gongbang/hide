@@ -2,7 +2,7 @@ import type { TFunction } from "i18next";
 import { useEffect } from "react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
-import { catalogFor, modelToSend, selectKind, type AgentKind, type AgentSelection, type ModelCatalog, type ProviderKind } from "../agentPicker";
+import { catalogFor, modelToSend, selectKind, providerLabel, PROVIDER_KINDS, type AgentKind, type AgentSelection, type ModelCatalog, type ProviderKind } from "../agentPicker";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { cn } from "../lib/utils";
@@ -16,7 +16,6 @@ import { Hint } from "./ui/tooltip";
 // from the remembered choice (`rememberedSelection`) and sends what is
 // chosen. While any picker shows, the catalog is observed.
 
-const KIND_LABELS: Record<ProviderKind, string> = { claude: "Claude", codex: "Codex" };
 /** Radix items cannot carry an empty value; this stands for the CLI's own default. */
 const DEFAULT_ITEM = "__cli_default";
 
@@ -88,7 +87,7 @@ export function AgentPickerView({
   className?: string;
 }) {
   const { t } = useInterfaceTranslation();
-  const kinds: readonly AgentKind[] = withTerminal ? ["terminal", "claude", "codex"] : ["claude", "codex"];
+  const kinds: readonly AgentKind[] = withTerminal ? ["terminal", ...PROVIDER_KINDS] : PROVIDER_KINDS;
   return (
     <div className={cn("flex min-w-0 gap-xs", className)} data-agent-picker="true">
       <Select value={value.kind} disabled={disabled} onValueChange={(next) => onKind(next as AgentKind)}>
@@ -99,7 +98,7 @@ export function AgentPickerView({
           {kinds.map((kind) => (
             <SelectItem key={kind} value={kind} data-agent-kind-option={kind}>
               <AgentMark kind={kind === "terminal" ? null : kind} />
-              {kind === "terminal" ? t("agentPicker.terminalOnly") : KIND_LABELS[kind]}
+              {kind === "terminal" ? t("agentPicker.terminalOnly") : providerLabel(kind)}
             </SelectItem>
           ))}
         </SelectContent>

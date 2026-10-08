@@ -11,6 +11,7 @@ publish = false
 # core-host-node D-02).
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 base64 = "=0.23.1"
 cap-std = "=4.0.3"
 hide-project = { path = "../hide-project" }

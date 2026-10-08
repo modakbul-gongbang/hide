@@ -280,7 +280,14 @@ it("opens the Partial popover from the chip and lists every feature with a mark 
   await click(q('[data-agent-partial="grok"]'));
   const popover = document.body.querySelector('[data-agent-partial-popover="grok"]')!;
   const lines = [...popover.querySelectorAll("[data-agent-feature]")].map((line) => line.getAttribute("data-agent-feature"));
-  expect(lines).toEqual(FEATURES.map((feature) => `${feature}:${supports(feature) ? "yes" : "no"}`));
+  expect([...lines].sort()).toEqual(FEATURES.map((feature) => `${feature}:${supports(feature) ? "yes" : "no"}`).sort());
+  const groups = [...popover.querySelectorAll("[data-agent-feature-group]")];
+  expect(groups.map((group) => group.getAttribute("data-agent-feature-group"))).toEqual(["herdr", "sessions", "collaboration"]);
+  expect(groups.map((group) => [...group.querySelectorAll("[data-agent-feature]")].map((line) => line.getAttribute("data-agent-feature")?.split(":")[0]))).toEqual([
+    ["skill", "guidance", "herdr_integration", "start"],
+    ["titles", "sleep", "fork"],
+    ["letters", "bell", "memory", "subagents", "spawn_guard"],
+  ]);
   expect(popover.querySelector('[data-agent-feature="letters:no"]')?.textContent).toContain("–Not available: Letters and Observer warnings");
   expect(popover.querySelector('[data-agent-feature="skill:yes"]')?.textContent).toContain("✓Works: Hide skill");
   // Every supported agent has Herdr's integration, so no row says its status is judged from the screen.

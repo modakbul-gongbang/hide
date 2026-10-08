@@ -16,7 +16,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 /// The agent kinds a phone may start; `terminal` is a desktop-only start.
-pub const KINDS: [&str; 2] = ["claude", "codex"];
+pub const KINDS: [&str; hide_agent_adapter::START_KINDS.len()] = hide_agent_adapter::START_KINDS;
 /// How long a start may wait for the core's creation receipt: longer than a
 /// device's Home sync (30 s) plus opening its tab, so a slow start is not
 /// reported as lost while it still runs.
@@ -322,9 +322,7 @@ fn event(request: &Request<'_>, catalog: &Catalog) -> Result<Value, &'static str
     if let Some(problem) = prompt_problem(request.text) {
         return Err(problem);
     }
-    if !KINDS.contains(&request.kind) {
-        return Err("unknown_kind");
-    }
+    let kind = hide_agent_adapter::start_kind(request.kind).ok_or("unknown_kind")?;
     if request.target.chars().count() > MAX_TARGET_CHARS {
         return Err("unknown_target");
     }
@@ -339,7 +337,7 @@ fn event(request: &Request<'_>, catalog: &Catalog) -> Result<Value, &'static str
         return Err("unknown_model");
     }
     let mut payload = json!({
-        "provider": request.kind,
+        "provider": kind,
         "prompt": request.text,
         "request_id": request.request_id,
     });

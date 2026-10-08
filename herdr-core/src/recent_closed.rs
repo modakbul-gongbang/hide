@@ -309,10 +309,11 @@ impl ClosedLayoutNode {
 
 pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
     let session_id = agent.session_id.as_ref()?;
-    match agent.kind.to_ascii_lowercase().as_str() {
-        "claude" | "claude-code" => Some(vec!["--resume".into(), session_id.clone()]),
-        "codex" => Some(vec!["resume".into(), session_id.clone()]),
-        _ => None,
+    match hide_agent_adapter::adapter(&agent.kind)?.resume? {
+        hide_agent_adapter::LaunchDialect::Claude => {
+            Some(vec!["--resume".into(), session_id.clone()])
+        }
+        hide_agent_adapter::LaunchDialect::Codex => Some(vec!["resume".into(), session_id.clone()]),
     }
 }
 
