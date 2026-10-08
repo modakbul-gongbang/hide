@@ -79,13 +79,20 @@ The shared `BackgroundRead` has one in-flight request and observes the latest de
 
 ## The spawn guard hook on a shell call
 
-`PreToolUse` with the `Bash` matcher runs `hide-agent-hooks` before every shell call a Claude Code or Codex agent makes, so it is a high-frequency path that every agent pays and no operator sees (PRD herdr-spawn-guard B13).
+The `Bash` branch of the `PreToolUse` matcher runs `hide-agent-hooks` before every shell call a Claude Code or Codex agent makes, so it is a high-frequency path that every agent pays and no operator sees (PRD herdr-spawn-guard B13).
 Per input it adds one process start: the helper reads the payload (at most 256 KiB, waiting at most 0.5 seconds), runs a byte test for `herdr` or `HERDR_BIN_PATH` over the whole payload (its `cwd` and transcript path too, so under a checkout whose path contains `herdr` every call also pays the JSON parse and the lexer, microseconds that start nothing), and exits with no output when neither is there, before it parses JSON, reads a file or starts a child.
 A call that mentions `herdr` without launching an agent (`pane split`, `agent list`) pays one JSON parse and the shell lexer, and still starts nothing.
 Only a launch in a Herdr pane starts a child: one `hide workspace bootstrap`, owned through `hide_platform::process` with the guard's 2.5 second deadline, a 16 KiB output cap, and an end of the child on success, failure and timeout alike.
 The guard keeps no state, runs no timer or worker, takes no lock of the runtime, publishes nothing and fans out no notification; the daemon sees one `bootstrap` request per refused launch, the call `SessionStart` already makes.
 The retained data is the refusal log, capped at 256 KiB with one rotation, and the throttled diagnostic store `delivery` already caps; crossing a cap rotates or suppresses, and never refuses a call.
 A defect, a missing `hide` or a daemon that does not answer lets the shell call run, so the worst the guard can add to an ordinary call is its own bounded wait, never a refusal.
+
+The matcher also selects native question tools (`docs/agent-hooks.md`, Native questions from Factory workers).
+Their cheap name test leaves the ordinary Bash path unchanged, while a native question pays one JSON parse and one owned sibling CLI query within the helper's original 2.5-second deadline.
+The daemon gives that readonly query one shared two-second deadline across queueing, pane identity, the fresh 64-KiB native response and the existing 32-slot Factory queue; the CLI caps its guard response at 16 KiB.
+Only a proven current Task worker is denied; missing proof, expiry or a full queue allows the call with a bounded diagnostic.
+The query creates no Factory, resident worker, timer, judgment or store write and fans out no publication; the existing Factory owner ends its queue with the core.
+Factory starts currently use the core's own node, so a foreign caller is rejected before any SSH native-identity connection.
 
 Measure it at the command boundary: the installed command line run as the runtime runs it (`sh -c`, the payload on stdin), wall time per call from the caller's side, against a process-spawn baseline, with the first calls discarded as warm-up (ten, and five for the real `hide` row).
 Report p50, p95 and the load average before and after, and report the idle and driven (launch) paths separately.

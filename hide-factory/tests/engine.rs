@@ -1094,6 +1094,19 @@ fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
     assert_eq!(h.engine.role_for(Some(&pane), None), bound);
     let inside = format!("{}/src", worker.worktree);
     assert_eq!(h.engine.role_for(None, Some(&inside)), bound);
+    assert_eq!(h.engine.question_worker(&pane), Some(&worker));
+    assert_eq!(
+        h.engine.question_worker(&inside),
+        None,
+        "cwd is never question authority"
+    );
+    assert_eq!(h.engine.question_worker("a-descendant-pane"), None);
+    h.op(Command::Revive { task: t.clone() });
+    assert_eq!(
+        h.engine.question_worker(&pane),
+        Some(&worker),
+        "revive retains its accepted spawn"
+    );
 }
 
 #[test]
@@ -1110,6 +1123,39 @@ fn a_finished_task_whose_pane_is_gone_binds_no_caller() {
     assert_eq!(h.engine.role_for(Some(&pane), None), None);
     let inside = format!("{}/src", worker.worktree);
     assert_eq!(h.engine.role_for(None, Some(&inside)), None);
+    assert_eq!(h.engine.question_worker(&pane), None);
+}
+
+#[test]
+fn question_authority_follows_only_an_accepted_replacement_spawn() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Restarted worker", &[]);
+    let old = h.task(&f, &t).worker.unwrap();
+    let old_pane = old.pane.clone().unwrap();
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Gone);
+    h.advance(5 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Stopped);
+    h.world().spawn_failure = Some(Failure::start_pending("worker.spawn"));
+    h.op(Command::Retry { task: t.clone() });
+    h.engine.tick();
+    assert_eq!(
+        h.engine.question_worker(&old_pane),
+        Some(&old),
+        "pending start cannot replace Task.worker"
+    );
+    h.world().spawn_failure = None;
+    tick_until(&mut h, &f, &t, TaskState::Running);
+    let fresh = h.task(&f, &t).worker.unwrap();
+    assert_ne!(fresh.pane, old.pane);
+    assert_eq!(h.engine.question_worker(&old_pane), None);
+    assert_eq!(
+        h.engine.question_worker(fresh.pane.as_deref().unwrap()),
+        Some(&fresh)
+    );
 }
 
 #[test]

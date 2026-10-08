@@ -104,6 +104,13 @@ impl Lineage {
 }
 
 enum Request {
+    /// A bounded read of an already-open engine. It never opens or ticks it.
+    QuestionGuard {
+        caller: QuestionCaller,
+        runtime: Weak<Mutex<Runtime>>,
+        deadline: Instant,
+        reply: SyncSender<Result<bool, String>>,
+    },
     Command {
         caller: FactoryCaller,
         command: Command,
@@ -143,6 +150,67 @@ pub struct PreparedFactory {
     requests: SyncSender<Request>,
     caller: FactoryCaller,
     command: Command,
+}
+
+/// Owned native execution facts captured briefly under the Runtime lock.
+pub(crate) struct QuestionCaller {
+    pub actor: delivery::Actor,
+    pub context: crate::workspace_control::Context,
+    pub raw_pane: String,
+    pub terminal_id: String,
+    pub connector: Arc<dyn hide_herdr_client::ApiConnector>,
+}
+
+/// One readonly question decision, run outside both the owner and Runtime lock.
+pub struct PreparedQuestionGuard {
+    requests: SyncSender<Request>,
+    caller: QuestionCaller,
+    runtime: Weak<Mutex<Runtime>>,
+    deadline: Instant,
+}
+
+impl PreparedQuestionGuard {
+    pub fn run(self) -> Result<bool, String> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or("factory_guard_expired")?;
+        let fresh = hide_herdr_client::request_small_response_until(
+            self.caller.connector.as_ref(),
+            "agent.get",
+            crate::wire::agent_target_params(&self.caller.raw_pane)?,
+            self.deadline,
+        )
+        .map_err(|_| "factory_guard_native_unavailable")?;
+        let fresh =
+            crate::wire::delivery_agent(fresh).map_err(|_| "factory_guard_native_unavailable")?;
+        if fresh.pane_id != self.caller.raw_pane
+            || fresh.terminal_id != self.caller.terminal_id
+            || fresh.name != self.caller.actor.name
+            || fresh.kind.as_deref() != Some(self.caller.actor.kind.as_str())
+            || fresh.session.is_none()
+            || fresh.session != self.caller.actor.session
+        {
+            return Err("factory_guard_native_changed".into());
+        }
+        let (reply, answer) = mpsc::sync_channel(1);
+        self.requests
+            .try_send(Request::QuestionGuard {
+                caller: self.caller,
+                runtime: self.runtime,
+                deadline: self.deadline,
+                reply,
+            })
+            .map_err(|_| "factory_guard_busy")?;
+        let left = self
+            .deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or("factory_guard_expired")?;
+        answer
+            .recv_timeout(left)
+            .map_err(|_| "factory_guard_expired")?
+    }
 }
 
 impl PreparedFactory {
@@ -197,6 +265,20 @@ impl FactoryHost {
             requests: self.requests.clone(),
             caller,
             command,
+        }
+    }
+
+    pub(crate) fn prepare_question_guard(
+        &self,
+        caller: QuestionCaller,
+        runtime: Weak<Mutex<Runtime>>,
+        deadline: Instant,
+    ) -> PreparedQuestionGuard {
+        PreparedQuestionGuard {
+            requests: self.requests.clone(),
+            caller,
+            runtime,
+            deadline,
         }
     }
 
@@ -460,6 +542,17 @@ fn run(
     let mut last_tick = Instant::now();
     while !stop.load(Ordering::Acquire) {
         match requests.recv_timeout(TICK) {
+            Ok(Request::QuestionGuard {
+                caller,
+                runtime,
+                deadline,
+                reply,
+            }) => {
+                let answer = question_guard(engine.as_ref(), &runtime, &caller, deadline);
+                let _ = reply.try_send(answer);
+                // A read performs no maintenance, persistence or publication.
+                continue;
+            }
             Ok(Request::Command {
                 caller,
                 command,
@@ -559,6 +652,28 @@ fn run(
     {
         crate::diagnostic!(json!({"component":"factory","kind":"starts.join_failed"}));
     }
+}
+
+fn question_guard(
+    engine: Option<&Engine>,
+    runtime: &Weak<Mutex<Runtime>>,
+    caller: &QuestionCaller,
+    deadline: Instant,
+) -> Result<bool, String> {
+    if Instant::now() >= deadline {
+        return Err("factory_guard_expired".into());
+    }
+    let engine = engine.ok_or("factory_guard_unstarted")?;
+    let Some(worker) = engine.question_worker(&caller.actor.pane_id) else {
+        return Ok(false);
+    };
+    let runtime = runtime.upgrade().ok_or("factory_guard_unavailable")?;
+    let runtime = runtime.try_lock().map_err(|_| "factory_guard_busy")?;
+    runtime.factory_question_current(caller, worker)?;
+    if Instant::now() >= deadline {
+        return Err("factory_guard_expired".into());
+    }
+    Ok(true)
 }
 
 /// Runs one screen request with the operator role the screen holds; every
@@ -1731,6 +1846,110 @@ mod tests {
     use super::*;
     use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    fn question_caller(herdr: &crate::fake_herdr::FakeHerdr) -> QuestionCaller {
+        let actor = delivery::Actor {
+            pane_id: "w1:p1".into(),
+            name: "w1:p1".into(),
+            kind: "codex".into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: crate::wire::session_digest("native-1"),
+        };
+        QuestionCaller {
+            context: crate::runtime::delivery::tests::authority(&actor).context,
+            actor,
+            raw_pane: "w1:p1".into(),
+            terminal_id: "terminal-1".into(),
+            connector: Arc::new(herdr.connector()),
+        }
+    }
+
+    fn question_herdr(native: &str) -> crate::fake_herdr::FakeHerdr {
+        let native = native.to_owned();
+        crate::fake_herdr::FakeHerdr::start("question-guard", move |method, params| {
+            assert_eq!(method, "agent.get");
+            assert_eq!(params["target"], "w1:p1");
+            json!({"type":"agent_info", "agent":{
+                "pane_id":"w1:p1", "tab_id":"w1:t1", "workspace_id":"w1",
+                "terminal_id":"terminal-1", "agent":"codex", "agent_status":"working",
+                "state_change_seq":1, "focused":false, "revision":1,
+                "agent_session":{"source":"herdr:codex", "agent":"codex", "kind":"id", "value":native},
+            }})
+        })
+    }
+
+    #[test]
+    fn a_question_cannot_start_an_unstarted_factory_or_create_its_store() {
+        let root = tempfile::tempdir().unwrap();
+        let herdr = question_herdr("native-1");
+        let mut host = FactoryHost::start(
+            root.path(),
+            Some(root.path().into()),
+            Weak::new(),
+            ChangeNotifier::noop(),
+        )
+        .unwrap();
+        let answer = host
+            .prepare_question_guard(
+                question_caller(&herdr),
+                Weak::new(),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .run();
+        assert_eq!(answer, Err("factory_guard_unstarted".into()));
+        host.shutdown();
+        assert!(!hide_kit::layout::factory_store(root.path()).exists());
+        assert!(!hide_kit::layout::factory_files(root.path()).exists());
+    }
+
+    #[test]
+    fn expired_replaced_and_overloaded_question_checks_never_deny() {
+        let herdr = question_herdr("native-2");
+        let (requests, _receiver) = mpsc::sync_channel(0);
+        let prepared = |deadline| PreparedQuestionGuard {
+            requests: requests.clone(),
+            caller: question_caller(&herdr),
+            runtime: Weak::new(),
+            deadline,
+        };
+        assert_eq!(
+            prepared(Instant::now()).run(),
+            Err("factory_guard_expired".into())
+        );
+        assert!(
+            herdr.requests().is_empty(),
+            "expired work never opens a native read"
+        );
+        assert_eq!(
+            prepared(Instant::now() + Duration::from_secs(5)).run(),
+            Err("factory_guard_native_changed".into())
+        );
+        let current = question_herdr("native-1");
+        let mut stale_terminal = question_caller(&current);
+        stale_terminal.terminal_id = "replaced-terminal".into();
+        assert_eq!(
+            PreparedQuestionGuard {
+                requests: requests.clone(),
+                caller: stale_terminal,
+                runtime: Weak::new(),
+                deadline: Instant::now() + Duration::from_secs(5),
+            }
+            .run(),
+            Err("factory_guard_native_changed".into()),
+            "native session text on a reused pane cannot lend the prior terminal's authority"
+        );
+        let busy = PreparedQuestionGuard {
+            requests,
+            caller: question_caller(&current),
+            runtime: Weak::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        };
+        assert_eq!(
+            busy.run(),
+            Err("factory_guard_busy".into()),
+            "a full queue answers immediately"
+        );
+    }
 
     /// The core's own node answering the offset in turn, then busy.
     struct Offsets(Mutex<Vec<Result<i64, ()>>>);

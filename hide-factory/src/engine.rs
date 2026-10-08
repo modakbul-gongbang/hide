@@ -464,6 +464,22 @@ impl Engine {
             .map(|task| (task.factory.clone(), task.id.clone()))
     }
 
+    /// The one current Task-held spawn on a pane. This is deliberately
+    /// narrower than command roles: neither cwd nor descendants lend identity.
+    /// The caller must independently prove this spawn's current native session.
+    pub fn question_worker(&self, pane: &str) -> Option<&WorkerRef> {
+        let mut workers = self.all_tasks().filter_map(|task| {
+            let worker = task.worker.as_ref()?;
+            (!task.purged
+                && worker.factory == task.factory
+                && worker.pane.as_deref() == Some(pane)
+                && worker.agent.as_deref().is_some_and(|id| !id.is_empty()))
+            .then_some(worker)
+        });
+        let worker = workers.next()?;
+        workers.next().is_none().then_some(worker)
+    }
+
     pub fn factory_for_project(&self, project: &str) -> Option<&Factory> {
         let path = Path::new(project);
         self.factories
