@@ -23,6 +23,19 @@ fn context(stdout: &str) -> Result<String> {
         .to_owned())
 }
 
+/// The `value` of a `hide agent` answer, which does not use the envelope of
+/// the mailbox commands.
+fn agent_value(output: fixture::PaneOutput) -> Result<Value> {
+    ensure!(
+        output.status == 0,
+        "agent command failed: {}",
+        output.stderr
+    );
+    let answer: Value = serde_json::from_str(&output.stdout).context("agent command JSON")?;
+    ensure!(answer["ok"] == true, "agent command refused: {answer}");
+    answer.get("value").cloned().context("agent command value")
+}
+
 /// The prompt hook of the turn Hide's own bell opened: only that turn receives
 /// the letter bodies, an operator's prompt receives a count.
 fn hook(binary: &std::path::Path, session: &str) -> String {
@@ -256,6 +269,106 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
         Ok(())
     })();
     // Teardown is an assertion, and it never hides the first journey failure.
+    let cleanup = fixture.stop();
+    journey?;
+    cleanup
+}
+
+/// A request the recipient took in and never answered stops being awaited when
+/// the recipient's registration ends, and the sender, on the other machine,
+/// reads that and the reason from `hide request show`; the log records it
+/// without the body.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn ending_the_recipients_registration_ends_the_senders_answer_wait_and_says_why() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let remote_hide = fixture.remote.environment.home.join("bin/hide");
+        let hide = quote(&fixture.hide);
+        let recipient = agent_value(fixture.local.run_in_pane(&format!(
+                "{hide} agent register --host-scope \"$HERDR_SOCKET_PATH\" \
+                 --session fixture-local-session --instance {pane} --name local-parent --pane {pane}",
+                pane = fixture.local.pane
+            ))?)?["id"]
+            .as_str()
+            .context("the recipient's registration ID")?
+            .to_owned();
+        let sent = fixture
+            .remote
+            .run_in_pane(&format!(
+                "{} request send local-parent --intent wait-ends-1 --body {}",
+                quote(&remote_hide),
+                quote("DELIVERY_WAIT_ENDS")
+            ))?
+            .json()?;
+        let id = sent["id"].as_str().context("sent letter ID")?.to_owned();
+        ensure!(
+            sent["waiting_answer"] == true,
+            "a new request awaits its answer"
+        );
+        let delivered = fixture
+            .local
+            .run_in_pane(&hook(&fixture.hooks, "fixture-local-session"))?;
+        ensure!(
+            context(&delivered.stdout)?.contains(&id),
+            "the recipient did not take the request in: status {} stdout {:?} stderr {:?}",
+            delivered.status,
+            delivered.stdout,
+            delivered.stderr
+        );
+        wait_for("durable delivery confirmation", || {
+            Ok(fixture
+                .ledger()?
+                .letters
+                .iter()
+                .any(|letter| letter.id == id && letter.state == State::Delivered)
+                .then_some(()))
+        })?;
+        let show = format!("{} request show {id}", quote(&remote_hide));
+        let waiting = fixture.remote.run_in_pane(&show)?.json()?;
+        ensure!(
+            waiting["waiting_answer"] == true && waiting["answer_wait_ended"].is_null(),
+            "an awaited request already reports an end: {waiting}"
+        );
+
+        agent_value(
+            fixture
+                .local
+                .run_in_pane(&format!("{hide} agent end {recipient}"))?,
+        )?;
+
+        let shown = fixture.remote.run_in_pane(&show)?.json()?;
+        ensure!(
+            shown["waiting_answer"] == false,
+            "the wait did not end: {shown}"
+        );
+        ensure!(
+            shown["answer_wait_ended"] == "party_ended",
+            "the sender cannot read why: {shown}"
+        );
+        ensure!(shown["state"] == "delivered", "the state moved: {shown}");
+        ensure!(
+            shown["finished_at_unix_ms"].is_u64(),
+            "the finished letter has no finish time: {shown}"
+        );
+        let log = fixture.state.join("Logs/core.jsonl");
+        wait_for("the answer_wait.ended log line", || {
+            if !log.exists() {
+                return Ok(None);
+            }
+            let text = String::from_utf8(std::fs::read(&log)?)?;
+            let line = text
+                .lines()
+                .find(|line| line.contains("answer_wait.ended") && line.contains(id.as_str()));
+            Ok(line.map(|line| {
+                assert!(
+                    line.contains("party_ended") && !line.contains("DELIVERY_WAIT_ENDS"),
+                    "the log line carries the reason and never the body: {line}"
+                );
+            }))
+        })?;
+        Ok(())
+    })();
     let cleanup = fixture.stop();
     journey?;
     cleanup
