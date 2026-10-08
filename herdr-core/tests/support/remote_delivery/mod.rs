@@ -434,6 +434,9 @@ impl Fixture {
         for name in ["hide", "hided", "hide-agent-hooks", "hide-host-helper"] {
             let staged = cli.join(name);
             fs::copy(source_cli.join(name), &staged)?;
+            // Frozen build inputs may be read-only. Only this private copy
+            // needs owner write access for strip and ad-hoc signing.
+            hide_platform::fs::private::restrict_to_owner(&staged)?;
             let mut strip = local_env.command("/usr/bin/strip");
             strip.arg(&staged);
             successful(strip)?;
