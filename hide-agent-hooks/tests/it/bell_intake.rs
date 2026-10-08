@@ -14,6 +14,7 @@ use hide_agent_hooks::delivery::BELL_PROMPT;
 use hide_platform::process::OwnedChild;
 
 use crate::programs;
+use crate::stand_ins;
 
 const FAKE_HIDE: &str = r#"#!/bin/sh
 echo "$@" >> "$FAKE_HIDE_LOG"
@@ -33,11 +34,11 @@ impl Kit {
     /// A folder holding the helper and a `hide` beside it, as the install kit
     /// lays them out, so the helper reaches the stand-in and nothing else.
     fn new() -> Self {
-        let root = programs::folder();
+        let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
-        programs::link(programs::hook(), &bin.join("hide-agent-hooks"));
-        programs::link(&programs::stand_in(FAKE_HIDE), &bin.join("hide"));
+        stand_ins::place(programs::hook(), &bin.join("hide-agent-hooks"));
+        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
         Self { root }
     }
 

@@ -10,12 +10,13 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 use super::*;
+use stand_ins::program;
 
 mod agent_cases;
 mod codex_trust_cases;
 mod herdr_cases;
 mod retired_cases;
-#[path = "../../hide-agent-hooks/tests/it/stand_ins.rs"]
+#[path = "../../hide-agent-hooks/src/stand_ins.rs"]
 mod stand_ins;
 
 type IndexReadHook = Box<dyn FnOnce(&Path)>;
@@ -143,35 +144,6 @@ fn executable(path: &Path, body: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, body).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// Puts the stand-in whose text is `body` at `at`, replacing what is there:
-/// a program the kit runs against one of its deadlines, ready before the kit
-/// runs it (`stand_ins`). Each body is one file beside this test binary, and
-/// `at` is a hard link to it; a fixture on another filesystem gets a copy,
-/// made ready the same way.
-fn program(at: &Path, body: &str) {
-    let store = std::env::current_exe()
-        .unwrap()
-        .with_file_name("hide-kit-stand-ins");
-    let stand_in = stand_ins::stand_in(&store, body);
-    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
-    if let Err(error) = std::fs::remove_file(at) {
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::NotFound,
-            "{}",
-            at.display()
-        );
-    }
-    match std::fs::hard_link(&stand_in, at) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
-            std::fs::copy(&stand_in, at).unwrap();
-            stand_ins::ready(at);
-        }
-        Err(error) => panic!("{} could not be linked: {error}", at.display()),
-    }
 }
 
 /// The `herdr` CLI: plugin calls go to `$HOME/herdr.log`, integration calls

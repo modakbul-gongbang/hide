@@ -298,7 +298,12 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    A folder the runtime's workers write into is the runtime's (`test_dirs`), so it goes after them; a folder a test double writes into from a worker goes once the double's calls have ended (`Machine` in `herdr-core/src/runtime/tests/home.rs`), because a save still running into a removed folder makes it again.
    Make what a test needs beside its folder inside it: `strip_checkout` and `workspace.rs`'s `temp_dir` put the checkout one level inside the scratch folder, so a second checkout, a linked worktree or a link made next to it is removed with it, where a sibling of the scratch folder sat in the shared temp folder for good.
    Why: a leaked process or file is inherited by the next test and by the next run.
-8. **Retries are a classification.**
+8. **Give a test a program that has already started once.**
+   macOS checks a file the first time it is started, once per file, and the checks of every process on the machine wait in one line: on 2026-10-09 at load 7 a new script's first start took about 90 ms, its second 6 ms, and the last of twenty new scripts started together waited 1.8 s; Linux refuses to start a file another thread's fork still holds open for writing (`ETXTBSY`).
+   A program a test copies or writes and then runs inside a product deadline therefore pays that line inside the deadline, and under load it outgrew the hook's budget and the kit's 5 s deadlines (issue 813).
+   In `hide-agent-hooks` and `hide-kit` a stand-in comes from `hide-agent-hooks/src/stand_ins.rs`: `program(at, body)` puts at `at` a hard link to one read-only file per body beside the build's test binaries, started once per process before the test gets it, and `place` does the same for the helper cargo built.
+   A body is fixed text and finds its test's files from `HOME` (`${HOME%/*}` for the folder around it), never from a path written into it, because each distinct body is one more file kept for the build.
+9. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
    `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.

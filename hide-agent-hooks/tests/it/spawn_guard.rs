@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use hide_platform::process::OwnedChild;
 
 use crate::programs;
+use crate::stand_ins;
 
 const PANE: &str = "w1:p2";
 
@@ -59,7 +60,7 @@ struct Run {
 
 impl Machine {
     fn new(daemon: &str) -> Self {
-        let dir = programs::folder();
+        let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let home = root.join("home");
         let bin = root.join("bin");
@@ -69,8 +70,8 @@ impl Machine {
         std::fs::create_dir_all(checkout.join(".git")).unwrap();
         std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/topic\n").unwrap();
         let hook = bin.join("hide-agent-hooks");
-        programs::link(programs::hook(), &hook);
-        programs::link(&programs::stand_in(FAKE_HIDE), &bin.join("hide"));
+        stand_ins::place(programs::hook(), &hook);
+        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
         std::fs::write(root.join("mode"), daemon).unwrap();
         Self {
             _dir: dir,

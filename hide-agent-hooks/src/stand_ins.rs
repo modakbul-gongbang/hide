@@ -1,5 +1,6 @@
 //! Programs a test runs against a product deadline, ready before the
-//! deadline starts (issue 813). This file is also built into hide-kit's unit
+//! deadline starts (issue 813). Built only into tests: this crate's unit
+//! tests, its integration tests (`tests/it/main.rs`) and hide-kit's unit
 //! tests (`hide-kit/src/tests.rs`), whose stand-ins meet the kit's deadlines.
 //!
 //! macOS checks a file the first time it is started, once per file, and the
@@ -9,13 +10,15 @@
 //! last at 1.8 s, and a hard link to a file already started began at once. A
 //! test that copied the helper or wrote its stand-in afresh queued behind
 //! every new file the machine's other builds and tests started, inside the
-//! hook's budget or the kit's 5 s deadlines, and under load the wait outgrew
-//! them. Linux has its own refusal: a file another thread's fork still holds
-//! open for writing does not start (`ETXTBSY`).
+//! hook's budget or a 5 s `codex` or `launchctl` deadline, and under load the
+//! wait outgrew them. Linux has its own refusal: a file another thread's fork
+//! still holds open for writing does not start (`ETXTBSY`).
 //!
-//! So a program is one file per build, written once and never changed, and
-//! started once per process before a test is given it; a test's folder holds
-//! hard links to it, which are the same file and so share its check.
+//! So a stand-in is one file per body, kept beside the test binaries of the
+//! build, written once and never changed, and started once per process
+//! before a test is given it; a test's folder holds a hard link to it, which
+//! is the same file and so shares its check. A folder on another filesystem
+//! gets a copy, started once the same way.
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -36,25 +39,34 @@ use hide_platform::process::OwnedChild;
 /// nextest's slow-test period (`.config/nextest.toml`).
 const READY_GUARD: Duration = Duration::from_secs(60);
 
-/// The most stand-ins one store keeps. A body is fixed text, so a store grows
-/// only when a body is edited, by one file per edit until the build folder is
-/// cleaned; a body that named a test's own folder would add a file on every
-/// run, and this cap fails that test instead.
+/// The most stand-ins the build keeps. A body is fixed text, so the store
+/// grows only when a body is edited, by one file per edit until the build
+/// folder is cleaned; a body that named a test's own folder would add a file
+/// on every run, and this cap fails that test instead.
 #[cfg(unix)]
 const STORE_CAP: usize = 64;
 
 /// The files this process has already started once.
 static READY: LazyLock<Mutex<HashSet<FileId>>> = LazyLock::new(Mutex::default);
 
-/// The stand-in program whose text is `body`, kept in `store` and ready to
-/// run. A stand-in finds its test's files from `HOME`, which the program
-/// under test hands on to it, never from a path written into its body.
+/// Puts the stand-in program whose text is `body` at `at`, replacing what is
+/// there, ready to run. A stand-in finds its test's files from `HOME`, which
+/// the program under test hands on to it, never from a path written into its
+/// body.
 #[cfg(unix)]
-pub fn stand_in(store: &Path, body: &str) -> PathBuf {
+pub fn program(at: &Path, body: &str) {
+    place(&stand_in(body), at);
+}
+
+/// The stand-in program whose text is `body`, ready to run.
+#[cfg(unix)]
+fn stand_in(body: &str) -> PathBuf {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    std::fs::create_dir_all(store).unwrap();
+    // Beside the test binaries, so it goes with the build folder.
+    let store = std::env::current_exe().unwrap().with_file_name("stand-ins");
+    std::fs::create_dir_all(&store).unwrap();
     // FNV-1a, so a body keeps its name across toolchains; a name two bodies
     // shared would fail the comparison below rather than run the wrong one.
     let name = body.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
@@ -62,7 +74,7 @@ pub fn stand_in(store: &Path, body: &str) -> PathBuf {
     });
     let path = store.join(format!("{name:016x}"));
     if !path.exists() {
-        let kept = std::fs::read_dir(store)
+        let kept = std::fs::read_dir(&store)
             .unwrap()
             .filter(|entry| {
                 !entry
@@ -79,7 +91,7 @@ pub fn stand_in(store: &Path, body: &str) -> PathBuf {
              and after many edited bodies the folder can be removed",
             store.display()
         );
-        let mut file = tempfile::NamedTempFile::new_in(store).unwrap();
+        let mut file = tempfile::NamedTempFile::new_in(&store).unwrap();
         file.write_all(body.as_bytes()).unwrap();
         // Read-only, so a test that wrote to its link would fail rather than
         // change the program every other test runs.
@@ -101,6 +113,24 @@ pub fn stand_in(store: &Path, body: &str) -> PathBuf {
     );
     ready(&path);
     path
+}
+
+/// Puts `program`, ready to run, at `at`, replacing what is there: as a hard
+/// link, or as a copy started once when `at` is on another filesystem.
+#[cfg(unix)]
+pub fn place(program: &Path, at: &Path) {
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    if let Err(error) = std::fs::remove_file(at) {
+        assert_eq!(error.kind(), ErrorKind::NotFound, "{}", at.display());
+    }
+    match std::fs::hard_link(program, at) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::CrossesDevices => {
+            std::fs::copy(program, at).unwrap();
+            ready(at);
+        }
+        Err(error) => panic!("{} could not be linked: {error}", at.display()),
+    }
 }
 
 /// Starts `program` once in this process, unless it already was, and waits

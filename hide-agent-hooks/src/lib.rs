@@ -30,6 +30,8 @@ pub mod memory;
 pub mod report;
 pub mod runtime;
 pub mod spawn_guard;
+#[cfg(all(test, unix))]
+mod stand_ins;
 
 pub use counters::PaneCounters;
 pub use diagnosis::{

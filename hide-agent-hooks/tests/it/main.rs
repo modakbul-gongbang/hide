@@ -12,5 +12,6 @@ mod letter_origin;
 mod lossless_install;
 mod programs;
 mod spawn_guard;
+#[path = "../../src/stand_ins.rs"]
 mod stand_ins;
 mod windows_hook_command;
