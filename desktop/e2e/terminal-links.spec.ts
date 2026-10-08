@@ -512,6 +512,12 @@ test("Korean prose links only the real path and opens that file", async () => {
 });
 
 
+/** The shared fixture has two splits; give an unwrapped dense row one whole pane. */
+async function zoomDensePane(page: Page, paneId: string): Promise<void> {
+  await page.locator(`[data-terminal="${paneId}"]`).click({ button: "right" });
+  await page.locator('[data-menu-item="toggle_zoom"]').click();
+}
+
 test("dense terminal path hover measures cold and warm native work", async () => {
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
   fs.mkdirSync(path.join(checkout, "dense"), { recursive: true });
@@ -531,8 +537,9 @@ test("dense terminal path hover measures cold and warm native work", async () =>
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.3));
   await enterWorkspace(page, "fixture");
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
+  await zoomDensePane(page, paneId);
+  await expect.poll(() => page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)?.cols ?? 0, paneId)).toBeGreaterThan(tokens.join(" ").length + 12);
   const grid = await page.evaluate((id) => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneGrid(id)!, paneId);
-  expect(grid.cols).toBeGreaterThan(tokens.join(" ").length + 12);
   await print(page, paneId, [tokens.join(" "), "DENSE-END"], "DENSE-END");
   const sourceHashes = Object.fromEntries([
     ["terminalLinks.ts", "../../web/src/terminalLinks.ts"],
@@ -557,7 +564,6 @@ test("dense terminal path hover measures cold and warm native work", async () =>
     expect(processes).toHaveLength(2);
     return { at: new Date().toISOString(), machineLoadAverage: os.loadavg(), freeMemoryBytes: os.freemem(), processes };
   };
-
   // Observe the real IPC handler and native filesystem calls, preserving
   // every argument, answer and refusal. These taps live only in this app.
   await app.evaluate(({ ipcMain }) => {
