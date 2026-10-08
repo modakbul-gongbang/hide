@@ -34,7 +34,7 @@ async function start(label: string): Promise<Stack> {
     const home = path.join(herdr.root, "home");
     const git = (...args: string[]) => execFileSync("git", ["-C", path.join(herdr.root, "fixture"), ...args], { env: { ...process.env, GIT_AUTHOR_NAME: "fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" } });
     git("init", "-q", "-b", "main");
-    git("commit", "-q", "--allow-empty", "-m", "fixture");
+    git("-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture");
     fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
     for (const agent of ["pi", "omp"]) {
       fs.mkdirSync(path.join(home, `.${agent}`, "agent"), { recursive: true });
