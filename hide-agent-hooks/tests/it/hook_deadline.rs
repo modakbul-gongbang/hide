@@ -7,28 +7,10 @@ use std::time::{Duration, Instant};
 
 use hide_platform::process::OwnedChild;
 
-/// A relinked macOS executable pays a first-exec validation cost. Warm only
-/// the owned hook and its existing sibling, with a five-second deadline each.
-fn warm_first_exec(hook: &Path) {
-    let sibling = hook
-        .parent()
-        .map(|dir| dir.join(format!("hide{}", std::env::consts::EXE_SUFFIX)));
-    for program in std::iter::once(hook.to_path_buf()).chain(sibling.filter(|path| path.exists())) {
-        let mut command = Command::new(program);
-        command
-            .arg("--help")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut child = OwnedChild::spawn(&mut command).unwrap();
-        child
-            .capture_until(Instant::now() + Duration::from_secs(5), 1)
-            .expect("first-exec warming must finish within its own bound");
-    }
-}
+use crate::programs;
 
 fn hook_command(home: &Path, mode: &str, event: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_hide-agent-hooks"));
+    let mut command = Command::new(programs::hook());
     command
         .args([mode, "--runtime", "claude-code", "--event", event])
         .env(hide_platform::host::HOME_VARIABLE, home)
@@ -51,7 +33,6 @@ fn hook_command(home: &Path, mode: &str, event: &str) -> Command {
 #[test]
 fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
     let home = tempfile::tempdir().unwrap();
-    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
     let mut command = hook_command(home.path(), "hook", "SessionStart");
     command.arg("--memory-injection");
     let mut child = OwnedChild::spawn(&mut command).unwrap();
@@ -76,7 +57,6 @@ fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
 #[test]
 fn prompt_hook_with_open_payload_stdin_does_not_hold_submission() {
     let home = tempfile::tempdir().unwrap();
-    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
     let mut command = hook_command(home.path(), "hook", "UserPromptSubmit");
     command.arg("--memory-injection");
     let started = Instant::now();
@@ -177,7 +157,6 @@ impl Drop for OutputPressure {
 #[test]
 fn prompt_hook_with_blocked_diagnostic_output_exits_without_holding_submission() {
     let home = tempfile::tempdir().unwrap();
-    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
     let (mut pressure, output) = OutputPressure::new();
     let mut command = hook_command(home.path(), "hook", "UserPromptSubmit");
     command.stdin(Stdio::null()).stderr(Stdio::from(output));
@@ -211,7 +190,6 @@ fn prompt_hook_with_blocked_diagnostic_output_exits_without_holding_submission()
 #[test]
 fn internal_hook_without_a_positive_owner_is_refused_before_effects() {
     let home = tempfile::tempdir().unwrap();
-    warm_first_exec(Path::new(env!("CARGO_BIN_EXE_hide-agent-hooks")));
     let mut command = hook_command(home.path(), "hook-inner", "UserPromptSubmit");
     command.stdin(Stdio::null());
     let mut child = OwnedChild::spawn(&mut command).unwrap();
