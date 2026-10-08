@@ -739,28 +739,21 @@ pub mod push {
     fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
         let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
         for agent in projection.agents() {
-            if agent.root_pane_id == agent.pane_id || agent.escalated {
-                let place = agent
-                    .place
-                    .as_deref()
-                    .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
-                    .unwrap_or_default();
-                let entry = roots.entry(agent.key()).or_insert((
-                    Effective::Other,
-                    String::new(),
-                    String::new(),
-                ));
-                let raised = entry.0 == Effective::NeedsYou;
-                entry.0 = if agent.human_notice {
-                    Effective::Other
-                } else if raised {
-                    Effective::NeedsYou
-                } else {
-                    Effective::from_group(&agent.group)
-                };
-                entry.1 = agent.title.clone();
-                entry.2 = place;
-            }
+            let place = agent
+                .place
+                .as_deref()
+                .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
+                .unwrap_or_default();
+            let state = if agent.root_pane_id != agent.pane_id && !agent.escalated {
+                // Still present, but no longer the operator's responsibility:
+                // clear its previous escalation without a disappearance grace.
+                Effective::Seen
+            } else if agent.human_notice {
+                Effective::Other
+            } else {
+                Effective::from_group(&agent.group)
+            };
+            roots.insert(agent.key(), (state, agent.title.clone(), place));
         }
         roots
     }
