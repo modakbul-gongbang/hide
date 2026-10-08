@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 const STORE_TIMEOUT: Duration = Duration::from_secs(5);
 // Finite side effects serialize without occupying the durable store or Runtime.
 // A concurrent spawn is refused instead of accumulating blocked workers.
-static SPAWN: Mutex<()> = Mutex::new(());
+pub(crate) static SPAWN: Mutex<()> = Mutex::new(());
 /// Tests share `SPAWN` through the process, so those that spawn take turns
 /// when a runner puts them on threads of one process.
 #[cfg(test)]
@@ -362,6 +362,7 @@ fn check_target(
     actor: &Actor,
     device: &str,
     kind: &str,
+    intent: &str,
     repository: Option<&str>,
     agent: bool,
 ) -> Result<(), String> {
@@ -377,9 +378,16 @@ fn check_target(
     // A node that did not answer says nothing about the repository or the
     // CLI, so it is the device that is unavailable; only its own answer can
     // refuse them.
-    let unavailable = |error: LinkError| match error {
-        LinkError::Refused(_) => None,
-        _ => Some("machine_unavailable".to_owned()),
+    let unavailable = |check: &str, error: LinkError| {
+        // The caller is told what to do next; what the node said stays here.
+        crate::diagnostic!(json!({
+            "component": "spawn", "kind": "device_check_failed", "device": device,
+            "intent": intent, "check": check, "cause": error.to_string()
+        }));
+        match error {
+            LinkError::Refused(_) => None,
+            _ => Some("machine_unavailable".to_owned()),
+        }
     };
     if let Some(repository) = repository {
         match call_as::<Option<RepositoryDirs>>(
@@ -391,7 +399,11 @@ fn check_target(
         ) {
             Ok(Some(_)) => {}
             Ok(None) => return Err("repository_unavailable".into()),
-            Err(error) => return Err(unavailable(error).unwrap_or("repository_unavailable".into())),
+            Err(error) => {
+                return Err(
+                    unavailable("repository", error).unwrap_or("repository_unavailable".into())
+                );
+            }
         }
     }
     if !agent {
@@ -406,7 +418,9 @@ fn check_target(
     ) {
         Ok(true) => Ok(()),
         Ok(false) => Err("agent_not_installed".into()),
-        Err(error) => Err(unavailable(error).unwrap_or("agent_not_installed".into())),
+        Err(error) => {
+            Err(unavailable("agent_installed", error).unwrap_or("agent_not_installed".into()))
+        }
     }
 }
 
@@ -416,7 +430,6 @@ fn spawn(
     actor: &Actor,
     mut command: Command,
 ) -> Result<Value, String> {
-    let _single = SPAWN.try_lock().map_err(|_| "spawn_busy")?;
     // The caller's own device is the absence of a device: one intent, one
     // spelling.
     if let Command::Spawn { machine, .. } = &mut command
@@ -493,6 +506,7 @@ fn spawn(
                 actor,
                 device,
                 kind,
+                intent,
                 // A retry whose pane exists needs the device only to be
                 // reachable: the repository and the agent were already used.
                 (!started).then_some(repo.as_str()),
@@ -500,6 +514,10 @@ fn spawn(
             )?;
         }
     }
+    // The device checks above only read, so a slow device never holds the
+    // process-wide lock that local and Factory spawns need; everything that
+    // creates something runs under it.
+    let _single = SPAWN.try_lock().map_err(|_| "spawn_busy")?;
     let parent_id = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
         if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
@@ -594,175 +612,218 @@ fn spawn(
             reason
         }
     })?;
-    if reserved.pane.is_none() {
-        // Reconcile a worktree whose creation reply was interrupted. The
-        // existing local/device connector and checkout owner are shared with
-        // the product's worktree/start path; no spawn-specific SSH exists.
-        let listed = request_with_connector(
-            connector.as_ref(),
-            "worktree.list",
-            crate::wire::worktree_list_params(repo)?,
-            Duration::from_secs(5),
-        )
-        .map_err(|error| format!("{error}"))?;
-        let existing = crate::wire::listed_worktree_path(listed, branch)?;
-        if let Some(existing) = existing {
-            if path.as_ref().is_some_and(|path| path != &existing) {
-                return Err("checkout_path_conflict".into());
-            }
-            let owner = crate::checkout_owner::OwnerOpen::Worktree {
-                path: existing.clone(),
-                repository_root: repo.clone(),
-                label: name.clone(),
-            };
-            // The persistent unique tab label makes an interrupted tab-create
-            // discoverable before a retry could create another child pane.
-            let snapshot = request_with_connector(
+    // A device that stops answering partway leaves the spawn reserved and
+    // resumable: the caller is told the device is unavailable, and the same
+    // command continues once it answers again.
+    let (spawn_id, on_device) = (reserved.id.clone(), reserved.machine.is_some());
+    let placed = (|| -> Result<Value, String> {
+        if reserved.pane.is_none() {
+            // Reconcile a worktree whose creation reply was interrupted. The
+            // existing local/device connector and checkout owner are shared with
+            // the product's worktree/start path; no spawn-specific SSH exists.
+            let listed = request_with_connector(
                 connector.as_ref(),
-                "session.snapshot",
-                crate::wire::empty_params(),
+                "worktree.list",
+                crate::wire::worktree_list_params(repo)?,
                 Duration::from_secs(5),
             )
             .map_err(|error| format!("{error}"))?;
-            let snapshot =
-                crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
-            let label = format!("hide:{}", reserved.id);
-            let existing_pane = snapshot
-                .tabs
-                .iter()
-                .find(|tab| tab.label == label)
-                .and_then(|tab| snapshot.panes.iter().find(|pane| pane.tab_id == tab.tab_id))
-                .or_else(|| {
-                    snapshot
-                        .workspaces
-                        .iter()
-                        .find(|workspace| workspace.label == label)
-                        .and_then(|workspace| {
-                            snapshot
-                                .panes
-                                .iter()
-                                .find(|pane| pane.workspace_id == workspace.workspace_id)
-                        })
-                })
-                .map(|pane| pane.pane_id.clone());
-            let pane = match existing_pane {
-                Some(pane) => pane,
-                None => {
-                    crate::live::open_owner_tab(
-                        connector.as_ref(),
-                        &owner,
-                        &existing,
-                        &label,
-                        false,
-                        Default::default(),
-                    )
-                    .map_err(|error| format!("{error:?}"))?
-                    .pane_id
+            let existing = crate::wire::listed_worktree_path(listed, branch)?;
+            if let Some(existing) = existing {
+                if path.as_ref().is_some_and(|path| path != &existing) {
+                    return Err("checkout_path_conflict".into());
                 }
-            };
-            reserved = serde_json::from_value(mutate(
-                client,
-                authority,
-                actor,
-                Mutation::Advance {
-                    id: reserved.id.clone(),
-                    path: Some(existing),
-                    pane: Some(pane),
-                    child: None,
-                },
-            )?)
-            .map_err(|_| "spawn_unavailable")?;
-        } else {
-            let mut params = crate::wire::worktree_create_params(repo, branch, None, false)?;
-            params["label"] = json!(format!("hide:{}", reserved.id));
-            if let Some(path) = path {
-                params["path"] = json!(path);
+                let owner = crate::checkout_owner::OwnerOpen::Worktree {
+                    path: existing.clone(),
+                    repository_root: repo.clone(),
+                    label: name.clone(),
+                };
+                // The persistent unique tab label makes an interrupted tab-create
+                // discoverable before a retry could create another child pane.
+                let snapshot = request_with_connector(
+                    connector.as_ref(),
+                    "session.snapshot",
+                    crate::wire::empty_params(),
+                    Duration::from_secs(5),
+                )
+                .map_err(|error| format!("{error}"))?;
+                let snapshot =
+                    crate::wire::snapshot_response(snapshot).map_err(|_| "snapshot_unavailable")?;
+                let label = format!("hide:{}", reserved.id);
+                let existing_pane = snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.label == label)
+                    .and_then(|tab| snapshot.panes.iter().find(|pane| pane.tab_id == tab.tab_id))
+                    .or_else(|| {
+                        snapshot
+                            .workspaces
+                            .iter()
+                            .find(|workspace| workspace.label == label)
+                            .and_then(|workspace| {
+                                snapshot
+                                    .panes
+                                    .iter()
+                                    .find(|pane| pane.workspace_id == workspace.workspace_id)
+                            })
+                    })
+                    .map(|pane| pane.pane_id.clone());
+                let pane = match existing_pane {
+                    Some(pane) => pane,
+                    None => {
+                        crate::live::open_owner_tab(
+                            connector.as_ref(),
+                            &owner,
+                            &existing,
+                            &label,
+                            false,
+                            Default::default(),
+                        )
+                        .map_err(|error| format!("{error:?}"))?
+                        .pane_id
+                    }
+                };
+                reserved = serde_json::from_value(mutate(
+                    client,
+                    authority,
+                    actor,
+                    Mutation::Advance {
+                        id: reserved.id.clone(),
+                        path: Some(existing),
+                        pane: Some(pane),
+                        child: None,
+                    },
+                )?)
+                .map_err(|_| "spawn_unavailable")?;
+            } else {
+                let mut params = crate::wire::worktree_create_params(repo, branch, None, false)?;
+                params["label"] = json!(format!("hide:{}", reserved.id));
+                if let Some(path) = path {
+                    params["path"] = json!(path);
+                }
+                let result = request_with_connector(
+                    connector.as_ref(),
+                    "worktree.create",
+                    params,
+                    Duration::from_secs(5),
+                )
+                .map_err(|error| format!("{error}"))?;
+                let created = crate::wire::created_worktree(result)?;
+                reserved = serde_json::from_value(mutate(
+                    client,
+                    authority,
+                    actor,
+                    Mutation::Advance {
+                        id: reserved.id.clone(),
+                        path: Some(created.path),
+                        pane: Some(created.pane_id),
+                        child: None,
+                    },
+                )?)
+                .map_err(|_| "spawn_unavailable")?;
             }
-            let result = request_with_connector(
-                connector.as_ref(),
-                "worktree.create",
-                params,
-                Duration::from_secs(5),
-            )
-            .map_err(|error| format!("{error}"))?;
-            let created = crate::wire::created_worktree(result)?;
-            reserved = serde_json::from_value(mutate(
-                client,
-                authority,
-                actor,
-                Mutation::Advance {
-                    id: reserved.id.clone(),
-                    path: Some(created.path),
-                    pane: Some(created.pane_id),
-                    child: None,
-                },
-            )?)
-            .map_err(|_| "spawn_unavailable")?;
         }
-    }
-    let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
-    let observed = agents(connector.as_ref())?;
-    let live = observed
-        .iter()
-        .find(|agent| native_matches(agent, pane, Some(name), kind));
-    if live.is_none() {
-        // A changed session in an already registered child is refused. A
-        // retry never launches over a replacement occupant.
-        if reserved.child.is_some() {
-            return Err("child_identity_changed".into());
-        }
-        crate::live::start_agent(
-            connector.as_ref(),
-            &reserved.id,
-            pane,
-            name,
-            kind,
-            args.clone(),
-            codex_daemon,
-        )?;
-    }
-    let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
-    let mut child = record(
-        &native,
-        HostIdentity {
-            machine: &child_device,
-            scope: &host_scope,
-            native_machine: &native_machine,
-            on_node,
-        },
-        pane.into(),
-        name.clone(),
-        reserved.mode.responsibility(&parent_id),
-        reserved.path.clone(),
-    )?;
-    child.origin = reserved.mode.origin(&parent_id);
-    reserved = serde_json::from_value(mutate(
-        client,
-        authority,
-        actor,
-        Mutation::BindChild {
-            id: reserved.id.clone(),
-            record: child,
-        },
-    )?)
-    .map_err(|_| "spawn_unavailable")?;
-    let child_id = reserved.child.clone().ok_or("child_unavailable")?;
-    publish_tokens(client, connector.as_ref(), &child_id)?;
-    mutate(
-        client,
-        authority,
-        actor,
-        Mutation::Complete { id: reserved.id },
-    )?;
-    let ledger = state(client)?;
-    Ok(view(
-        ledger
-            .agents
+        let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
+        let observed = agents(connector.as_ref())?;
+        let live = observed
             .iter()
-            .find(|record| record.id == child_id)
-            .ok_or("child_unavailable")?,
-        &ledger,
-    ))
+            .find(|agent| native_matches(agent, pane, Some(name), kind));
+        if live.is_none() {
+            // A changed session in an already registered child is refused. A
+            // retry never launches over a replacement occupant.
+            if reserved.child.is_some() {
+                return Err("child_identity_changed".into());
+            }
+            crate::live::start_agent(
+                connector.as_ref(),
+                &reserved.id,
+                pane,
+                name,
+                kind,
+                args.clone(),
+                codex_daemon,
+            )?;
+        }
+        let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
+        let mut child = record(
+            &native,
+            HostIdentity {
+                machine: &child_device,
+                scope: &host_scope,
+                native_machine: &native_machine,
+                on_node,
+            },
+            pane.into(),
+            name.clone(),
+            reserved.mode.responsibility(&parent_id),
+            reserved.path.clone(),
+        )?;
+        child.origin = reserved.mode.origin(&parent_id);
+        reserved = serde_json::from_value(mutate(
+            client,
+            authority,
+            actor,
+            Mutation::BindChild {
+                id: reserved.id.clone(),
+                record: child,
+            },
+        )?)
+        .map_err(|_| "spawn_unavailable")?;
+        let child_id = reserved.child.clone().ok_or("child_unavailable")?;
+        publish_tokens(client, connector.as_ref(), &child_id)?;
+        mutate(
+            client,
+            authority,
+            actor,
+            Mutation::Complete { id: reserved.id },
+        )?;
+        let ledger = state(client)?;
+        Ok(view(
+            ledger
+                .agents
+                .iter()
+                .find(|record| record.id == child_id)
+                .ok_or("child_unavailable")?,
+            &ledger,
+        ))
+    })();
+    placed.map_err(|reason| {
+        if on_device {
+            device_unreachable(connector.as_ref(), &child_device, &spawn_id, reason)
+        } else {
+            reason
+        }
+    })
+}
+
+/// A failure of a spawn's work on a device, as the caller should read it: the
+/// device is unavailable when its Herdr no longer answers, whatever step was
+/// running; any other failure keeps its own code. The dropped cause is logged
+/// with the device and the spawn it belongs to.
+fn device_unreachable(
+    connector: &dyn ApiConnector,
+    device: &str,
+    spawn: &str,
+    reason: String,
+) -> String {
+    match request_with_connector(
+        connector,
+        "agent.list",
+        crate::wire::empty_params(),
+        Duration::from_secs(2),
+    ) {
+        Err(
+            error @ (hide_herdr_client::ApiError::NotRunning(_)
+            | hide_herdr_client::ApiError::Transport(_)),
+        ) => {
+            crate::diagnostic!(json!({
+                "component": "spawn", "kind": "device_unreachable", "device": device,
+                "spawn": spawn, "reason": reason, "cause": error.to_string()
+            }));
+            "machine_unavailable".to_owned()
+        }
+        _ => reason,
+    }
 }
 
 pub(crate) fn link_fork(

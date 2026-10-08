@@ -15,7 +15,7 @@ use crate::node_access::{LinkAnswer, LinkError, NodeLink};
 use crate::runtime::delivery::tests::{authority, fixture};
 use hide_node_link::protocol::Call;
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const DEVICE: &str = "mini";
 const WORKTREE: &str = "/srv/repo.worktrees/topic";
@@ -25,10 +25,13 @@ const WORKTREE: &str = "/srv/repo.worktrees/topic";
 struct Node {
     repository: AtomicBool,
     installed: AtomicBool,
+    /// How many checks the spawn has asked this node.
+    calls: AtomicUsize,
 }
 
 impl NodeLink for Node {
     fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(LinkAnswer::Parsed(match call {
             Call::Repository { .. } if self.repository.load(Ordering::SeqCst) => {
                 json!({"root": "/srv/repo", "git_dir": "/srv/repo/.git",
@@ -133,6 +136,7 @@ fn spawner() -> Spawner {
     let node = Arc::new(Node {
         repository: AtomicBool::new(true),
         installed: AtomicBool::new(true),
+        calls: AtomicUsize::new(0),
     });
     {
         let mut guard = runtime.lock().unwrap();
@@ -473,4 +477,99 @@ fn a_caller_on_a_device_may_name_no_other_device() {
         );
     }
     assert!(runtime.spawn_target(crate::node::TEST_NODE, DEVICE).is_ok());
+}
+
+/// A device whose Herdr stops answering after the node passed the checks is
+/// unavailable, not a raw transport error, and the same command continues
+/// the spawn once the device answers again.
+#[test]
+fn a_device_herdr_that_stops_answering_is_unavailable_and_the_retry_converges() {
+    let spawner = spawner();
+    let install = |connector: Arc<dyn hide_herdr_client::ApiConnector>| {
+        spawner
+            .runtime
+            .lock()
+            .unwrap()
+            .install_remote_control(RemoteControlContext::new(
+                DEVICE,
+                connector,
+                Arc::downgrade(&spawner.runtime),
+                ChangeNotifier::noop(),
+            ));
+    };
+    install(Arc::new(hide_herdr_client::LocalSocketConnector::new(
+        "/tmp/hide-remote-spawn-no-herdr.sock",
+    )));
+    assert_eq!(
+        spawner
+            .spawn(Some("here"), Some(DEVICE), "down")
+            .expect_err("the device Herdr is down"),
+        "machine_unavailable"
+    );
+    let reserved = spawner.ledger().spawns;
+    assert_eq!(reserved.len(), 1);
+    assert!(reserved[0].pane.is_none() && reserved[0].child.is_none());
+    install(Arc::new(spawner.herdr.connector()));
+    let answer = spawner
+        .spawn(Some("here"), Some(DEVICE), "down")
+        .expect("the retry continues the same spawn");
+    let ledger = spawner.ledger();
+    assert_eq!(ledger.spawns.len(), 1);
+    assert_eq!(ledger.spawns[0].child.as_deref(), answer["id"].as_str());
+    assert_eq!(count(&spawner.herdr.methods(), "worktree.create"), 1);
+}
+
+/// An agent on a device is refused by the spawn itself, before the intent is
+/// reserved and before anything is asked of any Herdr.
+#[test]
+fn a_spawn_by_a_device_caller_is_refused_before_anything_is_made() {
+    let spawner = spawner();
+    let mut actor = spawner.actor.clone();
+    actor.device_id = DEVICE.into();
+    for machine in ["studio", crate::node::TEST_NODE] {
+        let error = crate::coordination::run(
+            spawner.client.clone(),
+            authority(&actor),
+            actor.clone(),
+            Command::Spawn {
+                parent: Some("here".into()),
+                machine: Some(machine.into()),
+                name: "worker".into(),
+                intent: "from-device".into(),
+                kind: "codex".into(),
+                repo: "/srv/repo".into(),
+                branch: "topic".into(),
+                path: None,
+                args: Vec::new(),
+            },
+        )
+        .expect_err("refused");
+        assert_eq!(error, "machine_not_permitted", "{machine}");
+    }
+    assert!(spawner.ledger().spawns.is_empty());
+    assert!(spawner.herdr.methods().is_empty());
+    assert_eq!(spawner.node.calls.load(Ordering::SeqCst), 0);
+}
+
+/// The device checks only read, so they run before the process-wide lock: a
+/// spawn that finds the lock held has already judged the device, creates
+/// nothing, and the same command works once the lock is free.
+#[test]
+fn a_busy_spawn_lock_refuses_after_the_checks_and_creates_nothing() {
+    let spawner = spawner();
+    {
+        let _held = crate::coordination::SPAWN
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            spawner
+                .spawn(Some("here"), Some(DEVICE), "busy")
+                .expect_err("busy"),
+            "spawn_busy"
+        );
+    }
+    assert!(spawner.node.calls.load(Ordering::SeqCst) > 0);
+    assert!(spawner.ledger().spawns.is_empty());
+    assert!(spawner.herdr.methods().is_empty());
+    assert!(spawner.spawn(Some("here"), Some(DEVICE), "busy").is_ok());
 }

@@ -1363,6 +1363,7 @@
                 }
             ],
             "refusals": [
+                "spawn_busy",
                 "machine_unknown",
                 "machine_not_permitted",
                 "machine_unavailable",
@@ -1671,7 +1672,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:0a1c1fc4d9498743222b4d03b794560668c192bdc707a4e3632a40602ff59736",
+    "digest": "sha256:c151836161c948d53adc7d3224d3c6b5ad3c9cd9d9f3450d1d403e67269e596f",
     "envelopes": {
         "agent": {
             "answer": "value",

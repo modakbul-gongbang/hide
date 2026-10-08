@@ -215,6 +215,7 @@ pub const COMMANDS: &[Spec] = &[
         rest: Some("the agent's own arguments"),
         answers: &["agent"],
         refusals: &[
+            "spawn_busy",
             "machine_unknown",
             "machine_not_permitted",
             "machine_unavailable",

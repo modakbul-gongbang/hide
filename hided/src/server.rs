@@ -962,6 +962,7 @@ fn delivery_next_action(code: &str) -> &'static str {
         "agent_not_installed" => {
             "Install the agent CLI on the device so it is on the device's PATH, then run the command again"
         }
+        "spawn_busy" => "The first request is still running; wait, then run the same command again",
         "machine_not_permitted" => {
             "Run the command from an agent on the machine that runs Hide, or leave out --machine"
         }
@@ -3297,6 +3298,7 @@ mod tests {
         );
         assert!(none.contains("No other device is connected"), "{none}");
         for code in [
+            "spawn_busy",
             "machine_not_permitted",
             "machine_unavailable",
             "repository_unavailable",
