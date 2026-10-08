@@ -286,6 +286,11 @@ test("live check retains integrity loss before a later fatal artifact refusal", 
       expect(report.agents[0].verdict).toBe("unsafe");
       expect(fs.readFileSync(path.join(run, "report.md"), "utf8")).toContain('"status": "integrity_unproven"');
       clean = true;
+    } catch (error) {
+      // Keep the private tool report and its screen reads beside other CI logs.
+      const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
+      if (evidence && fs.existsSync(run)) fs.cpSync(run, path.join(evidence, `${scenario}-${path.basename(root)}`), { recursive: true });
+      throw error;
     } finally { if (clean) fs.rmSync(root, { recursive: true, force: true }); }
   }
 });
