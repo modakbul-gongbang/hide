@@ -130,6 +130,8 @@ static int run_as_codex(const char *argv0) {
   return strncmp(base, "codex", 5) == 0;
 }
 
+#include "live-check.h"
+
 // A Factory question fixture needs the existing owned-command runner's native
 // session report and sentinel command. Provider/auth/model requests above keep
 // using this shim; only an explicitly configured interactive pane hands off.
@@ -163,6 +165,7 @@ int main(int argc, char **argv) {
   _setmode(0, _O_BINARY);
   _setmode(1, _O_BINARY);
 #endif
+  if (getenv("HIDE_E2E_LIVE_CHECK")) return live_check(argc, argv);
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
     if (strcmp(argv[i], "--input-format") == 0) return models();
