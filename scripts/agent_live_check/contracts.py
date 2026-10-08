@@ -66,6 +66,11 @@ def recipes(directory: Path, declared: dict) -> dict:
                 or any(path not in value["known"] or format not in {"json", "toml"}
                        for path, format in shared.items())):
             raise ProtectionError("invalid_shared_configuration_declaration")
+        preparation = value.get("startup_preparation")
+        if preparation is not None and (
+                not isinstance(preparation, dict) or set(preparation) != {"prompt", "default", "selected", "provenance"}
+                or any(not isinstance(item, str) or not item for item in preparation.values())):
+            raise ProtectionError("invalid_startup_preparation_declaration")
         result[value["id"]] = value
     if set(result) != set(declared):
         raise ProtectionError("recipe_adapter_coverage_mismatch")

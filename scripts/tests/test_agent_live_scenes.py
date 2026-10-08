@@ -6,6 +6,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import threading
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -13,12 +14,81 @@ from agent_live_check.contracts import recipes, source_contract
 from agent_live_check.conversation import messages
 from agent_live_check.protection import ProtectionError
 from agent_live_check.scenes import transcript
-from agent_live_check.setup import configure
+from agent_live_check.setup import configure, prepare_startup
+from agent_live_check.runtime import Runtime
+from agent_live_check.authentication import AuthenticationRequired
+from agent_live_check.processes import ProcessError
 from agent_live_check.history import LABEL, seed
 from agent_live_check.scenes import startup_blocker
 
 
 class ScenePreparation(unittest.TestCase):
+    def trust_fixture(self, root):
+        checkout = Path(__file__).resolve().parents[2]
+        recipe = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])["claude-code"]
+        cwd = root / "owned-folder"
+        cwd.mkdir(mode=0o700)
+        state, commands = [0], []
+        prompt = "Is this a project you created or one you trust?\n"
+        screens = [prompt + "❯ No, exit\n  Yes, I trust this folder\n",
+                   prompt + "  No, exit\n❯ Yes, I trust this folder\n", "❯ \n"]
+        actual = {"pane_id": "owned", "workspace_id": "owned-workspace", "cwd": str(cwd),
+                  "agent": "claude", "name": "live-claude-code-rest"}
+        def command(args):
+            commands.append(args)
+            state[0] += 1
+        runtime = SimpleNamespace(fixture_bin=None, probe=root, workspaces={"owned-workspace"},
+                                  checkout_directories={cwd}, pane_credentials={"owned": object()},
+                                  screen=lambda pane: screens[state[0]], command=command,
+                                  agent=lambda pane: {**actual, "agent_status": "idle" if state[0] == 2 else "blocked",
+                                                      "launch_pending": state[0] != 2},
+                                  owner=SimpleNamespace(deadline=time.monotonic() + 5, cancelled=threading.Event()))
+        runtime.wait = lambda predicate, seconds: Runtime.wait(runtime, predicate, seconds)
+        return runtime, recipe, cwd, state, commands, screens, actual
+
+    def test_nonstartup_trust_preparation_confirms_each_owned_selection_before_ready(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            runtime, recipe, cwd, state, commands, _, _ = self.trust_fixture(root)
+            evidence = root / "preparation.json"
+            self.assertFalse(prepare_startup(runtime, "owned", recipe, "startup", cwd,
+                                            "owned-workspace", 1, evidence))
+            self.assertEqual(commands, [])
+            self.assertTrue(prepare_startup(runtime, "owned", recipe, "rest", cwd,
+                                           "owned-workspace", 1, evidence))
+            self.assertEqual(commands, [["pane", "send-keys", "owned", "down"],
+                                        ["pane", "send-keys", "owned", "enter"]])
+            record = json.loads(evidence.read_text())
+            self.assertEqual(record["outcome"], "ready")
+            self.assertEqual(record["key_attempts"], ["down", "enter"])
+            self.assertEqual([row["phase"] for row in record["samples"]], ["before", "selected", "confirmation", "ready"])
+            self.assertEqual(state[0], 2)
+
+    def test_trust_preparation_refuses_changed_identity_selection_or_authentication(self):
+        cases = [(field, value) for field, value in (("pane_id", "other"), ("workspace_id", "other"),
+                 ("cwd", "/operator"), ("agent", "codex"), ("name", "other"))]
+        cases += [("default", None), ("authentication", None), ("registration", None), ("deadline", None)]
+        for field, value in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as name:
+                root = Path(name).resolve()
+                runtime, recipe, cwd, _, commands, screens, actual = self.trust_fixture(root)
+                if field == "default":
+                    screens[0] = screens[1]
+                elif field == "authentication":
+                    screens[1] = "Sign in to continue"
+                elif field == "registration":
+                    runtime.pane_credentials.clear()
+                elif field == "deadline":
+                    runtime.owner.deadline = time.monotonic() - 1
+                else:
+                    actual[field] = value
+                evidence = root / "preparation.json"
+                expected = AuthenticationRequired if field == "authentication" else ProcessError
+                with self.assertRaises(expected):
+                    prepare_startup(runtime, "owned", recipe, "rest", cwd, "owned-workspace", 1, evidence)
+                self.assertEqual(commands, [["pane", "send-keys", "owned", "down"]] if field == "authentication" else [])
+                self.assertEqual(json.loads(evidence.read_text())["outcome"], "unknown")
+
     def test_blocked_startup_is_observed_only_for_the_owned_matching_native_agent(self):
         recipe = {"id": "pi", "kind": "pi", "scenes": {"startup": {"arrived": "Do you trust"}}}
         actual = {"pane_id": "owned", "workspace_id": "owned-workspace", "cwd": "/owned/probe",

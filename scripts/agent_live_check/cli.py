@@ -23,8 +23,8 @@ from .protection import ConfigGuard, ProtectionError, beneath, private_directory
 from .report import save
 from .runtime import Runtime, clean_env
 from .sandbox import WriteSandbox
-from .scenes import observe, startup_blocker
-from .setup import configure
+from .scenes import observe, readiness_refusal, startup_blocker
+from .setup import configure, prepare_startup
 
 
 def parser():
@@ -198,6 +198,12 @@ def main(argv=None):
                             if code:
                                 write_private(run / (recipe["id"] + "-" + scene + "-start-error.json"),
                                               json.dumps({"exit_code": code, "stdout": output, "stderr": err}).encode())
+                            prepared = False
+                            if not code or readiness_refusal((code, output, err)):
+                                prepared = prepare_startup(runtime, pane, recipe, scene, cwd, workspace,
+                                                           args.scene_seconds,
+                                                           run / (recipe["id"] + "-" + scene + "-startup-preparation.json"))
+                            if code and not prepared:
                                 actual = runtime.agent(pane)
                                 refused_screen = runtime.screen(pane)
                                 require_no_login(refused_screen)

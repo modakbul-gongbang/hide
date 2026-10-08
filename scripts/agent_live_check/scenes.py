@@ -22,20 +22,28 @@ def arrived(data: dict, screen: str, bell: str) -> bool:
         not data.get("controls") or matches(data["controls"], screen, bell))
 
 
-def startup_blocker(scene, recipe, pane, result, actual, screen, *, cwd, workspace):
+def owned_launch(scene, recipe, pane, actual, *, cwd, workspace):
+    return bool(actual and actual.get("pane_id") == pane and actual.get("agent") == recipe["kind"]
+                and actual.get("workspace_id") == workspace and actual.get("cwd") == str(cwd)
+                and actual.get("name") in (None, "live-" + recipe["id"] + "-" + scene))
+
+
+def readiness_refusal(result):
     code, _, error = result
     try:
         refusal = json.loads(error).get("error", {}).get("code")
     except (ValueError, AttributeError):
         return False
+    return bool(code and refusal in ("agent_not_ready", "timeout"))
+
+
+def startup_blocker(scene, recipe, pane, result, actual, screen, *, cwd, workspace):
     # Startup readiness can time out on the very unclassified dialog this
     # tool measures. Registration can still be absent at that point. Fresh
     # owned pane/workspace/cwd/kind plus the actual menu proves arrival;
     # Herdr's blocked classification is an observation, never a prerequisite.
-    return bool(code and scene == "startup" and refusal in ("agent_not_ready", "timeout") and actual
-                and actual.get("pane_id") == pane and actual.get("agent") == recipe["kind"]
-                and actual.get("workspace_id") == workspace and actual.get("cwd") == str(cwd)
-                and actual.get("name") in (None, "live-" + recipe["id"] + "-" + scene)
+    return bool(readiness_refusal(result) and scene == "startup"
+                and owned_launch(scene, recipe, pane, actual, cwd=cwd, workspace=workspace)
                 and arrived(recipe["scenes"]["startup"], screen, ""))
 
 

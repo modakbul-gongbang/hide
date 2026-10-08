@@ -25,6 +25,12 @@
     ".claude/debug"
   ],
   "login": "Run claude auth login yourself; this tool never logs in.",
+  "startup_preparation": {
+    "prompt": "Is this a project you created or one you trust\\?",
+    "default": "^\\s*\u276f\\s*No, exit\\s*$",
+    "selected": "^\\s*\u276f\\s*Yes, I trust this folder\\s*$",
+    "provenance": "Observed Claude 2.1.292 owned-folder dialog; explicit non-startup preparation decision."
+  },
   "scenes": {
     "rest": {
       "send": "",

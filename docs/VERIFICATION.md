@@ -146,6 +146,11 @@ The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
 An unclassified startup menu remains measurable when the pinned CLI's readiness wait expires: its pane, workspace, cwd, agent kind and actual menu must match the owned launch before observation continues.
 Registration may still be absent after that timeout; if an agent name is present, it must match the requested name.
 Other startup refusals retain their screen and agent evidence without being counted as arrival.
+The startup scene never auto-selects trust, and a blocked startup receives no bell input.
+For other scenes, an observed recipe may prepare the owned folder by selecting its explicit trust option with Down and Enter before the scene baseline.
+Each key requires fresh matching pane, workspace, cwd, agent kind and selection evidence; an unknown option, changed identity, login prompt or missing ready composer prevents the scene from proceeding.
+Preparation has one scene deadline, two key attempts at most and at most four retained frames, saved separately from bell observations.
+This does not grant writes to shared operator trust files; any resulting private probe key follows the shared-file observer and leftover policy below.
 
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
 It never opens a renderer or controls the installed app.

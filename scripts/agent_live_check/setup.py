@@ -3,8 +3,79 @@
 import json
 from pathlib import Path
 import sys
+import time
 
-from .protection import private_directory, write_private
+from .authentication import require_no_login
+from .processes import ProcessError
+from .protection import beneath, private_directory, write_private
+from .scenes import matches, owned_launch
+
+
+def prepare_startup(runtime, pane, recipe, scene, cwd, workspace, seconds, evidence):
+    """Select only an observed owned-folder trust option before other scenes."""
+    data = recipe.get("startup_preparation")
+    if scene == "startup" or runtime.fixture_bin or not data:
+        return False
+    screen = runtime.screen(pane)
+    require_no_login(screen)
+    if not matches(data["prompt"], screen, ""):
+        return False
+    record = {"scene": scene, "purpose": "owned_folder_trust_preparation", "outcome": "unknown", "key_attempts": []}
+    samples = {}
+    deadline = min(runtime.owner.deadline, time.monotonic() + seconds)
+
+    def remaining():
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise ProcessError("scene_timeout")
+        return value
+
+    def frame(phase):
+        screen = runtime.screen(pane)
+        actual = runtime.agent(pane)
+        samples[phase] = {"phase": phase, "screen": screen, "agent": actual}
+        require_no_login(screen)
+        if (workspace not in runtime.workspaces or pane not in runtime.pane_credentials
+                or cwd not in runtime.checkout_directories or not beneath(cwd, runtime.probe)
+                or not owned_launch(scene, recipe, pane, actual, cwd=cwd, workspace=workspace)):
+            raise ProcessError("startup_preparation_identity_not_owned")
+        return screen, actual
+
+    def selected(phase, option, other):
+        screen, _ = frame(phase)
+        return (matches(data["prompt"], screen, "") and matches(data[option], screen, "")
+                and not matches(data[other], screen, ""))
+
+    try:
+        if not selected("before", "default", "selected"):
+            raise ProcessError("startup_preparation_default_not_observed")
+        remaining()
+        record["key_attempts"].append("down")
+        runtime.command(["pane", "send-keys", pane, "down"])
+        runtime.wait(lambda: selected("selected", "selected", "default"), remaining())
+        # Re-read immediately before Enter; never confirm a stale selection.
+        if not selected("confirmation", "selected", "default"):
+            raise ProcessError("startup_preparation_selection_changed")
+        remaining()
+        record["key_attempts"].append("enter")
+        runtime.command(["pane", "send-keys", pane, "enter"])
+
+        def ready():
+            screen, actual = frame("ready")
+            remaining()
+            return (actual["agent_status"] in ("idle", "done") and not actual.get("launch_pending")
+                    and not matches(data["prompt"], screen, "")
+                    and matches(recipe["scenes"]["rest"]["arrived"], screen, ""))
+
+        runtime.wait(ready, remaining())
+        record["outcome"] = "ready"
+        return True
+    except Exception as error:
+        record["reason"] = str(error)
+        raise
+    finally:
+        record["samples"] = list(samples.values())
+        write_private(evidence, json.dumps(record, indent=2).encode())
 
 
 def configure(runtime, launch: Path, recipe: dict, scene: str, cwd: Path) -> list[str]:
