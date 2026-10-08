@@ -252253,7 +252253,7 @@
                           "type": "text",
                           "id": "fx-obs-set-l-cap",
                           "name": "Observer · 설정: 헤더와 사이드바가 고른 ",
-                          "content": "Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 바로 보인다",
+                          "content": "Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 보이고, 작업자는 후보 중 Factory AI가 Task마다 고른다",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-subhead",
@@ -254847,8 +254847,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "fx-obs-set-l-set-wk-n",
-                                                  "name": "Task를 하는 에이전트",
-                                                  "content": "Task를 하는 에이전트",
+                                                  "name": "Factory AI가 Task마다 카드와 설명을 보",
+                                                  "content": "Factory AI가 Task마다 카드와 설명을 보고 고름 · 사용량이 막히면 다음 후보",
                                                   "fill": "$--muted-foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption",
@@ -254866,19 +254866,19 @@
                                               "children": [
                                                 {
                                                   "type": "frame",
-                                                  "id": "fx-obs-set-l-set-wk-a",
+                                                  "id": "fx-obs-set-l-set-wk0",
                                                   "name": "Column",
                                                   "children": [
                                                     {
                                                       "type": "frame",
-                                                      "id": "fx-obs-set-l-set-wk-a-h",
+                                                      "id": "fx-obs-set-l-set-wk0-h",
                                                       "name": "Row",
                                                       "children": [
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-set-l-set-wk-a-l",
-                                                          "name": "에이전트",
-                                                          "content": "에이전트",
+                                                          "id": "fx-obs-set-l-set-wk0-l",
+                                                          "name": "기본",
+                                                          "content": "기본",
                                                           "fill": "$--foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-subhead",
@@ -254886,14 +254886,14 @@
                                                         },
                                                         {
                                                           "type": "frame",
-                                                          "id": "fx-obs-set-l-set-wk-a-s",
+                                                          "id": "fx-obs-set-l-set-wk0-s",
                                                           "name": "Spacer",
                                                           "children": [],
                                                           "width": "fill_container",
                                                           "height": 1
                                                         },
                                                         {
-                                                          "id": "fx-obs-set-l-set-wk-a-a",
+                                                          "id": "fx-obs-set-l-set-wk0-a",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -254911,7 +254911,7 @@
                                                           }
                                                         },
                                                         {
-                                                          "id": "fx-obs-set-l-set-wk-a-m",
+                                                          "id": "fx-obs-set-l-set-wk0-m",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -254930,7 +254930,7 @@
                                                         },
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-set-l-set-wk-a-el",
+                                                          "id": "fx-obs-set-l-set-wk0-el",
                                                           "name": "effort",
                                                           "content": "effort",
                                                           "fill": "$--muted-foreground",
@@ -254939,7 +254939,7 @@
                                                           "fontWeight": "400"
                                                         },
                                                         {
-                                                          "id": "fx-obs-set-l-set-wk-a-e",
+                                                          "id": "fx-obs-set-l-set-wk0-e",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -254949,10 +254949,178 @@
                                                           "descendants": {
                                                             "hideui:sel-t": {
                                                               "fill": "$--foreground",
-                                                              "content": "xhigh"
+                                                              "content": "high"
                                                             },
                                                             "hideui:sel-i": {
                                                               "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-set-l-set-wk0-xp",
+                                                          "name": "Pad",
+                                                          "children": [],
+                                                          "width": 20,
+                                                          "height": 1
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-l-set-wk0-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk0-w-t",
+                                                          "name": "대부분의 Task",
+                                                          "content": "대부분의 Task",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-l-set-wk-r1",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-l-set-wk1",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-l-set-wk1-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk1-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-set-l-set-wk1-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk1-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Claude Code"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk1-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "opus"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk1-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk1-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "max"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk1-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
                                                             }
                                                           }
                                                         }
@@ -254963,14 +255131,34 @@
                                                       "width": "fill_container"
                                                     },
                                                     {
-                                                      "type": "text",
-                                                      "id": "fx-obs-set-l-set-wk-d",
-                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다",
-                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다. 모든 프로젝트 설정에서 바꿉니다",
-                                                      "fill": "$--muted-foreground",
-                                                      "fontFamily": "$--font-ui",
-                                                      "fontSize": "$--text-caption",
-                                                      "fontWeight": "400"
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-l-set-wk1-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk1-w-t",
+                                                          "name": "herdr-core, 동시성, 큰 리팩터",
+                                                          "content": "herdr-core, 동시성, 큰 리팩터",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
                                                     }
                                                   ],
                                                   "layout": "vertical",
@@ -254978,6 +255166,227 @@
                                                   "width": "fill_container",
                                                   "padding": [
                                                     "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-l-set-wk-r2",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-l-set-wk2",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-l-set-wk2-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk2-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-set-l-set-wk2-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk2-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Codex"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk2-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "gpt-6.1-luna"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk2-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk2-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "low"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-l-set-wk2-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
+                                                            }
+                                                          }
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-l-set-wk2-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-l-set-wk2-w-t",
+                                                          "name": "문구, 문서, 작은 UI",
+                                                          "content": "문구, 문서, 작은 UI",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-l-set-wk-r3",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-l-set-wk-add",
+                                                  "name": "Row",
+                                                  "children": [
+                                                    {
+                                                      "id": "fx-obs-set-l-set-wk-add-b",
+                                                      "type": "ref",
+                                                      "ref": "hideui:btn-m",
+                                                      "name": "후보 추가",
+                                                      "fill": "#00000000",
+                                                      "height": 24,
+                                                      "descendants": {
+                                                        "hideui:btn-ic": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "icon": "plus",
+                                                          "enabled": true
+                                                        },
+                                                        "hideui:btn-lb": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "content": "후보 추가"
+                                                        }
+                                                      }
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-l-set-wk-add-s",
+                                                      "name": "Spacer",
+                                                      "children": [],
+                                                      "width": "fill_container",
+                                                      "height": 1
+                                                    },
+                                                    {
+                                                      "type": "text",
+                                                      "id": "fx-obs-set-l-set-wk-d",
+                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명 · ",
+                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명 · 모든 프로젝트 설정",
+                                                      "fill": "$--muted-foreground",
+                                                      "fontFamily": "$--font-ui",
+                                                      "fontSize": "$--text-caption",
+                                                      "fontWeight": "400"
+                                                    }
+                                                  ],
+                                                  "layout": "horizontal",
+                                                  "gap": "$--spacing-sm",
+                                                  "alignItems": "center",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-xs",
                                                     "$--spacing-md"
                                                   ]
                                                 }
@@ -255559,12 +255968,12 @@
                                 }
                               ],
                               "width": 1440,
-                              "height": 932,
+                              "height": 1132,
                               "layout": "horizontal"
                             }
                           ],
                           "width": 1440,
-                          "height": 960,
+                          "height": 1160,
                           "fill": "$--background",
                           "layout": "vertical",
                           "clip": true,
@@ -261923,10 +262332,10 @@
                                                         {
                                                           "type": "text",
                                                           "id": "fx-obs-task-l-tp-wk-c",
-                                                          "name": "codex",
-                                                          "content": "codex",
+                                                          "name": "Codex · gpt-6.1-luna · low",
+                                                          "content": "Codex · gpt-6.1-luna · low",
                                                           "fill": "$--muted-foreground",
-                                                          "fontFamily": "$--font-mono",
+                                                          "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-caption",
                                                           "fontWeight": "400"
                                                         },
@@ -261964,6 +262373,37 @@
                                                       "gap": "$--spacing-sm",
                                                       "alignItems": "center",
                                                       "width": 502
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-task-l-tp-pick",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "icon",
+                                                          "id": "fx-obs-task-l-tp-pick-g",
+                                                          "name": "Glyph",
+                                                          "enabled": true,
+                                                          "width": 12,
+                                                          "height": 12,
+                                                          "icon": "sparkles",
+                                                          "library": "lucide",
+                                                          "fill": "$--muted-foreground"
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-task-l-tp-pick-t",
+                                                          "name": "Factory AI가 고른 후보: 문구, 문서, 작",
+                                                          "content": "Factory AI가 고른 후보: 문구, 문서, 작은 UI · 칩 정렬만 바꾸는 작은 UI 변경",
+                                                          "fill": "$--subtle-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-xs",
+                                                      "alignItems": "center"
                                                     },
                                                     {
                                                       "type": "frame",
@@ -264627,8 +265067,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "fx-obs-off-l-set-wk-n",
-                                                  "name": "Task를 하는 에이전트",
-                                                  "content": "Task를 하는 에이전트",
+                                                  "name": "기본 후보로 시작하고, 사용량이 막히면 다음 후보",
+                                                  "content": "기본 후보로 시작하고, 사용량이 막히면 다음 후보",
                                                   "fill": "$--muted-foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption",
@@ -264646,19 +265086,19 @@
                                               "children": [
                                                 {
                                                   "type": "frame",
-                                                  "id": "fx-obs-off-l-set-wk-a",
+                                                  "id": "fx-obs-off-l-set-wk0",
                                                   "name": "Column",
                                                   "children": [
                                                     {
                                                       "type": "frame",
-                                                      "id": "fx-obs-off-l-set-wk-a-h",
+                                                      "id": "fx-obs-off-l-set-wk0-h",
                                                       "name": "Row",
                                                       "children": [
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-off-l-set-wk-a-l",
-                                                          "name": "에이전트",
-                                                          "content": "에이전트",
+                                                          "id": "fx-obs-off-l-set-wk0-l",
+                                                          "name": "기본",
+                                                          "content": "기본",
                                                           "fill": "$--foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-subhead",
@@ -264666,14 +265106,14 @@
                                                         },
                                                         {
                                                           "type": "frame",
-                                                          "id": "fx-obs-off-l-set-wk-a-s",
+                                                          "id": "fx-obs-off-l-set-wk0-s",
                                                           "name": "Spacer",
                                                           "children": [],
                                                           "width": "fill_container",
                                                           "height": 1
                                                         },
                                                         {
-                                                          "id": "fx-obs-off-l-set-wk-a-a",
+                                                          "id": "fx-obs-off-l-set-wk0-a",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -264691,7 +265131,7 @@
                                                           }
                                                         },
                                                         {
-                                                          "id": "fx-obs-off-l-set-wk-a-m",
+                                                          "id": "fx-obs-off-l-set-wk0-m",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -264710,7 +265150,7 @@
                                                         },
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-off-l-set-wk-a-el",
+                                                          "id": "fx-obs-off-l-set-wk0-el",
                                                           "name": "effort",
                                                           "content": "effort",
                                                           "fill": "$--muted-foreground",
@@ -264719,7 +265159,7 @@
                                                           "fontWeight": "400"
                                                         },
                                                         {
-                                                          "id": "fx-obs-off-l-set-wk-a-e",
+                                                          "id": "fx-obs-off-l-set-wk0-e",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -264729,10 +265169,178 @@
                                                           "descendants": {
                                                             "hideui:sel-t": {
                                                               "fill": "$--foreground",
-                                                              "content": "xhigh"
+                                                              "content": "high"
                                                             },
                                                             "hideui:sel-i": {
                                                               "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-off-l-set-wk0-xp",
+                                                          "name": "Pad",
+                                                          "children": [],
+                                                          "width": 20,
+                                                          "height": 1
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-l-set-wk0-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk0-w-t",
+                                                          "name": "대부분의 Task",
+                                                          "content": "대부분의 Task",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-l-set-wk-r1",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-l-set-wk1",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-l-set-wk1-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk1-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-off-l-set-wk1-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk1-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Claude Code"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk1-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "opus"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk1-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk1-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "max"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk1-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
                                                             }
                                                           }
                                                         }
@@ -264743,14 +265351,34 @@
                                                       "width": "fill_container"
                                                     },
                                                     {
-                                                      "type": "text",
-                                                      "id": "fx-obs-off-l-set-wk-d",
-                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다",
-                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다. 모든 프로젝트 설정에서 바꿉니다",
-                                                      "fill": "$--muted-foreground",
-                                                      "fontFamily": "$--font-ui",
-                                                      "fontSize": "$--text-caption",
-                                                      "fontWeight": "400"
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-l-set-wk1-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk1-w-t",
+                                                          "name": "herdr-core, 동시성, 큰 리팩터",
+                                                          "content": "herdr-core, 동시성, 큰 리팩터",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
                                                     }
                                                   ],
                                                   "layout": "vertical",
@@ -264758,6 +265386,227 @@
                                                   "width": "fill_container",
                                                   "padding": [
                                                     "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-l-set-wk-r2",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-l-set-wk2",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-l-set-wk2-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk2-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-off-l-set-wk2-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk2-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Codex"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk2-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "gpt-6.1-luna"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk2-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk2-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "low"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-l-set-wk2-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
+                                                            }
+                                                          }
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-l-set-wk2-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-l-set-wk2-w-t",
+                                                          "name": "문구, 문서, 작은 UI",
+                                                          "content": "문구, 문서, 작은 UI",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-l-set-wk-r3",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-l-set-wk-add",
+                                                  "name": "Row",
+                                                  "children": [
+                                                    {
+                                                      "id": "fx-obs-off-l-set-wk-add-b",
+                                                      "type": "ref",
+                                                      "ref": "hideui:btn-m",
+                                                      "name": "후보 추가",
+                                                      "fill": "#00000000",
+                                                      "height": 24,
+                                                      "descendants": {
+                                                        "hideui:btn-ic": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "icon": "plus",
+                                                          "enabled": true
+                                                        },
+                                                        "hideui:btn-lb": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "content": "후보 추가"
+                                                        }
+                                                      }
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-l-set-wk-add-s",
+                                                      "name": "Spacer",
+                                                      "children": [],
+                                                      "width": "fill_container",
+                                                      "height": 1
+                                                    },
+                                                    {
+                                                      "type": "text",
+                                                      "id": "fx-obs-off-l-set-wk-d",
+                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명 · ",
+                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명 · 모든 프로젝트 설정",
+                                                      "fill": "$--muted-foreground",
+                                                      "fontFamily": "$--font-ui",
+                                                      "fontSize": "$--text-caption",
+                                                      "fontWeight": "400"
+                                                    }
+                                                  ],
+                                                  "layout": "horizontal",
+                                                  "gap": "$--spacing-sm",
+                                                  "alignItems": "center",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-xs",
                                                     "$--spacing-md"
                                                   ]
                                                 }
@@ -265339,12 +266188,12 @@
                                 }
                               ],
                               "width": 1440,
-                              "height": 872,
+                              "height": 1072,
                               "layout": "horizontal"
                             }
                           ],
                           "width": 1440,
-                          "height": 900,
+                          "height": 1100,
                           "fill": "$--background",
                           "layout": "vertical",
                           "clip": true,
@@ -267310,8 +268159,8 @@
                                                         {
                                                           "type": "text",
                                                           "id": "fx-obs-all-l-set-f0-w-t",
-                                                          "name": "Codex · gpt-6.1-sol",
-                                                          "content": "Codex · gpt-6.1-sol",
+                                                          "name": "작업자 후보 3",
+                                                          "content": "작업자 후보 3",
                                                           "fill": "$--subtle-foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-caption",
@@ -267482,8 +268331,8 @@
                                                         {
                                                           "type": "text",
                                                           "id": "fx-obs-all-l-set-f1-w-t",
-                                                          "name": "Claude Code · opus",
-                                                          "content": "Claude Code · opus",
+                                                          "name": "작업자 후보 1",
+                                                          "content": "작업자 후보 1",
                                                           "fill": "$--subtle-foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-caption",
@@ -301605,7 +302454,7 @@
                           "type": "text",
                           "id": "fx-obs-set-d-cap",
                           "name": "Observer · 설정: 헤더와 사이드바가 고른 ",
-                          "content": "Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 바로 보인다",
+                          "content": "Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 보이고, 작업자는 후보 중 Factory AI가 Task마다 고른다",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-subhead",
@@ -304199,8 +305048,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "fx-obs-set-d-set-wk-n",
-                                                  "name": "Task를 하는 에이전트",
-                                                  "content": "Task를 하는 에이전트",
+                                                  "name": "Factory AI가 Task마다 카드와 설명을 보",
+                                                  "content": "Factory AI가 Task마다 카드와 설명을 보고 고름 · 사용량이 막히면 다음 후보",
                                                   "fill": "$--muted-foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption",
@@ -304218,19 +305067,19 @@
                                               "children": [
                                                 {
                                                   "type": "frame",
-                                                  "id": "fx-obs-set-d-set-wk-a",
+                                                  "id": "fx-obs-set-d-set-wk0",
                                                   "name": "Column",
                                                   "children": [
                                                     {
                                                       "type": "frame",
-                                                      "id": "fx-obs-set-d-set-wk-a-h",
+                                                      "id": "fx-obs-set-d-set-wk0-h",
                                                       "name": "Row",
                                                       "children": [
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-set-d-set-wk-a-l",
-                                                          "name": "에이전트",
-                                                          "content": "에이전트",
+                                                          "id": "fx-obs-set-d-set-wk0-l",
+                                                          "name": "기본",
+                                                          "content": "기본",
                                                           "fill": "$--foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-subhead",
@@ -304238,14 +305087,14 @@
                                                         },
                                                         {
                                                           "type": "frame",
-                                                          "id": "fx-obs-set-d-set-wk-a-s",
+                                                          "id": "fx-obs-set-d-set-wk0-s",
                                                           "name": "Spacer",
                                                           "children": [],
                                                           "width": "fill_container",
                                                           "height": 1
                                                         },
                                                         {
-                                                          "id": "fx-obs-set-d-set-wk-a-a",
+                                                          "id": "fx-obs-set-d-set-wk0-a",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -304263,7 +305112,7 @@
                                                           }
                                                         },
                                                         {
-                                                          "id": "fx-obs-set-d-set-wk-a-m",
+                                                          "id": "fx-obs-set-d-set-wk0-m",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -304282,7 +305131,7 @@
                                                         },
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-set-d-set-wk-a-el",
+                                                          "id": "fx-obs-set-d-set-wk0-el",
                                                           "name": "effort",
                                                           "content": "effort",
                                                           "fill": "$--muted-foreground",
@@ -304291,7 +305140,7 @@
                                                           "fontWeight": "400"
                                                         },
                                                         {
-                                                          "id": "fx-obs-set-d-set-wk-a-e",
+                                                          "id": "fx-obs-set-d-set-wk0-e",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -304301,10 +305150,178 @@
                                                           "descendants": {
                                                             "hideui:sel-t": {
                                                               "fill": "$--foreground",
-                                                              "content": "xhigh"
+                                                              "content": "high"
                                                             },
                                                             "hideui:sel-i": {
                                                               "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-set-d-set-wk0-xp",
+                                                          "name": "Pad",
+                                                          "children": [],
+                                                          "width": 20,
+                                                          "height": 1
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-d-set-wk0-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk0-w-t",
+                                                          "name": "대부분의 Task",
+                                                          "content": "대부분의 Task",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-d-set-wk-r1",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-d-set-wk1",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-d-set-wk1-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk1-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-set-d-set-wk1-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk1-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Claude Code"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk1-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "opus"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk1-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk1-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "max"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk1-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
                                                             }
                                                           }
                                                         }
@@ -304315,14 +305332,34 @@
                                                       "width": "fill_container"
                                                     },
                                                     {
-                                                      "type": "text",
-                                                      "id": "fx-obs-set-d-set-wk-d",
-                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다",
-                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다. 모든 프로젝트 설정에서 바꿉니다",
-                                                      "fill": "$--muted-foreground",
-                                                      "fontFamily": "$--font-ui",
-                                                      "fontSize": "$--text-caption",
-                                                      "fontWeight": "400"
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-d-set-wk1-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk1-w-t",
+                                                          "name": "herdr-core, 동시성, 큰 리팩터",
+                                                          "content": "herdr-core, 동시성, 큰 리팩터",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
                                                     }
                                                   ],
                                                   "layout": "vertical",
@@ -304330,6 +305367,227 @@
                                                   "width": "fill_container",
                                                   "padding": [
                                                     "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-d-set-wk-r2",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-d-set-wk2",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-d-set-wk2-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk2-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-set-d-set-wk2-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk2-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Codex"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk2-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "gpt-6.1-luna"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk2-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk2-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "low"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-set-d-set-wk2-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
+                                                            }
+                                                          }
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-d-set-wk2-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-set-d-set-wk2-w-t",
+                                                          "name": "문구, 문서, 작은 UI",
+                                                          "content": "문구, 문서, 작은 UI",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-d-set-wk-r3",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-set-d-set-wk-add",
+                                                  "name": "Row",
+                                                  "children": [
+                                                    {
+                                                      "id": "fx-obs-set-d-set-wk-add-b",
+                                                      "type": "ref",
+                                                      "ref": "hideui:btn-m",
+                                                      "name": "후보 추가",
+                                                      "fill": "#00000000",
+                                                      "height": 24,
+                                                      "descendants": {
+                                                        "hideui:btn-ic": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "icon": "plus",
+                                                          "enabled": true
+                                                        },
+                                                        "hideui:btn-lb": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "content": "후보 추가"
+                                                        }
+                                                      }
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-set-d-set-wk-add-s",
+                                                      "name": "Spacer",
+                                                      "children": [],
+                                                      "width": "fill_container",
+                                                      "height": 1
+                                                    },
+                                                    {
+                                                      "type": "text",
+                                                      "id": "fx-obs-set-d-set-wk-d",
+                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명 · ",
+                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명 · 모든 프로젝트 설정",
+                                                      "fill": "$--muted-foreground",
+                                                      "fontFamily": "$--font-ui",
+                                                      "fontSize": "$--text-caption",
+                                                      "fontWeight": "400"
+                                                    }
+                                                  ],
+                                                  "layout": "horizontal",
+                                                  "gap": "$--spacing-sm",
+                                                  "alignItems": "center",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-xs",
                                                     "$--spacing-md"
                                                   ]
                                                 }
@@ -304911,12 +306169,12 @@
                                 }
                               ],
                               "width": 1440,
-                              "height": 932,
+                              "height": 1132,
                               "layout": "horizontal"
                             }
                           ],
                           "width": 1440,
-                          "height": 960,
+                          "height": 1160,
                           "fill": "$--background",
                           "layout": "vertical",
                           "clip": true,
@@ -311275,10 +312533,10 @@
                                                         {
                                                           "type": "text",
                                                           "id": "fx-obs-task-d-tp-wk-c",
-                                                          "name": "codex",
-                                                          "content": "codex",
+                                                          "name": "Codex · gpt-6.1-luna · low",
+                                                          "content": "Codex · gpt-6.1-luna · low",
                                                           "fill": "$--muted-foreground",
-                                                          "fontFamily": "$--font-mono",
+                                                          "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-caption",
                                                           "fontWeight": "400"
                                                         },
@@ -311316,6 +312574,37 @@
                                                       "gap": "$--spacing-sm",
                                                       "alignItems": "center",
                                                       "width": 502
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-task-d-tp-pick",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "icon",
+                                                          "id": "fx-obs-task-d-tp-pick-g",
+                                                          "name": "Glyph",
+                                                          "enabled": true,
+                                                          "width": 12,
+                                                          "height": 12,
+                                                          "icon": "sparkles",
+                                                          "library": "lucide",
+                                                          "fill": "$--muted-foreground"
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-task-d-tp-pick-t",
+                                                          "name": "Factory AI가 고른 후보: 문구, 문서, 작",
+                                                          "content": "Factory AI가 고른 후보: 문구, 문서, 작은 UI · 칩 정렬만 바꾸는 작은 UI 변경",
+                                                          "fill": "$--subtle-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-xs",
+                                                      "alignItems": "center"
                                                     },
                                                     {
                                                       "type": "frame",
@@ -313979,8 +315268,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "fx-obs-off-d-set-wk-n",
-                                                  "name": "Task를 하는 에이전트",
-                                                  "content": "Task를 하는 에이전트",
+                                                  "name": "기본 후보로 시작하고, 사용량이 막히면 다음 후보",
+                                                  "content": "기본 후보로 시작하고, 사용량이 막히면 다음 후보",
                                                   "fill": "$--muted-foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption",
@@ -313998,19 +315287,19 @@
                                               "children": [
                                                 {
                                                   "type": "frame",
-                                                  "id": "fx-obs-off-d-set-wk-a",
+                                                  "id": "fx-obs-off-d-set-wk0",
                                                   "name": "Column",
                                                   "children": [
                                                     {
                                                       "type": "frame",
-                                                      "id": "fx-obs-off-d-set-wk-a-h",
+                                                      "id": "fx-obs-off-d-set-wk0-h",
                                                       "name": "Row",
                                                       "children": [
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-off-d-set-wk-a-l",
-                                                          "name": "에이전트",
-                                                          "content": "에이전트",
+                                                          "id": "fx-obs-off-d-set-wk0-l",
+                                                          "name": "기본",
+                                                          "content": "기본",
                                                           "fill": "$--foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-subhead",
@@ -314018,14 +315307,14 @@
                                                         },
                                                         {
                                                           "type": "frame",
-                                                          "id": "fx-obs-off-d-set-wk-a-s",
+                                                          "id": "fx-obs-off-d-set-wk0-s",
                                                           "name": "Spacer",
                                                           "children": [],
                                                           "width": "fill_container",
                                                           "height": 1
                                                         },
                                                         {
-                                                          "id": "fx-obs-off-d-set-wk-a-a",
+                                                          "id": "fx-obs-off-d-set-wk0-a",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -314043,7 +315332,7 @@
                                                           }
                                                         },
                                                         {
-                                                          "id": "fx-obs-off-d-set-wk-a-m",
+                                                          "id": "fx-obs-off-d-set-wk0-m",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -314062,7 +315351,7 @@
                                                         },
                                                         {
                                                           "type": "text",
-                                                          "id": "fx-obs-off-d-set-wk-a-el",
+                                                          "id": "fx-obs-off-d-set-wk0-el",
                                                           "name": "effort",
                                                           "content": "effort",
                                                           "fill": "$--muted-foreground",
@@ -314071,7 +315360,7 @@
                                                           "fontWeight": "400"
                                                         },
                                                         {
-                                                          "id": "fx-obs-off-d-set-wk-a-e",
+                                                          "id": "fx-obs-off-d-set-wk0-e",
                                                           "type": "ref",
                                                           "ref": "hideui:sel-m",
                                                           "name": "Select",
@@ -314081,10 +315370,178 @@
                                                           "descendants": {
                                                             "hideui:sel-t": {
                                                               "fill": "$--foreground",
-                                                              "content": "xhigh"
+                                                              "content": "high"
                                                             },
                                                             "hideui:sel-i": {
                                                               "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-off-d-set-wk0-xp",
+                                                          "name": "Pad",
+                                                          "children": [],
+                                                          "width": 20,
+                                                          "height": 1
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-d-set-wk0-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk0-w-t",
+                                                          "name": "대부분의 Task",
+                                                          "content": "대부분의 Task",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-d-set-wk-r1",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-d-set-wk1",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-d-set-wk1-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk1-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-off-d-set-wk1-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk1-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Claude Code"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk1-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "opus"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk1-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk1-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "max"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk1-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
                                                             }
                                                           }
                                                         }
@@ -314095,14 +315552,34 @@
                                                       "width": "fill_container"
                                                     },
                                                     {
-                                                      "type": "text",
-                                                      "id": "fx-obs-off-d-set-wk-d",
-                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다",
-                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명입니다. 모든 프로젝트 설정에서 바꿉니다",
-                                                      "fill": "$--muted-foreground",
-                                                      "fontFamily": "$--font-ui",
-                                                      "fontSize": "$--text-caption",
-                                                      "fontWeight": "400"
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-d-set-wk1-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk1-w-t",
+                                                          "name": "herdr-core, 동시성, 큰 리팩터",
+                                                          "content": "herdr-core, 동시성, 큰 리팩터",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
                                                     }
                                                   ],
                                                   "layout": "vertical",
@@ -314110,6 +315587,227 @@
                                                   "width": "fill_container",
                                                   "padding": [
                                                     "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-d-set-wk-r2",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-d-set-wk2",
+                                                  "name": "Column",
+                                                  "children": [
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-d-set-wk2-h",
+                                                      "name": "Row",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk2-l",
+                                                          "name": "후보",
+                                                          "content": "후보",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-subhead",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "type": "frame",
+                                                          "id": "fx-obs-off-d-set-wk2-s",
+                                                          "name": "Spacer",
+                                                          "children": [],
+                                                          "width": "fill_container",
+                                                          "height": 1
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk2-a",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "Codex"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk2-m",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 128,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "gpt-6.1-luna"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk2-el",
+                                                          "name": "effort",
+                                                          "content": "effort",
+                                                          "fill": "$--muted-foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-caption",
+                                                          "fontWeight": "400"
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk2-e",
+                                                          "type": "ref",
+                                                          "ref": "hideui:sel-m",
+                                                          "name": "Select",
+                                                          "fill": "$--background",
+                                                          "stroke": "$--input",
+                                                          "width": 84,
+                                                          "descendants": {
+                                                            "hideui:sel-t": {
+                                                              "fill": "$--foreground",
+                                                              "content": "low"
+                                                            },
+                                                            "hideui:sel-i": {
+                                                              "fill": "$--muted-foreground"
+                                                            }
+                                                          }
+                                                        },
+                                                        {
+                                                          "id": "fx-obs-off-d-set-wk2-x",
+                                                          "type": "ref",
+                                                          "ref": "hideui:Nyvom",
+                                                          "name": "Icon",
+                                                          "width": 20,
+                                                          "height": 20,
+                                                          "descendants": {
+                                                            "hideui:ZIZFR": {
+                                                              "fill": "$--muted-foreground",
+                                                              "icon": "x"
+                                                            }
+                                                          }
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "gap": "$--spacing-sm",
+                                                      "alignItems": "center",
+                                                      "width": "fill_container"
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-d-set-wk2-w",
+                                                      "name": "Text field",
+                                                      "children": [
+                                                        {
+                                                          "type": "text",
+                                                          "id": "fx-obs-off-d-set-wk2-w-t",
+                                                          "name": "문구, 문서, 작은 UI",
+                                                          "content": "문구, 문서, 작은 UI",
+                                                          "fill": "$--foreground",
+                                                          "fontFamily": "$--font-ui",
+                                                          "fontSize": "$--text-body",
+                                                          "fontWeight": "400"
+                                                        }
+                                                      ],
+                                                      "layout": "horizontal",
+                                                      "alignItems": "center",
+                                                      "width": 696,
+                                                      "height": 24,
+                                                      "padding": [
+                                                        0,
+                                                        "$--spacing-sm"
+                                                      ],
+                                                      "cornerRadius": "$--radius-sm",
+                                                      "fill": "$--background",
+                                                      "stroke": "$--input",
+                                                      "strokeWidth": 1,
+                                                      "strokeAlignment": "inner"
+                                                    }
+                                                  ],
+                                                  "layout": "vertical",
+                                                  "gap": "$--spacing-sm",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-sm",
+                                                    "$--spacing-md"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-d-set-wk-r3",
+                                                  "name": "Rule",
+                                                  "children": [],
+                                                  "width": "fill_container",
+                                                  "height": 1,
+                                                  "fill": "$--border"
+                                                },
+                                                {
+                                                  "type": "frame",
+                                                  "id": "fx-obs-off-d-set-wk-add",
+                                                  "name": "Row",
+                                                  "children": [
+                                                    {
+                                                      "id": "fx-obs-off-d-set-wk-add-b",
+                                                      "type": "ref",
+                                                      "ref": "hideui:btn-m",
+                                                      "name": "후보 추가",
+                                                      "fill": "#00000000",
+                                                      "height": 24,
+                                                      "descendants": {
+                                                        "hideui:btn-ic": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "icon": "plus",
+                                                          "enabled": true
+                                                        },
+                                                        "hideui:btn-lb": {
+                                                          "fill": "$--subtle-foreground",
+                                                          "content": "후보 추가"
+                                                        }
+                                                      }
+                                                    },
+                                                    {
+                                                      "type": "frame",
+                                                      "id": "fx-obs-off-d-set-wk-add-s",
+                                                      "name": "Spacer",
+                                                      "children": [],
+                                                      "width": "fill_container",
+                                                      "height": 1
+                                                    },
+                                                    {
+                                                      "type": "text",
+                                                      "id": "fx-obs-off-d-set-wk-d",
+                                                      "name": "동시에 도는 작업자는 이 Mac 전체에서 5명 · ",
+                                                      "content": "동시에 도는 작업자는 이 Mac 전체에서 5명 · 모든 프로젝트 설정",
+                                                      "fill": "$--muted-foreground",
+                                                      "fontFamily": "$--font-ui",
+                                                      "fontSize": "$--text-caption",
+                                                      "fontWeight": "400"
+                                                    }
+                                                  ],
+                                                  "layout": "horizontal",
+                                                  "gap": "$--spacing-sm",
+                                                  "alignItems": "center",
+                                                  "width": "fill_container",
+                                                  "padding": [
+                                                    "$--spacing-xs",
                                                     "$--spacing-md"
                                                   ]
                                                 }
@@ -314691,12 +316389,12 @@
                                 }
                               ],
                               "width": 1440,
-                              "height": 872,
+                              "height": 1072,
                               "layout": "horizontal"
                             }
                           ],
                           "width": 1440,
-                          "height": 900,
+                          "height": 1100,
                           "fill": "$--background",
                           "layout": "vertical",
                           "clip": true,
@@ -316662,8 +318360,8 @@
                                                         {
                                                           "type": "text",
                                                           "id": "fx-obs-all-d-set-f0-w-t",
-                                                          "name": "Codex · gpt-6.1-sol",
-                                                          "content": "Codex · gpt-6.1-sol",
+                                                          "name": "작업자 후보 3",
+                                                          "content": "작업자 후보 3",
                                                           "fill": "$--subtle-foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-caption",
@@ -316834,8 +318532,8 @@
                                                         {
                                                           "type": "text",
                                                           "id": "fx-obs-all-d-set-f1-w-t",
-                                                          "name": "Claude Code · opus",
-                                                          "content": "Claude Code · opus",
+                                                          "name": "작업자 후보 1",
+                                                          "content": "작업자 후보 1",
                                                           "fill": "$--subtle-foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": "$--text-caption",

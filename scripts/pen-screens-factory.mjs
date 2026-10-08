@@ -168,8 +168,16 @@ const obsCount = (lane, project) => Object.values({...TASKS, ...OBS_TASKS}).filt
 const obsFlow = project => ({before: obsCount('before', project), moving: obsCount('moving', project), stuck: obsCount('stuck', project), done: obsCount('done', project)});
 // The Factories: herdr-ide runs with 함께 and sasu, paused, with 맡김.
 const OBS_FACTORIES = [
-  {project: 'herdr-ide', mode: 1, worker: 'Codex · gpt-6.1-sol', paused: false},
-  {project: 'sasu', mode: 2, worker: 'Claude Code · opus', paused: true},
+  {project: 'herdr-ide', mode: 1, worker: '작업자 후보 3', paused: false},
+  {project: 'sasu', mode: 2, worker: '작업자 후보 1', paused: true},
+];
+// The worker candidates: an agent, model and effort with a line the operator writes; the
+// Factory AI picks one per Task at intake from the card and these lines, the first is the default,
+// and a candidate at its usage limit hands new starts to the next one.
+const WORKERS = [
+  {label: '기본', agent: 'Codex', model: 'gpt-6.1-sol', effort: 'high', when: '대부분의 Task'},
+  {label: '후보', agent: 'Claude Code', model: 'opus', effort: 'max', when: 'herdr-core, 동시성, 큰 리팩터'},
+  {label: '후보', agent: 'Codex', model: 'gpt-6.1-luna', effort: 'low', when: '문구, 문서, 작은 UI'},
 ];
 // What each choice hands to the AI (D-14, D-21, D-32): 직접 is the PRD's 수동, 함께 보조, 맡김 자율.
 // The settings show the picked choice's two lists instead of the whole table.
@@ -759,8 +767,8 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const switchOn = (id, on) => frame(id, 'Switch', {width: 32, height: 18, cornerRadius: 9, fill: on ? '$--primary' : '$--secondary', padding: 2, layout: 'horizontal', justifyContent: on ? 'end' : 'start', alignItems: 'center'}, [
     frame(`${id}-k`, 'Knob', {width: 14, height: 14, cornerRadius: 7, fill: on ? '$--primary-foreground' : MUT}, []),
   ]);
-  const textValue = (id, value, width) => frame(id, 'Text field', {layout: 'horizontal', alignItems: 'center', width, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-    text(`${id}-t`, value, {size: '$--text-body', mono: true}),
+  const textValue = (id, value, width, {mono = true} = {}) => frame(id, 'Text field', {layout: 'horizontal', alignItems: 'center', width, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    text(`${id}-t`, value, {size: '$--text-body', mono}),
   ]);
   // A folded line (settings-rows.tsx Disclosure): chevron, title, a short summary of what is inside.
   const disclosure = (id, title, summary, open = false) => row(id, [
@@ -801,9 +809,14 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         : settingsRow(`${id}-ai-a`, '에이전트', agentPick(`${id}-ai-a`, 'Claude Code', 'sonnet', 'low')),
       ...(aiOff ? [] : [settingsRow(`${id}-today`, '오늘 AI 판단', [meter(`${id}-today-m`, 37, 100), cap(`${id}-today-n`, '37 / 100', SUB, {mono: true})])]),
     ], '작업자의 질문과 머지를 누가 정할지');
+    const candidate = (cid, w, i) => settingsRow(cid, w.label, [
+      ...agentPick(cid, w.agent, w.model, w.effort),
+      i ? screenIconButton(`${cid}-x`, 'x', {size: 20}) : frame(`${cid}-xp`, 'Pad', {width: 20, height: 1}, []),
+    ], textValue(`${cid}-w`, w.when, SHEET_W - 2 * PAD_MD, {mono: false}));
     const worker = settingsGroup(`${id}-wk`, '작업자', [
-      settingsRow(`${id}-wk-a`, '에이전트', agentPick(`${id}-wk-a`, 'Codex', 'gpt-6.1-sol', 'xhigh'), cap(`${id}-wk-d`, '동시에 도는 작업자는 이 Mac 전체에서 5명입니다. 모든 프로젝트 설정에서 바꿉니다', MUT)),
-    ], 'Task를 하는 에이전트');
+      ...WORKERS.map((w, i) => candidate(`${id}-wk${i}`, w, i)),
+      row(`${id}-wk-add`, [screenButton(`${id}-wk-add-b`, '후보 추가', {variant: 'ghost', height: controlSm, icon: 'plus'}), spacer(`${id}-wk-add-s`), cap(`${id}-wk-d`, '동시에 도는 작업자는 이 Mac 전체에서 5명 · 모든 프로젝트 설정', MUT)], {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-md']}),
+    ], aiOff ? '기본 후보로 시작하고, 사용량이 막히면 다음 후보' : 'Factory AI가 Task마다 카드와 설명을 보고 고름 · 사용량이 막히면 다음 후보');
     const merge = settingsGroup(`${id}-merge`, '머지', [
       settingsRow(`${id}-mm`, '검증을 통과하면 바로 머지', [switchOn(`${id}-mm-sw`, true)], cap(`${id}-mm-d`, '끄면 모든 PR을 내가 머지합니다', MUT)),
       settingsRow(`${id}-vf`, '검증', [cap(`${id}-vf-t`, 'CI 필수 체크 · web-e2e, rust-test', SUB)]),
@@ -881,9 +894,10 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       col(`${id}-prog`, [
         sectionLabel(`${id}-pl`, '진행'),
         row(`${id}-wk`, [
-          icon(`${id}-wk-g`, 'square-terminal', {size: 14, fill: MUT}), body(`${id}-wk-t`, 't-435-worker'), cap(`${id}-wk-c`, 'codex', MUT, {mono: true}), spacer(`${id}-wk-s`),
+          icon(`${id}-wk-g`, 'square-terminal', {size: 14, fill: MUT}), body(`${id}-wk-t`, 't-435-worker'), cap(`${id}-wk-c`, 'Codex · gpt-6.1-luna · low', MUT), spacer(`${id}-wk-s`),
           screenButton(`${id}-wk-b`, 'worker 보기', {variant: 'outline', height: controlSm}),
         ], {width: colW}),
+        row(`${id}-pick`, [icon(`${id}-pick-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-pick-t`, 'Factory AI가 고른 후보: 문구, 문서, 작은 UI · 칩 정렬만 바꾸는 작은 UI 변경', SUB)], {gap: '$--spacing-xs'}),
         row(`${id}-at`, [cap(`${id}-at1`, '쉼 2분'), cap(`${id}-at2`, '깨움 1번 · 편지'), cap(`${id}-at3`, '답 없음', CRIT), cap(`${id}-at4`, '진단 1번')], {gap: '$--spacing-md'}),
       ], {gap: '$--spacing-sm'}),
       col(`${id}-log`, [sectionLabel(`${id}-ll`, '결정 기록'), ...OBS_LOG.map((entry, i) => logRow(`${id}-l${i}`, entry))], {gap: '$--spacing-md'}),
@@ -921,10 +935,10 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const none = windowFrame(id('none'), 'Factory 없음', noFactoryMain(id('none')), {height: 360, count: 0, secretary: false});
   const empty = windowFrame(id('empty'), 'Task 없음', noTaskMain(id('empty')), {height: 360, count: 0});
   const obsTurn = windowFrame(id('obs-turn'), '내 차례 · Observer', obsTurnMain(id('obs-turn')), {height: BOARD_H, count: OBS_INBOX_COUNT, factories: sideFactories(null)});
-  const obsSettings = windowFrame(id('obs-set'), '설정 · herdr-ide', settingsMain(id('obs-set')), {height: 960, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsSettings = windowFrame(id('obs-set'), '설정 · herdr-ide', settingsMain(id('obs-set')), {height: 1160, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsCards = obsCardsBody(id('obs-cards'));
   const obsTask = windowFrame(id('obs-task'), 'Task 페이지 · 보고 없음', obsTaskMain(id('obs-task')), {count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
-  const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {height: 900, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {height: 1100, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsAll = windowFrame(id('obs-all'), '설정 · 모든 프로젝트', settingsMain(id('obs-all'), {project: null}), {height: 640, count: OBS_INBOX_COUNT, factories: sideFactories(null)});
   const obsPaused = windowFrame(id('obs-paused'), '내 차례 · 일시정지', obsPausedMain(id('obs-paused'), 'sasu'), {height: 640, count: OBS_INBOX_COUNT, factories: sideFactories('sasu')});
 
@@ -952,7 +966,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
       row(id('r5'), [
         captioned(id('obs-turn'), 'Observer · 내 차례: 숫자는 답, 머지, 멈춤만 센다. AI가 처리한 일은 줄 아래 알림으로, 다른 답과 함께', obsTurn),
-        captioned(id('obs-set'), 'Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 바로 보인다', obsSettings),
+        captioned(id('obs-set'), 'Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 보이고, 작업자는 후보 중 Factory AI가 Task마다 고른다', obsSettings),
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
       row(id('r6'), [
         captioned(id('obs-cards'), 'Observer · 카드: 선택지가 있는 결정 요청, AI 제안, 보고 없음과 진단, 작업자 사라짐, 일시정지', obsCards),
