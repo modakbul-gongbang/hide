@@ -119,7 +119,8 @@ pub fn silences_claude_hook<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
 /// hooks it runs, its own and the Claude Code and Cursor hooks it loads beside
 /// them; `GROK_SESSION_ID` can also reach a program a Grok session started,
 /// such as a Claude Code launched from its shell, whose own hook must still
-/// count and guard, so it does not decide this.
+/// count, so it does not decide this. (That Claude Code's spawn guard stays
+/// out as in any foreign session, `ForeignOrigin`.)
 pub fn inside_grok<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
     variable("GROK_HOOK_EVENT").is_some()
 }
