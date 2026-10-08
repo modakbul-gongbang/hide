@@ -208,8 +208,86 @@ export type FactorySceneFixture = {
   config: { config: FactoryConfig; machine: { max_workers: number } };
 };
 
+/**
+ * The Observer set (PRD factory-observer): herdr-ide answers with 함께 and
+ * sasu, paused, with 맡김; 내 차례 holds the requests Factory AI left to the
+ * person, the stops it diagnosed or could not, and its notices, as the
+ * `fx-obs-*` frames of `Screen / Factory` draw them.
+ */
+function observerScene(base: FactorySceneFixture, now: number): FactorySceneFixture {
+  const [herdr0, sasu0] = base.summary.factories as [FactoryView, FactoryView];
+  const stuck = (spec: CardSpec, patch: Partial<CardView> = {}) => ({ ...card(spec, now), ...patch });
+  const t436 = stuck({ number: 436, title: "보드 빈 열 문구", summary: "빈 열에 보일 한 줄 문구를 정한다", state: "blocked", column: "stuck", worker: "worker-436", runtime: "claude", ago: 6 * MINUTE, needsPerson: true });
+  const t437 = stuck({ number: 437, title: "정렬 상태 기억", summary: "고른 정렬을 다시 열어도 그대로 둔다", state: "blocked", column: "stuck", worker: "worker-437", ago: 30 * MINUTE, needsPerson: true });
+  const t435 = stuck({ number: 435, title: "Sessions 칩 정렬", summary: "Sessions 칩을 최근 활동순으로 놓는다", state: "stopped", column: "stuck", ago: 9 * MINUTE, needsPerson: true }, { stop: "no_report", worker_runtime: "codex" });
+  const t433 = stuck({ number: 433, title: "설정 검색 결과 강조", summary: "설정 검색에서 맞은 글자를 굵게 보인다", state: "stopped", column: "stuck", ago: 18 * MINUTE, needsPerson: true, runtime: "claude" }, { stop: "worker_gone", worker_runtime: "claude" });
+  const t434 = stuck({ number: 434, title: "빈 Factory 안내 문구", summary: "Task가 없을 때 넣는 방법을 한 줄로 안내한다", state: "paused", column: "stuck", ago: 25 * MINUTE }, { pause_reason: "pane_closed", worker_runtime: "codex" });
+  const added = [t436, t437, t435, t433, t434];
+  const columns = herdr0.columns.map((column) => (column.column === "stuck" ? { ...column, cards: [...added, ...column.cards] } : column));
+  const workers = base.config.config.workers;
+  const herdr: FactoryView = { ...herdr0, columns, flow: { ...herdr0.flow, stuck: herdr0.flow.stuck + added.length }, observer_mode: "assist", observer_today: 37, workers, macos_notifications: true };
+  const sasu: FactoryView = { ...sasu0, paused: true, observer_mode: "autonomous", observer_today: 100, workers: workers.slice(0, 1) };
+  const item = (patch: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" | "factory" | "task" | "display_id" | "title" | "project" | "text">, ago: number) => inboxItem(patch, now, ago);
+  const answers: InboxItem[] = [
+    item({ group: "answer", kind: "blocking", factory: herdr.id, task: t436.task, display_id: t436.display_id, title: t436.title, project: "herdr-ide", question: "q-436", text: "빈 열에 무엇을 보일까요?", suggestion: "아무것도 보이지 않기", choices: ["\"없음\" 한 단어", "열마다 다른 안내"], result_code: "wake_worker", decision_kind: "C", observer_reason: "작업자는 첫 안을 추천합니다." }, 6 * MINUTE),
+    item({ group: "answer", kind: "blocking", factory: herdr.id, task: t437.task, display_id: t437.display_id, title: t437.title, project: "herdr-ide", question: "q-437", text: `카드가 틀림: 완료 조건이 ${issue(412)}와 겹칩니다`, suggestion: `AI 제안: ${issue(412)}에 합치기`, choices: ["그대로 진행"], result_code: "wake_worker", decision_kind: "E" }, 30 * MINUTE),
+    item({ group: "answer", kind: "default", factory: sasu.id, task: taskId(88), display_id: issue(88), title: "gate 결과 요약 보기", project: "sasu", question: "q-88", text: "gate 요약을 PR 댓글로도 올릴까요?", suggestion: "올리지 않기", choices: ["PR 댓글로 올리기"], default_action: "올리지 않기", deadline: now + 5 * HOUR, result_code: "wake_worker", decision_kind: "D", observer_reason: "밖에 글을 씁니다." }, 20 * MINUTE),
+  ];
+  const merge = base.summary.inbox.filter((row) => row.group === "merge").map((row) => ({ ...row, gates: ["risk_path" as const] }));
+  const stops: InboxItem[] = [
+    item({ group: "stopped", kind: "stopped", factory: herdr.id, task: t435.task, display_id: t435.display_id, title: t435.title, project: "herdr-ide", text: "멈춤: 보고 없음", suggestion: "retry", choices: ["cancel"], result_code: "restart_worker", stop: "no_report", observer_reason: "테스트 실행을 기다리다 멈춘 것으로 보입니다" }, 9 * MINUTE),
+    item({ group: "stopped", kind: "stopped", factory: herdr.id, task: t433.task, display_id: t433.display_id, title: t433.title, project: "herdr-ide", text: "멈춤: 작업자 사라짐", suggestion: "retry", choices: ["cancel"], result_code: "restart_worker", stop: "worker_gone" }, 18 * MINUTE),
+    item({ group: "stopped", kind: "paused", factory: herdr.id, task: t434.task, display_id: t434.display_id, title: t434.title, project: "herdr-ide", text: "일시정지: 작업자 pane을 닫음", suggestion: "resume", choices: ["cancel"], result_code: "resume_worker" }, 25 * MINUTE),
+  ];
+  const notices: InboxItem[] = [
+    item({ group: "notice", kind: "notice", factory: herdr.id, task: taskId(412), display_id: issue(412), title: "Issues 보드에 정렬 추가", project: "herdr-ide", question: "n-412", text: "정렬 키는? → updated_at", choices: ["ok"], notice: "ai_answered", refers_to: "q-412", decision_kind: "B", overridable: true }, 12 * MINUTE),
+    item({ group: "notice", kind: "notice", factory: sasu.id, task: taskId(86), display_id: issue(86), title: "verify 리포트 한 줄 요약", project: "sasu", question: "n-86", text: `${issue(86)}: 검증 통과, 위험 경로만 걸림`, choices: ["ok"], notice: "ai_risk_merge" }, 50 * MINUTE),
+    item({ group: "notice", kind: "notice", factory: sasu.id, task: taskId(91), display_id: issue(91), title: "implement 단계 로그 정리", project: "sasu", question: "n-91", text: `${issue(91)} → ${issue(92)}: 로그 형식 정하기`, choices: ["ok"], notice: "ai_new_task", decision_kind: "E" }, HOUR),
+    item({ group: "notice", kind: "notice", factory: sasu.id, task: taskId(88), display_id: issue(88), title: "gate 결과 요약 보기", project: "sasu", question: "n-88", text: "오늘 AI 판단 100번을 다 써서 남은 결정은 나에게 옵니다.", choices: ["ok"], notice: "daily_limit" }, 20 * MINUTE),
+  ];
+  const inbox = [...answers, ...merge, ...stops, ...notices].map((row, rank) => ({ ...row, rank }));
+  const turn = inbox.length - notices.length;
+  const summary: FactorySummary = { my_turn: turn, notices: notices.length, factories: [herdr, sasu], inbox };
+  const detail = (task: string): TaskDetail | null => {
+    if (task === t435.task) {
+      const at = now - 12 * MINUTE;
+      return {
+        ...base.detail(taskId(412))!,
+        card: t435,
+        goal: "Sessions 칩이 최근 활동순으로 놓인다.",
+        criteria: ["칩이 마지막 활동 시각 내림차순으로 놓인다", "칩은 다섯 개까지 보이고 나머지는 +n으로 접힌다"],
+        out_of_scope: [],
+        pr: null,
+        attempts: [],
+        allowed: ["retry", "cancel"],
+        stop_code: "no_report",
+        branch: "435-session-chips",
+        worker_name: "t-435-worker",
+        diagnosis: "테스트 실행을 기다리다 멈춘 것으로 보입니다",
+        worker: { agent: "codex", label: "Codex", model: "gpt-6.1-luna", effort: "low", picked: "문구, 문서, 작은 UI", pick_reason: "칩 정렬만 바꾸는 작은 UI 변경" },
+        woke_at: now - 6 * MINUTE,
+        diagnosed_at: now - 4 * MINUTE,
+        questions: [{ id: "q-sort", origin: "worker", kind: { kind: "default" }, text: "칩 정렬 키?", suggestion: "last_activity", default_action: null, deadline: null, asked_at: at - 5_000, choices: [], answer: { text: "last_activity", chose: null, relayed_by: "observer", at }, letter: null, routing: { kind: "B" } }],
+        decisions: [
+          { text: "정렬은 web 쪽에서 한다", by: "worker:t-435", at: now - 2 * HOUR },
+          { text: "뒤집음: 칩 최대 개수 -> 5", by: "p-1", at: now - HOUR },
+          { text: "칩 정렬 키는 last_activity로 둔다", by: "observer", at, kind: "B" },
+        ],
+      };
+    }
+    if (task === taskId(431)) return { ...base.detail(task)!, ai_picked_worker: 3, ai_pick_reason: "문서 링크만 고치는 작은 변경" };
+    return base.detail(task);
+  };
+  return { ...base, summary, detail };
+}
+
 /** The scene's summary, the Task pages it can open and the settings it answers with. */
-export function factoryScene(content: SceneContent, now: number): FactorySceneFixture {
+export function factoryScene(content: SceneContent, now: number, observer = false): FactorySceneFixture {
+  const fixture = referenceScene(content, now);
+  return observer ? observerScene(fixture, now) : fixture;
+}
+
+function referenceScene(content: SceneContent, now: number): FactorySceneFixture {
   const long = content === "long";
   const herdrCards = herdrSpecs(content).map((spec) => card(spec, now));
   const blocked = herdrCards.find((value) => value.state === "blocked")!;

@@ -372,7 +372,7 @@ function ObserverGroup({ factory, config, reset, set, actions }: { factory: Fact
       <Row label={t("factory.settings.aiToday")} detail={full ? <Note tone="warn">{t("factory.settings.aiTodayFull")}</Note> : undefined}>
         <span className="flex items-center gap-sm" data-factory-ai-today={`${factory.observer_today}/${factory.observer_limit}`}>
           <span aria-hidden="true" className="h-xs w-(--size-settings-control-w) overflow-hidden rounded-full bg-border">
-            <span className={cn("block h-full rounded-full", full ? "bg-warning" : "bg-success")} style={{ width: `${Math.min(100, (factory.observer_today / Math.max(1, factory.observer_limit)) * 100)}%` }} />
+            <span className={cn("block h-full rounded-full", full ? "bg-warning" : "bg-primary")} style={{ width: `${Math.min(100, (factory.observer_today / Math.max(1, factory.observer_limit)) * 100)}%` }} />
           </span>
           <span className={cn("font-mono text-caption", full ? "text-warning" : "text-subtle-foreground")}>
             {factory.observer_today} / {factory.observer_limit}
@@ -392,7 +392,7 @@ function ModeChips({ icon, label, keys }: { icon: ReactNode; label: string; keys
         {label}
       </span>
       {keys.map((key) => (
-        <span key={key} className="rounded-sm bg-muted px-sm py-xxs text-caption text-foreground">
+        <span key={key} className="rounded-sm bg-secondary px-sm py-xxs text-caption text-foreground">
           {t(key)}
         </span>
       ))}
@@ -420,6 +420,8 @@ function FactoryAiPicker({ value, set }: { value: FactoryAi | null; reset: numbe
               {row.label}
             </SelectItem>
           ))}
+          {/* An agent this Mac no longer offers still reads as the one chosen. */}
+          {value && !providers.some((row) => row.id === value.provider) ? <SelectItem value={value.provider}>{value.provider}</SelectItem> : null}
         </SelectContent>
       </Select>
       {provider && value ? (
