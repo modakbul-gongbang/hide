@@ -153,6 +153,16 @@ jobs:
       # image's own toolchain is never used. A full plan covers the whole
       # workspace; otherwise the plan names the changed crates and every crate
       # that depends on them.
+      - name: Install cargo-hakari
+        # The pinned release build, checked against its digest, so no compile.
+        timeout-minutes: 3
+        run: bash scripts/install-hakari.sh
+      - name: Check the shared feature set
+        # workspace-hack holds the features the manifests ask for and every
+        # member that should depends on it; when it does not, each cargo
+        # command that selects other members builds dependencies again
+        # (docs/BUILD.md, "One feature set per dependency").
+        run: bash scripts/verify-cargo.sh hakari
       - name: Check formatting and lint the planned crates
         run: |
           if [ "$FULL" = true ]; then
