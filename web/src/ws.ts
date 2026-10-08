@@ -36,7 +36,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
   let backoff = 500;
   let healthFails = 0;
   let revision = 0;
-  let terminalSequence = 0;
+  let terminalSequence: number | null = null;
   let operatorFocusSequence = 0;
   let reconnectTimer: number | undefined;
 
@@ -94,7 +94,8 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
           schema_version: 2,
           client_kind: hostKind() === "electron" ? "desktop" : "web",
           have_revision: revision,
-          have_terminal_sequence: terminalSequence,
+          // A client with no cursor names none and has its kept terminals drawn again.
+          have_terminal_sequence: terminalSequence ?? undefined,
         }),
       );
     });

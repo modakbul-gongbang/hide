@@ -25,6 +25,7 @@ use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
 use crate::pane_auth::Registry;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
+use crate::terminal_hub::Resume;
 use crate::watch::WatchService;
 use base64::Engine as _;
 use hide_node::opener::OpenHandler;
@@ -811,12 +812,17 @@ async fn client_loop(
     };
     // Terminal output reaches the client beside its snapshots, from the hub
     // (PRD core-host-node-terminal D-11). A client that kept its terminals
-    // across a reconnect resumes every pane from its cursor; one that got a
-    // whole snapshot draws each pane from the full frame its view asks for.
-    let terminals = state.core.hub.connect(match first {
-        FrameKind::Delta => Some(handshake.have_terminal_sequence.unwrap_or(0)),
-        FrameKind::Snapshot => None,
-    });
+    // across a reconnect resumes every pane from its cursor, or is drawn
+    // again whole when it names none; one that got a whole snapshot draws
+    // each pane from the full frame its view asks for.
+    let terminals = state
+        .core
+        .hub
+        .connect(match (first, handshake.have_terminal_sequence) {
+            (FrameKind::Snapshot, _) => Resume::Fresh,
+            (FrameKind::Delta, Some(cursor)) => Resume::After(cursor),
+            (FrameKind::Delta, None) => Resume::Redraw,
+        });
     loop {
         tokio::select! {
             changed = notify.recv() => {
@@ -2678,8 +2684,6 @@ fn device_root_known(
         || (roots_current(roots) && boundary.is_device_root(device, root))
 }
 
-/// The path a client sent, as written; a field the event omits reads as empty
-/// and is refused like any other empty path.
 /// A `key` event's target, a pane or a creation request (exactly one), and
 /// its bytes.
 fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
@@ -2735,6 +2739,8 @@ fn unix_ms_now() -> u64 {
         })
 }
 
+/// The path a client sent, as written; a field the event omits reads as empty
+/// and is refused like any other empty path.
 fn payload_str(event: &Value, field: &str) -> String {
     event
         .pointer(&format!("/payload/{field}"))

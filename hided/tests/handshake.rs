@@ -492,9 +492,10 @@ async fn send_event(
         .unwrap();
     loop {
         let frame = first_frame(socket).await;
-        // Snapshot deltas keep flowing on the same socket; the reply to a
-        // boundary event is the first frame that is not one of them.
-        if frame["type"] != "snapshot" && frame["type"] != "delta" {
+        // Snapshot deltas and terminal frames keep flowing on the same
+        // socket; the reply to a boundary event is the first frame that is
+        // not one of them.
+        if !["snapshot", "delta", "terminal"].contains(&frame["type"].as_str().unwrap_or("")) {
             return frame;
         }
     }

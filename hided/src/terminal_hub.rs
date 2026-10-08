@@ -77,6 +77,9 @@ struct Client {
     redraw: HashSet<Arc<str>>,
     /// The last sequence decided for this client, sent or withheld.
     examined: u64,
+    /// The client's cursor is to be told even with no chunk to carry it: it
+    /// started from a whole snapshot and has none it can resume from.
+    announce: bool,
     wake: Arc<tokio::sync::Notify>,
 }
 
@@ -100,6 +103,20 @@ pub struct TerminalFrame {
     pub text: String,
 }
 
+/// Where a client starts in the hub's output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resume {
+    /// The client drew every pane again from a whole snapshot and asks each
+    /// view's full frame itself; it is told its cursor at once.
+    Fresh,
+    /// The client kept its terminals and was sent everything up to this
+    /// cursor.
+    After(u64),
+    /// The client kept its terminals but names no cursor: every pane is
+    /// drawn again from a full frame.
+    Redraw,
+}
+
 /// A client's place in the hub; dropping it removes the client.
 pub struct HubClient {
     hub: Arc<TerminalHub>,
@@ -112,10 +129,8 @@ impl TerminalHub {
         Arc::default()
     }
 
-    /// Adds a client. `resume` is the cursor of a client that kept its
-    /// terminals across a reconnect; `None` is a client that draws every
-    /// pane from its next full frame (it asks for one per view).
-    pub fn connect(self: &Arc<Self>, resume: Option<u64>) -> HubClient {
+    /// Adds a client, starting where `resume` says.
+    pub fn connect(self: &Arc<Self>, resume: Resume) -> HubClient {
         let wake = Arc::new(tokio::sync::Notify::new());
         let mut state = lock(&self.state);
         let id = state.next_client;
@@ -126,12 +141,19 @@ impl TerminalHub {
             awaiting_full: HashSet::new(),
             redraw: HashSet::new(),
             examined: state.sequence,
+            announce: resume == Resume::Fresh,
             wake: Arc::clone(&wake),
         };
-        if let Some(cursor) = resume {
-            resume_from(&mut state, &mut client, cursor);
+        match resume {
+            Resume::Fresh => {}
+            Resume::After(cursor) => resume_from(&mut state, &mut client, cursor),
+            Resume::Redraw => {
+                for pane in state.panes.keys() {
+                    await_full(&mut client, pane, "resume_without_cursor");
+                }
+            }
         }
-        if !client.queue.is_empty() || !client.redraw.is_empty() {
+        if client.announce || !client.queue.is_empty() || !client.redraw.is_empty() {
             wake.notify_one();
         }
         state.clients.insert(id, client);
@@ -321,7 +343,8 @@ impl HubClient {
 
     /// The client drew every pane again from scratch (a self-contained
     /// snapshot reset its terminals): nothing queued for it before applies,
-    /// and it asks for each view's full frame itself.
+    /// it asks for each view's full frame itself, and it is told its new
+    /// cursor at once.
     pub fn restart(&self) {
         let mut state = lock(&self.hub.state);
         let sequence = state.sequence;
@@ -331,6 +354,8 @@ impl HubClient {
             client.awaiting_full.clear();
             client.redraw.clear();
             client.examined = sequence;
+            client.announce = true;
+            client.wake.notify_one();
         }
     }
 
@@ -360,9 +385,10 @@ impl HubClient {
             ring.redraw_asked = Some(now);
             redraws.push(pane.to_string());
         }
-        if client.queue.is_empty() {
+        if client.queue.is_empty() && !client.announce {
             return (None, redraws);
         }
+        client.announce = false;
         let mut text = String::from(r#"{"type":"terminal","payload":{"chunks":["#);
         let mut last = 0;
         for index in 0..FRAME_CHUNKS {
@@ -433,7 +459,7 @@ mod tests {
     #[test]
     fn a_client_resumes_every_pane_from_one_cursor() {
         let hub = TerminalHub::new();
-        let first = hub.connect(None);
+        let first = hub.connect(Resume::Fresh);
         hub.output("w1:p1", b"a", true);
         hub.output("w1:p2", b"b", true);
         let (frame, _) = first.take();
@@ -442,7 +468,7 @@ mod tests {
         drop(first);
         hub.output("w1:p1", b"c", false);
         hub.output("w1:p2", b"d", false);
-        let resumed = hub.connect(Some(cursor));
+        let resumed = hub.connect(Resume::After(cursor));
         let (frame, redraws) = resumed.take();
         assert!(redraws.is_empty());
         let (chunks, cursor) = frame_chunks(&frame.unwrap());
@@ -466,7 +492,7 @@ mod tests {
             hub.output("w1:p1", b"x", false);
         }
         hub.output("w1:p2", b"more", false);
-        let resumed = hub.connect(Some(cursor));
+        let resumed = hub.connect(Resume::After(cursor));
         let (frame, redraws) = resumed.take();
         assert_eq!(redraws, ["w1:p1"]);
         let (chunks, _) = frame_chunks(&frame.unwrap());
@@ -484,8 +510,8 @@ mod tests {
     #[test]
     fn a_stalled_client_bounds_the_panes_memory_and_costs_the_live_client_nothing() {
         let hub = TerminalHub::new();
-        let stalled = hub.connect(None);
-        let live = hub.connect(None);
+        let stalled = hub.connect(Resume::Fresh);
+        let live = hub.connect(Resume::Fresh);
         let chunk = vec![b'z'; 32 * 1024];
         let mut received = 0;
         let mut sent = 0;
@@ -517,10 +543,69 @@ mod tests {
     #[test]
     fn a_forgotten_pane_leaves_the_ring_and_every_queue() {
         let hub = TerminalHub::new();
-        let client = hub.connect(None);
+        let client = hub.connect(Resume::Fresh);
+        assert!(client.take().0.is_some(), "the fresh client's cursor");
         hub.output("w1:p1", b"a", true);
         hub.forget("w1:p1");
         assert!(client.take().0.is_none());
         assert!(hub.retained_bytes().is_empty());
+    }
+
+    /// A client that started from a whole snapshot learns its cursor before
+    /// any output, so a reconnect right after resumes from it.
+    #[test]
+    fn a_fresh_client_is_told_its_cursor_at_once() {
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"a", true);
+        let client = hub.connect(Resume::Fresh);
+        let (frame, redraws) = client.take();
+        assert!(redraws.is_empty());
+        assert_eq!(frame_chunks(&frame.unwrap()), (Vec::new(), 1));
+        assert!(client.take().0.is_none());
+        hub.output("w1:p1", b"b", false);
+        client.restart();
+        assert_eq!(frame_chunks(&client.take().0.unwrap()), (Vec::new(), 2));
+    }
+
+    /// A client that kept its terminals but names no cursor cannot be
+    /// resumed: every pane is drawn again, nothing partial first.
+    #[test]
+    fn a_client_without_a_cursor_redraws_every_pane() {
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"a", true);
+        hub.output("w1:p2", b"b", true);
+        let client = hub.connect(Resume::Redraw);
+        let (frame, mut redraws) = client.take();
+        redraws.sort();
+        assert_eq!(redraws, ["w1:p1", "w1:p2"]);
+        assert!(frame.is_none());
+        hub.output("w1:p1", b"partial", false);
+        hub.output("w1:p1", b"\x1bcwhole", true);
+        let (chunks, _) = frame_chunks(&client.take().0.unwrap());
+        assert_eq!(chunks, [("w1:p1".to_owned(), b"\x1bcwhole".to_vec())]);
+    }
+
+    /// A redraw that no full frame answered is asked again once the pane
+    /// keeps drawing past the retry interval, and only then.
+    #[test]
+    fn an_unanswered_redraw_is_asked_again_while_the_pane_keeps_drawing() {
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"a", true);
+        let client = hub.connect(Resume::Redraw);
+        assert_eq!(client.take().1, ["w1:p1"]);
+        hub.output("w1:p1", b"more", false);
+        assert!(client.take().1.is_empty(), "asked within the interval");
+        lock(&hub.state)
+            .panes
+            .get_mut("w1:p1")
+            .unwrap()
+            .redraw_asked = Some(Instant::now() - REDRAW_RETRY);
+        hub.output("w1:p1", b"more", false);
+        assert_eq!(client.take().1, ["w1:p1"]);
+        hub.output("w1:p1", b"\x1bcwhole", true);
+        hub.output("w1:p1", b"next", false);
+        let (frame, redraws) = client.take();
+        assert!(redraws.is_empty());
+        assert_eq!(frame_chunks(&frame.unwrap()).0.len(), 2);
     }
 }

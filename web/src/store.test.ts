@@ -9,7 +9,7 @@ describe("snapshot merge", () => {
     useShellStore.setState({
       connection: "connecting",
       revision: 0,
-      terminalSequence: 0,
+      terminalSequence: null,
       rest: null,
       agents: [],
       focusedPaneId: null,
@@ -127,16 +127,22 @@ describe("snapshot merge", () => {
     expect(state.diagnostics[0]).toContain("brand_new");
   });
 
-  it("returns terminal chunks without storing them", () => {
+  it("returns a terminal frame's chunks without storing them and keeps its cursor", () => {
     const chunks = useShellStore.getState().applyFrame({
-      type: "delta",
+      type: "terminal",
       payload: {
-        revision: 4,
-        chunks: [{ pane_id: "p1", sequence: 1, bytes_base64: "YQ==" }],
+        chunks: [{ pane_id: "p1", bytes_base64: "YQ==" }],
+        terminal_sequence: 7,
       },
     });
     expect(chunks).toHaveLength(1);
     expect(useShellStore.getState().agents).toEqual([]);
+    expect(useShellStore.getState().terminalSequence).toBe(7);
+    // A delta keeps the cursor; a whole snapshot clears it.
+    useShellStore.getState().applyFrame({ type: "delta", payload: { revision: 4 } });
+    expect(useShellStore.getState().terminalSequence).toBe(7);
+    useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 5, rest: {} as never } });
+    expect(useShellStore.getState().terminalSequence).toBeNull();
   });
 
   it("keeps untouched workspace rows by reference across a delta", () => {

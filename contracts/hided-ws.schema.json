@@ -22,7 +22,7 @@
         "schema_version": { "type": "integer", "const": 2 },
         "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
-        "have_terminal_sequence": { "type": "integer", "minimum": 0 }
+        "have_terminal_sequence": { "description": "The `terminal_sequence` of the last terminal frame a reconnecting client applied. With a delta it resumes every pane from there (a pane the hub's ring no longer reaches is drawn again from a full frame); a client that kept its terminals and names none has every pane drawn again; a client given a whole snapshot ignores it.", "type": "integer", "minimum": 0 }
       }
     },
     "workspaceQuery": {
@@ -104,14 +104,35 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace` and `clone_repository`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). project_target answers a `project_target` probe (see projectTarget and projectTargetResult). clone_target answers a `clone_target` question about where a clone would land (see cloneTarget). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; terminal carries pane output beside them, never through the core (see terminalFrame); error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace` and `clone_repository`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). project_target answers a `project_target` probe (see projectTarget and projectTargetResult). clone_target answers a `clone_target` question about where a clone would land (see cloneTarget). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "directory_unavailable", "path_refused", "project_target", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result", "clone_target"] },
+        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "terminal", "error", "directory_list", "directory_unavailable", "path_refused", "project_target", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result", "clone_target"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
+      }
+    },
+    "terminalFrame": {
+      "description": "Payload of a terminal frame: pane output from the screen-side hub (PRD core-host-node-terminal D-11, D-22), in the order the panes' nodes produced it. One sequence numbers every pane's chunks; terminal_sequence is the client's cursor after this frame, which it names as have_terminal_sequence when it reconnects. After a whole snapshot the client resets every terminal and is sent a terminal frame with no chunks that gives its new cursor. A pane whose output a client left unsent past 1 MiB, or that a resume cannot reach, sends that client nothing more until a full frame redraws it. Keys go the other way as the `key` event {pane_id or pending_request, bytes_base64}, and a view's grid as `terminal_viewport` {pane_id, cols, rows, new_view}; both reach the pane's node directly and never the core.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunks", "terminal_sequence"],
+      "properties": {
+        "chunks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pane_id", "bytes_base64"],
+            "properties": {
+              "pane_id": { "type": "string" },
+              "bytes_base64": { "type": "string" }
+            }
+          }
+        },
+        "terminal_sequence": { "type": "integer", "minimum": 0 }
       }
     },
     "daemonInfo": {
