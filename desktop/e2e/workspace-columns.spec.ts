@@ -532,7 +532,6 @@ test("SSH Workspace columns keep chords, fallback and saved widths separate from
     const rail = (device: string) => page.locator(`[data-rail-tile="${device}"]`);
     await expect(rail("columns-ssh")).toHaveAttribute("data-rail-connected", "true", { timeout: 120_000 });
     await rail("columns-ssh").click();
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const row = (label: string) => page.locator("[data-project]", { hasText: label }).locator("[data-checkout]").first();
     await row("shared-columns").click();
     await expect(row("shared-columns")).toHaveAttribute("aria-current", "true");
@@ -648,7 +647,6 @@ test("a Workspace switch cancels its column drag without changing another Worksp
     await page.reload();
     await enterWorkspace(page, "fixture");
     await bodyWidth(app, page, 1600);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const row = (label: string) => page.locator("[data-project]", { hasText: label }).locator("[data-checkout]").first();
     const openNotes = async () => {
       await showExplorer(page);

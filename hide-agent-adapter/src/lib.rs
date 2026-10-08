@@ -7,7 +7,7 @@
 mod declarations;
 pub use declarations::ADAPTERS;
 mod web;
-pub use web::{WebAdapter, web_contract};
+pub use web::{HookKind, WebAdapter, web_contract};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentId {
@@ -42,21 +42,33 @@ pub enum TitlePriority {
     GoalOnly,
 }
 
-/// The input and output protocol of an agent's own hook events: how its
-/// payload names the shell call and session, and how a refusal is written.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The input and output protocol of an agent's own hook: how its payload
+/// names the shell call and session, and how a refusal is written. Claude
+/// Code's and Codex's six-event hook, OpenCode's plugin, which calls the same
+/// helper, and Grok's and Cursor's own hook files.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HookDialect {
     ClaudeCode,
     Codex,
+    OpenCode,
     Grok,
     Cursor,
 }
 
 impl HookDialect {
+    pub const ALL: [Self; 5] = [
+        Self::ClaudeCode,
+        Self::Codex,
+        Self::OpenCode,
+        Self::Grok,
+        Self::Cursor,
+    ];
+
     pub const fn adapter(self) -> &'static AgentAdapter {
         match self {
             Self::ClaudeCode => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::OpenCode => AgentId::OpenCode.adapter(),
             Self::Grok => AgentId::Grok.adapter(),
             Self::Cursor => AgentId::Cursor.adapter(),
         }
@@ -80,10 +92,17 @@ impl GuidanceDialect {
     }
 }
 
+/// A plugin file Hide owns in the agent's own plugin folder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PluginDialect {
+    OpenCode,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookInstall {
     Runtime(HookDialect),
     Guidance(GuidanceDialect),
+    Plugin(PluginDialect),
     None,
 }
 
@@ -135,6 +154,29 @@ impl LaunchDialect {
         }
     }
 
+    /// How the CLI takes a model and a reasoning effort at launch; `{}` is
+    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160;
+    /// the other agents declare neither, so a start of theirs takes none.
+    pub const fn options(self) -> LaunchOptions {
+        match self {
+            Self::Claude => LaunchOptions {
+                model: &["--model", "{}"],
+                effort: &["--effort", "{}"],
+                efforts: &["low", "medium", "high", "xhigh", "max"],
+            },
+            Self::Codex => LaunchOptions {
+                model: &["-m", "{}"],
+                effort: &["-c", "model_reasoning_effort={}"],
+                efforts: &["minimal", "low", "medium", "high", "xhigh"],
+            },
+            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp | Self::Cursor => LaunchOptions {
+                model: &[],
+                effort: &[],
+                efforts: &[],
+            },
+        }
+    }
+
     /// The first interactive prompt is an argument, held by the native CLI
     /// through startup questions. OpenCode's positional argument is a project.
     pub const fn prompt_flag(self) -> &'static str {
@@ -152,6 +194,59 @@ impl LaunchDialect {
 
     pub const fn closes_pane_when_sleeping(self) -> bool {
         !matches!(self, Self::Claude | Self::Codex)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LaunchOptions {
+    pub model: &'static [&'static str],
+    pub effort: &'static [&'static str],
+    pub efforts: &'static [&'static str],
+}
+
+/// A model name reaches a command line, so it is held to the characters
+/// model ids use; anything else is refused rather than quoted.
+pub fn valid_model(model: &str) -> bool {
+    // A leading dash would read as an option to the agent's CLI.
+    !model.is_empty()
+        && !model.starts_with('-')
+        && model.len() <= 80
+        && model
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._:/[]".contains(&byte))
+}
+
+impl LaunchOptions {
+    /// The launch arguments for a model and an effort, refused with the
+    /// reason when either is not something this CLI declares.
+    pub fn arguments(
+        self,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let mut arguments = Vec::new();
+        if let Some(model) = model {
+            if self.model.is_empty() {
+                return Err("this agent takes no model at launch".to_owned());
+            }
+            if !valid_model(model) {
+                return Err(format!("model `{model}` is not a model name"));
+            }
+            arguments.extend(self.model.iter().map(|part| part.replace("{}", model)));
+        }
+        if let Some(effort) = effort {
+            if self.efforts.is_empty() {
+                return Err("this agent takes no effort at launch".to_owned());
+            }
+            if !self.efforts.contains(&effort) {
+                return Err(format!(
+                    "effort `{effort}` is not one of {}",
+                    self.efforts.join(", ")
+                ));
+            }
+            arguments.extend(self.effort.iter().map(|part| part.replace("{}", effort)));
+        }
+        Ok(arguments)
     }
 }
 
@@ -299,6 +394,14 @@ pub fn start_kind(value: &str) -> Option<&'static str> {
     row.start.map(|_| row.herdr.name)
 }
 
+/// The Herdr kind of the agent whose hook asks, under its canonical id
+/// `runtime`, whether to refuse a direct question tool in a Factory worker
+/// pane; `None` for an agent with no such tool Hide can refuse.
+pub fn direct_ask_kind(runtime: &str) -> Option<&'static str> {
+    let row = ADAPTERS.iter().find(|row| row.id == runtime)?;
+    matches!(row.factory.direct_ask, Capability::Available(_)).then_some(row.herdr.name)
+}
+
 const fn start_count() -> usize {
     let mut count = 0;
     let mut index = 0;
@@ -366,7 +469,7 @@ impl AgentAdapter {
         match feature {
             Feature::Skill | Feature::HerdrIntegration => true,
             Feature::Guidance => match self.hook {
-                HookInstall::Runtime(_) => true,
+                HookInstall::Runtime(_) | HookInstall::Plugin(_) => true,
                 HookInstall::Guidance(dialect) => dialect.prints_guidance(),
                 HookInstall::None => false,
             },

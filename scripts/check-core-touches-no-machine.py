@@ -94,8 +94,9 @@ STORES = {
         "the Factory's store, which the core keeps beside its state file",
     ),
     "hide-factory/src/engine.rs": (
-        2,
-        "reads a Task's attached PRD, a file in the Factory's own store",
+        1,
+        "reads a Task's attached PRD, a file in the Factory's own store, "
+        "in `attached_prd`, which every engine reader of it calls",
     ),
     "herdr-core/src/node_migration.rs": (
         15,

@@ -14,15 +14,13 @@ import { AgentGraph, GraphFilterControls, type GraphReveal } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
 import { lensHandlers } from "./OverviewLenses";
 import { scopeAgents } from "./overviewLens";
-import { RequestView } from "./RequestView";
-import { requestRows } from "./requestList";
 import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
 import { frontDeviceId } from "./devices";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
-import { NO_REQUEST_LENS, toggledFold, useUiStore, type MainView, type RequestLens } from "./ui";
+import { toggledFold, useUiStore, type MainView } from "./ui";
 import { hostBridge } from "./host";
 import { commandLabel } from "./shortcutLabels";
 
@@ -38,9 +36,8 @@ import { commandLabel } from "./shortcutLabels";
 // Everything drawn is a value the snapshot carries; a device that cannot
 // answer says why on its own section, with Retry where retrying can help.
 
-const VIEWS: readonly { view: MainView; label: "requests.title" | "overview.tasks" | "overview.agents" | "overview.projects" }[] = [
+const VIEWS: readonly { view: MainView; label: "overview.tasks" | "overview.agents" | "overview.projects" }[] = [
   { view: "agents", label: "overview.agents" },
-  { view: "requests", label: "requests.title" },
   { view: "tasks", label: "overview.tasks" },
   { view: "projects", label: "overview.projects" },
 ];
@@ -50,7 +47,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const view = useUiStore((s) => s.mainView);
+  const savedView = useUiStore((s) => s.mainView);
+  const view = savedView === "requests" ? "agents" : savedView;
   const setView = useUiStore((s) => s.setMainView);
   const tasksMode = useUiStore((s) => s.tasksMode);
   const setTasksMode = useUiStore((s) => s.setTasksMode);
@@ -76,10 +74,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const agentScope = deviceScope(rest, deviceId);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
-  const rows = useMemo(() => agentScope ? requestRows(lensAgents, projects.flatMap((project) => project.agents), agentScope) : [], [lensAgents, projects, agentScope]);
-  // The request view's expanded rows and fold, this screen's own page state.
-  const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
-  const onRequestLens = useCallback((patch: Partial<RequestLens>) => useUiStore.getState().setMainRequestLens(patch), []);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -99,16 +93,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
     const local = projects.filter(({ workspace }) => !workspace.remote_target_id && workspace.tasks?.source);
     return (front ? local.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace.id ?? local[0]?.workspace.id ?? null;
   }, [rest, projects]);
-  const agentProject = useMemo(() => {
-    const front = frontCheckout(rest);
-    return (front ? projects.find(({ workspace }) => workspace.checkouts.some((checkout) => checkout.id === front.id)) : undefined)?.workspace ?? projects[0]?.workspace ?? null;
-  }, [rest, projects]);
-  const newAgent = useCallback(() => {
-    if (!agentProject) return actions.openAddProject();
-    if (agentProject.is_git) return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: agentProject.id });
-    const checkout = agentProject.checkouts[0];
-    if (checkout) actions.openWorkspace(agentProject.device_id, agentProject.id, checkout.id);
-  }, [actions, agentProject]);
   const newIssue = () => {
     if (issueProject) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: issueProject });
   };
@@ -126,7 +110,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
   // The Agents tab keeps the count of agents whose turn it is, as a project's Agents tab does;
   // the 요청 tab the rows to answer, as a project's 요청 tab does.
   const waiting = agentScope?.buckets.turn ?? 0;
-  const answering = agentScope?.requests.answer ?? 0;
   const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => {
       setView("tasks");
@@ -184,11 +167,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
             {VIEWS.map((choice) => (
               <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
                 {t(choice.label)}
-                {choice.view === "requests" && answering > 0 ? (
-                  <span className="text-caption text-warning" data-requests-answer={answering} aria-label={t("overview.answerCount", { count: answering })}>
-                    {answering}
-                  </span>
-                ) : null}
                 {choice.view === "agents" && waiting > 0 ? (
                   <span className="text-caption text-warning" data-agents-waiting={waiting} aria-label={t("overview.myTurnCount", { count: waiting })}>
                     {waiting}
@@ -215,9 +193,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </div>
         ))
       ) : null}
-      {view === "requests" ? (
-        <RequestView agentScope={agentScope} rows={rows} scope="all" lens={requestLens} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
-      ) : view === "tasks" ? (
+      {view === "tasks" ? (
         <IssuesView
           board={tasks}
           scope="all"

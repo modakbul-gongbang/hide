@@ -30,12 +30,11 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    // The sidebar opens on Projects; these rows are the Agents list's.
-    await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
-    await expect(page.locator('[data-sidebar="agents"]')).toBeVisible();
+    // One sidebar exposes the project and its root agents.
+    await expect(page.locator('[data-sidebar="projects"]')).toBeVisible();
     labelAgent(herdr, one, { task: "Agent one", progress: "팔레트 그룹 검증 중" });
     await setFixtureLifecycle(herdr, one, "working");
-    await expect(page.locator(`[data-agent-list] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
 
     // The sidebar's Search icon opens the palette with the query focused. The
     // page shows Main, which has nothing to relate to, so the palette holds

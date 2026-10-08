@@ -15,8 +15,6 @@ import { foldId } from "./agentGraph";
 import { OverviewTitleRow } from "./OverviewTitleRow";
 import { LensTabs, lensHandlers } from "./OverviewLenses";
 import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
-import { RequestView } from "./RequestView";
-import { requestRows, requestsTile } from "./requestList";
 import { boardLabels, buildPullRequests, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
@@ -46,7 +44,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const setProject = useUiStore((s) => s.setOverviewProject);
   const setLens = useUiStore((s) => s.setLens);
   const clearSessionTarget = useCallback(() => setLens({ session: null }), [setLens]);
-  const onRequestLens = useCallback((requests: Partial<OverviewLens["requests"]>) => setLens({ requests: { ...lens.requests, ...requests } }), [setLens, lens.requests]);
+
   const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key, panel: task.key }),
     toggleFold: (fold) => setLens({ folds: toggledFold(lens.folds, fold) }),
@@ -64,15 +62,15 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const everyone = useMemo(() => scopeAgents(boardProjects(rest, agents)), [rest, agents]);
-  const rows = useMemo(() => workspace ? requestRows(lensAgents, deviceAgents ?? [], workspace.agent_scope) : [], [lensAgents, deviceAgents, workspace]);
+
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
   const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
   const tiles = useMemo(
     () =>
       tasks && workspace && found && pullRequests
-        ? [agentsTile(workspace.agent_scope, found.availability, t), requestsTile(workspace.agent_scope, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
+        ? [agentsTile(workspace.agent_scope, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
         : [],
-    [tasks, workspace, found, rows, lensAgents, sessions, pullRequests, t, i18n.language],
+    [tasks, workspace, found, lensAgents, sessions, pullRequests, t, i18n.language],
   );
   // A local Git project's Git facts and pull requests are read whenever this
   // screen opens. The previous answer stays visible during the worker reads.
@@ -127,11 +125,11 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     showCheckouts: () => setLens({ tab: "agents", panel: null, folds: lens.folds.includes(foldId("empty", project.id)) ? lens.folds : [...lens.folds, foldId("empty", project.id)] }),
   };
   // An issue chip opens the Issues tile at its card with the issue's panel open.
-  const view = lens.tab;
+  const view = lens.tab === "requests" ? "agents" : lens.tab;
   // With the issue panel open the board and the panel scroll on their own, under a header that stays (D-43).
   const split = (view === "issues" && panelCard(tasks, lens.panel) !== null) || (view === "prs" && lens.prs.panel !== null);
   const state =
-    view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" || view === "requests" ? (lensAgents.length === 0 ? "empty" : "board") : view === "prs" ? (pullRequests.groups.length === 0 ? "empty" : "board") : "sessions";
+    view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : view === "prs" ? (pullRequests.groups.length === 0 ? "empty" : "board") : "sessions";
   const sessionsView = view === "sessions";
   return (
     <section
@@ -177,12 +175,6 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
         </div>
       ) : view === "prs" ? (
         <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} actions={actions} now={now} />
-      ) : view === "requests" ? (
-        availability.state === "ready" ? (
-          <RequestView agentScope={workspace!.agent_scope} rows={rows} scope="project" lens={lens.requests} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />
-        ) : (
-          <div className="flex-1" data-requests-unavailable={availability.state} />
-        )
       ) : view === "agents" ? (
         // A device that does not answer shows its reason above and no graph: the last picture is not left standing (B32).
         availability.state === "ready" ? (

@@ -1184,6 +1184,7 @@ fn remove_event(workspace_id: &str) -> Vec<u8> {
 #[test]
 fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmation() {
     let (mut runtime, registration) = registered_context_runtime();
+    runtime.snapshot.ui_state.session_open_folds = vec![registration.id.clone()];
     let alpha = runtime
         .snapshot
         .navigator
@@ -1215,6 +1216,10 @@ fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmati
         vec![registration.clone()],
         "a timeout leaves the project registered"
     );
+    assert_eq!(
+        runtime.snapshot.ui_state.session_open_folds.as_slice(),
+        std::slice::from_ref(&registration.id)
+    );
     let error = runtime.snapshot.status.last_error.clone().unwrap();
     assert_eq!(error.kind, "workspace.remove_failed");
     assert!(error.message.contains("Timed out"));
@@ -1232,6 +1237,7 @@ fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmati
     assert!(runtime.dispatch_json(&remove_event(&registration.id)));
     assert!(runtime.ingest_workspace_close_result(&registration.id, Ok(())));
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
     assert!(
         !runtime
             .snapshot
@@ -2177,14 +2183,14 @@ fn invalid_purpose_fails_the_sheet_operation_with_the_shared_scalar_limit() {
     );
 }
 
-/// B5, B12. The two fold events own independent persisted keys and update
+/// Session B7, B8. The fold events own independent persisted keys and update
 /// the snapshot immediately. Repeating each toggle converges back to the
 /// default collapsed state without changing project disclosure.
 #[test]
-fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
+fn session_fold_events_toggle_project_and_cleanup_state_independently() {
     let mut runtime = runtime();
     let path = "/tmp/hide-runtime-inactive";
-    let settled = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
+    let agentless = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
         agent_scope: Default::default(),
         id: id.to_owned(),
         workspace_id: "workspace-inactive".to_owned(),
@@ -2192,11 +2198,12 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
         path: checkout_path.to_owned(),
         is_worktree,
         is_primary: !is_worktree,
+        exists: true,
         worktree: Some(crate::model::WorktreeSnapshot {
-            merged: Some(true),
+            merged: Some(false),
             ..Default::default()
         }),
-        landed: true,
+        landed: false,
         ..CheckoutSnapshot::default()
     };
     runtime.snapshot.navigator.workspaces = vec![workspace(
@@ -2204,71 +2211,71 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
         "Inactive",
         path,
         vec![
-            settled("primary", path, false),
-            settled("secondary", "/tmp/hide-runtime-inactive-secondary", true),
+            agentless("primary", path, false),
+            agentless("secondary", "/tmp/hide-runtime-inactive-secondary", true),
         ],
     )];
     runtime.refresh_inactive_groups();
     assert_eq!(
-        runtime.snapshot.navigator.workspaces[0]
-            .inactive_checkouts
-            .checkout_ids,
+        runtime.snapshot.navigator.workspaces[0].session_folds.empty,
         ["secondary"]
     );
-    assert_eq!(runtime.snapshot.navigator.inactive_projects.len(), 1);
+    assert!(runtime.snapshot.navigator.inactive_projects.is_empty());
 
     let checkout_toggle = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
-        "kind": "inactive_checkouts_toggle",
-        "payload": { "project_path": path }
+        "kind": "session_fold_toggle",
+        "payload": { "key": "workspace-inactive" }
     }))
     .unwrap();
     let project_toggle = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
-        "kind": "inactive_projects_toggle",
-        "payload": { "device_id": crate::node::TEST_NODE }
+        "kind": "session_fold_toggle",
+        "payload": { "key": format!("cleanup/{}", crate::node::TEST_NODE) }
     }))
     .unwrap();
 
     assert!(runtime.dispatch_json(&checkout_toggle));
     assert!(
         runtime.snapshot.navigator.workspaces[0]
-            .inactive_checkouts
-            .expanded
+            .session_folds
+            .empty_open
     );
     assert_eq!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_checkout_project_paths,
-        [path]
+        runtime.snapshot.ui_state.session_open_folds,
+        ["workspace-inactive"]
     );
     assert!(runtime.dispatch_json(&project_toggle));
-    assert!(runtime.snapshot.navigator.inactive_projects[0].expanded);
-    assert_eq!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_project_device_ids,
-        [crate::node::TEST_NODE]
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .session_folds
+            .cleanup_open
+    );
+    assert_eq!(runtime.snapshot.ui_state.session_open_folds.len(), 2);
+
+    // Restart/reconnect catalogs can be empty before the same rows return.
+    let workspaces = std::mem::take(&mut runtime.snapshot.navigator.workspaces);
+    let devices = std::mem::take(&mut runtime.snapshot.navigator.devices);
+    runtime.refresh_inactive_groups();
+    assert_eq!(runtime.snapshot.ui_state.session_open_folds.len(), 2);
+    runtime.snapshot.navigator.workspaces = workspaces;
+    runtime.snapshot.navigator.devices = devices;
+    runtime.refresh_inactive_groups();
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .session_folds
+            .empty_open
+    );
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .session_folds
+            .cleanup_open
     );
 
     assert!(runtime.dispatch_json(&checkout_toggle));
     assert!(runtime.dispatch_json(&project_toggle));
-    assert!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_checkout_project_paths
-            .is_empty()
-    );
-    assert!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_project_device_ids
-            .is_empty()
-    );
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
 }
 
 #[test]

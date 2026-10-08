@@ -17,7 +17,7 @@ const PENDING_CHECKS_REREAD: std::time::Duration = std::time::Duration::from_sec
 
 impl Runtime {
     pub(super) fn refresh_agent_scopes(&mut self) -> bool {
-        self.agent_scope_cache.refresh(&mut self.snapshot)
+        self.agent_scope_cache.refresh(&mut self.snapshot) | self.refresh_pane_headers()
     }
 
     /// Lays the block on this Mac's rows, whose pull requests come from
@@ -69,6 +69,10 @@ impl Runtime {
             unix_milliseconds(),
         );
         if let Some(live) = live_panes {
+            self.prune_resolved_sessions(|pane| {
+                !pane.starts_with("remote:") && !live.contains(pane)
+            });
+            let verbs = &mut self.snapshot.ui_state.request_verbs;
             changed |= request_view::prune_verbs(verbs, |pane| {
                 !pane.starts_with("remote:")
                     && !live.contains(pane)
@@ -100,6 +104,10 @@ impl Runtime {
         );
         let prefix = remote_pane_id_prefix(target_id);
         if fetched {
+            self.prune_resolved_sessions(|pane| {
+                pane.starts_with(&prefix) && !agents.iter().any(|row| row.pane_id == pane)
+            });
+            let verbs = &mut self.snapshot.ui_state.request_verbs;
             changed |= request_view::prune_verbs(verbs, |pane| {
                 pane.starts_with(&prefix) && !agents.iter().any(|row| row.pane_id == pane)
             });
@@ -150,7 +158,7 @@ impl Runtime {
                 changed = true;
             }
         }
-        changed | self.refresh_agent_scopes()
+        changed | self.sync_session_state() | self.refresh_agent_scopes()
     }
 
     /// A window began or stopped showing the request view.

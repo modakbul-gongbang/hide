@@ -5,7 +5,7 @@
 // so both judge one geometry. Plain JavaScript because that command is a Node
 // script, not a Playwright spec.
 
-/** Every row the Projects and Agents lists draw, by a stable key. */
+/** Every row the sidebar lists draw, by a stable key. */
 const ROWS = [
   ["agent", "li[data-pane]", "data-pane"],
   ["checkout", "[data-checkout-menu]", "data-checkout-menu"],
@@ -22,7 +22,6 @@ const PARTS = [
   "[data-device-chip]",
   "[data-descendant-badge]",
   "[data-agent-elapsed]",
-  "[data-agent-tree-toggle]",
   "[data-fold-slot]",
   "[data-row-name]",
   "[data-checkout-age]",
@@ -46,7 +45,7 @@ export async function rowBoxes(page) {
       for (const row of document.querySelectorAll(`nav[data-sidebar] ${selector}`)) {
         if (row.getClientRects().length === 0) continue;
         const box = row.getBoundingClientRect();
-        const list = row.closest("[data-project-list], [data-agent-list]");
+        const list = row.closest("[data-project-list]");
         const origin = list ? list.getBoundingClientRect() : { left: 0, top: 0 };
         const left = box.x - origin.left + (list?.scrollLeft ?? 0);
         const top = box.y - origin.top + (list?.scrollTop ?? 0);
@@ -88,7 +87,7 @@ export async function rowTargets(page) {
 export async function agentColumns(page) {
   return page.evaluate(() => {
     const lists = [];
-    for (const list of document.querySelectorAll("nav[data-sidebar] [data-checkout-agents-open], nav[data-sidebar] [data-agent-list]")) {
+    for (const list of document.querySelectorAll("nav[data-sidebar] [data-checkout-agents-open]")) {
       const rows = [];
       for (const row of list.querySelectorAll("li[data-pane]")) {
         if (row.getClientRects().length === 0) continue;
@@ -149,7 +148,7 @@ export async function rowPartProblems(page) {
  */
 export async function sidebarColumns(page) {
   return page.evaluate(() => {
-    const list = "nav[data-sidebar] :is([data-agent-list], [data-project-list])";
+    const list = "nav[data-sidebar] [data-project-list]";
     const boxes = (parts) =>
       Array.from(document.querySelectorAll(`${list} :is(${parts})`))
         .filter((part) => part.getClientRects().length > 0)
@@ -164,7 +163,7 @@ export async function sidebarColumns(page) {
             .map((badge) => badge.getBoundingClientRect()),
         ].map((box) => box.right),
       ),
-      chevrons: distinct(boxes("[data-agent-tree-toggle], [data-checkout-toggle], [data-project-toggle]").map((box) => box.left + box.width / 2)),
+      chevrons: distinct(boxes("[data-checkout-toggle], [data-project-toggle]").map((box) => box.left + box.width / 2)),
     };
   });
 }
@@ -180,7 +179,7 @@ export async function sidebarOverflow(page, width) {
     if (!nav) return ["no sidebar"];
     if (value !== null) nav.style.width = value;
     const problems = [];
-    for (const list of Array.from(document.querySelectorAll("[data-agent-list], [data-project-list]"))) {
+    for (const list of Array.from(document.querySelectorAll("[data-project-list]"))) {
       if (list.scrollWidth > list.clientWidth) problems.push(`list scrolls sideways ${list.scrollWidth} > ${list.clientWidth}`);
     }
     for (const row of Array.from(document.querySelectorAll("[data-pane], [data-checkout-row] > *, [data-project] > *"))) {
@@ -206,7 +205,7 @@ export async function sidebarRowsFit(page) {
     // Every element in the lists that holds text itself (names, lines, places,
     // times, chips), every icon, and every status and provider mark, so a
     // line drawn only in marks is measured too.
-    const parts = Array.from(document.querySelectorAll("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")).filter(
+    const parts = Array.from(document.querySelectorAll("nav[data-sidebar] [data-project-list] *")).filter(
       (part) =>
         part.getClientRects().length > 0 &&
         (part.matches("svg, [data-mark], [data-agent-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),

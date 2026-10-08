@@ -21,8 +21,11 @@ const BUILT: FixtureShim[] = windows ? ["claude-shim", "spawn-provider", "noop",
 // Playwright starts its workers after `globalSetup`, so they inherit it.
 const PROGRAMS = "HIDE_E2E_SHIMS";
 
-const hashed = (source: string, name: FixtureShim): string =>
-  `${name}-${createHash("sha256").update(fs.readFileSync(source)).digest("hex").slice(0, 12)}${ext}`;
+const hashed = (source: string, name: FixtureShim): string => {
+  const digest = createHash("sha256").update(fs.readFileSync(source));
+  if (name === "claude-shim") digest.update(fs.readFileSync(path.join(path.dirname(source), "live-check.h")));
+  return `${name}-${digest.digest("hex").slice(0, 12)}${ext}`;
+};
 
 /**
  * Compiles every program whose current source has no finished build, removes

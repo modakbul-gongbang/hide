@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 base64 = "=0.23.1"
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 hide-node-link = { path = "../hide-node-link" }
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }

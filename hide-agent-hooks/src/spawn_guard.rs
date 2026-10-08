@@ -232,6 +232,9 @@ pub fn read_call(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
         return None;
     }
     let (tool, input, cwd) = match dialect {
+        // OpenCode's plugin hands its helper the command itself; no hook
+        // payload of OpenCode's reaches this reader.
+        HookDialect::OpenCode => return None,
         HookDialect::Grok => {
             let payload: GrokPayload = serde_json::from_slice(payload).ok()?;
             (payload.tool_name, payload.tool_input, payload.cwd)
@@ -242,7 +245,7 @@ pub fn read_call(payload: &[u8], truncated: bool, dialect: HookDialect) -> Optio
         }
     };
     let shell = match dialect {
-        HookDialect::ClaudeCode | HookDialect::Codex => &["Bash"][..],
+        HookDialect::ClaudeCode | HookDialect::Codex | HookDialect::OpenCode => &["Bash"][..],
         HookDialect::Grok => &["run_terminal_command", "Bash"][..],
         HookDialect::Cursor => &["Shell"][..],
     };

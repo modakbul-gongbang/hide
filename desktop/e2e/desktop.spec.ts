@@ -58,7 +58,8 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
 
   // B11: no Node API in the page; the bridge is the host kind and OS, the menu
   // channel, the pane-chord report, the file manager reveal, Add a project's folder
-  // picker and the browser displays' views (issue 155).
+  // picker, the browser displays' views (issue 155) and the Factory's macOS
+  // notification with its click back.
   expect(
     await page.evaluate(() => ({
       require: typeof (globalThis as { require?: unknown }).require,
@@ -66,7 +67,7 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "notify", "onCommand", "onNotificationOpen", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath"], kind: "electron" });
 
   // B9: the app's New tab chord is one create_tab here; the browser's is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();

@@ -170,7 +170,7 @@ impl AiBackend for PiCliBackend {
             &Spec {
                 binary: &binary,
                 args: &Self::print_arguments(
-                    &self.config.model,
+                    request.model(&self.config.model),
                     &request.system,
                     &request.output_schema,
                 ),

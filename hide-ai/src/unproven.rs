@@ -70,6 +70,7 @@ mod tests {
             output_schema: serde_json::json!({}),
             deadline: Duration::from_secs(1),
             schema_version: "v1".into(),
+            pick: None,
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),

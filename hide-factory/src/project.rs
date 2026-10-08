@@ -112,8 +112,7 @@ impl Drop for Projects {
 /// The runtimes a worker can start with on the node, in the order D-45
 /// prefers; one the node cannot answer for is left out.
 fn installed_runtimes(machine: &Machine) -> Vec<Runtime> {
-    [Runtime::Claude, Runtime::Codex]
-        .into_iter()
+    Runtime::all()
         .filter(|runtime| {
             machine
                 .node_call::<bool>(
@@ -463,6 +462,10 @@ impl TaskSource for SharedProjects {
         base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .map_err(|error| error.to_string())
+    }
+
+    fn installed(&mut self, agent: Runtime) -> bool {
+        installed_runtimes(&self.lock().machine).contains(&agent)
     }
 
     fn probe(&mut self, project: &str) -> Result<ProjectProbe, Failure> {

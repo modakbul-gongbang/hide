@@ -3,7 +3,8 @@
 Hide's core owns agent registration, spawning and lineage, the single mailbox and inactivity watches for local and connected device agents.
 This guide is the public operating contract.
 Approved implementation contracts and run state stay in the private local harness.
-Human Inbox UI, relay/escalate, authority proof and automatic draft clearing remain follow-up work.
+Human Inbox UI, relay/escalate commands, authority proof and automatic draft clearing remain follow-up work.
+Derived UI escalation is separate: the core maps the existing delivery and watch facts to the six causes in [status-model.md](status-model.md#delegated-escalation), without changing delivery clocks, retries, authority or the mailbox protocol.
 
 ## Commands and caller identity
 
@@ -75,7 +76,7 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
   A pane that entered `working` was submitted to as well, which is how an answered menu or a custom slash command that starts a turn clears the hold.
   A key after both is an unsent draft, an Esc-restored prompt or a recalled input; a pane held by one stays held until the next real prompt.
 - The pane still hosts the native session the letter was written for, and the agent kind is one the bell targets.
-- For an agent whose session read reports its turns (today Codex), that read, made for Herdr's current state, says nothing waits for the operator (see [A menu Herdr reads as a stop](#a-menu-herdr-reads-as-a-stop)).
+- For Claude Code and Codex, whose session readers report turns, a read made for Herdr's current state says no native question or plan approval waits for the operator (see [A menu Herdr reads as a stop](#a-menu-herdr-reads-as-a-stop)).
 - Herdr does not report the agent as starting or not ready.
   Herdr reports readiness only for an agent it launched itself (`herdr agent start`, which `hide agent spawn` uses): `launch_pending: true` while that start settles or is blocked, then `interactive_ready: true`.
   An agent the operator started by typing its program in a Herdr shell, the usual way a lead is started, carries neither flag; its readiness is unreported, not refused, and the facts above decide it.
@@ -83,9 +84,14 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
 
 Herdr's `blocked` status guards every permission and selection menu Herdr reads as `blocked`, so only kinds whose menus were observed to read `blocked` are bell targets.
 Today those are Claude Code and Codex.
+Repeat the complete scene matrix with the [local measurement tool](VERIFICATION.md#local-agent-bell-measurement) before enabling another target or relying on a result after a Herdr or agent CLI update.
+Its ignored run report records active detection-manifest versions and native outcomes, including unsafe picker/startup effects and unknown cells.
+The adapter declaration is a reviewed product decision; the tool never changes it automatically.
 The shared agent adapter declares bell eligibility separately from prompt intake, spawn refusal and session format; its contract rejects a bell without a prompt hook, and adding prompt intake alone never widens the bell targets.
 Claude Code's plan approval reads `blocked`; Codex's does not, and the session read guards it instead (next section).
-Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); OpenCode, Pi and every other kind keep today's behavior, with letters read through `hide inbox` or a prompt hook.
+Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); Pi and every other kind keep today's behavior, with letters read through `hide inbox`.
+OpenCode is not a target either, though Hide's plugin gives it a prompt hook: on 2026-10-07 its previous-session picker read `done`, and a bell's Enter there opened another session.
+Its letters ride its next prompt instead (below), and the bell is reconsidered only in the change that would flip its adapter declaration, once the live-check tool has found a bell harmless in every scene OpenCode does not read as `blocked`.
 Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
@@ -113,7 +119,14 @@ Both pulls carry the payload's `session_id`; the core takes the pull as proof th
 The session id is not a secret, so this guards against accidents and not against a hostile process in the pane (external input, D-18).
 A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and an id longer than 256 bytes or holding a control character is refused before it is hashed.
 A device kit older than the local app sends `hide inbox --hook` without `--bell`, so its bell turn gets only the count line and the letter stays pending until the kit is updated; keep the kit and the app on the same build.
-A prompt hook that runs inside an agent with no prompt hook of its own (Grok or OpenCode loading Claude Code's hook) receives nothing and confirms nothing.
+A prompt hook that runs inside an agent with no prompt hook of its own (Grok loading Claude Code's hook) receives nothing and confirms nothing.
+Claude Code's hook run inside OpenCode, through an operator plugin that bridges `~/.claude/settings.json`, ends silently as a whole, so OpenCode's letters and counts are taken once, by Hide's own plugin.
+
+An agent with a prompt hook that no bell rings for, today only OpenCode through Hide's plugin, takes its letters on its next prompt, whoever typed it, since no turn of Hide's own will ever bring them (`mailbox::next_prompt_letters`).
+Its `hide inbox --hook --session` pull hands over the letter bodies as a bell pull does and confirms nothing: the plugin attaches them to the root session's prompt as a synthetic part, and only when OpenCode reports that part written (`message.part.updated` with the part's id) does it run `hide inbox --confirm`.
+OpenCode's `chat.message` runs before the prompt is stored, so a prompt OpenCode loses before that leaves its letters pending for the next prompt or `hide inbox`.
+A subagent's prompt and a prompt of only synthetic text pull nothing.
+The plugin forgets a pull it never saw stored after 10 minutes and keeps at most 16 waiting, so a stored part reported late can still confirm; past that the letter stays pending and comes again.
 An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt, as it is for an agent with one: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does.
 Transport arrival and the doorbell alone do not confirm intake.
 Interruption before confirmation can repeat the same letter ID; confirmed letters do not appear again in hook context.
@@ -126,6 +139,7 @@ A blocked diagnostic store or output stream can prevent the diagnostic from fini
 CLI output collection uses the canonical platform capture, with a 64 KiB bound and no reader thread or blocking join after timeout.
 Cleanup uncertainty is a separate private diagnostic field and never authorizes confirmation.
 Manual `hide inbox` and `hide request show` remain available when the hook is missing or fails.
+OpenCode's plugin holds the same 1.85-second prompt budget around its helper call, which itself stops at 1.65 seconds so the process start fits; past the budget the prompt goes on unchanged and the cause lands in the same private diagnostic (cause `plugin` for helper calls the plugin skipped or gave up on).
 
 The pinned Herdr API has no atomic composer guard.
 Hide checks the occupant before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
@@ -142,11 +156,12 @@ Records the parser does not recognise are not known rather than "nothing waits":
 The rule and its basis (codex-cli 0.160.1) are written beside the Codex parser, and nothing outside it names Codex.
 The answer is kept with the Herdr `state_change_seq` the read was asked under, and it holds for that state only.
 Herdr can read the agent at rest before Codex writes how the turn ended; that state's read then does not settle a plan-mode turn, so the bell holds and the row shows no wait until Herdr's next state is read, because this rule adds no session reads of its own (PRD codex-plan-approval-hold B10).
-While it says a plan waits, the bell holds with `awaiting_operator`.
+The same turn tracker reads Claude Code's native `AskUserQuestion` calls and matching tool-result records.
+When a supported session reader says a native question or plan approval waits, the bell holds with `awaiting_operator`.
 For an agent whose read reports turns, a state that no read has settled holds the bell too, with `session_unread`: a session file not found (Codex is looked up in its seven newest day folders), a failed read, a device helper that predates the field, a read still behind Herdr's newest state, or a daemon that does not hold the label generator lock and so reads nothing.
 That lock is one per Herdr server and taken with `flock` (`herdr-core/src/labels/generator.rs`): the operator's single daemon lacks it only while another hided follows the same Herdr server (a candidate or development daemon pointed at the operator's socket, even with a private HOME), or, after a restart that overlapped the old daemon, until its next attempt, at most thirty seconds after the old one exits; the kernel frees a crashed holder's lock.
 Unknown is never read as "nothing waits".
-An agent whose read reports no turns (Claude Code and every other kind) is belled exactly as before.
+Kinds whose session readers report no turns retain the other delivery guards; this does not enable a new bell target.
 "No, stay in Plan mode" writes nothing to the session (measured with Codex CLI 0.160.1), so the wait, the hold and the row in Needs You last until Codex's next turn starts or a person's message is written.
 The first start of a build with this rule resumes a stored session at its last person's message, after that turn's `task_started`, so a plan already waiting then is not known until Herdr's next state; that start holds the bell rather than ringing it.
 The rule reads the session Herdr reports for the pane, so a pane reported with another session is judged by that session.

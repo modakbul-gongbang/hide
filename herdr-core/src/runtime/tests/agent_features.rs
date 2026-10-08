@@ -18,17 +18,29 @@ fn herdr_kind(adapter: &hide_kit::AgentAdapter) -> &'static str {
 fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
     for adapter in hide_kit::agents::ADAPTERS {
         let kind = herdr_kind(adapter);
-        let hook = crate::agent_hooks::runtime_of(kind).is_some();
+        // What instruments a session: a settings-file hook the core reads a
+        // runtime for, or Hide's OpenCode plugin, which the kit installs.
+        let hook = crate::agent_hooks::runtime_of(kind).is_some()
+            || adapter.hook == hide_kit::HookSupport::Plugin;
         for feature in [Feature::Letters, Feature::Memory] {
             assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
         }
-        // Grok's and Cursor's own hooks count subagents too (PRD
-        // grok-cursor-hooks), and the pane header reads that count.
-        let counted = crate::agent_hooks::counting_hook(kind).is_some();
+        // The pane header reads a count for the agents the leaf names a
+        // counting dialect for: the instrumented ones, and Grok's and
+        // Cursor's own hooks (PRD grok-cursor-hooks).
+        let counted = hide_agent_adapter::adapter(kind)
+            .and_then(|row| row.subagent_counts)
+            .is_some();
         assert_eq!(
             adapter.supports(Feature::Subagents),
             counted,
             "{kind}: subagents"
+        );
+        // Letters reach exactly the kinds the mailbox hands them to.
+        assert_eq!(
+            adapter.supports(Feature::Letters),
+            crate::delivery::mailbox::prompt_hook(kind),
+            "{kind}: letters"
         );
         // The doorbell rings for the core's own target list.
         assert_eq!(
@@ -36,9 +48,9 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
             crate::delivery::doorbell::bell_target(kind),
             "{kind}: bell"
         );
-        // The guard is the hook's `PreToolUse` entry, so an agent has it
-        // exactly when the hook the core instruments for it registers that
-        // event.
+        // The guard is the hook's `PreToolUse` entry or the plugin's
+        // `tool.execute.before`, so an agent has it exactly when a hook or
+        // the plugin counts for it.
         assert_eq!(
             adapter.supports(Feature::SpawnGuard),
             counted

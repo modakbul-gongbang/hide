@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use hide_agent_adapter::HookDialect;
 use hide_agent_hooks::runtime::{
     AgentRuntime, BLOCKED_TOKEN, DONE_TOKEN, INSTRUMENTED_TOKEN, WORKING_TOKEN,
 };
@@ -65,32 +66,6 @@ pub fn runtime_of(agent_kind: &str) -> Option<AgentRuntime> {
     AgentRuntime::from_id(agent_kind)
 }
 
-/// The hook that counts a pane's subagents: Claude Code's and Codex's
-/// six-event hook, or the hook file of Grok and Cursor (PRD
-/// grok-cursor-hooks). Its install state is what a pane's count is judged
-/// against.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CountingHook {
-    Runtime(AgentRuntime),
-    Basic(hide_agent_hooks::guidance::GuidanceAgent),
-}
-
-/// The hook that counts subagents for an agent kind Herdr detected, `None`
-/// for an agent whose subagents Hide cannot see.
-pub fn counting_hook(agent_kind: &str) -> Option<CountingHook> {
-    let row = hide_agent_adapter::adapter(agent_kind)?;
-    row.subagent_counts?;
-    match row.hook {
-        hide_agent_adapter::HookInstall::Runtime(dialect) => {
-            AgentRuntime::from_dialect(dialect).map(CountingHook::Runtime)
-        }
-        hide_agent_adapter::HookInstall::Guidance(_) => {
-            hide_agent_hooks::guidance::GuidanceAgent::from_id(row.id).map(CountingHook::Basic)
-        }
-        hide_agent_adapter::HookInstall::None => None,
-    }
-}
-
 /// The kit adapter whose switch governs `runtime`'s hook.
 pub fn adapter_id(runtime: AgentRuntime) -> &'static str {
     runtime.id()
@@ -105,7 +80,7 @@ pub fn is_remote_pane(pane_id: &str) -> bool {
     pane_id.starts_with("remote:")
 }
 
-/// A device's hook for `runtime`, in the terms the pane judgement reads,
+/// A device's hook for `dialect`, in the terms the pane judgement reads,
 /// from what the device's kit last reported (PRD device-parity D-21). On a
 /// device where Hide has certainly installed nothing (`declined`: never
 /// allowed, or a platform it has no helper for) the hook is not installed;
@@ -116,35 +91,38 @@ pub fn is_remote_pane(pane_id: &str) -> bool {
 pub fn device_hook_status(
     declined: bool,
     kit: &crate::model::KitSnapshot,
-    hook: CountingHook,
+    dialect: HookDialect,
 ) -> Option<hide_agent_hooks::HookStatus> {
     if declined {
         return Some(hide_agent_hooks::HookStatus::NotInstalled);
     }
-    kit_hook_status(kit, hook)
+    kit_hook_status(kit, dialect)
 }
 
-/// `hook`'s install state as a machine's kit last reported it: the hook part
-/// of Claude Code and Codex, the hook piece of the agent's row for Grok and
-/// Cursor. A kit that has not reported it answers nothing.
+/// The hook `dialect` speaks through, as a machine's kit reported it: Claude
+/// Code's and Codex's kit parts, or the hook piece on the agent's own row
+/// (OpenCode's plugin, Grok's and Cursor's hook entries). This Mac's Claude
+/// Code and Codex hooks are read from their files instead
+/// (`hide_agent_hooks::Diagnosis`); the others have no other reading.
 pub fn kit_hook_status(
     kit: &crate::model::KitSnapshot,
-    hook: CountingHook,
+    dialect: HookDialect,
 ) -> Option<hide_agent_hooks::HookStatus> {
     use hide_agent_hooks::HookStatus;
     use hide_kit::{ComponentId, ComponentState};
-    let state = match hook {
-        CountingHook::Runtime(runtime) => {
-            let id = match runtime {
-                AgentRuntime::ClaudeCode => ComponentId::ClaudeCodeHook,
-                AgentRuntime::Codex => ComponentId::CodexHook,
-            };
-            kit.components.iter().find(|part| part.id == id)?.state
-        }
-        CountingHook::Basic(agent) => {
+    let part = |id: ComponentId| {
+        kit.components
+            .iter()
+            .find(|part| part.id == id)
+            .map(|part| part.state)
+    };
+    let state = match dialect {
+        HookDialect::ClaudeCode => part(ComponentId::ClaudeCodeHook)?,
+        HookDialect::Codex => part(ComponentId::CodexHook)?,
+        HookDialect::OpenCode | HookDialect::Grok | HookDialect::Cursor => {
             kit.agents
                 .iter()
-                .find(|row| row.id == agent.id())?
+                .find(|agent| agent.id == dialect.adapter().id)?
                 .hook
                 .as_ref()?
                 .state
@@ -228,7 +206,7 @@ mod tests {
             device_hook_status(
                 false,
                 &kit(hide_kit::ComponentState::Off),
-                CountingHook::Runtime(AgentRuntime::ClaudeCode)
+                HookDialect::ClaudeCode
             ),
             Some(hide_agent_hooks::HookStatus::Off)
         );
@@ -236,10 +214,85 @@ mod tests {
             device_hook_status(
                 false,
                 &kit(hide_kit::ComponentState::NotInstalled),
-                CountingHook::Runtime(AgentRuntime::ClaudeCode)
+                HookDialect::ClaudeCode
             ),
             Some(hide_agent_hooks::HookStatus::NotInstalled)
         );
+    }
+
+    #[test]
+    fn opencode_grok_and_cursor_panes_are_judged_by_the_hook_piece_on_their_own_kit_row() {
+        let piece = |state| crate::model::KitPieceSnapshot {
+            state,
+            reason: None,
+            location: None,
+        };
+        let kit = |id: &str, hook| crate::model::KitSnapshot {
+            agents: vec![crate::model::KitAgentSnapshot {
+                id: id.to_owned(),
+                label: id.to_owned(),
+                availability: hide_kit::Availability::Available,
+                enabled: true,
+                chosen: true,
+                skill: piece(hide_kit::ComponentState::Installed),
+                hook,
+                herdr: None,
+                partial: false,
+                features: Vec::new(),
+                sessions: None,
+                doc_url: String::new(),
+            }],
+            ..Default::default()
+        };
+        use hide_agent_hooks::HookStatus;
+        use hide_kit::ComponentState;
+        for (dialect, id) in [
+            (HookDialect::OpenCode, "opencode"),
+            (HookDialect::Grok, "grok"),
+            (HookDialect::Cursor, "cursor"),
+        ] {
+            for (state, status) in [
+                (
+                    ComponentState::Installed,
+                    HookStatus::Installed {
+                        version: hide_agent_hooks::HOOK_VERSION,
+                    },
+                ),
+                // An edited entry, or another build's, still speaks.
+                (
+                    ComponentState::Outdated,
+                    HookStatus::Outdated { version: 0 },
+                ),
+                (ComponentState::Off, HookStatus::Off),
+                (ComponentState::Absent, HookStatus::RuntimeAbsent),
+                (ComponentState::Removed, HookStatus::NotInstalled),
+            ] {
+                assert_eq!(
+                    kit_hook_status(&kit(id, Some(piece(state))), dialect),
+                    Some(status),
+                    "{id}: {state:?}"
+                );
+            }
+            // A kit not read yet, a row without the piece, or another
+            // agent's row leaves it unknown.
+            assert_eq!(kit_hook_status(&kit(id, None), dialect), None, "{id}");
+            assert_eq!(
+                kit_hook_status(&crate::model::KitSnapshot::default(), dialect),
+                None,
+                "{id}"
+            );
+            let other = if id == "grok" { "cursor" } else { "grok" };
+            assert_eq!(
+                kit_hook_status(&kit(other, Some(piece(ComponentState::Installed))), dialect),
+                None,
+                "{id}"
+            );
+            assert_eq!(
+                device_hook_status(true, &kit(id, None), dialect),
+                Some(HookStatus::NotInstalled),
+                "{id}"
+            );
+        }
     }
 
     #[test]
@@ -262,74 +315,6 @@ mod tests {
         assert_eq!(runtime_of("Codex"), Some(AgentRuntime::Codex));
         assert_eq!(runtime_of("unknown"), None);
         assert_eq!(runtime_of(""), None);
-    }
-
-    #[test]
-    fn grok_and_cursor_count_through_their_own_hook_and_others_through_none() {
-        use hide_agent_hooks::guidance::GuidanceAgent;
-        assert_eq!(
-            counting_hook("claude"),
-            Some(CountingHook::Runtime(AgentRuntime::ClaudeCode))
-        );
-        assert_eq!(
-            counting_hook("grok"),
-            Some(CountingHook::Basic(GuidanceAgent::Grok))
-        );
-        assert_eq!(
-            counting_hook("cursor"),
-            Some(CountingHook::Basic(GuidanceAgent::Cursor))
-        );
-        assert_eq!(counting_hook("opencode"), None);
-        assert_eq!(counting_hook("unknown"), None);
-    }
-
-    #[test]
-    fn a_grok_pane_is_judged_by_the_hook_piece_of_its_agent_row() {
-        use hide_agent_hooks::guidance::GuidanceAgent;
-        let kit = |state| crate::model::KitSnapshot {
-            agents: vec![crate::model::KitAgentSnapshot {
-                id: "grok".to_owned(),
-                label: "Grok".to_owned(),
-                availability: hide_kit::Availability::Available,
-                enabled: true,
-                chosen: true,
-                skill: crate::model::KitPieceSnapshot {
-                    state: hide_kit::ComponentState::Installed,
-                    reason: None,
-                    location: None,
-                },
-                hook: Some(crate::model::KitPieceSnapshot {
-                    state,
-                    reason: None,
-                    location: None,
-                }),
-                herdr: None,
-                partial: true,
-                features: Vec::new(),
-                sessions: None,
-                doc_url: String::new(),
-            }],
-            ..Default::default()
-        };
-        let grok = CountingHook::Basic(GuidanceAgent::Grok);
-        assert_eq!(
-            kit_hook_status(&kit(hide_kit::ComponentState::Installed), grok),
-            Some(hide_agent_hooks::HookStatus::Installed {
-                version: hide_agent_hooks::HOOK_VERSION
-            })
-        );
-        assert_eq!(
-            kit_hook_status(&kit(hide_kit::ComponentState::Off), grok),
-            Some(hide_agent_hooks::HookStatus::Off)
-        );
-        assert_eq!(
-            kit_hook_status(
-                &kit(hide_kit::ComponentState::Installed),
-                CountingHook::Basic(GuidanceAgent::Cursor)
-            ),
-            None,
-            "a row the kit did not report leaves the cause unknown"
-        );
     }
 
     #[test]

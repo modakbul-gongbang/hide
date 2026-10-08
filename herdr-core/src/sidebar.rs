@@ -402,17 +402,15 @@ pub fn project_pane_children(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
     tokens: crate::agent_hooks::PaneHookTokens,
-    status_of: &dyn Fn(crate::agent_hooks::CountingHook) -> Option<hide_agent_hooks::HookStatus>,
+    status_of: &dyn Fn(hide_agent_adapter::HookDialect) -> Option<hide_agent_hooks::HookStatus>,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let agent = agents.iter().find(|agent| agent.pane_id == pane_id)?;
-    let hook = crate::agent_hooks::counting_hook(&agent.agent_kind);
-    let status = hook.and_then(status_of);
+    let dialect =
+        hide_agent_adapter::adapter(&agent.agent_kind).and_then(|row| row.subagent_counts);
+    let status = dialect.and_then(status_of);
     let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
         hide_agent_hooks::diagnosis::PaneObservation {
-            runtime: match hook {
-                Some(crate::agent_hooks::CountingHook::Runtime(runtime)) => Some(runtime),
-                _ => None,
-            },
+            dialect,
             token_version: tokens.version,
             working: tokens.working,
             done: tokens.done,
@@ -468,7 +466,7 @@ pub fn project_pane_children_connected(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
     tokens: crate::agent_hooks::PaneHookTokens,
-    status_of: &dyn Fn(crate::agent_hooks::CountingHook) -> Option<hide_agent_hooks::HookStatus>,
+    status_of: &dyn Fn(hide_agent_adapter::HookDialect) -> Option<hide_agent_hooks::HookStatus>,
     codex_daemon_on: bool,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let mut children = project_pane_children(agents, pane_id, tokens, status_of)?;
@@ -482,8 +480,9 @@ pub fn project_pane_children_connected(
 
 /// Whether Hide hears one pane's session, and why not.
 ///
-/// Only Claude Code and Codex have a hook that can speak, so no other agent
-/// has a connection to judge (B19). An agent switched off has no status, and
+/// Only Claude Code's and Codex's sessions can be reopened to connect them, so
+/// no other agent has a connection to judge (B19); an OpenCode session started
+/// before Hide's plugin keeps its children mark and reason instead. An agent switched off has no status, and
 /// a machine whose hooks Hide has not read leaves the cause unknown rather
 /// than naming one (B16).
 fn pane_connection(
@@ -625,6 +624,10 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let identity_label = title.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         state: Default::default(),
+        resolved: None,
+        resolved_today: false,
+        escalation: None,
+        raised_children: Vec::new(),
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
@@ -683,6 +686,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_session: non_empty(agent.lineage_session.as_deref()).map(str::to_owned),
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
+        direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
         waiting_on_descendants: false,
         descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
@@ -925,6 +929,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,
@@ -1046,6 +1051,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,

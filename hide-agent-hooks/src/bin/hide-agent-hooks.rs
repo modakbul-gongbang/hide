@@ -43,6 +43,9 @@ const PROMPT_PAYLOAD_BUDGET: Duration = Duration::from_millis(500);
 #[path = "../workspace_context.rs"]
 mod workspace_context;
 
+#[path = "../opencode/helper.rs"]
+mod opencode_helper;
+
 fn main() -> ExitCode {
     let started = Instant::now();
     // Guarded launches acknowledge ownership before parsing, filesystem work
@@ -52,9 +55,16 @@ fn main() -> ExitCode {
         Ok(watch) => watch,
         // Exit 2 from a `PreToolUse` hook refuses the tool call. The outer hook
         // is what an agent runs, and it must never end that way; the inner one
-        // is only ever started by it. Cursor's permission hooks get their allow,
-        // since Cursor reads output that is not a valid answer as a refusal.
-        Err(_) if arguments.first().map(String::as_str) == Some("hook") => {
+        // is only ever started by it. OpenCode's plugin reads any exit as no
+        // answer, and an agent's call is never failed by Hide's helper.
+        // Cursor's permission hooks get their allow, since Cursor reads
+        // output that is not a valid answer as a refusal.
+        Err(_)
+            if matches!(
+                arguments.first().map(String::as_str),
+                Some("hook" | "opencode")
+            ) =>
+        {
             if cursor_permission_hook(&arguments) {
                 print_line(basic::CURSOR_ALLOW);
             }
@@ -84,9 +94,9 @@ fn main() -> ExitCode {
             // Cursor and Grok load Claude Code's hooks from
             // `~/.claude/settings.json` beside their own and run both, so under
             // them Claude Code's hook stays out and their own hook is the one
-            // that speaks, once (`docs/agent-hooks.md`, Other agents). OpenCode
-            // runs it too and has no hook of Hide's: it still speaks there, but
-            // takes no letters (`run_hook`).
+            // that speaks, once (`docs/agent-hooks.md`, Other agents); under
+            // OpenCode, which runs it through an operator's bridge plugin,
+            // Hide's OpenCode plugin is.
             if argument_value("--runtime", &arguments).and_then(|value| AgentRuntime::parse(&value))
                 == Some(AgentRuntime::ClaudeCode)
                 && hide_agent_hooks::runtime::silences_claude_hook(|name| std::env::var_os(name))
@@ -107,6 +117,13 @@ fn main() -> ExitCode {
             }
             // A hook that could not report is not a failed turn. Its visible
             // outcome is the pane reading as uninstrumented (PRD B32).
+            ExitCode::SUCCESS
+        }
+        // What Hide's OpenCode plugin asks (`hide_agent_hooks::opencode`).
+        Some("opencode") => {
+            let _ = std::panic::catch_unwind(|| {
+                opencode_helper::run(arguments.get(1).map(String::as_str), started)
+            });
             ExitCode::SUCCESS
         }
         Some("hook-inner") if owner_watch.is_some() => {
@@ -138,7 +155,9 @@ fn usage() -> String {
      [--memory-injection] [--source <install marker>]\n       \
      hide-agent-hooks hook --runtime <grok|cursor> \
      --event <SessionStart|PreToolUse|SubagentStart|SubagentStop|Stop> \
-     [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
+     [--source <install marker>]\n       \
+     hide-agent-hooks opencode <start|prompt|confirm|tool|subagents>\n       \
+     hide-agent-hooks doctor [--json]"
         .to_owned()
 }
 
@@ -393,8 +412,8 @@ fn run_hook(arguments: &[String], started: Instant) {
             hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
         });
     }
-    // Claude Code's hook inside Grok or OpenCode leaves the letters where
-    // they are: the session that runs it is not the pane's Claude Code.
+    // Claude Code's hook inside Grok leaves the letters where they are: the
+    // session that runs it is not the pane's Claude Code.
     let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
         || hide_agent_hooks::runtime::takes_letters(|name| std::env::var_os(name));
     let intake = if event == HookEvent::UserPromptSubmit && prompt_hook && takes_letters {
@@ -480,7 +499,7 @@ fn report_count(home: &std::path::Path, event: HookEvent, change: Change) {
     // stderr reaches nobody, and the record is what `doctor` and Settings
     // show (engineering rule 10).
     let socket_path = socket_path.unwrap_or_default();
-    let _ = report::record_outcome(home, &pane_id, event, &socket_path, &outcome);
+    let _ = report::record_outcome(home, &pane_id, event.name(), &socket_path, &outcome);
 }
 
 /// Reports `counters` and, when another event of the pane changed the record

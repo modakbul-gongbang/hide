@@ -42,7 +42,7 @@ export function generate(root) {
     children = found ? children.map(node => node === found ? sheet : node) : [...children, sheet];
   }
 
-  const document = {version: '2.18', themes: {Mode: ['Light', 'Dark']}, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
+  const document = {version: existing?.version ?? '2.18', themes: {Mode: ['Light', 'Dark']}, imports: {[ALIAS]: LIBRARY_PATH}, variables, children};
   const before = existing ? serialize(existing) : null;
   const after = serialize(document);
   return {file: path.join(root, FILE), before, after, sheetCount: generated.length};

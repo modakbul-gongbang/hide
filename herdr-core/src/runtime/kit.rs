@@ -1316,7 +1316,8 @@ impl Runtime {
         } else if judged_before.as_ref() != Some(&judged_now) {
             // A Codex pane's reason for not being connected follows the
             // shared server (its setting, or a daemon that still answers), and
-            // a Grok or Cursor pane's count follows its agent's hook piece, so
+            // an OpenCode, Grok or Cursor pane's count follows its agent's
+            // hook piece, so
             // the panes are judged again at once.
             self.sync_pane_lineage();
         }

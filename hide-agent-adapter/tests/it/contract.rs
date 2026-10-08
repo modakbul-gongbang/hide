@@ -150,3 +150,63 @@ fn generated_web_contract_and_logo_document_sources_are_current() {
         );
     }
 }
+
+#[test]
+fn the_factory_question_guard_names_each_agent_with_a_refusable_question_tool_by_its_herdr_kind() {
+    use hide_agent_adapter::direct_ask_kind;
+    assert_eq!(direct_ask_kind("claude-code"), Some("claude"));
+    assert_eq!(direct_ask_kind("codex"), Some("codex"));
+    assert_eq!(direct_ask_kind("opencode"), Some("opencode"));
+    // The hook passes its canonical id; an alias or an agent with no refusable
+    // tool is not a runtime the guard answers for.
+    for runtime in ["claude", "grok", "cursor", "pi", "omp", ""] {
+        assert_eq!(direct_ask_kind(runtime), None, "{runtime}");
+    }
+}
+
+#[test]
+fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_unsafe_values() {
+    use hide_agent_adapter::LaunchDialect;
+    for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {
+        let options = row.start.unwrap().options();
+        assert_eq!(options.arguments(None, None).unwrap(), Vec::<String>::new());
+        assert!(options.arguments(Some("model; rm -rf /"), None).is_err());
+        assert!(
+            options.arguments(Some("--yolo"), None).is_err(),
+            "a model never reads as an option"
+        );
+        assert!(options.arguments(None, Some("ultra")).is_err());
+        // An agent that declares no model or effort refuses one rather than
+        // starting without it.
+        assert_eq!(
+            options.arguments(Some("some-model"), None).is_ok(),
+            !options.model.is_empty(),
+            "{}",
+            row.id
+        );
+        assert_eq!(
+            options.arguments(None, Some("high")).is_ok(),
+            options.efforts.contains(&"high"),
+            "{}",
+            row.id
+        );
+    }
+    for dialect in [LaunchDialect::Claude, LaunchDialect::Codex] {
+        assert!(!dialect.options().model.is_empty(), "{dialect:?}");
+        assert!(!dialect.options().efforts.is_empty(), "{dialect:?}");
+    }
+    assert_eq!(
+        LaunchDialect::Claude
+            .options()
+            .arguments(Some("claude-opus-5-5"), Some("max"))
+            .unwrap(),
+        ["--model", "claude-opus-5-5", "--effort", "max"]
+    );
+    assert_eq!(
+        LaunchDialect::Codex
+            .options()
+            .arguments(Some("gpt-5.5"), Some("high"))
+            .unwrap(),
+        ["-m", "gpt-5.5", "-c", "model_reasoning_effort=high"]
+    );
+}

@@ -1,0 +1,99 @@
+{
+  "source": "OpenCode 1.18.30: the shapes Bus publishes to a plugin's event hook (session/session.ts SessionV1.Event, session/status.ts) and the chat.message input and output (session/prompt.ts createUserMessage).",
+  "session.created": {
+    "type": "session.created",
+    "properties": {
+      "sessionID": "ses_root",
+      "info": {
+        "id": "ses_root",
+        "slug": "quiet-river",
+        "projectID": "prj_fixture",
+        "directory": "/checkouts/fixture",
+        "title": "New session - 2026-10-07T12:00:00.000Z",
+        "version": "1.18.30",
+        "time": { "created": 1791374400000, "updated": 1791374400000 }
+      }
+    }
+  },
+  "session.created.child": {
+    "type": "session.created",
+    "properties": {
+      "sessionID": "ses_child",
+      "info": {
+        "id": "ses_child",
+        "slug": "brave-stone",
+        "projectID": "prj_fixture",
+        "directory": "/checkouts/fixture",
+        "parentID": "ses_root",
+        "title": "Explore the parser (@explore subagent)",
+        "version": "1.18.30",
+        "time": { "created": 1791374410000, "updated": 1791374410000 }
+      }
+    }
+  },
+  "session.status.busy": {
+    "type": "session.status",
+    "properties": { "sessionID": "ses_child", "status": { "type": "busy" } }
+  },
+  "session.status.idle": {
+    "type": "session.status",
+    "properties": { "sessionID": "ses_child", "status": { "type": "idle" } }
+  },
+  "message.part.updated": {
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_root",
+      "part": {
+        "id": "prt_0000000000000000000000000",
+        "sessionID": "ses_root",
+        "messageID": "msg_fixture",
+        "type": "text",
+        "text": "",
+        "synthetic": true
+      },
+      "time": 1791374400100
+    }
+  },
+  "chat.message": {
+    "input": {
+      "sessionID": "ses_root",
+      "agent": "build",
+      "model": { "providerID": "anthropic", "modelID": "claude-sonnet" },
+      "messageID": "msg_fixture"
+    },
+    "output": {
+      "message": {
+        "id": "msg_fixture",
+        "sessionID": "ses_root",
+        "role": "user",
+        "time": { "created": 1791374400000 },
+        "agent": "build",
+        "model": { "providerID": "anthropic", "modelID": "claude-sonnet" }
+      },
+      "parts": [
+        {
+          "id": "prt_1a0f3c2e4000AbCdEfGhIjKlMn",
+          "sessionID": "ses_root",
+          "messageID": "msg_fixture",
+          "type": "text",
+          "text": "Fix the failing parser test"
+        }
+      ]
+    }
+  },
+  "tool.execute.before.bash": {
+    "input": { "tool": "bash", "sessionID": "ses_root", "callID": "call_fixture" },
+    "output": {
+      "args": {
+        "command": "herdr agent start --kind claude --name helper",
+        "description": "Start a helper agent"
+      }
+    }
+  },
+  "tool.execute.before.question": {
+    "input": { "tool": "question", "sessionID": "ses_root", "callID": "call_question" },
+    "output": {
+      "args": { "questions": [{ "question": "Which branch?", "header": "Branch", "options": [] }] }
+    }
+  }
+}

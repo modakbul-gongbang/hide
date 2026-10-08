@@ -253,12 +253,11 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await chooseTheme(page, "light");
 
     // The project row opens the Agents graph, the first tab.
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
-    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((value) => value.getAttribute("data-lens-tile")))).toEqual(["agents", "requests", "issues", "prs", "sessions"]);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((value) => value.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
 
     // Until GitHub answers the tab is three skeleton rows and the tile has no number (B22).
     await tile("prs").locator("[data-lens-tile-button]").click();
@@ -405,6 +404,7 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     // The sidebar's PR card has `View on the PRs tab` (B21).
     await tile("agents").locator("[data-lens-tile-button]").click();
     const sidebarCheckout = page.locator('[data-project-list] [data-checkout][aria-label^="prd/new-issue"]');
+    await page.getByRole("button", { name: /^No agents · open PRs/ }).click();
     await sidebarCheckout.hover();
     const toTab = page.locator('[data-checkout-card-prs-tab="22"]');
     await expect(toTab).toBeVisible();

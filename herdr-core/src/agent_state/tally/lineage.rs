@@ -41,6 +41,49 @@ pub struct TreeRow {
     pub depth: usize,
 }
 
+/// The sidebar lists operator sessions only. Delegated agents remain available
+/// through their parent's direct-child badge and the unchanged graph tree.
+pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
+    let references = row_references(agents);
+    let roots: Vec<_> = agents
+        .iter()
+        .copied()
+        .filter(|row| !row.delegated && row.resolved.is_none())
+        .collect();
+    let rows: Vec<_> = roots
+        .iter()
+        .map(|row| TreeRow {
+            pane_id: row.pane_id.clone(),
+            occurrence: references[&(*row as *const _)].occurrence,
+            depth: 0,
+        })
+        .collect();
+    let needs_you = roots
+        .iter()
+        .any(|row| row.state.needs_you || row.group == "done");
+    let turn_kind = needs_you.then(|| {
+        if roots.iter().any(|row| row.state.needs_you) {
+            "question"
+        } else {
+            "review"
+        }
+    });
+    let mut priority = roots;
+    priority.sort_by_key(|row| row.state.attention_rank);
+    Tree {
+        visible_rows: rows.clone(),
+        rows,
+        shown: priority
+            .iter()
+            .take(2)
+            .map(|row| row.pane_id.clone())
+            .collect(),
+        more: priority.len().saturating_sub(2),
+        needs_you,
+        turn_kind,
+    }
+}
+
 /// First physical checkout owns an agent in a project. The whole lineage
 /// follows it there, including descendants working in another checkout.
 pub(super) fn checkout_trees(

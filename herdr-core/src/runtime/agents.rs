@@ -1052,11 +1052,12 @@ impl Runtime {
         if lineage_pruned {
             self.persist_ui_state();
         }
-        let synced = sync_pane_status(
+        sync_pane_status(
             &mut session.workspaces,
             &session.agents,
             session.focused_pane_id.as_deref(),
-        ) | sync_remote_pane_relations(session);
+        );
+        sync_remote_pane_relations(session);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &session.workspaces,
@@ -1064,7 +1065,10 @@ impl Runtime {
             ReadRecordScope::Remote(&prefix),
         );
         if changes.is_empty() && !pruned && !lineage_pruned {
-            return synced;
+            // These copies were just projected from Herdr, not the previous
+            // published snapshot. The caller compares the completed session;
+            // applying read/status fields alone is not a new runtime change.
+            return false;
         }
         self.record_read_record_changes(&changes);
         true
@@ -1107,11 +1111,34 @@ impl Runtime {
     /// moved or copied: the full collections stay authoritative for search,
     /// focus, and non-sidebar consumers.
     pub(super) fn refresh_inactive_groups(&mut self) -> bool {
-        crate::project_context::refresh_inactive_groups(
+        // A bootstrap or reconnect can temporarily publish no catalog rows.
+        // Like recent checkouts, remembered folds leave only on explicit removal.
+        let mut changed = crate::project_context::refresh_inactive_groups(
             &mut self.snapshot.navigator,
             &self.snapshot.ui_state,
             unix_milliseconds(),
-        ) | self.refresh_agent_scopes()
+        );
+        for remote in &mut self.snapshot.status.remote {
+            if let Some(session) = &mut remote.session {
+                let agents = session
+                    .agents
+                    .iter()
+                    .map(|row| (row.pane_id.as_str(), row))
+                    .collect();
+                let focused = session.focused_checkout_id.as_deref();
+                for workspace in &mut session.workspaces {
+                    let before = workspace.session_folds.clone();
+                    crate::project_context::refresh_session_folds(
+                        workspace,
+                        &agents,
+                        &self.snapshot.ui_state,
+                        focused,
+                    );
+                    changed |= workspace.session_folds != before;
+                }
+            }
+        }
+        changed | self.refresh_agent_scopes()
     }
 
     /// Drops the conversation choice of every pane that is no longer an
@@ -1141,33 +1168,33 @@ impl Runtime {
     pub(super) fn sync_pane_lineage(&mut self) -> bool {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
-        // Grok's and Cursor's hooks are pieces of their agent rows, which the
-        // kit reads on this machine as on a device; read once per pass.
-        let basic: Vec<_> = hide_agent_hooks::guidance::GuidanceAgent::LIVE
+        let local_kit = self.kit_states.get(self.node.as_str());
+        // Claude Code's and Codex's hooks are read from their files; OpenCode's
+        // plugin and Grok's and Cursor's hooks from this Mac's kit, the one
+        // place that judges them, read here once rather than holding the kit
+        // across the pass.
+        let from_kit: Vec<_> = hide_agent_adapter::HookDialect::ALL
             .into_iter()
-            .map(|agent| {
-                let hook = crate::agent_hooks::CountingHook::Basic(agent);
-                let status = self
-                    .kit_states
-                    .get(self.node.as_str())
-                    .and_then(|kit| crate::agent_hooks::kit_hook_status(kit, hook));
-                (agent, status)
+            .filter(|dialect| hide_agent_hooks::AgentRuntime::from_dialect(*dialect).is_none())
+            .map(|dialect| {
+                let status =
+                    local_kit.and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect));
+                (dialect, status)
             })
             .collect();
-        let status_of = |hook: crate::agent_hooks::CountingHook| match hook {
-            crate::agent_hooks::CountingHook::Runtime(runtime) => diagnosis
-                .as_ref()
-                .and_then(|diagnosis| diagnosis.status_of(runtime))
-                .cloned(),
-            crate::agent_hooks::CountingHook::Basic(agent) => basic
-                .iter()
-                .find(|(known, _)| *known == agent)
-                .and_then(|(_, status)| status.clone()),
+        let codex_daemon_on = local_kit.is_some_and(crate::model::KitSnapshot::shares_codex_server);
+        let status_of = |dialect: hide_agent_adapter::HookDialect| {
+            match hide_agent_hooks::AgentRuntime::from_dialect(dialect) {
+                Some(runtime) => diagnosis
+                    .as_ref()
+                    .and_then(|diagnosis| diagnosis.status_of(runtime))
+                    .cloned(),
+                None => from_kit
+                    .iter()
+                    .find(|(known, _)| *known == dialect)
+                    .and_then(|(_, status)| status.clone()),
+            }
         };
-        let codex_daemon_on = self
-            .kit_states
-            .get(self.node.as_str())
-            .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;
@@ -1889,6 +1916,7 @@ impl Runtime {
                     .map(|(id, size)| (id.clone(), *size))
                     .collect(),
             );
+            self.acknowledge_session_save(&state, result.is_ok());
             self.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
             return result;
         };
@@ -1926,12 +1954,24 @@ impl Runtime {
                     let result = persistence::save(&path, &state, &sizes);
                     let changed = {
                         let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
-                        let changed =
+                        let resolving = state.resolved_sessions.iter().any(|(pane, record)| {
+                            guard.pending_session_resolutions.get(pane) == Some(record)
+                        });
+                        let resolved_changed =
+                            guard.acknowledge_session_save(&state, result.is_ok());
+                        let dormant_changed =
                             guard.ingest_dormant_saved(&state.agent_sleep, result.is_ok());
                         if let Err(message) = &result {
-                            guard.set_error("ui_state.save_failed", message.clone(), true);
+                            if resolving && !dormant_changed {
+                                guard.push_diagnostic(
+                                    "session.resolve.save_failed",
+                                    message.clone(),
+                                );
+                            } else {
+                                guard.set_error("ui_state.save_failed", message.clone(), true);
+                            }
                         }
-                        changed || result.is_err()
+                        resolved_changed || dormant_changed || result.is_err()
                     };
                     if changed {
                         context.notifier.notify();

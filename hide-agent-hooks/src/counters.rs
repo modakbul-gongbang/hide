@@ -138,12 +138,31 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
         Change::Settled { running } => counters.working = running,
         Change::None => {}
     }
-    let mut record = hide_platform::fs::private::open_or_create_file(&path)?;
-    record.set_len(0)?;
-    record.write_all(&serde_json::to_vec(&counters)?)?;
-    drop(record);
+    write_record(&path, counters)?;
     drop(held);
     Ok(counters)
+}
+
+/// Replaces a pane's counts with ones its agent keeps itself: OpenCode's
+/// plugin follows its child sessions and sends the totals, not events. It
+/// holds the same lock as [`change`], so a total and an event never
+/// interleave.
+pub fn store(home: &Path, pane_id: &str, counters: PaneCounters) -> io::Result<()> {
+    let path = record_path(home, pane_id);
+    if let Some(parent) = path.parent() {
+        hide_platform::fs::private::create_dir_all(parent)?;
+    }
+    let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
+    write_record(&path, counters)?;
+    drop(held);
+    Ok(())
+}
+
+/// Writes a record in place, private to the account, under a held lock.
+fn write_record(path: &Path, counters: PaneCounters) -> io::Result<()> {
+    let mut record = hide_platform::fs::private::open_or_create_file(path)?;
+    record.set_len(0)?;
+    record.write_all(&serde_json::to_vec(&counters)?)
 }
 
 /// One lock file beside the records, not the record itself: Windows locks a

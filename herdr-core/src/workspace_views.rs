@@ -42,7 +42,7 @@ pub const MAX_WORKSPACES: usize = 256;
 pub const MAX_COLUMN_WIDTH: u32 = 8192;
 
 /// The one tool the Tools column holds (issue 170, "Side panel hierarchy,
-/// revised"): the Explorer or History, never both. Choosing one swaps it;
+/// revised"): Sessions, Explorer or History, one at a time. Choosing one swaps it;
 /// hiding the column keeps which one comes back.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,6 +51,8 @@ pub enum Tool {
     Explorer,
     /// History, the checkout's changes.
     Changes,
+    /// Live operator sessions, separate from the Memory reader's `sessions`.
+    AgentSessions,
 }
 
 impl Tool {
@@ -58,6 +60,7 @@ impl Tool {
         match value {
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
+            "agent_sessions" => Some(Self::AgentSessions),
             _ => None,
         }
     }

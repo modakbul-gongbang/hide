@@ -50,6 +50,15 @@ pub struct LabelTranscriptRequest {
     pub turns: Option<TurnTracker>,
 }
 
+/// One receipt line and the message it was stored in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryReceiptPart {
+    /// The message's index in the session, as [`LabelEvent::offset`].
+    pub offset: u64,
+    /// The `<hide-memory-receipt …/>` line, and nothing else of the part.
+    pub text: String,
+}
+
 /// A conversation event as the label analysis reads it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LabelEvent {
@@ -114,6 +123,12 @@ pub struct LabelTranscript {
     /// covered (PRD overview-request-view D-31).
     #[serde(default)]
     pub pr_sightings: Vec<crate::PrSighting>,
+    /// Hide's Project Memory receipts the session stored in a part only Hide's
+    /// own plugin writes (OpenCode's synthetic prompt part); the core checks
+    /// each one's tag before it records the injection (PRD opencode-plugin
+    /// D-12). Claude Code's and Codex's receipts are read by Memory's own pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_receipts: Vec<MemoryReceiptPart>,
     /// Where each subagent file was read up to, for the next request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub subagents: BTreeMap<String, ConversationCheckpoint>,
@@ -266,6 +281,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         title,
         custom_title: parsed.custom_title.clone(),
         pr_sightings,
+        memory_receipts: Vec::new(),
         subagents,
         turns,
     })

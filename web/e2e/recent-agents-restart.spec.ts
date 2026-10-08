@@ -52,9 +52,9 @@ test("the recent agent pane order survives a daemon restart and a reload", async
     // From a sidebar control, which supplies no pane visit, the cycle starts
     // at the most recent agent pane and still reaches beta's, visited only
     // before the restart.
-    const projectsMode = page.locator('[data-sidebar-mode="projects"]');
-    await projectsMode.focus();
-    await expect(projectsMode).toBeFocused();
+    const sidebarOverview = page.locator('[data-sidebar-overview]');
+    await sidebarOverview.focus();
+    await expect(sidebarOverview).toBeFocused();
     const agents = page.locator("[data-cycle=agents]");
     const cycleRow = page.locator("[data-cycle] [aria-selected=true]");
     await page.keyboard.down("Alt");
