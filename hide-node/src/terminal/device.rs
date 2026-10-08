@@ -482,8 +482,9 @@ struct ProxyState {
     failed: Option<String>,
     /// Panes already told the link failed, so a key flood reports once.
     told_failed: HashSet<String>,
-    /// Each pane's state as the device last reported it.
-    states: HashMap<String, PaneTerminalState>,
+    /// Each pane the core attached here, with its state as the device last
+    /// reported it.
+    states: HashMap<String, Option<PaneTerminalState>>,
     stopping: bool,
 }
 
@@ -586,6 +587,7 @@ impl TerminalNode for DeviceTerminals {
             let mut state = lock(&self.shared.state);
             state.overflowed.remove(pane);
             state.told_failed.remove(pane);
+            state.states.entry(pane.clone()).or_default();
         }
         if let TerminalControl::Forget { pane } = &control {
             lock(&self.shared.state).states.remove(pane);
@@ -620,7 +622,7 @@ impl TerminalNode for DeviceTerminals {
                 let unsent = state.key_bytes.get(&pane).copied().unwrap_or(0);
                 if unsent + bytes.len() > MAX_UNSENT_KEY_BYTES {
                     state.overflowed.insert(pane.clone());
-                    let ended = state.states.get(&pane).cloned().map(|mut ended| {
+                    let ended = state.states.get(&pane).cloned().flatten().map(|mut ended| {
                         ended.state = "ended".to_owned();
                         ended.retry_decision = "manual".to_owned();
                         ended.message = Some(overflow_message());
@@ -716,7 +718,10 @@ impl ProxyShared {
             TerminalUp::Report { report } => {
                 if let TerminalReport::State { pane, state } = &report {
                     let mut proxy = lock(&self.state);
-                    proxy.states.insert(pane.clone(), state.clone());
+                    // Only a pane the core attached keeps a state here.
+                    if let Some(kept) = proxy.states.get_mut(pane) {
+                        *kept = Some(state.clone());
+                    }
                     // The pane reads ended until it is attached again; the
                     // device's own word on it waits until then.
                     if proxy.overflowed.contains(pane) {
@@ -725,14 +730,59 @@ impl ProxyShared {
                 }
                 self.sink.report(&self.device, report);
             }
-            TerminalUp::Diagnostic { mut record } => {
-                if let Some(record) = record.as_object_mut() {
-                    record.insert("device".to_owned(), json!(self.device));
-                }
-                crate::diagnostic!(record);
+            TerminalUp::Diagnostic { record } => {
+                crate::diagnostic!(device_record(&self.device, record));
             }
         }
     }
+}
+
+/// The fields of a device's diagnostic record this machine's log keeps at
+/// most, the longest name and the longest text of one: a device's node is
+/// another machine's program.
+const DEVICE_RECORD_FIELDS: usize = 24;
+const DEVICE_RECORD_NAME: usize = 64;
+const DEVICE_RECORD_TEXT: usize = 512;
+
+/// A device's diagnostic record as this machine's log keeps it: its plain
+/// fields, cut to size, how many were left out, and the device it came
+/// from.
+fn device_record(device: &str, record: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    let mut kept = serde_json::Map::new();
+    let mut left_out = 0_usize;
+    match record {
+        Value::Object(fields) => {
+            for (name, value) in fields {
+                let value = match value {
+                    Value::String(text) => {
+                        Value::String(text.chars().take(DEVICE_RECORD_TEXT).collect())
+                    }
+                    value @ (Value::Null | Value::Bool(_) | Value::Number(_)) => value,
+                    Value::Array(_) | Value::Object(_) => {
+                        left_out += 1;
+                        continue;
+                    }
+                };
+                // What the record is stays, however many fields come
+                // before it.
+                let names_it = matches!(name.as_str(), "kind" | "component");
+                if (kept.len() >= DEVICE_RECORD_FIELDS && !names_it)
+                    || name.len() > DEVICE_RECORD_NAME
+                {
+                    left_out += 1;
+                    continue;
+                }
+                kept.insert(name, value);
+            }
+        }
+        _ => left_out += 1,
+    }
+    if left_out > 0 {
+        kept.insert("fields_left_out".to_owned(), json!(left_out));
+    }
+    kept.insert("device".to_owned(), json!(device));
+    Value::Object(kept)
 }
 
 fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {

@@ -1541,6 +1541,11 @@ impl Runtime {
                 submitted,
                 focus,
             } => {
+                // A pane the core does not project is neither typed into
+                // nor focused by a node's word, a device's least of all.
+                if !self.pane_still_terminal(&pane) {
+                    return false;
+                }
                 self.note_delivery_key_at(&pane, at_unix_ms);
                 if submitted {
                     self.record_operator_submit(&pane);

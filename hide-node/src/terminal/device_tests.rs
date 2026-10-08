@@ -90,6 +90,35 @@ fn a_pane_past_its_unsent_output_loses_it_and_is_drawn_again_from_a_full_frame()
     );
 }
 
+/// A device's diagnostic reaches this machine's log with its plain fields
+/// only, cut to size, and the device it came from.
+#[test]
+fn a_devices_diagnostic_keeps_its_plain_fields_cut_to_size() {
+    let mut record = serde_json::Map::new();
+    record.insert("kind".into(), json!("terminal.output_overflow"));
+    record.insert("bytes".into(), json!(42));
+    record.insert("message".into(), json!("m".repeat(10_000)));
+    record.insert("nested".into(), json!({"a": [1, 2, 3]}));
+    record.insert("n".repeat(100), json!(1));
+    record.insert("device".into(), json!("someone-else"));
+    for index in 0..100 {
+        record.insert(format!("field{index:03}"), json!(index));
+    }
+    let kept = device_record("mini", serde_json::Value::Object(record));
+    let kept = kept.as_object().unwrap();
+    assert_eq!(kept["kind"], "terminal.output_overflow");
+    assert_eq!(kept["bytes"], 42);
+    assert_eq!(kept["device"], "mini");
+    assert_eq!(kept["message"].as_str().unwrap().len(), DEVICE_RECORD_TEXT);
+    assert!(!kept.contains_key("nested"));
+    assert!(kept.len() <= DEVICE_RECORD_FIELDS + 4);
+    assert!(kept["fields_left_out"].as_u64().unwrap() > 0);
+    assert_eq!(
+        device_record("mini", json!("not a record")),
+        json!({"fields_left_out": 1, "device": "mini"})
+    );
+}
+
 fn node(socket_seen: Sender<String>) -> (NodeTerminals, Receiver<Opened>) {
     let (opened_tx, opened) = channel();
     let attacher = Arc::new(FakeAttacher {
@@ -285,6 +314,11 @@ fn controlling() -> PaneTerminalState {
 fn a_pane_past_its_unsent_keys_reads_ended_while_other_panes_keys_go_on() {
     let (proxy, link, heard) = proxy();
     let inbound = proxy.inbound();
+    proxy.control(TerminalControl::Attach {
+        pane: "w1:p1".into(),
+        size: Some(SIZE),
+        manual: false,
+    });
     inbound(
         &line_of(TerminalUp::Report {
             report: TerminalReport::State {
@@ -345,6 +379,7 @@ fn a_pane_past_its_unsent_keys_reads_ended_while_other_panes_keys_go_on() {
     let lines = link.lines();
     let first_keys = lines
         .iter()
+        .filter(|line| matches!(line, TerminalDown::Key { .. }))
         .take_while(|line| {
             matches!(line, TerminalDown::Key { target: KeyTarget::Pane(pane), .. } if pane == "w1:p1")
         })

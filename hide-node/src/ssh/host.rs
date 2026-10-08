@@ -999,6 +999,29 @@ fn start_terminals(
     }
 }
 
+/// Why a line the device helper sent, whole or still arriving, is longer
+/// than any the protocol allows: a terminal line past
+/// [`hide_node_link::terminal::MAX_TERMINAL_LINE_BYTES`], an answer past
+/// [`MAX_ANSWER_BYTES`]. The helper's lines are untrusted input, so such a
+/// line ends the connection rather than this process's memory.
+fn overlong_line(line: &[u8]) -> Option<String> {
+    use hide_node_link::terminal::{MAX_TERMINAL_LINE_BYTES, TERMINAL_LINE_PREFIX};
+    if line.starts_with(TERMINAL_LINE_PREFIX) {
+        return (line.len() > MAX_TERMINAL_LINE_BYTES).then(|| {
+            format!(
+                "the device helper sent a terminal line longer than {} MiB",
+                MAX_TERMINAL_LINE_BYTES / (1024 * 1024)
+            )
+        });
+    }
+    (line.len() > MAX_ANSWER_BYTES).then(|| {
+        format!(
+            "the device helper sent an answer longer than {} MiB",
+            MAX_ANSWER_BYTES / (1024 * 1024)
+        )
+    })
+}
+
 /// B30: each step a device's connection reaches, so a connection that
 /// stalls names the step it stalled in.
 fn establish_stage(target: &str, stage: &str, since: Instant) {
@@ -1851,7 +1874,7 @@ fn spawn_host(
         // answer arriving in many chunks is scanned once.
         let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
-        let reason = loop {
+        let reason = 'read: loop {
             let message = tokio::select! {
                 message = channel.wait() => message,
                 () = closing.notified() => break "this Hide closed the link".to_owned(),
@@ -1864,6 +1887,9 @@ fn spawn_host(
                         scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
+                        if let Some(reason) = overlong_line(&line) {
+                            break 'read reason;
+                        }
                         if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
                             match inner.terminals.get() {
                                 Some(terminals) => terminals(&line),
@@ -1926,14 +1952,8 @@ fn spawn_host(
                         }
                     }
                     scanned = buffer.len();
-                    // The helper's answers are untrusted input: a line that
-                    // outgrows every answer the protocol allows ends the
-                    // connection rather than this process's memory.
-                    if buffer.len() > MAX_ANSWER_BYTES {
-                        break format!(
-                            "the device helper sent an answer longer than {} MiB",
-                            MAX_ANSWER_BYTES / (1024 * 1024)
-                        );
+                    if let Some(reason) = overlong_line(&buffer) {
+                        break reason;
                     }
                 }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {
@@ -2054,6 +2074,24 @@ fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    /// A device's terminal line past its cap ends the link, and an answer
+    /// keeps its own, larger cap: a device's node is another machine's
+    /// program.
+    #[test]
+    fn a_terminal_line_past_its_cap_ends_the_link_and_an_answer_keeps_its_own() {
+        use hide_node_link::terminal::{MAX_TERMINAL_LINE_BYTES, TERMINAL_LINE_PREFIX};
+        let mut line = TERMINAL_LINE_PREFIX.to_vec();
+        line.resize(MAX_TERMINAL_LINE_BYTES, b'a');
+        assert_eq!(overlong_line(&line), None);
+        line.push(b'a');
+        assert!(
+            overlong_line(&line)
+                .is_some_and(|reason| reason.contains("terminal line longer than 8 MiB"))
+        );
+        let answer = vec![b'a'; MAX_TERMINAL_LINE_BYTES + 1];
+        assert_eq!(overlong_line(&answer), None);
+    }
 
     #[derive(Default)]
     struct Heard(Mutex<Vec<(String, NodeEvent)>>);
