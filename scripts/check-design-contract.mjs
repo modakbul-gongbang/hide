@@ -26,6 +26,7 @@ try {
       const input = file === 'design/hide-ui.lib.pen'
         || file === 'design/hide-screens.pen'
         || file === 'design/tokens.json'
+        || file === 'contracts/agent-adapters.json'
         || file === 'hide-kit/src/agents.rs'
         || file === 'hide-ai/src/registry.rs'
         || file.startsWith('web/src/')
