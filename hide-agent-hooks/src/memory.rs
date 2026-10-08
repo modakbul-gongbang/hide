@@ -112,33 +112,96 @@ fn project_memory_output_with_expiry<E>(
 where
     E: Fn() -> bool + Clone + Send + 'static,
 {
-    let base = || HookMemoryResult {
-        stdout: crate::runtime::hook_stdout(runtime, event),
-        outcome: HookMemoryOutcome::Unavailable,
+    let projected = if exceeded {
+        MemoryContext::without(HookMemoryOutcome::InputTooLarge)
+    } else {
+        match serde_json::from_slice::<HookInput>(bytes) {
+            Ok(input) => memory_context_with_expiry(
+                MemoryRequest {
+                    runtime_id: runtime.memory_id(),
+                    event,
+                    cwd: input.cwd,
+                    prompt: input.prompt,
+                    session_id: input.session_id,
+                },
+                home,
+                expired,
+            ),
+            Err(_) => MemoryContext::without(HookMemoryOutcome::Unavailable),
+        }
     };
-    if exceeded {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::InputTooLarge,
-            ..base()
-        };
+    HookMemoryResult {
+        stdout: match &projected.context {
+            Some(context) => hook_stdout_with_context(runtime, event, Some(context)),
+            None => crate::runtime::hook_stdout(runtime, event),
+        },
+        outcome: projected.outcome,
     }
-    let Ok(input) = serde_json::from_slice::<HookInput>(bytes) else {
-        return base();
-    };
-    let Some(cwd) = input.cwd else {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::ProjectUnresolved,
-            ..base()
-        };
+}
+
+/// What one hook asks Project Memory for, whatever runtime's payload it came in.
+pub struct MemoryRequest<'a> {
+    /// The provider id Memory keys sessions and receipts by: `claude`, `codex`
+    /// or `opencode`.
+    pub runtime_id: &'a str,
+    /// `SessionStart` for a session's first context, `UserPromptSubmit` for a
+    /// later prompt; any other event asks for nothing.
+    pub event: HookEvent,
+    pub cwd: Option<PathBuf>,
+    pub prompt: Option<String>,
+    pub session_id: Option<String>,
+}
+
+/// The Memory context for one hook, with its receipt, or none.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct MemoryContext {
+    pub context: Option<String>,
+    pub outcome: HookMemoryOutcome,
+}
+
+impl MemoryContext {
+    fn without(outcome: HookMemoryOutcome) -> Self {
+        Self {
+            context: None,
+            outcome,
+        }
+    }
+}
+
+/// [`MemoryContext`] for `request`, bounded by `deadline` and failing open.
+pub fn memory_context_until(
+    request: MemoryRequest<'_>,
+    home: &Path,
+    deadline: Instant,
+) -> MemoryContext {
+    memory_context_with_expiry(request, home, move || Instant::now() >= deadline)
+}
+
+fn memory_context_with_expiry<E>(
+    request: MemoryRequest<'_>,
+    home: &Path,
+    expired: E,
+) -> MemoryContext
+where
+    E: Fn() -> bool + Clone + Send + 'static,
+{
+    let MemoryRequest {
+        runtime_id,
+        event,
+        cwd,
+        prompt,
+        session_id,
+    } = request;
+    let base = || MemoryContext::without(HookMemoryOutcome::Unavailable);
+    let deadline = || MemoryContext::without(HookMemoryOutcome::Deadline);
+    let Some(cwd) = cwd else {
+        return MemoryContext::without(HookMemoryOutcome::ProjectUnresolved);
     };
     let Ok(store) =
         MemoryStore::open_hook_read_only_with_expiry(&database_path(home), expired.clone())
     else {
         if expired() {
-            return HookMemoryResult {
-                outcome: HookMemoryOutcome::Deadline,
-                ..base()
-            };
+            return deadline();
         }
         return base();
     };
@@ -146,35 +209,22 @@ where
     // stores it under (PRD core-host-node D-23). It is read only once a store
     // exists, so a machine without Project Memory pays no lookup.
     let Ok(node) = hide_platform::host::machine_id() else {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::ProjectUnresolved,
-            ..base()
-        };
+        return MemoryContext::without(HookMemoryOutcome::ProjectUnresolved);
     };
     let Ok(project) = hide_project::resolve(&cwd, &node) else {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::ProjectUnresolved,
-            ..base()
-        };
+        return MemoryContext::without(HookMemoryOutcome::ProjectUnresolved);
     };
     if expired() {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::Deadline,
-            ..base()
-        };
+        return deadline();
     }
-    let runtime_id = match runtime {
-        AgentRuntime::Codex => "codex",
-        AgentRuntime::ClaudeCode => "claude",
-    };
-    let session_id = input.session_id.unwrap_or_default();
+    let session_id = session_id.unwrap_or_default();
     if session_id.is_empty() {
         return base();
     }
     let query = match event {
         HookEvent::SessionStart => RetrievalQuery::session_start(&project.id),
         HookEvent::UserPromptSubmit => {
-            let mut text = input.prompt.unwrap_or_default();
+            let mut text = prompt.unwrap_or_default();
             if let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, &session_id) {
                 for topic in topics {
                     text.push('\n');
@@ -201,17 +251,11 @@ where
         | HookEvent::PreToolUse => return base(),
     };
     if expired() {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::Deadline,
-            ..base()
-        };
+        return deadline();
     }
     let Ok(injection) = store.retrieve_with_expiry(&query, &expired) else {
         if expired() {
-            return HookMemoryResult {
-                outcome: HookMemoryOutcome::Deadline,
-                ..base()
-            };
+            return deadline();
         }
         return base();
     };
@@ -230,7 +274,7 @@ where
     ) else {
         return base();
     };
-    render(runtime, event, injection, &receipt_auth, &expired, base)
+    render(event, injection, &receipt_auth, &expired)
 }
 
 fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -> PathBuf {
@@ -248,18 +292,13 @@ fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -
 }
 
 fn render(
-    runtime: AgentRuntime,
     event: HookEvent,
     injection: Injection,
     receipt_auth: &str,
     expired: &impl Fn() -> bool,
-    base: impl Fn() -> HookMemoryResult,
-) -> HookMemoryResult {
+) -> MemoryContext {
     if expired() {
-        return HookMemoryResult {
-            outcome: HookMemoryOutcome::Deadline,
-            ..base()
-        };
+        return MemoryContext::without(HookMemoryOutcome::Deadline);
     }
     let outcome = match injection.outcome {
         InjectionOutcome::Provided => HookMemoryOutcome::Provided {
@@ -293,15 +332,10 @@ fn render(
         {
             receipt
         }
-        None => {
-            return HookMemoryResult {
-                stdout: crate::runtime::hook_stdout(runtime, event),
-                outcome,
-            };
-        }
+        None => return MemoryContext::without(outcome),
     };
-    HookMemoryResult {
-        stdout: hook_stdout_with_context(runtime, event, Some(&context)),
+    MemoryContext {
+        context: Some(context),
         outcome,
     }
 }
@@ -828,37 +862,34 @@ mod tests {
 
     #[test]
     fn empty_session_start_emits_an_internal_receipt_without_a_zero_item_message() {
-        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
-            let (_elapsed, expired) = invocation_clock();
-            let result = render(
-                runtime,
-                HookEvent::SessionStart,
-                Injection {
-                    outcome: InjectionOutcome::Empty,
-                    items: Vec::new(),
-                    token_count: 0,
-                },
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                &expired,
-                || HookMemoryResult {
-                    stdout: crate::runtime::hook_stdout(runtime, HookEvent::SessionStart),
-                    outcome: HookMemoryOutcome::Unavailable,
-                },
-            );
+        let (_elapsed, expired) = invocation_clock();
+        let result = render(
+            HookEvent::SessionStart,
+            Injection {
+                outcome: InjectionOutcome::Empty,
+                items: Vec::new(),
+                token_count: 0,
+            },
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            &expired,
+        );
 
-            assert_eq!(result.outcome, HookMemoryOutcome::Empty);
-            let output = result.stdout.unwrap();
+        assert_eq!(result.outcome, HookMemoryOutcome::Empty);
+        let context = result.context.unwrap();
+        assert_eq!(
+            context,
+            "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" />\n"
+        );
+        // Every runtime's session start carries it after the base context.
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            let output =
+                hook_stdout_with_context(runtime, HookEvent::SessionStart, Some(&context)).unwrap();
             let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-            let context = value["hookSpecificOutput"]["additionalContext"]
+            let delivered = value["hookSpecificOutput"]["additionalContext"]
                 .as_str()
                 .unwrap();
-            assert!(
-                context.contains(
-                    "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" />"
-                )
-            );
-            assert!(!context.contains("Project Memory ready 0"));
-            assert!(!context.contains("<hide-memory-context"));
+            assert!(delivered.ends_with(&context), "{delivered}");
+            assert!(!delivered.contains("Project Memory ready 0"));
         }
     }
 
@@ -983,27 +1014,12 @@ mod tests {
         );
         elapsed.fetch_add(1, Ordering::SeqCst);
 
-        let result = render(
-            AgentRuntime::Codex,
-            HookEvent::SessionStart,
-            injection,
-            &receipt_auth,
-            &expired,
-            || HookMemoryResult {
-                stdout: crate::runtime::hook_stdout(AgentRuntime::Codex, HookEvent::SessionStart),
-                outcome: HookMemoryOutcome::Unavailable,
-            },
-        );
+        let result = render(HookEvent::SessionStart, injection, &receipt_auth, &expired);
 
+        // An expired render carries no Memory and no receipt; the hook then
+        // prints only its base context.
         assert_eq!(result.outcome, HookMemoryOutcome::Deadline);
-        let output: serde_json::Value = serde_json::from_str(&result.stdout.unwrap()).unwrap();
-        let context = output["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        assert_eq!(context, crate::runtime::PURPOSE_CONTEXT);
-        assert!(!context.contains(body));
-        assert!(!context.contains("<hide-memory-context"));
-        assert!(!context.contains("<hide-memory-receipt"));
+        assert_eq!(result.context, None);
     }
 
     #[test]

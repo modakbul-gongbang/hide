@@ -142,6 +142,11 @@ jobs:
       PACKAGES: ${{ needs.plan.outputs.rust-packages }}
     steps:
       - uses: actions/checkout@v7
+      # hide-agent-hooks runs Hide's OpenCode plugin under Node in its tests
+      # (`tests/it/opencode_plugin.rs`); the version is pinned, not the image's.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"

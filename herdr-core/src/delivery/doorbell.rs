@@ -935,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bell_kinds_are_exactly_the_kinds_with_an_installed_prompt_hook() {
+    fn the_bell_rings_for_claude_code_and_codex_and_never_for_opencode() {
         for kind in ["claude", "claude-code", "claude_code", "codex"] {
             assert!(bell_target(kind), "{kind}");
         }

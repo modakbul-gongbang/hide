@@ -92,6 +92,7 @@ fn read_whole(home: &Path, agent: Agent) -> LabelTranscript {
         let next = read(home, &request).unwrap();
         whole.events.extend(next.events);
         whole.pr_sightings.extend(next.pr_sightings);
+        whole.memory_receipts.extend(next.memory_receipts);
         whole.has_more = next.has_more;
         whole.checkpoint = next.checkpoint;
         whole.subagents = next.subagents;
@@ -961,4 +962,56 @@ fn a_replaced_session_file_folds_its_turns_again() {
     let rescanned = read(home.path(), &continued(&proposed)).unwrap();
     assert!(rescanned.rescanned.is_some());
     assert_eq!(waiting(&rescanned), Some(Waiting::Nothing));
+}
+
+/// Hide's OpenCode plugin adds one synthetic text part to a root prompt; its
+/// Memory receipt is reported for the core to check, and the part stays out
+/// of the conversation the labels and titles read (PRD opencode-plugin D-12).
+#[test]
+fn hides_receipt_in_an_opencode_synthetic_part_is_reported_and_kept_out_of_the_conversation() {
+    let home = home(Agent::OpenCode);
+    add_opencode_request(home.path(), 0, 10);
+    let path = home.path().join(".local/share/opencode/opencode.db");
+    let writer = rusqlite::Connection::open(path).unwrap();
+    let receipt =
+        r#"<hide-memory-receipt event="UserPromptSubmit" count="1" items="mem-1@2" auth="aaaa" />"#;
+    let text = format!(
+        "<system-reminder>\nProject Memory:\n- Keep the parser pure.\n{receipt}\n</system-reminder>"
+    );
+    let at = START + 300_000;
+    for (id, synthetic, body) in [
+        ("prt_big_000_hide", true, text.as_str()),
+        // An operator's own text quoting a receipt is no receipt.
+        ("prt_big_000_typed", false, receipt),
+    ] {
+        writer
+            .execute(
+                "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+                rusqlite::params![
+                    id,
+                    "msg_big_000",
+                    "ses_0a1b2c3d4e5f60718293a4b5c6",
+                    at + 1,
+                    serde_json::json!({"type": "text", "text": body, "synthetic": synthetic})
+                        .to_string()
+                ],
+            )
+            .unwrap();
+    }
+
+    let transcript = read_whole(home.path(), Agent::OpenCode);
+
+    let request = transcript
+        .events
+        .iter()
+        .find(|event| event.text.starts_with("0 x"))
+        .expect("the operator's request is an event");
+    assert!(!request.text.contains("Project Memory"), "{}", request.text);
+    assert_eq!(
+        transcript.memory_receipts,
+        [hide_session::label_transcript::MemoryReceiptPart {
+            offset: request.offset,
+            text: receipt.to_owned(),
+        }]
+    );
 }

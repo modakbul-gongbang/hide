@@ -26,7 +26,7 @@ use serde_json::json;
 
 use crate::counters::PaneCounters;
 use crate::runtime::{
-    DONE_TOKEN, HOOK_SOURCE_NAME, HOOK_VERSION, HookEvent, INSTRUMENTED_TOKEN, WORKING_TOKEN,
+    DONE_TOKEN, HOOK_SOURCE_NAME, HOOK_VERSION, INSTRUMENTED_TOKEN, WORKING_TOKEN,
 };
 
 /// How long one report may hold the agent's hook slot. A hook runs inside
@@ -130,7 +130,7 @@ fn failure_path(home: &Path) -> PathBuf {
 pub fn record_outcome(
     home: &Path,
     pane_id: &str,
-    event: HookEvent,
+    event: &str,
     socket_path: &Path,
     outcome: &Result<(), ApiError>,
 ) -> io::Result<()> {
@@ -144,7 +144,7 @@ pub fn record_outcome(
         Err(error) => {
             let failure = ReportFailure {
                 pane_id: pane_id.to_owned(),
-                event: event.name().to_owned(),
+                event: event.to_owned(),
                 socket_path: socket_path.display().to_string(),
                 error: error.to_string(),
                 at_unix_ms: SystemTime::now()
@@ -186,6 +186,7 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
 
     use super::*;
+    use crate::runtime::HookEvent;
 
     fn scratch(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -296,9 +297,16 @@ mod tests {
         );
 
         let stale = Err(ApiError::Transport("earlier".to_owned()));
-        record_outcome(&root, "w1:p1", HookEvent::SessionStart, &socket, &stale).expect("stale");
+        record_outcome(
+            &root,
+            "w1:p1",
+            HookEvent::SessionStart.name(),
+            &socket,
+            &stale,
+        )
+        .expect("stale");
         assert!(last_failure(&root).is_some());
-        record_outcome(&root, "w1:p1", HookEvent::Stop, &socket, &outcome).expect("record");
+        record_outcome(&root, "w1:p1", HookEvent::Stop.name(), &socket, &outcome).expect("record");
         assert_eq!(last_failure(&root), None);
         fs::remove_dir_all(&root).ok();
         fs::remove_file(&socket).ok();
@@ -325,7 +333,14 @@ mod tests {
             "{outcome:?}"
         );
 
-        record_outcome(&root, "w1:p1", HookEvent::SessionStart, &socket, &outcome).expect("record");
+        record_outcome(
+            &root,
+            "w1:p1",
+            HookEvent::SessionStart.name(),
+            &socket,
+            &outcome,
+        )
+        .expect("record");
         let failure = last_failure(&root).expect("a failure is remembered");
         assert_eq!(failure.pane_id, "w1:p1");
         assert_eq!(failure.event, "SessionStart");
@@ -333,7 +348,7 @@ mod tests {
         assert!(failure.error.contains("not running"), "{}", failure.error);
         assert!(failure.message().contains("w1:p1"));
 
-        record_outcome(&root, "w1:p1", HookEvent::Stop, &socket, &Ok(())).expect("clear");
+        record_outcome(&root, "w1:p1", HookEvent::Stop.name(), &socket, &Ok(())).expect("clear");
         assert_eq!(last_failure(&root), None);
         fs::remove_dir_all(&root).ok();
     }

@@ -1398,6 +1398,10 @@ pub struct Runtime {
     memory_enable_after_hook_update: bool,
     memory_poll_in_flight: bool,
     memory_next_poll_unix_ms: u64,
+    /// Memory receipts the label reads found, waiting for the one thread that
+    /// checks and records them (`runtime/memory.rs`, `record_memory_receipts`).
+    memory_receipts_pending: Vec<crate::labels::worker::SightedMemoryReceipt>,
+    memory_receipts_in_flight: bool,
     editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
@@ -2025,6 +2029,8 @@ impl Runtime {
             memory_enable_after_hook_update: false,
             memory_poll_in_flight: false,
             memory_next_poll_unix_ms: 0,
+            memory_receipts_pending: Vec::new(),
+            memory_receipts_in_flight: false,
             editor_tab_history: Vec::new(),
             worker_context: None,
             state_save_pending: false,

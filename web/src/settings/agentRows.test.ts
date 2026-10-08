@@ -1,7 +1,7 @@
 import { emptyScope } from "../../test/legacyAgentScope";
 import { describe, expect, it } from "vitest";
 import type { Device, KitAgent, KitPiece } from "../snapshot";
-import { agentInstalled, agentLeftover, checkFailedReason, docsUrl, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
+import { agentHookWait, agentInstalled, agentLeftover, checkFailedReason, docsUrl, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
 const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({
@@ -109,6 +109,18 @@ describe("what a row says (B13, B14, B16, B19, B20)", () => {
     expect(agentProblems(agent("codex", { enabled: false, skill: piece("removed") }))).toEqual([]);
     // A row from a helper whose build predates the Herdr piece has nothing there to fail.
     expect(agentProblems(agent("grok", { herdr: null }))).toEqual([]);
+    // OpenCode's hook piece is Hide's plugin, and its row says so.
+    expect(agentProblems(agent("opencode", { hook: piece("outdated", "edited") })).map(({ part }) => part)).toEqual(["plugin"]);
+  });
+
+  it("says why an agent's hook is not in while the agent is on and found, without a repair (opencode-plugin B14)", () => {
+    const waiting = agentHookWait(agent("opencode", { hook: piece("absent", "OpenCode has not created ~/.config/opencode yet") }));
+    expect(waiting).toEqual({ part: "plugin", piece: piece("absent", "OpenCode has not created ~/.config/opencode yet") });
+    expect(agentProblems(agent("opencode", { hook: piece("absent", "OpenCode has not created ~/.config/opencode yet") }))).toEqual([]);
+    expect(agentHookWait(agent("opencode", { enabled: false, hook: piece("absent", "no folder") }))).toBeNull();
+    expect(agentHookWait(agent("opencode", { availability: "not_installed", hook: piece("absent", "not found") }))).toBeNull();
+    expect(agentHookWait(agent("cursor", { hook: piece("absent") }))).toBeNull();
+    expect(agentHookWait(agent("cursor", { hook: piece("installed") }))).toBeNull();
   });
 
   it("keeps a switched-off agent whose removal did not finish from reading Off (B14)", () => {

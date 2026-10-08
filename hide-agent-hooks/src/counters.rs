@@ -76,12 +76,18 @@ pub fn apply(home: &Path, pane_id: &str, event: HookEvent) -> io::Result<PaneCou
         }
         HookEvent::Stop => counters.working = 0,
     }
+    store(home, pane_id, counters)?;
+    Ok(counters)
+}
+
+/// Replaces a pane's counts with ones its agent keeps itself: OpenCode's
+/// plugin follows its child sessions and sends the totals, not events.
+pub fn store(home: &Path, pane_id: &str, counters: PaneCounters) -> io::Result<()> {
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, serde_json::to_vec(&counters)?)?;
-    Ok(counters)
+    fs::write(&path, serde_json::to_vec(&counters)?)
 }
 
 /// Drops a pane's record. Used by the diagnosis when a pane is gone.

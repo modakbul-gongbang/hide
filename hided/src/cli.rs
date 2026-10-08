@@ -126,9 +126,9 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                     ["--session", session, "--runtime", runtime]
                         if !session.is_empty() && session.len() <= 256
                             && !session.chars().any(char::is_control)
-                            && matches!(*runtime, "claude-code" | "codex") =>
+                            && hide_agent_adapter::direct_ask_kind(runtime).is_some() =>
                         Ok(CommandKind::FactoryQuestionGuard { session: (*session).to_owned(), runtime: (*runtime).to_owned() }),
-                    _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex>".into()),
+                    _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex|opencode>".into()),
                 }
             }
             Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
@@ -1624,7 +1624,7 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         };
-        for runtime in ["claude-code", "codex"] {
+        for runtime in ["claude-code", "codex", "opencode"] {
             assert_eq!(
                 parse(&[
                     "hide",

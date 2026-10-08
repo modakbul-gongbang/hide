@@ -86,23 +86,28 @@
   {
     "id": "opencode",
     "hook": {
-      "absent": "No installed hook dialect in this build"
+      "sample": "hide-agent-hooks/tests/fixtures/hook-bytes/opencode-plugin.js"
     },
     "session": {
       "sample": "hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
     },
     "features": [
       "skill",
+      "guidance",
+      "letters",
+      "memory",
+      "subagents",
+      "spawn_guard",
       "herdr_integration",
       "start"
     ],
     "factory": {
-      "direct_ask": "unconfirmed",
+      "direct_ask": "available",
       "user_turn": "unconfirmed",
       "turn_end_and_answer": "unconfirmed",
-      "startup_guidance": "unavailable",
+      "startup_guidance": "available",
       "resume": "unconfirmed",
-      "next_prompt_letters": "unavailable"
+      "next_prompt_letters": "available"
     }
   },
   {
