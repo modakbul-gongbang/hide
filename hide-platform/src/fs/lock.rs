@@ -2,10 +2,12 @@
 //!
 //! The lock lives as long as the [`Lock`] and ends with the process that
 //! holds it, so a crash never leaves one behind. On Unix it belongs to the
-//! open file, not the descriptor: a child started while the lock is held has
-//! a copy of the descriptor until it starts its program (descriptors are
-//! close-on-exec), so a drop in that moment frees the lock when the child
-//! starts its program, not at once. It orders cooperating
+//! open file, not the descriptor: a child another thread starts while the
+//! lock is held has a copy of the descriptor until it starts its program
+//! (descriptors are close-on-exec), so closing ours would leave the lock held
+//! for that moment and a one-try lock elsewhere would find it busy (issue
+//! 820). Dropping a [`Lock`] therefore releases it before it closes the
+//! descriptor, and it is free at once. It orders cooperating
 //! programs and stops nobody else from opening the file. A shared lock admits
 //! other shared locks; an exclusive lock admits none.
 //!
@@ -35,7 +37,15 @@ pub enum Mode {
 /// A lock held on a file or folder; dropping it releases the lock.
 #[derive(Debug)]
 pub struct Lock {
-    _file: File,
+    file: File,
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // A refused release leaves the lock to the close that follows, which
+        // is how it ended before; there is no caller left to tell.
+        let _ = self.file.unlock();
+    }
 }
 
 /// How a wait for a lock ended.
@@ -63,7 +73,7 @@ pub fn lock_file(
     let deadline = Instant::now() + within;
     loop {
         if attempt(&file, mode)? {
-            return Ok(Waited::Locked(Lock { _file: file }));
+            return Ok(Waited::Locked(Lock { file }));
         }
         if cancelled() {
             return Ok(Waited::Cancelled);
