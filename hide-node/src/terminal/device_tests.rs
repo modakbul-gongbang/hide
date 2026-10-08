@@ -709,6 +709,44 @@ fn a_failed_link_tells_a_bounded_set_of_panes() {
     assert!(link.lines().is_empty());
 }
 
+/// A device's error about its own pane is its word, not the operator's
+/// refusal: it reaches the core as a note, never as the last error.
+#[test]
+fn a_devices_error_reaches_the_core_as_a_note() {
+    let (proxy, _link, heard) = proxy();
+    let inbound = proxy.inbound();
+    inbound(
+        &line_of(TerminalUp::Report {
+            report: TerminalReport::Error {
+                pane: "w1:p1".into(),
+                kind: "remote.control.close_status_unknown".into(),
+                message: "chosen by the device".into(),
+            },
+        })
+        .unwrap(),
+    );
+    let reports = heard.reports.lock().unwrap();
+    assert!(matches!(
+        reports.as_slice(),
+        [(device, TerminalReport::Note { pane, kind, .. })]
+            if device == "mini" && pane == "w1:p1" && kind == "remote.control.close_status_unknown"
+    ));
+}
+
+/// What a device's lines make this machine log is capped per second, so a
+/// flood of unreadable lines writes at most the cap and counts the rest.
+#[test]
+fn a_devices_unreadable_lines_write_at_most_the_record_cap() {
+    let (proxy, _link, _heard) = proxy();
+    let inbound = proxy.inbound();
+    for _ in 0..DEVICE_RECORDS_PER_WINDOW + 36 {
+        inbound(b"not a terminal line");
+    }
+    let records = lock(&proxy.shared.records);
+    assert_eq!(records.written, DEVICE_RECORDS_PER_WINDOW);
+    assert_eq!(records.unwritten, 36);
+}
+
 #[test]
 fn output_from_the_device_reaches_the_hub_decoded_and_named_by_device() {
     let (proxy, _link, heard) = proxy();

@@ -41,6 +41,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use hide_node_link::terminal::{
     GridSize, KeyTarget, MAX_TERMINAL_LINE_BYTES, MAX_UNSENT_KEY_BYTES, MAX_UNSENT_OUTPUT_BYTES,
@@ -679,6 +680,30 @@ struct ProxyShared {
     state: Mutex<ProxyState>,
     ready: Condvar,
     sink: Arc<dyn DeviceSink>,
+    /// The log records this link's lines made in the current second.
+    records: Mutex<RecordWindow>,
+}
+
+/// The log records a device's lines may make in one second, its own
+/// diagnostics and the lines this side could not read: past it a record is
+/// counted, not written, so a device cannot rotate this machine's log away.
+pub(super) const DEVICE_RECORDS_PER_WINDOW: usize = 64;
+const DEVICE_RECORD_WINDOW: Duration = Duration::from_secs(1);
+
+struct RecordWindow {
+    opened: Instant,
+    written: usize,
+    unwritten: usize,
+}
+
+impl Default for RecordWindow {
+    fn default() -> Self {
+        Self {
+            opened: Instant::now(),
+            written: 0,
+            unwritten: 0,
+        }
+    }
 }
 
 /// A device's terminals on the core's side of its link.
@@ -699,6 +724,7 @@ impl DeviceTerminals {
             link: NEXT_LINK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             state: Mutex::default(),
             ready: Condvar::new(),
+            records: Mutex::default(),
             sink,
         });
         let writer = Arc::clone(&shared);
@@ -900,17 +926,51 @@ impl ProxyShared {
         }
     }
 
+    /// Whether one more record from this link's lines may be written now.
+    /// The window that passed before it is logged with what it did not write.
+    fn may_record(&self) -> bool {
+        let now = Instant::now();
+        let mut window = lock(&self.records);
+        if now.saturating_duration_since(window.opened) >= DEVICE_RECORD_WINDOW {
+            let unwritten = std::mem::take(&mut window.unwritten);
+            *window = RecordWindow {
+                opened: now,
+                written: 0,
+                unwritten: 0,
+            };
+            if unwritten > 0 {
+                crate::diagnostic!(json!({
+                    "component": "device_terminal",
+                    "kind": "terminal.device_records_unwritten",
+                    "device": self.device,
+                    "link": self.link,
+                    "count": unwritten,
+                    "cap": DEVICE_RECORDS_PER_WINDOW,
+                }));
+            }
+        }
+        if window.written < DEVICE_RECORDS_PER_WINDOW {
+            window.written += 1;
+            true
+        } else {
+            window.unwritten += 1;
+            false
+        }
+    }
+
     fn inbound(&self, line: &[u8]) {
         let up = match serde_json::from_slice::<TerminalLine<TerminalUp>>(line) {
             Ok(line) => line.terminal,
             Err(error) => {
-                crate::diagnostic!(json!({
-                    "component": "device_terminal",
-                    "kind": "terminal.up_unreadable",
-                    "device": self.device,
-                    "class": format!("{:?}", error.classify()),
-                    "bytes": line.len(),
-                }));
+                if self.may_record() {
+                    crate::diagnostic!(json!({
+                        "component": "device_terminal",
+                        "kind": "terminal.up_unreadable",
+                        "device": self.device,
+                        "class": format!("{:?}", error.classify()),
+                        "bytes": line.len(),
+                    }));
+                }
                 return;
             }
         };
@@ -919,15 +979,35 @@ impl ProxyShared {
                 Ok(bytes) => self
                     .sink
                     .output(&self.device, &output.pane, &bytes, output.full),
-                Err(message) => crate::diagnostic!(json!({
-                    "component": "device_terminal",
-                    "kind": "terminal.output_unreadable",
-                    "device": self.device,
-                    "pane_id": output.pane,
-                    "message": message,
-                })),
+                Err(message) => {
+                    if self.may_record() {
+                        crate::diagnostic!(json!({
+                            "component": "device_terminal",
+                            "kind": "terminal.output_unreadable",
+                            "device": self.device,
+                            "pane_id": device_text(&output.pane, DEVICE_RECORD_NAME),
+                            "message": device_text(&message, DEVICE_RECORD_TEXT),
+                        }));
+                    }
+                }
             },
             TerminalUp::Report { report } => {
+                // A device's errors are its own word about its panes: they
+                // reach the log as notes and never become the operator's
+                // last error, which the screen reads as a refusal of what
+                // the operator is doing.
+                let report = match report {
+                    TerminalReport::Error {
+                        pane,
+                        kind,
+                        message,
+                    } => TerminalReport::Note {
+                        pane,
+                        kind,
+                        message,
+                    },
+                    report => report,
+                };
                 if let TerminalReport::State { pane, state } = &report {
                     let mut proxy = lock(&self.state);
                     // Only a pane the core attached keeps a state here.
@@ -943,7 +1023,9 @@ impl ProxyShared {
                 self.sink.report(&self.device, report);
             }
             TerminalUp::Diagnostic { record } => {
-                crate::diagnostic!(device_record(&self.device, record));
+                if self.may_record() {
+                    crate::diagnostic!(device_record(&self.device, record));
+                }
             }
         }
     }
@@ -955,6 +1037,11 @@ impl ProxyShared {
 const DEVICE_RECORD_FIELDS: usize = 24;
 const DEVICE_RECORD_NAME: usize = 64;
 const DEVICE_RECORD_TEXT: usize = 512;
+
+/// A device's text cut to at most `most` characters for this machine's log.
+fn device_text(text: &str, most: usize) -> String {
+    text.chars().take(most).collect()
+}
 
 /// A device's diagnostic record as this machine's log keeps it: its plain
 /// fields, cut to size, how many were left out, and the device it came
