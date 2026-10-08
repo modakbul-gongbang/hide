@@ -952,10 +952,16 @@ impl Engine {
             }
             Command::PauseFactory { project } => {
                 let factory = self.factory_id(project.as_deref())?;
-                self.pause_factory(&factory);
-                Ok(
-                    json!({"message": "paused: no starts, AI judgments or auto merges; workers asleep"}),
-                )
+                let awake = self.pause_factory(&factory);
+                let message = if awake.is_empty() {
+                    "paused: no starts, AI judgments or auto merges; workers asleep".to_owned()
+                } else {
+                    format!(
+                        "paused: no starts, AI judgments or auto merges; workers asleep except {}, whose agent cannot sleep and keeps its turn",
+                        awake.join(", ")
+                    )
+                };
+                Ok(json!({"message": message, "awake": awake}))
             }
             Command::ResumeFactory { project } => {
                 let factory = self.factory_id(project.as_deref())?;
@@ -3981,7 +3987,7 @@ impl Engine {
         self.stop_worker(factory_id, &task.id, worker);
         self.with_task(factory_id, &task.id, |t| {
             if let Some(w) = &mut t.worker {
-                w.asleep = true;
+                w.asleep = w.runtime.sleeps();
             }
         });
     }
@@ -4319,7 +4325,7 @@ impl Engine {
                     factory,
                     Some(id),
                     "worker.sleep_failed",
-                    json!({"stage": failure.stage}),
+                    json!({"stage": failure.stage, "detail": failure.detail}),
                 ),
             }
         }
@@ -4368,10 +4374,12 @@ impl Engine {
             return;
         };
         let state = self.task(factory, id).map(|t| t.state);
-        let paused = self.factories.get(factory).is_some_and(|f| f.paused);
+        let paused = self.factories.get(factory).is_some_and(|f| f.paused)
+            && matches!(state, Some(TaskState::Running | TaskState::Relanding));
         if worker.asleep || paused || state == Some(TaskState::Blocked) {
             // A blocked Task wakes when it gets a slot again, and a paused
-            // Factory's resume hands it over, a worker that cannot sleep too.
+            // Factory's resume hands a running Task's reply over, to a worker
+            // that cannot sleep too.
             self.with_task(factory, id, |task| {
                 task.flags
                     .push(format!("pending reply: {}", judgment::cut(body, 2000)))
@@ -4419,7 +4427,8 @@ impl Engine {
             task.cancelled_at = Some(now);
             task.cancelled_from = Some(task.state);
             if let Some(worker) = &mut task.worker {
-                worker.asleep = true;
+                // An agent that declares no sleep stays awake in its pane.
+                worker.asleep = worker.runtime.sleeps();
             }
             // A cancelled Task asks nothing of a person, and no deadline
             // applies a default to it; a revived worker asks again.

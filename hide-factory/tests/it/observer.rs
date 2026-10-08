@@ -1317,6 +1317,29 @@ fn a_worker_whose_agent_cannot_sleep_is_never_counted_asleep_and_hears_a_pause_s
 }
 
 #[test]
+fn a_pause_names_a_worker_whose_agent_cannot_sleep_and_a_cancel_leaves_it_awake() {
+    let mut h = Bench::new(false);
+    let f = h.factory(false);
+    let grok = Runtime::parse("grok").expect("grok declares a start");
+    h.world().sleepless.push(grok);
+    assert_eq!(
+        config(&mut h, "workers", r#"[{"agent":"grok"}]"#)["ok"],
+        true
+    );
+    let t = h.ready("Keeps working", &[]);
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    let paused = h.op(Command::PauseFactory { project: None });
+    assert_eq!(paused["awake"], json!([t]), "{paused}");
+    assert!(!h.task(&f, &t).worker.expect("worker").asleep);
+    h.op(Command::ResumeFactory { project: None });
+    assert_eq!(h.op(Command::Cancel { task: t.clone() })["ok"], true);
+    assert!(
+        !h.task(&f, &t).worker.expect("worker").asleep,
+        "its agent stays awake in its pane"
+    );
+}
+
+#[test]
 fn a_task_only_an_automatic_merge_would_take_waits_out_a_pause_without_reading_anything() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -1405,7 +1428,8 @@ fn pausing_puts_running_workers_to_sleep() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let t = h.ready("Sleeps", &[]);
-    h.op(Command::PauseFactory { project: None });
+    let paused = h.op(Command::PauseFactory { project: None });
+    assert_eq!(paused["awake"], json!([]), "{paused}");
     assert!(h.task(&f, &t).worker.unwrap().asleep);
     assert!(h.world().sleeps.contains(&t));
     h.op(Command::ResumeFactory { project: None });

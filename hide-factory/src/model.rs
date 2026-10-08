@@ -186,6 +186,12 @@ impl Runtime {
             .map(|kind| Self(kind))
     }
 
+    /// Whether the agent's adapter declares a sleep; one that does not keeps
+    /// working where the Factory would put it to sleep (D-28).
+    pub fn sleeps(self) -> bool {
+        self.adapter().sleep.is_some()
+    }
+
     /// How the agent's start takes a model and an effort.
     pub fn launch_options(self) -> Option<hide_agent_adapter::LaunchOptions> {
         self.adapter().start.map(|start| start.options())

@@ -1264,13 +1264,14 @@ impl Engine {
     // ---------------------------------------------------------------- pause
 
     /// Pauses a Factory (D-48): starts, AI judgments and auto merges stop,
-    /// and every running worker sleeps where it is.
-    pub(super) fn pause_factory(&mut self, factory: &str) {
+    /// and every running worker sleeps where it is. Answers the Tasks whose
+    /// worker could not sleep and keeps its turn (D-28).
+    pub(super) fn pause_factory(&mut self, factory: &str) -> Vec<String> {
         let Some(f) = self.factories.get_mut(factory) else {
-            return;
+            return Vec::new();
         };
         if f.paused {
-            return;
+            return Vec::new();
         }
         f.paused = true;
         self.save_factory(factory);
@@ -1281,9 +1282,18 @@ impl Engine {
             .filter(|t| t.worker.as_ref().is_some_and(|w| !w.asleep))
             .map(|t| t.id.clone())
             .collect();
+        let mut awake = Vec::new();
         for id in running {
             self.put_to_sleep(factory, &id);
+            if self
+                .task(factory, &id)
+                .and_then(|t| t.worker.as_ref())
+                .is_some_and(|w| !w.asleep)
+            {
+                awake.push(id);
+            }
         }
+        awake
     }
 
     /// Resumes a Factory: sleeping workers continue in their worktrees with

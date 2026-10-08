@@ -209,7 +209,7 @@ A start that fails with an environment signal leaves the Task `waiting` and is h
 
 A Task's worker is put to sleep when the Task blocks, pauses, goes to `verifying`, or waits for a slot, and woken when it runs again.
 Sleep goes through agent sleep and is deferred until the agent's turn ends; a worker that never slept is sent the message instead, and a worker whose agent declares no sleep is never counted asleep.
-Stopping a worker, when its Task is cancelled or an outside pull request takes it over, ends its ledger record at once and puts its agent to sleep the same way, so the pane and session stay for `revive`.
+Stopping a worker, when its Task is cancelled or an outside pull request takes it over, ends its ledger record at once and puts its agent to sleep the same way, so the pane and session stay for `revive`; an agent that cannot sleep is left awake in its pane.
 A wake restarts the agent in the same pane and session.
 Letters for a woken worker are held, at most 16, until its agent is back, and are dropped to the diagnostic log after 10 minutes.
 A retried Task spawns again in the same worktree and session with a fresh intent.
@@ -341,12 +341,12 @@ An approval merges through the path `hide factory merge` takes, with the pre-mer
 In 직접 and 함께 a risk path always waits for a person.
 
 **Pausing a Factory.**
-`hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends, while a worker whose agent cannot sleep keeps working; a request that arrives meanwhile goes to a person.
+`hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends, while a worker whose agent cannot sleep keeps working and the answer names its Task; a request that arrives meanwhile goes to a person.
 A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing.
 A Task verified while paused that a person must merge, by its mode, an open question or a gate such as a failed check or a risk path, goes through its usual merge checks to `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
 A Task sent back to its worker while paused, by a conflict with main, a failed check or a person, goes back to `running` with its worker asleep where its agent can sleep, and the worker hears why on resume, as it hears every answer given during the pause.
 A Factory AI verdict asked before the pause still lands: an answer reaches the sleeping worker on resume, while a risk-path approval merges nothing and is asked again on resume, and a diagnosis is set aside.
-`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path unless main is broken.
+`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, and sends a running Task's worker that could not sleep what was held for it, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path unless main is broken.
 
 **The Factory AI and the workers.**
 `factory_ai` chooses the agent, and `factory_ai_model` and `factory_ai_effort` its model and effort, that run every judgment of this Factory; unset, the Factory uses the agent Settings › Hide AI chose.

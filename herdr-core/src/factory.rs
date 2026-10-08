@@ -1452,7 +1452,9 @@ impl WorkerRuntime for CoreWorkers {
     fn stop(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
         // The agent ends through agent sleep once its turn ends, so its pane
         // and session stay for a revive (B50, B55); the ledger record ends now.
+        // An agent that declares no sleep stays in its pane (D-28).
         if let Some(pane) = &worker.pane
+            && crate::agent_sleep::sleeps_kind(worker.runtime.as_str())
             && let Ok(mut state) = self.state.lock()
         {
             state.pending_sleep.insert(pane.clone());
