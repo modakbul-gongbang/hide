@@ -409,7 +409,6 @@ export const factoryEnglish = {
   "factory.task.pickAuto": "Factory AI picks",
   "factory.task.pickHint": "Candidates change in Settings › Workers",
   "factory.task.pickEffect": "Picking another candidate starts it and Factory AI does not pick",
-  "factory.task.resting": "Resting {{time}}",
   "factory.task.woke": "Woken once · letter",
   "factory.task.noReply": "No reply",
   "factory.task.diagnosed": "Diagnosed once",
@@ -434,6 +433,8 @@ export const factoryEnglish = {
   "factory.action.acknowledge": "Acknowledge",
   "factory.card.goneAgain": "restarted, then it disappeared again",
   "factory.card.noReply": "woken, no reply",
+  "factory.task.rest": "Resting",
+  "factory.task.restarted": "Restarted {{count}} automatically",
 } as const;
 
 const ko = {
@@ -844,7 +845,6 @@ const ko = {
   "factory.task.pickAuto": "Factory AI가 고름",
   "factory.task.pickHint": "후보는 설정의 작업자에서 바뀝니다",
   "factory.task.pickEffect": "다른 후보를 고르면 그 후보로 시작하고 Factory AI는 고르지 않습니다",
-  "factory.task.resting": "쉼 {{time}}",
   "factory.task.woke": "깨움 1번 · 편지",
   "factory.task.noReply": "답 없음",
   "factory.task.diagnosed": "진단 1번",
@@ -869,6 +869,8 @@ const ko = {
   "factory.action.acknowledge": "확인",
   "factory.card.goneAgain": "다시 띄웠지만 또 사라짐",
   "factory.card.noReply": "깨웠지만 답 없음",
+  "factory.task.rest": "쉼",
+  "factory.task.restarted": "자동으로 다시 띄움 {{count}}번",
 } satisfies Catalog<typeof factoryEnglish>;
 
 const zhCN = {
@@ -1279,7 +1281,6 @@ const zhCN = {
   "factory.task.pickAuto": "Factory AI 选择",
   "factory.task.pickHint": "候选在设置的 Worker 中更改",
   "factory.task.pickEffect": "选择其他候选后将以它启动，Factory AI 不再选择",
-  "factory.task.resting": "休息 {{time}}",
   "factory.task.woke": "已唤醒 1 次 · 信件",
   "factory.task.noReply": "无回复",
   "factory.task.diagnosed": "诊断 1 次",
@@ -1304,6 +1305,8 @@ const zhCN = {
   "factory.action.acknowledge": "确认",
   "factory.card.goneAgain": "重新启动后又消失了",
   "factory.card.noReply": "已唤醒，无回复",
+  "factory.task.rest": "休息",
+  "factory.task.restarted": "自动重启 {{count}} 次",
 } satisfies Catalog<typeof factoryEnglish>;
 
 const ja = {
@@ -1714,7 +1717,6 @@ const ja = {
   "factory.task.pickAuto": "Factory AI が選ぶ",
   "factory.task.pickHint": "候補は設定の Worker で変わります",
   "factory.task.pickEffect": "別の候補を選ぶとその候補で始め、Factory AI は選びません",
-  "factory.task.resting": "休み {{time}}",
   "factory.task.woke": "1 回起こした · 手紙",
   "factory.task.noReply": "返事なし",
   "factory.task.diagnosed": "診断 1 回",
@@ -1739,6 +1741,8 @@ const ja = {
   "factory.action.acknowledge": "確認",
   "factory.card.goneAgain": "起動し直したがまた消えた",
   "factory.card.noReply": "起こしたが返事なし",
+  "factory.task.rest": "休み",
+  "factory.task.restarted": "自動で再起動 {{count}} 回",
 } satisfies Catalog<typeof factoryEnglish>;
 
 export const factoryCatalogs = { en: factoryEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof factoryEnglish>;

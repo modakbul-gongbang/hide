@@ -516,3 +516,39 @@ it("changes who answers with one of three choices, and dims them while Hide AI i
   await act(async () => useShellStore.setState((state) => ({ rest: { ...state.rest, status: { ...state.rest?.status, background_ai: { enabled: false, provider: null, chosen: false, providers: [], unavailable_reason: null } } } as never })));
   expect(container.querySelector("[data-factory-ai-off]")!.textContent).toBe(english["factory.settings.aiOff"]);
 });
+
+it("lets a person answer a decision Factory AI made differently from the Task page, until the Task finishes (D-19)", async () => {
+  const at = NOW - 60_000;
+  const answered: TaskDetail = {
+    ...detail("running", ["pause", "cancel"]),
+    decisions: [{ text: "정렬은 web 쪽에서", by: "worker:T-1", at: at - 1 }, { text: "정렬 키는 updated_at", by: "observer", at, kind: "B", reason: null }],
+    questions: [{ id: "q-1", origin: "worker", kind: { kind: "default" }, text: "정렬 키?", suggestion: "updated_at", default_action: null, deadline: null, asked_at: at - 5, choices: [], answer: { text: "updated_at", chose: null, relayed_by: "observer", at }, letter: null, routing: { kind: "B" } }],
+  };
+  const { container, events } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: answered } }));
+  expect([...container.querySelectorAll("[data-factory-decision-by]")].map((by) => by.getAttribute("data-factory-decision-by"))).toEqual(["observer", "worker"]);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-decision-override='q-1']")!.click());
+  await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-override-text]")!, "last_activity"));
+  await act(async () => container.querySelector("[data-factory-override-text]")!.closest("form")!.requestSubmit());
+  expect(commands(events).at(-1)).toEqual({ verb: "answer", task: "f1/T-1", question: "q-1", choice: null, text: "last_activity", change: true });
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: { ...answered, card: card("T-1", "done") } } }));
+  expect(container.querySelector("[data-factory-decision-override]")).toBeNull();
+});
+
+it("says why a worker stopped with Factory AI's reading, and how the engine treated its rest (B23, D-22)", async () => {
+  const stopped: TaskDetail = { ...detail("stopped", ["retry", "cancel"]), stop_code: "no_report", diagnosis: "테스트 실행을 기다리다 멈춤", woke_at: NOW - 240_000, diagnosed_at: NOW - 120_000 };
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: stopped } }));
+  expect(container.querySelector("[data-factory-stop='no_report']")!.textContent).toBe(`${english["factory.stop.no_report"]} · ${english["factory.card.noReply"]}`);
+  expect(container.querySelector("[data-factory-diagnosis]")!.textContent).toBe(english["factory.task.diagnosis"].replace("{{text}}", "테스트 실행을 기다리다 멈춤"));
+  expect(container.querySelector("[data-factory-rest]")!.textContent).toBe(`${english["factory.task.woke"]}${english["factory.task.noReply"]}${english["factory.task.diagnosed"]}`);
+});
+
+it("marks Factory AI's pick among the worker candidates before a worker starts (D-41)", async () => {
+  const workers = [{ agent: "codex", model: "gpt-6.1-sol", effort: "high", description: "대부분의 Task" }, { agent: "claude", model: "opus", effort: "max", description: "큰 리팩터" }];
+  const waiting: TaskDetail = { ...detail("waiting", ["priority", "cancel"]), ai_picked_worker: 2, ai_pick_reason: "큰 변경" };
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory({ workers })], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: waiting } }));
+  expect(container.querySelector("[data-factory-worker-pick]")!.getAttribute("data-factory-worker-pick")).toBe("2");
+  expect(container.querySelector("[data-factory-picked]")!.textContent).toBe(english["factory.task.picked"].replace("{{description}}", "큰 리팩터 · 큰 변경"));
+});

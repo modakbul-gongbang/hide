@@ -219,6 +219,8 @@ export type Question = {
   choices: string[];
   answer: Answer | null;
   letter: string | null;
+  /** How the Observer sorted it, and whether a person replaced its answer. */
+  routing?: { kind?: DecisionKind; reason?: string; overridden?: boolean } | null;
 };
 export type Discovery = { id: string; class: DiscoveryClass; text: string; at: UnixMs; task: string | null };
 export type AttemptView = {
