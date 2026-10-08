@@ -692,7 +692,12 @@ fn lock_role() {
 fn hold_in_another_process(path: &Path) -> Killed {
     let mut child = Killed(
         Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "lock_role", "--nocapture", "--test-threads=1"])
+            .args([
+                "--exact",
+                "fs::lock_role",
+                "--nocapture",
+                "--test-threads=1",
+            ])
             .env(ROLE, "lock")
             .env(HELD, path)
             .stdout(Stdio::piped())

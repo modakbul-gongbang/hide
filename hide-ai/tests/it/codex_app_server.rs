@@ -41,14 +41,10 @@ fn request(deadline: Duration) -> AiRequest {
     }
 }
 
-/// The fixture reads its behaviour from the environment; tests that need a
-/// mode run serially under this lock so they never see each other's value.
-static MODE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn with_mode<T>(mode: &str, body: impl FnOnce() -> T) -> T {
-    let _guard = MODE.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: the lock above serialises every writer of FAKE_MODE in this
-    // process, and the fixture reads it once at spawn.
+    let _guard = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: FAKE_ENV serialises every writer of a FAKE_* variable in this
+    // binary, and the fixture reads it once at spawn.
     unsafe { std::env::set_var("FAKE_MODE", mode) };
     let out = body();
     unsafe { std::env::remove_var("FAKE_MODE") };

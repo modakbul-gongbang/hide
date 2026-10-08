@@ -63,7 +63,7 @@ mod windows {
         command
             .args([
                 "--exact",
-                "windows::child_listener",
+                "listeners::windows::child_listener",
                 "--nocapture",
                 "--test-threads=1",
             ])

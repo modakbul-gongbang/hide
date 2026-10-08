@@ -1,4 +1,4 @@
-# The remote mailbox crate-boundary lane (hided/tests/remote_delivery.rs,
+# The remote mailbox crate-boundary lane (hided/tests/it/remote_delivery.rs,
 # docs/TESTING.md) as one reusable job: the candidate CLI binaries, two private
 # pinned Herdr servers and a loopback SSH server. `pr.yml` runs it on Linux for
 # a change to the crates it builds, and `nightly.yml` on macOS, the system of
@@ -73,7 +73,7 @@ jobs:
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^remote_delivery::/)' --run-ignored only
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true

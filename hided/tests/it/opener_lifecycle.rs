@@ -22,7 +22,7 @@ const FAKE_WARM: &str = "HIDED_FAKE_OPENER_WARM";
 /// given as the marker: what an operator's `HIDE_OPEN_COMMAND` is to hided.
 fn fake(dir: &Path, name: &str, role: &str) -> PathBuf {
     let exe = std::env::current_exe().unwrap();
-    let entry = "--ignored --exact fake_program --nocapture";
+    let entry = "--ignored --exact opener_lifecycle::fake_program --nocapture";
     #[cfg(unix)]
     let script = {
         use std::os::unix::fs::PermissionsExt;
@@ -93,7 +93,12 @@ fn fake_program() {
             std::fs::write(sidecar(&marker, "arg"), marker.to_string_lossy().as_bytes()).unwrap();
             write_pid("pid");
             let mut child = Command::new(std::env::current_exe().unwrap())
-                .args(["--ignored", "--exact", "fake_program", "--nocapture"])
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "opener_lifecycle::fake_program",
+                    "--nocapture",
+                ])
                 .env(ROLE, "child")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -190,7 +195,7 @@ fn assert_gone(process: Started) {
 }
 
 /// The owner process the tests below spawn: this test binary run again with
-/// `--ignored --exact owner_process`. Ignored, so a plain `cargo test` never
+/// `--ignored --exact opener_lifecycle::owner_process`. Ignored, so a plain `cargo test` never
 /// counts it as a passing test of anything; it is an entry point.
 #[test]
 #[ignore = "subprocess entry point; the owner tests run it with --ignored --exact"]
@@ -239,7 +244,12 @@ fn acceptance_timeout_ends_cli_spawned_before_watcher() {
     let marker = dir.path().join("acceptance-timeout");
     supervisor();
     let owner = Command::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "owner_process", "--nocapture"])
+        .args([
+            "--ignored",
+            "--exact",
+            "opener_lifecycle::owner_process",
+            "--nocapture",
+        ])
         .env("HIDED_OWNED_OPENER_TEST_MARKER", &marker)
         .env("HIDED_EXPECT_OPENER_TIMEOUT", "1")
         .env("HIDE_OPEN_HELPER_TEST_PAUSE_MS", "3000")
@@ -340,7 +350,12 @@ fn killing_the_owner_reaps_cli_and_its_child() {
     let marker = dir.path().join("crash");
     supervisor();
     let owner = Command::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "owner_process", "--nocapture"])
+        .args([
+            "--ignored",
+            "--exact",
+            "opener_lifecycle::owner_process",
+            "--nocapture",
+        ])
         .env("HIDED_OWNED_OPENER_TEST_MARKER", &marker)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

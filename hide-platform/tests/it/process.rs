@@ -101,7 +101,12 @@ fn child_role() {
         // A child with one child of its own that has left no handle behind.
         "tree" => {
             let mut grandchild = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "process::child_role",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(ROLE, "sleep")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
                 .env_remove(OWNER_LAUNCH_KEYS[1])
@@ -116,7 +121,12 @@ fn child_role() {
         "tree_own_group" => {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command
-                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "process::child_role",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(ROLE, "sleep")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
                 .env_remove(OWNER_LAUNCH_KEYS[1])
@@ -130,7 +140,12 @@ fn child_role() {
         // Two levels below it: a child that has a `tree` child.
         "deep" => {
             let mut child = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "process::child_role",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(ROLE, "tree")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
                 .env_remove(OWNER_LAUNCH_KEYS[1])
@@ -161,7 +176,12 @@ fn child_role() {
             }
             #[allow(clippy::zombie_processes)]
             let helper = command
-                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "process::child_role",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(ROLE, "sleep")
                 .spawn()
                 .unwrap();
@@ -210,7 +230,12 @@ fn child_role() {
         "detacher" => {
             let mut command = Command::new(std::env::current_exe().unwrap());
             command
-                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "process::child_role",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(ROLE, "sleep")
                 .env_remove(OWNER_LAUNCH_KEYS[0])
                 .env_remove(OWNER_LAUNCH_KEYS[1])
@@ -231,7 +256,12 @@ fn child_role() {
             let mut command = Command::new(std::env::current_exe().unwrap());
             restrict_to_login_environment(&mut command);
             let output = command
-                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "process::child_role",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
                 .env(ROLE, "login_env")
                 .output()
                 .unwrap();
@@ -249,7 +279,12 @@ fn child_role() {
 fn role_command(role: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "process::child_role",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(ROLE, role)
         .env_remove(OWNER_LAUNCH_KEYS[0])
         .env_remove(OWNER_LAUNCH_KEYS[1])
@@ -258,7 +293,7 @@ fn role_command(role: &str) -> Command {
     command
 }
 
-/// Reads the number after `READY ` (libtest prints "test child_role ... "
+/// Reads the number after `READY ` (libtest prints "test process::child_role ... "
 /// before it), waiting for it.
 fn ready_number(stdout: std::process::ChildStdout) -> u32 {
     let (ready, heard) = mpsc::channel();
@@ -1033,7 +1068,12 @@ fn run_role(
 ) -> Result<hide_platform::process::Finished, RunFailure> {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "process::child_role",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(ROLE, role);
     run_to_end(&mut command, deadline, stop)
 }
@@ -1089,7 +1129,12 @@ fn a_raised_stop_ends_the_child_before_its_deadline() {
     let stop = std::sync::atomic::AtomicBool::new(false);
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "process::child_role",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(ROLE, "sleep")
         .env(READY_FILE, &ready);
     let (failure, child, raised) = thread::scope(|scope| {

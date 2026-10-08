@@ -80,7 +80,7 @@ class Selection(unittest.TestCase):
         # or to a crate they depend on plans it.
         for path in (
             "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-host/src/lib.rs",
-            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "hided/tests/remote_delivery.rs",
+            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "hided/tests/it/remote_delivery.rs",
         ):
             with self.subTest(path=path):
                 self.assertIn("remote-mailbox", plan(path)["lanes"])
@@ -100,7 +100,7 @@ class Selection(unittest.TestCase):
 
     def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
         for path in (
-            "herdr-core/src/lib.rs", "hided/tests/remote_delivery.rs", "hided/src/main.rs",
+            "herdr-core/src/lib.rs", "hided/tests/it/remote_delivery.rs", "hided/src/main.rs",
             "hide-host/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-platform/src/process.rs",
             "hide-session/src/lib.rs", "hide-ai/src/lib.rs",
         ):
@@ -154,7 +154,7 @@ class Selection(unittest.TestCase):
         self.assertIn("windows-check", result["lanes"])
         self.assertNotIn("windows-e2e", result["lanes"])
         self.assertNotIn("os-contract", result["lanes"])
-        self.assertEqual(plan("hided/tests/handshake.rs")["rust_packages"], ["hided"])
+        self.assertEqual(plan("hided/tests/it/handshake.rs")["rust_packages"], ["hided"])
 
     def test_the_macos_os_contract_runs_for_the_two_crates_it_tests(self):
         for path in ("hide-herdr-client/src/lib.rs", "hide-platform/src/process.rs"):

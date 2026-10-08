@@ -253,9 +253,7 @@ jobs:
       # times and compiling took about 6 of the job's 11 minutes (2026-10-05).
       TEST_TARGETS: >-
         -p hided -p hide-host -p hide-node -p hide-kit -p hide-agent-hooks -p herdr-core -p hide-ai
-        --lib --bin hide-agent-hooks
-        --test opener_lifecycle --test connect_stop --test handshake --test real_herdr
-        --test hook_deadline --test windows_hook_command --test claude_cli
+        --lib --bin hide-agent-hooks --test it
     steps:
       - name: Keep line endings as committed
         # The runner converts to CRLF by default, which would make the unit
@@ -285,9 +283,9 @@ jobs:
         run: |
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hided) & kind(lib) & (test(pane_auth) | test(opener) | test(open_command) | test(workspace_cli) | test(root_identity_is_the_one_the_node_reads))'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-node) & kind(lib)'
-          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::opener_lifecycle)'
-          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::connect_stop)'
-          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::handshake)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::it) & test(/^opener_lifecycle::/)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::it) & test(/^connect_stop::/)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::it) & test(/^handshake::/)'
       - name: The weekly usage child's environment
         # The `/usage` child is started with a restricted environment, which
         # on Windows has to carry what Node and the CLI need to start, and the
@@ -295,7 +293,7 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 10
         run: |
-          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hide-ai::claude_cli) & test(usage::)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hide-ai::it) & test(/^claude_cli::usage::/)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(herdr-core) & kind(lib) & (test(zoneinfo::) | test(usage::tests))'
       - name: Install kit and its Windows command shim
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
@@ -307,7 +305,7 @@ jobs:
         # it runs whatever the step above answered.
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 15
-        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-agent-hooks)'
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-agent-hooks) & (kind(lib) | kind(bin) | test(/^(hook_deadline|windows_hook_command)::/))'
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step
@@ -323,7 +321,7 @@ jobs:
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::real_herdr)' --run-ignored only --no-capture
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::it) & test(/^real_herdr::/)' --run-ignored only --no-capture
       - name: Attribute a native listening port to its working directory
         # Cleanup must refuse an unreadable in-use check. This unchanged core
         # contract exposes the native read reason that a browser error lacks.
@@ -411,7 +409,7 @@ jobs:
       # shard's time at four is measured after merge (docs/TESTING.md).
       shards: 4
 
-  # The remote mailbox crate-boundary lane (hided/tests/remote_delivery.rs,
+  # The remote mailbox crate-boundary lane (hided/tests/it/remote_delivery.rs,
   # docs/TESTING.md), in `remote-mailbox.yml`. It has its own job because it was
   # the tail of `web e2e (macOS)` (6.8 minutes of `@platform` tests, then 3.2 of
   # this lane after a 4.4-minute build of every CLI binary, 14.4 minutes in

@@ -33,7 +33,7 @@ Pick the cheapest layer that can observe the result.
 | End to end | A flow that crosses a process boundary a user depends on: browser to hided to the core to Herdr to the PTY, or the desktop window and its native integration | `web/e2e/`, `desktop/e2e/` |
 
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
-The external crate-boundary lane in `hided/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
+The external crate-boundary lane in `hided/tests/it/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
 It verifies real helper attestation and mailbox intake over the device's node link, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
 Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned for a change to a crate it builds and tests) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
 A pull request runs it on Linux only: SSH, the helper's attestation and the mailbox are the same code on every system, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
@@ -278,12 +278,12 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    New code with a deadline takes the clock from the start.
 5. **Never bound a test by a short wall-clock.**
    `clippy.toml` refuses `std::thread::sleep`; the sleeps that remain carry an `#[allow(clippy::disallowed_methods)]` with the reason: a bounded polling helper, a production wait, a sleep that is the subject of the test or keeps a child process alive, or a stand-in for a state that a tracking issue lists.
-   A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
+   A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/it/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
    Assert the counted result (how many requests, how many attempts, which one won) or observe the event, with a generous deadline that is only a hang guard.
    A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.
    A sleep that is the subject of the test, such as a fake peer that answers late, is the exception and says so in a comment.
 6. **Poll the state, once, with a named condition.**
-   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `hided/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
+   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `hided/tests/it/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
    The helper fails with the name of the thing it waited for, so a hang is readable.
 7. **Own and remove what the test starts.**
    Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.

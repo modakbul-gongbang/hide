@@ -2,8 +2,7 @@
 //! Every candidate child has an owned process tree; counts and reads are capped.
 
 mod renderer;
-#[path = "../ssh_server.rs"]
-mod ssh;
+use super::ssh_server as ssh;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -401,6 +400,7 @@ pub struct Fixture {
     pub hide: PathBuf,
     pub hooks: PathBuf,
     root: PathBuf,
+    removed: bool,
     ipc: tempfile::TempDir,
     daemon: Option<OwnedChild>,
     port: u16,
@@ -568,6 +568,7 @@ impl Fixture {
             hide: cli.join("hide"),
             hooks: cli.join("hide-agent-hooks"),
             root,
+            removed: false,
             ipc,
             daemon: Some(daemon),
             port: daemon_state["port"]
@@ -722,10 +723,27 @@ impl Fixture {
         )?;
         Ok(())
     }
+
+    /// The journey passed and every owned process confirmed its exit, so the
+    /// run directory holds no evidence anyone needs: remove it. A failed run
+    /// never reaches this and keeps its directory for the lane to upload; a
+    /// passed one used to keep its two accounts and staged binaries too,
+    /// about 400 MB under `agents/runs/` per run.
+    pub fn remove_run_dir(&mut self) -> Result<()> {
+        self.stop()?;
+        fs::remove_dir_all(&self.root)
+            .with_context(|| format!("remove {}", self.root.display()))?;
+        self.removed = true;
+        Ok(())
+    }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // `remove_run_dir` confirmed every exit before it removed the folder.
+        if self.removed {
+            return;
+        }
         if let Err(error) = self.stop() {
             eprintln!("private delivery fixture cleanup failed, evidence retained: {error}");
         }

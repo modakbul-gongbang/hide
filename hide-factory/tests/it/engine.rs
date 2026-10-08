@@ -1,6 +1,7 @@
 //! The engine's rules, driven through its command, letter and tick entry
 //! points over a recording fake world and an injected clock.
 
+#[path = "support/mod.rs"]
 mod support;
 
 use std::collections::BTreeMap;

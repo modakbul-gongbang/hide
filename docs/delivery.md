@@ -297,7 +297,7 @@ Focused checks are:
 ```sh
 bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib delivery:: -- --nocapture
 bash scripts/verify-cargo.sh test-scoped -p hide-session --lib session_activity -- --nocapture
-bash scripts/verify-cargo.sh test-scoped -p hide-host --test session_activity
+bash scripts/verify-cargo.sh test-scoped -p hided --test it node_session_activity::
 ```
 
 A filtered run must execute the expected named tests; zero selected tests is a failed check.

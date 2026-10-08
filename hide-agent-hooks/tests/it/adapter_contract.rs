@@ -21,7 +21,7 @@ fn every_installed_hook_dialect_resolves_through_the_shared_adapter() {
                     )
                     .unwrap();
                     let expected: serde_json::Value = serde_json::from_str(include_str!(
-                        "../../hide-agent-adapter/tests/fixtures/cursor-guidance.json"
+                        "../../../hide-agent-adapter/tests/fixtures/cursor-guidance.json"
                     ))
                     .unwrap();
                     assert_eq!(actual, expected);
