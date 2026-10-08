@@ -32,9 +32,14 @@ it.each([
   expect(resumeProvider(kind)).toBe(canonical);
 });
 
-it.each(["opencode", "grok", "pi", "omp", "cursor", "future-agent"])("keeps %s neutral and ineligible for resume", (kind) => {
+it.each(["opencode", "grok", "omp", "cursor", "future-agent"])("keeps %s neutral and ineligible for resume", (kind) => {
   expect(renderToStaticMarkup(<AgentMark kind={kind} />)).toContain('data-agent-mark="neutral"');
   expect(resumeProvider(kind)).toBeNull();
+});
+
+it("keeps Pi's neutral mark while enabling its completed exact resume reader", () => {
+  expect(renderToStaticMarkup(<AgentMark kind="pi" />)).toContain('data-agent-mark="neutral"');
+  expect(resumeProvider(" PI ")).toBe("pi");
 });
 
 it("derives all seven supported phone starts and the existing default from the generated projection", () => {
@@ -50,7 +55,7 @@ it("derives all seven supported phone starts and the existing default from the g
   expect(agentAdapter("future-agent")).toBeUndefined();
 });
 
-it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical) => {
+it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"], [" PI ", "pi"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical) => {
   const saved = useShellStore.getState();
   const checkout = { id: "checkout", workspace_id: "project", path: "/project/task", branch: "task", exists: true } as Checkout;
   const project = { id: "project", device_id: "local", path: "/project", label: "Project", checkouts: [checkout] } as Workspace;
