@@ -38,6 +38,10 @@ use crate::{
 /// The user's decision for background features.
 pub const DEFAULT_MODEL: &str = "gpt-5.6-luna";
 
+/// The reasoning efforts `turn/start` takes (`codex app-server
+/// generate-json-schema`, codex-cli 0.160.1, `ReasoningEffort`).
+pub const EFFORTS: &[&str] = &["minimal", "low", "medium", "high", "xhigh"];
+
 /// Features that load tool definitions into every turn. Measured on
 /// codex-cli 0.153.4: disabling them takes a label from 26,703 input tokens
 /// to 11,898 on this model, and no config key disables the remainder.
@@ -221,7 +225,7 @@ impl CodexAppServerBackend {
                 "sandbox": "read-only",
                 "approvalPolicy": "never",
                 "cwd": self.config.cwd,
-                "model": self.config.model,
+                "model": request.model(&self.config.model),
                 "baseInstructions": request.system,
             }),
             CONTROL_TIMEOUT,
@@ -234,15 +238,19 @@ impl CodexAppServerBackend {
         // Once this is written the server may be running the turn. A lost
         // answer no longer says whether it completed, and only that answer
         // would make a retry safe; a rejection still does.
+        let mut turn_start = json!({
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": request.input}],
+            "outputSchema": request.output_schema,
+            "clientUserMessageId": request.request_id.0,
+        });
+        if let Some(effort) = request.effort() {
+            turn_start["effort"] = json!(effort);
+        }
         let turn = session
             .request_raw(
                 "turn/start",
-                json!({
-                    "threadId": thread_id,
-                    "input": [{"type": "text", "text": request.input}],
-                    "outputSchema": request.output_schema,
-                    "clientUserMessageId": request.request_id.0,
-                }),
+                turn_start,
                 CONTROL_TIMEOUT,
             )
             .map_err(RequestFailure::after_submission)?;

@@ -38,6 +38,7 @@ fn request(deadline: Duration) -> AiRequest {
         output_schema: json!({"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}),
         deadline,
         schema_version: "fixture.v1".into(),
+        pick: None,
     }
 }
 

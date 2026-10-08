@@ -167,7 +167,7 @@ impl AiBackend for GrokCliBackend {
             &Spec {
                 binary: &binary,
                 args: &Self::print_arguments(
-                    &self.config.model,
+                    request.model(&self.config.model),
                     &request.system,
                     &request.output_schema,
                     &prompt.path().display().to_string(),

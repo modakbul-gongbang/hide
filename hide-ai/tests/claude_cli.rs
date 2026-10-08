@@ -55,6 +55,7 @@ fn request(deadline: Duration) -> AiRequest {
         output_schema: schema(),
         deadline,
         schema_version: "fixture.v1".into(),
+        pick: None,
     }
 }
 
@@ -116,7 +117,7 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
 
         assert_eq!(
             args,
-            ClaudeCliBackend::print_arguments("haiku", &request.system, &request.output_schema)
+            ClaudeCliBackend::print_arguments("haiku", None, &request.system, &request.output_schema)
         );
         assert_eq!(args.first().map(String::as_str), Some("-p"));
         assert!(

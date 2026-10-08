@@ -81,6 +81,7 @@ pub(crate) fn request(pane_id: &str, request_id: String, context: &str) -> AiReq
         output_schema: OUTPUT_SCHEMA.clone(),
         deadline: DEADLINE,
         schema_version: SCHEMA_VERSION.into(),
+        pick: None,
     }
 }
 

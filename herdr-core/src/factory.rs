@@ -1864,6 +1864,7 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             output_schema: judgment.schema(),
             deadline: JUDGMENT_DEADLINE,
             schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
+            pick: None,
         };
         let started = Instant::now();
         let outcome = match router.execute(&request, &shared.cancel) {
