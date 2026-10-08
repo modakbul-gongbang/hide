@@ -18,17 +18,23 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 On Windows `~` is the account's profile folder (`%USERPROFILE%`), where both runtimes keep these files.
 
 One entry is appended per registered event, and nothing else in the file is touched.
-The write is atomic - a temporary file beside the target, created private to the account (0600 on macOS and Linux, an access list naming only the account on Windows), that replaces the target in one step (`hide_platform::fs::atomic::write_file`) - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
+The common writer retains JSON source spans through `serde_json::value::RawValue`, splicing only owned changes so unrelated members, groups and handlers retain their literal whitespace, ordering and escapes.
+Removing a Hide handler from a mixed group keeps every unowned sibling.
+Duplicate decoded member names, malformed JSON, nesting beyond serde's limit, or input/output beyond 16 MiB are refused without replacement.
+The write is atomic - a temporary file beside the target, created private to the account (0600 on macOS and Linux, an access list naming only the account on Windows), that replaces the target in one step (`hide_platform::fs::atomic::write_file`).
+The kit holds its account lock around the pass, and the writer refuses an observed source edit or resolved-link change before replacement.
+That comparison is not an operating-system compare-and-swap: an arbitrary editor can still race after it.
 The file keeps its mode, a new one is created 0600, and a file that is a symlink stays one: the write lands at the file the link resolves to, so a settings file kept in a dotfiles repository is edited there.
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
 Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
-`PreToolUse` is the one entry with a matcher: it selects only the `Bash` tool in both runtimes (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
-An install made before `PreToolUse` existed has the other five entries and reads Outdated until the kit's next pass, which adds the missing entry; the marker stays `hide-subagents@6`.
+`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+The version-seven marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
+Already-running sessions pick up the changed hooks when restarted.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command (in Claude Code's Windows entry, inside its `args`).
-The runtime argument selects that runtime's stdout envelope; the version-6 marker makes an installation whose command is not guarded against a missing helper outdated, so the next launch or connection replaces it.
+The runtime argument selects that runtime's stdout envelope; the current marker also replaces commands not guarded against a missing helper.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing else is read from the command but the helper's quoted path, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
@@ -130,6 +136,20 @@ Exiting zero is not the same as saying nothing.
 The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-failure.json`: a failure writes the pane, the event, the socket and Herdr's answer, and the next success removes the file, so it describes the hook's current state rather than its history.
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
 The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
+
+## Native questions from Factory workers
+
+The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input`, only after the core proves the caller is the current Task-held Factory worker.
+The model receives a deny reason directing it to `hide factory ask`; an operator-started session and every other pane retain their native question UI.
+Pinned Codex 0.160.1 was exercised with a trusted Bash positive control and a genuine plan-mode `request_user_input`: both reached PreToolUse and the question's native tool result and model reply carried the denial.
+The ordinary launch mode remains unchanged.
+
+`hide workspace factory-question-guard --session <native-id> --runtime <runtime>` uses the authenticated pane-scoped route, a bounded fresh native identity read and the already-open Factory's current Task worker.
+Environment, display name, cwd, descendants and a historical registration alone confer no worker authority.
+An ended registration retained across cancel/revive counts only when its accepted spawn still joins the current independently attested native execution.
+Missing identity, an unopened Factory, a changed connection, overload, timeout or any other unavailable proof allows the tool call and records a bounded diagnostic.
+Factory starts currently belong to the core's own node; foreign-device callers cannot borrow its worker identity, while a device running its own Factory uses the same local route.
+This read starts no Factory, judgment, tick or store write and publishes no snapshot.
 
 ## The spawn guard
 
@@ -359,7 +379,7 @@ Starting the app-server also makes Codex do its own bookkeeping in `~/.codex` (i
 What is trusted is exactly the entry Hide wrote, or the entry the kit recorded Herdr writing, and nothing else (`select_targets`, one function for both):
 
 - Codex lists it from this account's `~/.codex/hooks.json` as a user hook that is not managed, so a project's hook, a plugin's and a managed one with the same command are not it;
-- its event, handler type, `command` and matcher are, byte for byte, those of one of Hide's six entries (the command Hide writes for that event with this kit's helper, a command hook, and the matcher Hide writes for it: `Bash` for `PreToolUse`, none for the other five; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind), or of one entry in the kit record's Herdr entries for Codex (below);
+- its event, handler type, `command` and matcher are, byte for byte, those of one of Hide's six entries (the command Hide writes for that event with this kit's helper, a command hook, and `install::hook_matcher` for that runtime/event; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind), or of one entry in the kit record's Herdr entries for Codex (below);
 - Codex does not trust it yet (`untrusted`, or `modified` after a change).
 
 The Herdr entries are learned, never written down in Hide: the kit reads the command entries of `~/.codex/hooks.json` before its own `herdr integration install codex` call and again as soon as the call returns, under the account lock, and records the entries that call added (event, matcher, handler type, command) as `herdr_hooks.codex` in `~/.hide/kit/installed.json`, once Herdr reports the integration `current`.

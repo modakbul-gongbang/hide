@@ -290,6 +290,34 @@ pub fn request_small_response(
     response_result(response, &request_id)
 }
 
+/// A small read whose write and read share the caller's end time.
+/// Connection establishment uses the connector's own bound and cannot be
+/// interrupted here. A caller with a short total budget must choose a
+/// connector whose connect fits it; the Factory question guard permits only
+/// its local connector. Expiry after connecting prevents a request from being
+/// written. Responses retain the 64 KiB cap.
+pub fn request_small_response_until(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+    deadline: Instant,
+) -> Result<Value, ApiError> {
+    let remaining = || {
+        deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or_else(|| ApiError::Transport("request deadline expired".to_owned()))
+    };
+    remaining()?;
+    let request_id = format!("herdr-core:{method}");
+    let mut stream = connector.connect()?;
+    stream.set_write_timeout(Some(remaining()?))?;
+    write_request(stream.as_mut(), &request_id, method, params)?;
+    let line = stream.read_line_with_timeout(remaining()?)?;
+    remaining()?;
+    response_result(decode_response(&line)?, &request_id)
+}
+
 /// Sends one request with a caller-selected correlation id.
 ///
 /// The pinned Herdr contract explicitly keeps this envelope id separate from
@@ -481,6 +509,57 @@ mod tests {
                 outgoing: Arc::clone(&self.outgoing),
             }))
         }
+    }
+
+    #[test]
+    fn an_expired_small_request_does_not_connect_or_write() {
+        struct Unreachable;
+        impl ApiConnector for Unreachable {
+            fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
+                panic!("expired work must not connect");
+            }
+        }
+        let answer = request_small_response_until(
+            &Unreachable,
+            "agent.get",
+            json!({"target":"w1:p1"}),
+            Instant::now(),
+        );
+        assert!(matches!(answer, Err(ApiError::Transport(reason)) if reason.contains("deadline")));
+    }
+
+    #[test]
+    fn a_small_request_expiring_during_connect_is_never_written() {
+        struct SlowConnect {
+            deadline: Instant,
+            outgoing: Arc<Mutex<Vec<u8>>>,
+        }
+        impl ApiConnector for SlowConnect {
+            fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
+                // The transport is the delayed boundary under test. It
+                // returns only when the supplied caller budget is spent.
+                let (_hold, release) = std::sync::mpsc::channel::<()>();
+                let _ =
+                    release.recv_timeout(self.deadline.saturating_duration_since(Instant::now()));
+                Ok(Box::new(FixtureStream {
+                    incoming: Cursor::new(Vec::new()),
+                    outgoing: Arc::clone(&self.outgoing),
+                }))
+            }
+        }
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let outgoing = Arc::new(Mutex::new(Vec::new()));
+        let answer = request_small_response_until(
+            &SlowConnect {
+                deadline,
+                outgoing: Arc::clone(&outgoing),
+            },
+            "agent.get",
+            json!({"target":"w1:p1"}),
+            deadline,
+        );
+        assert!(matches!(answer, Err(ApiError::Transport(reason)) if reason.contains("deadline")));
+        assert!(outgoing.lock().unwrap().is_empty());
     }
 
     /// Reads the request line a fake Herdr was sent, leaving the stream

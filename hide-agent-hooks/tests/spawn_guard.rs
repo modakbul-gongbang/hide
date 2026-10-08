@@ -67,9 +67,10 @@ impl Machine {
         std::fs::write(
             &fake,
             format!(
-                "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\necho \"$@\" >> '{calls}'\ncase \"$(/bin/cat '{mode}')\" in\n  registered) echo '{{\"ok\":true,\"reference\":\"/x\"}}' ;;\n  unregistered) echo checkout_not_registered >&2; exit 2 ;;\n  down) echo hide_unavailable >&2; exit 2 ;;\n  mute) exit 2 ;;\n  bridge) echo bridge_unavailable >&2; exit 2 ;;\n  later) echo a_reason_a_later_build_adds >&2; exit 2 ;;\n  slow) /bin/sleep 30 ;;\nesac\n",
+                "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\necho \"$@\" >> '{calls}'\ncase \"$(/bin/cat '{mode}')\" in\n  registered) echo '{{\"ok\":true,\"reference\":\"/x\"}}' ;;\n  worker) echo '{{\"type\":\"workspace_result\",\"ok\":true,\"result\":{{\"deny\":true}}}}' ;;\n  nonworker) echo '{{\"type\":\"workspace_result\",\"ok\":true,\"result\":{{\"deny\":false}}}}' ;;\n  incomplete) echo '{{\"type\":\"workspace_result\",\"ok\":true,\"result\":{{\"deny\":\"true\"}}}}' ;;\n  refused) echo '{{\"type\":\"workspace_result\",\"ok\":false,\"reason\":\"factory_guard_native_changed\"}}' ;;\n  oversized) printf '%20000s' x ;;\n  unregistered) echo checkout_not_registered >&2; exit 2 ;;\n  down) echo hide_unavailable >&2; exit 2 ;;\n  mute) exit 2 ;;\n  bridge) echo bridge_unavailable >&2; exit 2 ;;\n  later) echo a_reason_a_later_build_adds >&2; exit 2 ;;\n  slow) echo $$ > '{pid}'; exec /bin/sleep 30 ;;\nesac\n",
                 calls = root.join("hide-calls").display(),
                 mode = root.join("mode").display(),
+                pid = root.join("cli-pid").display(),
             ),
         )
         .unwrap();
@@ -94,6 +95,14 @@ impl Machine {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": { "command": command },
+        })
+        .to_string()
+    }
+
+    fn question(&self, tool: &str) -> String {
+        serde_json::json!({
+            "session_id":"s1", "tool_name":tool,
+            "tool_input":{"questions":[{"question":"private-question-text"}]},
         })
         .to_string()
     }
@@ -126,7 +135,15 @@ impl Machine {
         let started = Instant::now();
         let mut child = OwnedChild::spawn(&mut command).unwrap();
         let mut stdin = child.take_stdin().unwrap();
-        stdin.write_all(payload.as_bytes()).unwrap();
+        // A guard that has already decided (no pane, no checkout) ends without
+        // reading its payload, and an agent writing to it meets a closed pipe
+        // whenever the guard wins that race; what the agent observes is the
+        // guard's answer, not whether its write landed.
+        match stdin.write_all(payload.as_bytes()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => panic!("the payload could not be written to the guard: {error}"),
+        }
         drop(stdin);
         let output = child
             .capture_until(Instant::now() + Duration::from_secs(15), 64 * 1024)
@@ -165,6 +182,110 @@ impl Machine {
 }
 
 const START: &str = "herdr agent start set-g --kind claude --pane w1:p9 -- --model opus";
+
+#[test]
+fn current_factory_worker_questions_are_redirected_through_one_authenticated_query() {
+    for (runtime, tool) in [
+        ("claude-code", "AskUserQuestion"),
+        ("claude-code", "ExitPlanMode"),
+        ("codex", "request_user_input"),
+    ] {
+        let machine = Machine::new("worker");
+        let run = machine.run(runtime, &machine.question(tool), Some(PANE), &[]);
+        assert!(run.status_ok, "{runtime}/{tool}");
+        assert_eq!(run.stderr, "");
+        assert!(machine.reason(&run).contains("hide factory ask"));
+        assert_eq!(
+            machine.calls(),
+            [format!(
+                "workspace factory-question-guard --session s1 --runtime {runtime}"
+            )]
+        );
+        let log = machine.guard_log();
+        assert!(log.contains("factory_question.refused") && log.contains(tool));
+        assert!(!log.contains("private-question-text") && !log.contains("s1"));
+    }
+}
+
+#[test]
+fn nonworker_and_unproven_question_answers_let_the_native_tool_run() {
+    for mode in ["nonworker", "incomplete", "refused", "down", "oversized"] {
+        let machine = Machine::new(mode);
+        let run = machine.run(
+            "claude-code",
+            &machine.question("AskUserQuestion"),
+            Some(PANE),
+            &[],
+        );
+        assert!(run.status_ok, "{mode}");
+        assert_eq!(run.stdout, "", "{mode}");
+        assert_eq!(run.stderr, "", "{mode}");
+        assert_eq!(machine.calls().len(), 1, "{mode}");
+        if mode == "nonworker" {
+            assert_eq!(machine.guard_log(), "");
+        } else {
+            assert!(machine.guard_log().contains("daemon.unreachable"), "{mode}");
+        }
+    }
+}
+
+#[test]
+fn an_unanswered_question_is_allowed_and_its_query_child_is_reaped() {
+    let machine = Machine::new("slow");
+    let run = machine.run(
+        "codex",
+        &machine.question("request_user_input"),
+        Some(PANE),
+        &[],
+    );
+    assert!(run.status_ok);
+    assert_eq!(run.stdout, "");
+    assert_eq!(run.stderr, "");
+    assert!(run.elapsed < Duration::from_secs(6), "{:?}", run.elapsed);
+    assert!(machine.guard_log().contains("\"cause\":\"deadline\""));
+    let pid = std::fs::read_to_string(machine.root.join("cli-pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        hide_platform::process::start_time(pid).is_err(),
+        "query child {pid} survived"
+    );
+}
+
+#[test]
+fn questions_without_native_identity_or_from_another_runtime_never_query() {
+    let machine = Machine::new("worker");
+    for (runtime, payload) in [
+        ("codex", machine.question("AskUserQuestion")),
+        ("claude-code", machine.question("request_user_input")),
+        ("claude-code", r#"{"tool_name":"AskUserQuestion"}"#.into()),
+        (
+            "claude-code",
+            r#"{"tool_name":"AskUserQuestion","session_id":""}"#.into(),
+        ),
+        (
+            "claude-code",
+            r#"{"tool_name":"AskUserQuestion","session_id":"s1","session_id":"s2"}"#.into(),
+        ),
+        (
+            "claude-code",
+            serde_json::json!({"tool_name":"ExitPlanMode","session_id":"x".repeat(257)})
+                .to_string(),
+        ),
+    ] {
+        let run = machine.run(runtime, &payload, Some(PANE), &[]);
+        assert!(run.status_ok);
+        assert_eq!(run.stdout, "");
+    }
+    let payload = machine.question("AskUserQuestion");
+    for (pane, extra) in [(None, &[][..]), (Some(PANE), &[("OPENCODE", "1")][..])] {
+        let run = machine.run("claude-code", &payload, pane, extra);
+        assert_eq!(run.stdout, "");
+    }
+    assert!(machine.calls().is_empty());
+}
 
 #[test]
 fn a_launch_in_a_registered_checkout_is_refused_with_the_command_to_use_instead() {

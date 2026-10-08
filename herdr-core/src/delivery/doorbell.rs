@@ -144,7 +144,9 @@ pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
     }
     match observation.turn {
         Turn::NotReported | Turn::Read(Waiting::Nothing) => {}
-        Turn::Read(Waiting::PlanApproval) => return Err(Hold::AwaitingOperator),
+        Turn::Read(Waiting::Question | Waiting::PlanApproval) => {
+            return Err(Hold::AwaitingOperator);
+        }
         Turn::Unread => return Err(Hold::SessionUnread),
     }
     if observation.last_input_at_unix_ms
@@ -658,6 +660,8 @@ mod tests {
         for status in ["idle", "done"] {
             let mut pane = at_rest("codex");
             pane.status = status.into();
+            pane.turn = Turn::Read(Waiting::Question);
+            assert_eq!(judge(&pane, NOW), Err(Hold::AwaitingOperator), "{status}");
             pane.turn = Turn::Read(Waiting::PlanApproval);
             assert_eq!(judge(&pane, NOW), Err(Hold::AwaitingOperator), "{status}");
             pane.turn = Turn::Unread;

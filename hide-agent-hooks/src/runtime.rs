@@ -26,7 +26,7 @@ pub const HELPER_BINARY_NAME: &str = if cfg!(windows) {
 /// changes shape, so an older entry is reported as outdated and the operator
 /// is offered a reinstall rather than being silently left with a hook that
 /// reports nothing.
-pub const HOOK_VERSION: u32 = 6;
+pub const HOOK_VERSION: u32 = 7;
 
 /// The one sentence SessionStart adds to either agent runtime inside Hide.
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`

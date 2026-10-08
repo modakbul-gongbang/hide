@@ -41,7 +41,36 @@ bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client #
 Then open the pull request against `main` and answer the template.
 Write the issue it finishes on the `Closes #N` line and nothing else there; a big issue split across several pull requests gets one sub-issue per piece, and each pull request closes its own.
 `Related:` names only the PRD path and the pull requests this one follows or depends on, because Hide and GitHub relate a pull request to an issue only through a closing keyword.
+
+## Merging into main
+
 `main` accepts pull-request merges, and the `verify` check has to pass; this repository currently uses merge commits, and there is no way around branch protection, including for maintainers.
+A pull request merges when the latest `verify` run on its head passed and `python3 scripts/premerge-check.py <number>` passes against main as it is now.
+It does not have to contain the latest main, and branch protection does not ask it to.
+Requiring that sends every other green pull request back through a full `verify` and the runner queue on each merge: the 40 pull requests merged in the 24 hours to 2026-10-08 10:40 KST waited a median 29 minutes from their first green `verify` to their merge (read from the runs' and pull requests' timestamps), one was brought up to date five times and waited 264 minutes, and a pull request with nothing ahead of it merged two to seven minutes after its run.
+
+The check takes about two minutes, most of it the typecheck and Clippy on a cold worktree:
+
+1. It requires the latest `verify` run on the pull request's head to have passed.
+2. It merges the head with main in memory (`git merge-tree`) and refuses a conflict.
+3. It checks the merge result out in its own worktree beside the checkout and runs the checks where two changes that each passed can fail together without a conflict: the web and desktop typecheck, the e2e test size budgets, `cargo fmt` and Clippy, and the structural checks of the policy lane.
+   On 2026-10-05 one pull request removed an export another one imported, both had passed, and main's typecheck failed until a third pull request fixed it.
+
+A refusal says what to do instead, which is to merge main into the branch, fix it there, and let `verify` run again on the push.
+A pass prints the merge command, `gh pr merge <number> --merge --match-head-commit <head>`, which GitHub refuses if the branch moved after the check.
+Above it, a pull request that closes no issue gets a reminder, not a refusal: Hide and GitHub relate a pull request to an issue only through the `Closes #N` line, so one that finishes an issue gets that line before it merges, and one that finishes none merges as it is.
+
+The check does not prove a behavior that only the two changes together break, which only the unit and end-to-end suites would see.
+Main's push run is the net for that: a push to main plans every lane, and in a burst of merges GitHub keeps one pending run, which checks the merges' combined state.
+Whoever merges watches the first completed push run that contains the merge.
+
+When main's push run fails, merge nothing else until main is green again, except the change that makes it green.
+Revert the merge the failure points to in a pull request of its own (`git revert -m 1 <merge commit>`), then land the change again from the latest main in a new pull request; fix forward instead only when the fix is smaller than the revert and ready now.
+The Software Factory follows the same rule for its own merges and makes the revert itself ([docs/factory.md](docs/factory.md#merge)).
+
+GitHub's merge queue was turned on 2026-10-05 and off again the next day: with the organization's 20 concurrent jobs, a pull request waited a median 47.6 minutes from ready to merged, of which 12.6 were its own runs.
+Its ruleset is kept disabled and `verify` no longer runs on a merge group.
+Runner capacity has to grow before the queue can help: on 2026-10-07 all 20 jobs were in use for 427 minutes, and between 13:00 and 19:00 KST a full `verify` run took a median 23.9 minutes, 10.7 of them waiting for a runner (read from each job's created and started times).
 
 ## CI gates
 
@@ -129,6 +158,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 | `node scripts/check-hide-design-enforcement.mjs` | `design-contract.yml` still binds the real checkers, so this list cannot drift from CI | - |
 | `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
 | `bash scripts/check-typed-live-remote.sh <stage>` | The same boundary against a live and a remote server: `behavior`, `probe`, `suites` or `attribution` | An authorized remote fixture |
+| `python3 scripts/premerge-check.py <number>` | A pull request may merge into main as main is now: its latest `verify` passed, it does not conflict, and the fast checks pass on the merge result ([Merging into main](#merging-into-main)) | `gh` logged in for this repository, and the web and Rust toolchains the checks build with |
 | `python3 scripts/check-no-attribution.py` | No AI tooling attribution in the branch name, the commits, or a prepared PR body | A fetched `origin/main`; `--range` and `--pr-body` override the defaults |
 | `python3 scripts/check-herdr-release.py <source\|asset>` | A Herdr release at its public and local source boundaries before the pin moves | A Herdr checkout or a reference binary |
 | `python3 scripts/check-worktree-performance-evidence.py [dir]` | A worktree performance run recorded what the guide requires | A completed native run directory |

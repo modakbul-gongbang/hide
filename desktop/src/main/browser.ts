@@ -164,8 +164,10 @@ export class BrowserViews {
     if (changed || retirement || this.cdpObservedRevision !== this.cdpScopesRevision) {
       this.cdpObserved = next;
       this.cdpObservedRevision = this.cdpScopesRevision;
-      for (const row of excluded) this.cdpChanged({ contentsId: row.contents, reason: "replaced" });
-      this.cdpChanged(retirement);
+      // The owner's session closes on a retirement and ends its observation with it, so each
+      // notice goes to whoever still observes when it is sent.
+      for (const row of excluded) this.cdpChanged?.({ contentsId: row.contents, reason: "replaced" });
+      this.cdpChanged?.(retirement);
     }
   }
 

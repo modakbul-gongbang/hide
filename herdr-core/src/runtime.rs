@@ -2278,9 +2278,21 @@ impl Runtime {
         message: impl Into<String>,
         retryable: bool,
     ) {
+        let kind = kind.into();
+        let message = message.into();
+        // `last_error` lives until the next event clears it, and no surface
+        // reads it while a headless client or a fixture drives the core, so a
+        // refusal that is not logged here leaves no trace at all.
+        crate::diagnostic!(serde_json::json!({
+            "component": "runtime",
+            "kind": "error.reported",
+            "error_kind": kind,
+            "message": message,
+            "retryable": retryable,
+        }));
         self.snapshot.status.last_error = Some(LastErrorSnapshot {
-            kind: kind.into(),
-            message: message.into(),
+            kind,
+            message,
             retryable,
             occurred_at: unix_milliseconds(),
             request_id: None,

@@ -111,6 +111,56 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
     );
 }
 
+/// Herdr names a new pane's folder from its process, which is the server's
+/// own until the shell has started: the snapshot the close ingests must still
+/// place the replacement at the checkout it was created for.
+#[test]
+fn replacement_shell_is_placed_at_its_checkout_while_herdr_still_names_the_servers_folder() {
+    let mut created = false;
+    let herdr = FakeHerdr::start("replacement-early-cwd", move |method, _| match method {
+        "session.snapshot" => {
+            let mut value = snapshot(created);
+            if created {
+                let body = &mut value["snapshot"];
+                body["panes"] = json!([
+                    {"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","terminal_id":"t1","focused":false,"revision":0,"agent_status":"idle","cwd":"/tmp"},
+                    {"workspace_id":"w1","tab_id":"w1:t2","pane_id":"w1:p2","terminal_id":"t2","focused":false,"revision":0,"agent_status":"idle","cwd":"/srv/herdr-server"}
+                ]);
+                body["layouts"] = json!([{
+                    "workspace_id":"w1","tab_id":"w1:t2","zoomed":false,
+                    "area":{"x":0,"y":0,"width":120,"height":60},"focused_pane_id":"w1:p2",
+                    "panes":[{"pane_id":"w1:p2","focused":false,"rect":{"x":0,"y":0,"width":120,"height":60}}],
+                    "splits":[]
+                }]);
+            }
+            value
+        }
+        "tab.create" => {
+            created = true;
+            json!({"type":"tab_created","tab":tab("w1:t2"),"root_pane":{
+                "pane_id":"w1:p2","terminal_id":"t2","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":0
+            }})
+        }
+        "layout.export" => json!({"type":"layout_export","layout":{
+            "workspace_id":"w1","tab_id":"w1:t1","zoomed":false,"focused_pane_id":"w1:p1",
+            "root":{"type":"pane","pane_id":"w1:p1","cwd":"/tmp","env":{}}
+        }}),
+        other => panic!("unexpected {other}"),
+    });
+    let (tab_id, payload) =
+        prepare_close_replacement(&herdr.connector(), "intent", &context(), true).unwrap();
+    assert_eq!(tab_id, "w1:t2");
+    let cwd = |pane: &str| {
+        payload
+            .panes
+            .iter()
+            .find(|candidate| candidate.pane_id == pane)
+            .and_then(|candidate| candidate.cwd.as_deref())
+    };
+    assert_eq!(cwd("w1:p2"), Some("/tmp"));
+    assert_eq!(cwd("w1:p1"), Some("/tmp"));
+}
+
 #[test]
 fn reuse_only_retry_cannot_create_when_its_shell_disappears_before_worker_reads() {
     let herdr = FakeHerdr::start("replacement-reuse-only", |method, _| match method {
