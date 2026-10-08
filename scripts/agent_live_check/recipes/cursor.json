@@ -16,10 +16,6 @@
   "roots": [
     ".cursor"
   ],
-  "histories": [
-    ".cursor/projects",
-    ".cursor/chats"
-  ],
   "login": "Use cursor-agent login yourself; this tool never logs in.",
   "scenes": {
     "rest": {

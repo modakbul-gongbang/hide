@@ -63,7 +63,12 @@ def wrapper(runtime, recipe, executable, sandbox):
     # The driver routes the pinned installer's assets through disposable
     # configuration. This executable wrapper only enforces the OS guard.
     fixture_env = "export HIDE_E2E_LIVE_CHECK=1\n" if runtime.fixture_bin else ""
-    write_private(target, ("#!/bin/sh\n" + fixture_env + "exec " + " ".join(shlex.quote(v) for v in command) + ' "$@"\n').encode())
+    # The pane/server can add environment after clean_env. Enforce the actual
+    # Claude exec boundary without redirecting its HOME or authenticating it.
+    native_env = ("unset CLAUDE_CONFIG_DIR\n"
+                  "export DISABLE_AUTOUPDATER=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1\n"
+                  if recipe["id"] == "claude-code" and not runtime.fixture_bin else "")
+    write_private(target, ("#!/bin/sh\n" + fixture_env + native_env + "exec " + " ".join(shlex.quote(v) for v in command) + ' "$@"\n').encode())
     target.chmod(0o700)
     return target
 
@@ -123,14 +128,24 @@ def main(argv=None):
         all_recipes = [available[key] for key in selected]
         known = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["known"]))
         roots = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["roots"]))
-        histories = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["histories"]))
         # A disposable fixture HOME has one writer and still proves exact
         # recovery. Live shared project files are strictly read-only observers.
         shared = {} if args.fixture_bin else {agent_home / relative: format
                   for recipe in all_recipes for relative, format in recipe.get("shared", {}).items()}
         guard = ConfigGuard(run / "configuration-backup", known, roots,
                             exclusive_root=agent_home if args.fixture_bin else None, shared=shared)
-        sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, histories, runtime.state,
+        # These are inherited operator routes, never the private runtime's
+        # rewritten environment. Default and legacy roots are protected too.
+        routing = [Path(os.environ[key]) for key in ("HIDE_STATE_DIR", "HERDR_CONFIG_PATH", "HERDR_SESSION_PATH")
+                   if os.environ.get(key)]
+        if os.environ.get("XDG_STATE_HOME"):
+            routing.append(Path(os.environ["XDG_STATE_HOME"]) / "hide")
+        executables = [runtime.herdr_bin, Path(sys.executable)]
+        executables.extend(Path(value) for recipe in all_recipes
+                           if (value := shutil.which(recipe["executable"])))
+        sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, runtime.state,
+                                                            checkout=checkout, routing=routing,
+                                                            executables=executables,
                                                             protected=[path for path in known if path not in shared])
         runtime.sandbox = sandbox
         if sandbox:

@@ -18,9 +18,6 @@
   "roots": [
     ".omp/agent"
   ],
-  "histories": [
-    ".omp/agent/sessions"
-  ],
   "login": "Use omp /login yourself; this tool never logs in.",
   "scenes": {
     "rest": {

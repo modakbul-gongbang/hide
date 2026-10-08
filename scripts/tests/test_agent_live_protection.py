@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -28,7 +29,7 @@ from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, val
 from agent_live_check.sandbox import WriteSandbox
 from agent_live_check.runtime import Runtime
 from agent_live_check.report import save
-from agent_live_check.cli import record_process_diagnostics
+from agent_live_check.cli import record_process_diagnostics, wrapper
 
 
 def procargs(*environment, argv=(b"fixture",), pointer_width=8):
@@ -439,6 +440,57 @@ raise SystemExit('FIFO was accepted as configuration')
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_claude_exec_boundary_removes_injected_config_root_without_replacing_home(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            executable = root / "inert-cli"
+            executable.write_text("#!/bin/sh\n" +
+                                  "test -z \"${CLAUDE_CONFIG_DIR+x}\" || exit 31\n" +
+                                  "test \"$DISABLE_AUTOUPDATER:$DISABLE_TELEMETRY:$DISABLE_ERROR_REPORTING\" = 1:1:1 || exit 32\n" +
+                                  'test "$HOME" = "$EXPECTED_OWNED_HOME" || exit 33\n' +
+                                  "echo exec-boundary-confirmed\n")
+            executable.chmod(0o700)
+            runtime = SimpleNamespace(bin=root / "bin", fixture_bin=None)
+            target = wrapper(runtime, {"id": "claude-code", "executable": "claude"}, executable, None)
+            with OwnedProcesses() as owner:
+                code, output, error = owner.run([str(target)], env={**os.environ,
+                    "HOME": str(root / "home"), "EXPECTED_OWNED_HOME": str(root / "home"),
+                    "CLAUDE_CONFIG_DIR": str(root / "injected")}, check=False)
+            self.assertEqual((code, output.strip()), (0, "exec-boundary-confirmed"), error)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin unreaped getpgid boundary")
+    def test_fast_completed_child_keeps_cleanup_and_successful_exit(self):
+        # Gate Popen's return on a real unreaped zombie. Darwin getpgid then
+        # returns ESRCH, while libproc still proves the reserved owned group.
+        with tempfile.TemporaryDirectory() as name:
+            receipt = Path(name) / "receipt.json"
+            program = ("import os,sys,time,subprocess; from pathlib import Path\n"
+                       "from agent_live_check import processes as p\n"
+                       "original=subprocess.Popen\n"
+                       "def completed(*args,**kwargs):\n"
+                       " child=original(*args,**kwargs)\n"
+                       " end=time.monotonic()+2\n"
+                       " while True:\n"
+                       "  table=p.snapshot(child.pid); p.require_complete(table)\n"
+                       "  root=table.get(child.pid)\n"
+                       "  if root and root.zombie: break\n"
+                       "  if time.monotonic()>=end: raise RuntimeError('zombie_barrier_unavailable')\n"
+                       "  time.sleep(.01)\n"
+                       " try: os.getpgid(child.pid)\n"
+                       " except ProcessLookupError: pass\n"
+                       " else: raise RuntimeError('ESRCH_boundary_not_observed')\n"
+                       " return child\n"
+                       "subprocess.Popen=completed\n"
+                       "reader,writer=os.pipe()\n"
+                       f"code=p.guard(reader,[sys.executable,'-c','pass'],{str(receipt)!r},"
+                       "os.environ['HIDE_LIVE_CHECK_OWNER'].split(':')[0],time.monotonic()+10)\n"
+                       "os.close(writer)\nraise SystemExit(code)\n")
+            with OwnedProcesses() as owner:
+                code, _, error = owner.run([sys.executable, "-c", program],
+                    env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}, check=False)
+            self.assertEqual(code, 0, error)
+            self.assertTrue(json.loads(receipt.read_text())["confirmed"])
+
     def test_expired_prelaunch_work_never_starts_a_child_or_owes_a_receipt(self):
         for phase, seconds, delay in (("receipt", .1, 2), ("environment", .1, 2), ("environment", 120, 16)):
             with self.subTest(phase=phase, seconds=seconds), tempfile.TemporaryDirectory() as name:
@@ -1060,7 +1112,7 @@ class NativeWriteProtection(unittest.TestCase):
             reference.chmod(0o600)
             mailbox = state / "mailbox.json"
             mailbox.write_text("fresh-test-marker")
-            guard = WriteSandbox(run, sockets, home, [])
+            guard = WriteSandbox(run, sockets, home, checkout=root / "candidate")
             guard.allow_reference(reference)
             with OwnedProcesses() as owner:
                 standin = owner.spawn([sys.executable, "-c", "import time; time.sleep(5)", "fixture-process-marker"],
@@ -1083,7 +1135,7 @@ class NativeWriteProtection(unittest.TestCase):
                 code, output, error = owner.run(guard.command([sys.executable, "-c", program]), env=dict(os.environ), check=False)
                 self.assertEqual((code, output.strip()), (0, "all-denials-enforced"), error)
 
-    def test_real_sandbox_blocks_outside_writes_and_other_unix_sockets(self):
+    def test_real_sandbox_protects_declared_files_and_allows_native_state(self):
         with tempfile.TemporaryDirectory(prefix="acl-", dir="/tmp") as name:
             root = Path(name).resolve()
             run, sockets, outside, home = [root / key for key in ("run", "sockets", "outside", "operator")]
@@ -1097,7 +1149,7 @@ class NativeWriteProtection(unittest.TestCase):
             protected = history / "declared-config.json"
             protected.write_bytes(b"original-config")
             guard = ConfigGuard(run / "backup", [protected], [history])
-            sandbox = WriteSandbox(run, sockets, home, [history], protected=[protected])
+            sandbox = WriteSandbox(run, sockets, home, checkout=root / "candidate", protected=[protected])
             with OwnedProcesses() as owner:
                 sandbox.verify(owner, dict(os.environ), outside)
                 # Lead2702 explicitly allows existing history writes. A
@@ -1123,6 +1175,56 @@ class NativeWriteProtection(unittest.TestCase):
             for path in previous:
                 self.assertIn({"path": str(path), "kind": "changed"}, result["directory_changes"])
             self.assertIn({"path": str(fresh), "kind": "added"}, result["directory_changes"])
+
+    def test_control_files_and_ancestors_cannot_be_replaced_by_native_agent(self):
+        with tempfile.TemporaryDirectory(prefix="acl-", dir="/tmp") as name:
+            root = Path(name).resolve()
+            run, sockets, home, checkout, routing = [root / key for key in
+                                                   ("run", "sockets", "operator", "candidate", "custom-state")]
+            for path in (run, sockets, home, checkout, routing):
+                path.mkdir(mode=0o700)
+            gitdir = root / "shared-git/worktrees/candidate"
+            gitdir.mkdir(parents=True)
+            (checkout / ".git").write_text("gitdir: " + str(gitdir) + "\n")
+            (gitdir / "commondir").write_text("../..\n")
+            executable = root / "installed-cli"
+            protected = home / "native/declared.json"
+            controls = [run / "configuration-backup/0", run / "bin/wrapper", run / "evidence.json",
+                        checkout / "agents/runs/process-owner-families/issued", checkout / "scripts/source.py",
+                        home / ".hide/state/ledger", home / ".local/state/hide/ledger",
+                        home / ".config/herdr/config", routing / "ledger", protected,
+                        gitdir / "index", root / "shared-git/refs/head", executable]
+            for path in controls:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"original-control")
+            sandbox = WriteSandbox(run, sockets, home, checkout=checkout,
+                                   protected=[protected], routing=[routing], executables=[executable])
+            program = ("from pathlib import Path\n"
+                       f"for name in {[str(path) for path in controls]!r}:\n"
+                       " p=Path(name)\n"
+                       " for operation in ('write','unlink','replace'):\n"
+                       "  try:\n"
+                       "   if operation=='write': p.write_bytes(b'forbidden')\n"
+                       "   elif operation=='unlink': p.unlink()\n"
+                       "   else:\n"
+                       f"    q=Path({str(sandbox.probe / 'replacement')!r}); q.write_bytes(b'forbidden'); q.replace(p)\n"
+                       "  except PermissionError: pass\n"
+                       "  else: raise SystemExit(31)\n"
+                       f"for name in {[str(path) for path in (run, checkout, root, protected.parent, home / '.hide', routing)]!r}:\n"
+                       " p=Path(name); q=p.with_name(p.name+'.moved')\n"
+                       " try: p.rename(q)\n"
+                       " except PermissionError: pass\n"
+                       " else: q.rename(p); raise SystemExit(32)\n"
+                       f"Path({str(home / 'native/session-env')!r}).mkdir()\n"
+                       f"Path({str(home / '.claude.json')!r}).write_bytes(b'native-shared-state')\n")
+            with OwnedProcesses() as owner:
+                code, _, error = owner.run(sandbox.command([sys.executable, "-c", program]),
+                                           env=dict(os.environ), check=False)
+            self.assertEqual(code, 0, error)
+            for path in controls:
+                self.assertEqual(path.read_bytes(), b"original-control")
+            self.assertTrue((home / "native/session-env").is_dir())
+            self.assertEqual((home / ".claude.json").read_bytes(), b"native-shared-state")
 
 
 if __name__ == "__main__":

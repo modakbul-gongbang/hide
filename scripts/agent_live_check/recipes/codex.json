@@ -25,10 +25,6 @@
   "roots": [
     ".codex"
   ],
-  "histories": [
-    ".codex/sessions",
-    ".codex/log"
-  ],
   "login": "Run codex login yourself; this tool never logs in.",
   "scenes": {
     "rest": {

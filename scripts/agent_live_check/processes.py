@@ -553,7 +553,10 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
         child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker},
                             stdin=None, stdout=None, stderr=None, _guarded=False, deadline=launch_deadline)
         group = child.pid
-        if group <= 1 or group == os.getpgrp() or os.getpgid(child.pid) != group:
+        # Popen returns only after start_new_session/setsid succeeded. Darwin
+        # getpgid returns ESRCH for a fast, unreaped zombie; the group snapshot
+        # below remains the authoritative live/terminal membership evidence.
+        if group <= 1 or group == os.getpgrp():
             raise ProcessError("owned_group_unconfirmed")
         while not cancelled.is_set():
             table = collect()
@@ -567,6 +570,8 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
             root = table.get(child.pid)
             if root is None:
                 raise ProcessError("unreaped_owned_root_missing")
+            if root.group != group:
+                raise ProcessError("owned_group_unconfirmed")
             if root.zombie:
                 root_exited = True
                 break

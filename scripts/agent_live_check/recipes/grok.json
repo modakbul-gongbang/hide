@@ -18,10 +18,6 @@
   "roots": [
     ".grok"
   ],
-  "histories": [
-    ".grok/projects",
-    ".grok/sessions"
-  ],
   "login": "Use grok login yourself; this tool never logs in.",
   "scenes": {
     "rest": {

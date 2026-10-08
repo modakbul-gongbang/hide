@@ -15,10 +15,6 @@
     ".config/opencode",
     ".local/share/opencode"
   ],
-  "histories": [
-    ".local/share/opencode/storage",
-    ".local/share/opencode/log"
-  ],
   "login": "Use opencode auth login yourself; this tool never logs in.",
   "scenes": {
     "rest": {

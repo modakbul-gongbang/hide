@@ -280,11 +280,12 @@ def shared_project_entries(data: bytes, format: str, run: Path) -> dict:
 class ConfigGuard:
     """Backups plus explicit mutation ownership; observing a diff is not ownership.
 
-    The live write sandbox prevents config writes. A caller that deliberately
+    The live sandbox protects declared nonshared config files, not all native
+    account/session state. A caller that deliberately
     performs a reversible, owned write must register its exact before/after
     stamps with record_write. Shared project files are observed only, and their
     private-path entries are named without recovery or failure. Other unknown
-    changes fail recovery without overwriting the operator. Backups never
+    declared-file changes fail recovery without overwriting the operator. Backups never
     contain a public report or log field.
     """
 
@@ -341,7 +342,7 @@ class ConfigGuard:
         """Called by the owner of a write, never by a before/after scan."""
         # Filesystem rename has no conditional compare-and-swap against an
         # unrelated writer. Only a sole-owned disposable HOME may opt into
-        # restoration. Live operator writes are denied by the OS sandbox, and
+        # restoration. Declared nonshared writes are denied by the sandbox, and
         # an unexpected operator change is preserved and reported as failure.
         if self.exclusive_root is None or not beneath(path, self.exclusive_root):
             raise ProtectionError("operator_configuration_has_no_exclusive_writer")

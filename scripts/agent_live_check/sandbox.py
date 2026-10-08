@@ -1,9 +1,8 @@
-"""Fail-closed macOS write confinement for authenticated native CLI probes.
+"""macOS protection of routing, declared configuration and probe controls.
 
-The operator HOME stays readable for existing authentication. Declared history
-trees, the disposable probe tree and its private sockets may be written.
-Nonshared declared configuration files remain protected, including when an
-allowance overlaps them. A failed self-test prevents any provider launch.
+Native account/session state remains writable under letters 2702/2766.
+This is not universal confinement of writes to the disposable probe.
+A failed protection self-test prevents any provider launch.
 """
 
 import json
@@ -18,8 +17,9 @@ from .protection import ProtectionError, beneath, private_directory, write_priva
 
 class WriteSandbox:
     def __init__(self, run: Path, sockets: Path, operator_home: Path,
-                 histories: list[Path], state: Path | None = None, *,
-                 protected: list[Path] | None = None):
+                 state: Path | None = None, *, checkout: Path,
+                 protected: list[Path] | None = None, routing: list[Path] | None = None,
+                 executables: list[Path] | None = None):
         if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
             raise ProtectionError("authenticated_probes_require_macos_write_sandbox")
         self.run = run.resolve()
@@ -29,38 +29,63 @@ class WriteSandbox:
         if not beneath(self.state, self.run):
             raise ProtectionError("sandbox_state_outside_run")
         self.temp = self.run / "agent-tmp"
+        self.declared_proof = self.temp / "guard-declared-config"
         protected = protected or []
         for path in (self.probe, self.temp):
             private_directory(path)
-        for root in histories:
-            if (not beneath(root, operator_home) or root.is_symlink()
-                    or any(p.is_symlink() for p in root.parents
-                           if beneath(p, operator_home))):
-                raise ProtectionError("history_path_outside_operator_home_or_link")
         if any(not beneath(path, operator_home) or path.is_symlink() for path in protected):
             raise ProtectionError("protected_configuration_outside_operator_home_or_link")
         quote = lambda value: json.dumps(str(value), ensure_ascii=True)
-        allowed = [self.probe, self.temp, self.sockets, *[p.resolve() for p in histories]]
+        controls = [checkout.resolve(), self.run, operator_home / ".hide",
+                    operator_home / ".local/state/hide", operator_home / ".local/share/hide",
+                    operator_home / ".config/herdr", Path("/Applications/hide.app"),
+                    *(routing or []), *(executables or [])]
+        # A linked worktree's index and shared object/ref store live outside
+        # the checkout. Protect both rather than just its .git pointer file.
+        marker = checkout / ".git"
+        if marker.is_file():
+            value = marker.read_text().strip()
+            if not value.startswith("gitdir: ") or "\n" in value:
+                raise ProtectionError("candidate_git_control_path_invalid")
+            directory = (checkout / value.removeprefix("gitdir: ")).resolve()
+            controls.append(directory)
+            common = directory / "commondir"
+            if common.is_file():
+                value = common.read_text().strip()
+                if not value or "\n" in value:
+                    raise ProtectionError("candidate_git_common_path_invalid")
+                controls.append((directory / value).resolve())
+        controls = list(dict.fromkeys(path.resolve() for path in controls))
+        allowed = [self.probe, self.temp, self.sockets]
         # The remote-unix grammar follows the installed system sandbox profiles.
-        rules = ["(version 1)", "(allow default)", "(deny file-write*)",
+        rules = ["(version 1)", "(allow default)",
                  "(deny signal (target others))",
                  "(allow signal (target same-sandbox))",
                  "(deny appleevent-send hid-control mach-task*)",
                  "(deny process-info*)",
                  "(allow process-info* (target self))",
                  '(deny sysctl-read (sysctl-name-prefix "kern.proc"))',
+                 "(deny file-write* " + " ".join(f"(subpath {quote(p)})" for p in controls) + ")",
                  "(allow file-write* " + " ".join(f"(subpath {quote(p)})" for p in allowed) + ")",
-                 '(allow file-write* (literal "/dev/null") (literal "/dev/tty"))',
                  '(deny network-outbound (remote unix-socket))',
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.sockets)})))",
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.run)})))",
-                 f"(deny file-read* (subpath {quote(self.state)}))"]
-        for path in dict.fromkeys(protected):
+                 f"(deny file-read* (subpath {quote(self.run)}))",
+                 "(allow file-read* " + " ".join(f"(subpath {quote(p)})" for p in
+                                                   [*allowed, self.run / "bin"]) + ")"]
+        leaves = [*[path.resolve() for path in protected], self.declared_proof]
+        for path in dict.fromkeys(leaves):
             rules.append(f"(deny file-write* (literal {quote(path.resolve())}))")
+        # A leaf denial alone cannot prevent renaming its containing tree.
+        ancestors = {parent for path in [*controls, *leaves, self.sockets]
+                     for parent in (path, *path.parents) if parent != Path("/")}
+        rules.append("(deny file-write-unlink " + " ".join(
+            f"(literal {quote(p)})" for p in sorted(ancestors)) + ")")
         # Installed hook executables may live in .hide/kit. They remain
         # readable; only operator routing/credentials are concealed.
         for path in (operator_home / ".hide/state", operator_home / ".hide/hcoord",
-                     operator_home / ".config/herdr"):
+                     operator_home / ".local/state/hide", operator_home / ".config/herdr",
+                     *[path.resolve() for path in routing or []]):
             rules.append(f"(deny file-read* (subpath {quote(path.resolve())}))")
         self.profile = self.run / "native-write-guard.sb"
         self.rules = rules
@@ -85,19 +110,21 @@ class WriteSandbox:
         return ["/usr/bin/sandbox-exec", "-f", str(self.profile), *argv]
 
     def verify(self, owner: OwnedProcesses, env: dict, outside: Path) -> None:
-        """Exercise allowed writes, forbidden writes, and Unix socket isolation.
+        """Exercise declared-file/control protection and Unix socket isolation.
 
         Both the forbidden file and listening socket belong to this self-test,
         not the operator. No operator endpoint is contacted even if the profile
-        is broken. The file is outside all allowed trees and removed on failure.
+        is broken. Native-state stand-ins are writable without a history list.
         """
-        forbidden = outside / "must-not-be-created"
+        forbidden = self.declared_proof
+        native = outside / "allowed-native-state"
         endpoint = outside / "operator-stand-in.sock"
         inside = self.probe / "guard-write-proof"
         if beneath(outside, self.run) or beneath(outside, self.sockets):
             raise ProtectionError("guard_selftest_outside_aliases_allowance")
-        if any(path.exists() for path in (forbidden, endpoint, inside)):
+        if any(path.exists() for path in (forbidden, endpoint, inside, native)):
             raise ProtectionError("guard_selftest_paths_already_exist")
+        write_private(forbidden, b"unchanged")
         listener = socket.socket(socket.AF_UNIX)
         try:
             listener.bind(str(endpoint))
@@ -105,6 +132,7 @@ class WriteSandbox:
             program = (
                 "import ctypes,errno,os,pathlib,socket,sys; "
                 f"pathlib.Path({str(inside)!r}).write_bytes(b'proof'); "
+                f"pathlib.Path({str(native)!r}).write_bytes(b'native-state'); "
                 f"p=pathlib.Path({str(forbidden)!r}); "
                 "\ntry: p.write_bytes(b'forbidden')"
                 "\nexcept PermissionError: pass"
@@ -123,9 +151,10 @@ class WriteSandbox:
             )
             code, _, _ = owner.run(self.command([sys.executable, "-c", program]),
                                    env=env, check=False)
-            if code or not inside.exists() or forbidden.exists():
-                raise ProtectionError("native_confinement_guard_not_enforced")
+            if (code or not inside.exists() or forbidden.read_bytes() != b"unchanged"
+                    or native.read_bytes() != b"native-state"):
+                raise ProtectionError("native_protection_guard_not_enforced")
         finally:
             listener.close()
-            for path in (forbidden, endpoint, inside):
+            for path in (forbidden, endpoint, inside, native):
                 path.unlink(missing_ok=True)

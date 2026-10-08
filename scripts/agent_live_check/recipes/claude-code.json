@@ -19,11 +19,6 @@
     ".claude.json",
     ".claude"
   ],
-  "histories": [
-    ".claude/projects",
-    ".claude/todos",
-    ".claude/debug"
-  ],
   "login": "Run claude auth login yourself; this tool never logs in.",
   "startup_preparation": {
     "prompt": "Is this a project you created or one you trust\\?",

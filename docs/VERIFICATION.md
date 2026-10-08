@@ -154,7 +154,7 @@ The deadline starts before its first screen read; every screen query, identity q
 Each command retains the 15-second cap and the same absolute launch deadline through receipt checks, registry setup and the guardian's child admission.
 Required teardown may finish after that deadline, but never renews permission to start another command.
 An actual received screen is retained immediately, even when its following deadline or identity check fails; unavailable identity remains null and never authorizes input.
-This does not grant writes to shared operator trust files; any resulting private probe key follows the shared-file observer and leftover policy below.
+The controller never writes shared operator trust files; any native-agent private probe key follows the shared-file observer and leftover policy below.
 
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
 It never opens a renderer or controls the installed app.
@@ -162,10 +162,12 @@ Native agents keep the operator HOME for existing login.
 Supported per-command config roots use bounded private copies of existing authentication, with source/version provenance in each provider row.
 Private copies have mode 0600, never update the account's login, and are removed on controlled exit even if another teardown step fails.
 An uncatchable controller kill can retain private copies in the ignored run directory; remove a stale run only after confirming its owned processes have ended.
-Authenticated probing currently requires macOS `sandbox-exec`; a real write/socket denial self-test must pass before a provider starts.
+Authenticated probing currently requires macOS `sandbox-exec`; a real declared-file write denial, permitted native-state write and socket denial self-test must pass before a provider starts.
 Unsupported hosts fail closed.
 The process guardian supports macOS and the trusted Linux fixture lane; Linux authenticated probing remains unsupported.
 Every direct child starts in its own session and process group.
+The successful `start_new_session` spawn establishes its reserved group; the guardian confirms membership through its complete group snapshot.
+It does not use `getpgid` as a liveness check, because Darwin returns ESRCH for an unreaped zombie that remains visible in that snapshot.
 An EOF guardian sends CONT and TERM to that group, allows a bounded grace period, then sends KILL and requires the kernel to report the group absent.
 It retains the direct child's unreaped identity until the last group signal, so its group ID cannot be reused during signalling.
 No group signal is sent after that child is reaped.
@@ -240,8 +242,12 @@ The inventory stops at 50,000 scanned entries and reports partial coverage, a lo
 The excluded-boundary count includes explicitly listed roots inside an excluded tree and is not a deduplicated count of physical installation trees.
 An addition or removal is reported only where the opposite inventory observed absence, so partial coverage cannot manufacture a change.
 Metadata changes outside the known file list are named and preserved without failing the run or attempting restoration.
-The native sandbox restricts writes to the disposable probe/temp/socket trees and declared history roots, with exact denials for nonshared declared configuration/trust files.
-Existing and new history files use the same history allowance and their metadata changes remain named in the bounded inventory; the profile never enumerates session files.
+The native sandbox explicitly protects nonshared declared configuration/trust files, operator Hide/Herdr routing, the installed app and this checkout's control files, including its external Git metadata, the owner-family registry, candidate and selected CLI executables, wrappers, backups and evidence.
+Protected ancestors cannot be renamed or removed; the private probe/temp/socket trees and exact issued claim files remain writable.
+Native account and session state, including shared project bookkeeping and Claude's session environment, remain writable under the recorded native-state policy.
+There is no universal OS guarantee that files outside the probe cannot change: harmless probe instructions constrain requested actions, and the bounded metadata inventory observes only its recorded roots and exclusions.
+Existing and new native history changes remain named where that inventory covers them; the profile never enumerates session files.
+Claude's actual exec wrapper removes `CLAUDE_CONFIG_DIR` without replacing HOME and sets its supported updater, telemetry and error-reporting disable controls; this is not proof of zero outbound activity.
 The command cap remains 15 seconds regardless of history count.
 Unexpected or concurrent changes to nonshared known configuration/trust files are preserved and fail the run; observing a diff never authorizes overwriting the operator.
 Only the test lane's exclusively owned disposable HOME permits attributed restoration.

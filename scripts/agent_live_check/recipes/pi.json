@@ -17,9 +17,6 @@
   "roots": [
     ".pi/agent"
   ],
-  "histories": [
-    ".pi/agent/sessions"
-  ],
   "login": "Use pi /login yourself; this tool never logs in.",
   "scenes": {
     "rest": {
