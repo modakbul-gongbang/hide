@@ -281,6 +281,22 @@ fn agent_pane(value: &Value, name: &str) -> Option<(String, bool)> {
     }
 }
 
+/// The agent row of a pane in a snapshot, wherever the snapshot nests it.
+fn row_of_pane<'a>(value: &'a Value, pane: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object(map) => {
+            if map.get("pane_id").and_then(Value::as_str) == Some(pane)
+                && map.contains_key("lineage_parent_pane_id")
+            {
+                return Some(value);
+            }
+            map.values().find_map(|value| row_of_pane(value, pane))
+        }
+        Value::Array(rows) => rows.iter().find_map(|value| row_of_pane(value, pane)),
+        _ => None,
+    }
+}
+
 /// Every string stored under `key`, wherever the answer nests it.
 fn strings_under(value: &Value, key: &str, found: &mut Vec<String>) {
     match value {
@@ -427,6 +443,48 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
             "the same intent on another machine was not refused: {} {}",
             moved.stdout,
             moved.stderr
+        );
+
+        // This machine's screen places the device's agent under the lead.
+        let (pane, _) = agent_pane(&fixture.remote.run(&["agent", "list"])?, "remote-worker")
+            .context("spawned agent pane")?;
+        let screen_pane = format!("remote:remote:pane:{pane}");
+        let lead_pane = fixture.local.pane.clone();
+        wait_for(
+            "the device agent under its lead on the caller's screen",
+            || {
+                let snapshot = fixture.snapshot()?;
+                Ok(row_of_pane(&snapshot, &screen_pane)
+                    .filter(|row| {
+                        row["delegated"] == true && row["lineage_parent_pane_id"] == lead_pane
+                    })
+                    .map(|_| ()))
+            },
+        )?;
+
+        // The lead's letter reaches the device agent through its own hook.
+        let remote_hooks = std::fs::canonicalize(&remote_hide)?
+            .parent()
+            .context("installed private CLI directory")?
+            .join("hide-agent-hooks");
+        let letter = fixture
+            .local
+            .run_in_pane(&format!(
+                "{} request send remote-worker --intent lead-to-child --body {}",
+                quote(&fixture.hide),
+                quote("DELIVERY_TO_SPAWNED")
+            ))?
+            .json()?;
+        let letter_id = letter["id"].as_str().context("lead letter ID")?.to_owned();
+        let (pane, _) = agent_pane(&fixture.remote.run(&["agent", "list"])?, "remote-worker")
+            .context("spawned agent pane")?;
+        let delivered = fixture
+            .remote
+            .run_in(&pane, &hook(&remote_hooks, "fixture-spawned-session"))?;
+        let intake = context(&delivered.stdout)?;
+        ensure!(
+            intake.contains(&letter_id) && intake.contains("DELIVERY_TO_SPAWNED"),
+            "the spawned agent did not receive its lead's letter: {intake}"
         );
 
         // The child's report reaches its caller over the device's bridge.
