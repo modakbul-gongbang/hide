@@ -30,4 +30,3 @@ export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map
   };
   return new Map(workspace.checkouts.map((checkout) => [checkout.id, checkoutRows(checkout)]));
 }
-

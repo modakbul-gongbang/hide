@@ -1357,14 +1357,13 @@ fn start_worker(
         authority,
         actor,
         crate::coordination::Command::Spawn {
-            parent,
+            parent: Some(parent),
             name: request.name.clone(),
             intent,
             kind: request.runtime.as_str().into(),
             repo: request.project.clone(),
             branch: request.branch.clone(),
             path,
-            no_watch: false,
             args,
         },
     )
