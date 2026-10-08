@@ -304,7 +304,7 @@ class NamedPaths(unittest.TestCase):
             ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml",
             "scripts/tests/test_ci_plan.py", "scripts/check-harness-ignore-anchor.sh",
             "scripts/pen-system.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/run.sh",
-            "contracts/README.md", "site/README.md",
+            "scripts/premerge-check.py", "contracts/README.md", "site/README.md",
         ):
             with self.subTest(path=path):
                 result = plan(path)
