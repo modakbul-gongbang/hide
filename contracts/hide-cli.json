@@ -140,6 +140,13 @@
                 "name": {
                     "type": "string"
                 },
+                "origin": {
+                    "description": "The spawner, independently of responsibility; null for ordinary roots.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
                 "pane": {
                     "type": "string"
                 },
@@ -185,6 +192,7 @@
                 "instance",
                 "pane",
                 "parent",
+                "origin",
                 "project",
                 "runtime",
                 "connection",
@@ -248,6 +256,13 @@
                         "name": {
                             "type": "string"
                         },
+                        "origin": {
+                            "description": "The spawner, independently of responsibility; null for ordinary roots.",
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
                         "pane": {
                             "type": "string"
                         },
@@ -293,6 +308,7 @@
                         "instance",
                         "pane",
                         "parent",
+                        "origin",
                         "project",
                         "runtime",
                         "connection",
@@ -1271,7 +1287,7 @@
             "options": [
                 {
                     "name": "--parent",
-                    "required": true,
+                    "required": false,
                     "requires": [],
                     "value": {
                         "type": "text"
@@ -1326,7 +1342,7 @@
                     }
                 },
                 {
-                    "name": "--no-watch",
+                    "name": "--help",
                     "required": false,
                     "requires": [],
                     "value": null
@@ -1639,7 +1655,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:004d10ca60636b6045e225f820929d8f3143cd04de0c2a42112648656bcd1a25",
+    "digest": "sha256:8b566393194954c506287a04404d97f99ff9730cc9fd8976c091fd6431b5a96a",
     "envelopes": {
         "agent": {
             "answer": "value",

@@ -1271,6 +1271,7 @@ fn create_checkout_tab(
             workspace_id,
             &request.checkout_path,
             &request.label,
+            true,
             Default::default(),
         ),
         crate::checkout_owner::TabHost::Open(owner) => super::open_owner_tab(
@@ -1278,6 +1279,7 @@ fn create_checkout_tab(
             owner,
             &request.checkout_path,
             &request.label,
+            true,
             Default::default(),
         ),
     }
