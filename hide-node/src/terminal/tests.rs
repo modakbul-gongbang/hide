@@ -138,10 +138,21 @@ impl Attacher for FakeAttacher {
 pub(super) struct Outputs {
     written: Mutex<Vec<(String, Vec<u8>, bool)>>,
     forgotten: Mutex<Vec<String>>,
+    /// The pane whose next output the sink panics on.
+    panic_on: Mutex<Option<String>>,
 }
 
 impl OutputSink for Outputs {
     fn output(&self, pane: &str, bytes: &[u8], full: bool) {
+        if self
+            .panic_on
+            .lock()
+            .unwrap()
+            .take_if(|panicking| panicking == pane)
+            .is_some()
+        {
+            panic!("the sink failed on {pane}");
+        }
         self.written
             .lock()
             .unwrap()
@@ -548,6 +559,29 @@ fn a_pane_another_client_controls_is_observed_once() {
     harness.report_where(|report| {
         matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.read_only")
     });
+}
+
+/// A sink that panics on one pane's output stops only the thread that
+/// handed it over: every other pane's output still reaches the sink.
+#[test]
+fn a_sink_that_panics_on_one_output_does_not_stop_the_others() {
+    let harness = harness(RetryPolicy::Automatic);
+    let first = harness.controlling("w1:p1");
+    let second = harness.controlling("w1:p2");
+    *harness.outputs.panic_on.lock().unwrap() = Some("w1:p1".into());
+    first.frame(SIZE, true, b"lost");
+    let started = Instant::now();
+    while harness.outputs.panic_on.lock().unwrap().is_some() {
+        assert!(
+            started.elapsed() < WAIT,
+            "the sink was never handed the output"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    second.frame(SIZE, true, b"kept");
+    let written = harness.wait_written(1);
+    assert_eq!(written[0].0, "w1:p2");
+    assert!(written[0].1.ends_with(b"kept"), "{written:?}");
 }
 
 #[test]

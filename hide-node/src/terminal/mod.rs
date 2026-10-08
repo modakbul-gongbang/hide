@@ -29,6 +29,7 @@ pub mod router;
 pub mod session;
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -251,7 +252,8 @@ enum Delivery {
 /// output in the order it was decided; one thread at a time hands it over,
 /// and the thread that decided a batch returns only once its batch was
 /// handed, so a reader is slowed by its own frames as before and the queue
-/// holds at most one batch per thread.
+/// holds at most one batch per thread. A sink that panics ends the thread
+/// that handed it over, and the next thread takes the queue from there.
 #[derive(Default)]
 struct Deliveries {
     queue: VecDeque<Delivery>,
@@ -429,14 +431,22 @@ impl Shared {
                     break;
                 };
                 drop(deliveries);
-                match delivery {
+                let handed = panic::catch_unwind(AssertUnwindSafe(|| match delivery {
                     Delivery::Output { pane, bytes, full } => {
                         self.outputs.output(&pane, &bytes, full)
                     }
                     Delivery::Forget { pane } => self.outputs.forget(&pane),
-                }
+                }));
                 deliveries = self.deliveries_lock();
                 deliveries.handed += 1;
+                if let Err(failure) = handed {
+                    // The sink's failure ends this thread, not the handing
+                    // over: the next thread takes the queue from here.
+                    deliveries.handing = false;
+                    drop(deliveries);
+                    self.handed.notify_all();
+                    panic::resume_unwind(failure);
+                }
             }
             deliveries.handing = false;
             self.handed.notify_all();
