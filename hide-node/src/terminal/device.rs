@@ -686,44 +686,50 @@ struct ProxyShared {
 
 /// The log records a device's lines may make in one second, its own
 /// diagnostics, its notes and errors, and the lines this side could not
-/// read: past it a record is counted, not written, so a device cannot rotate
-/// this machine's log away.
+/// read, and the bytes those records may take: past either a record is
+/// counted, not written, so a device cannot rotate this machine's log away.
 pub(super) const DEVICE_RECORDS_PER_WINDOW: usize = 64;
+pub(super) const DEVICE_RECORD_BYTES_PER_WINDOW: usize = 16 * 1024;
 const DEVICE_RECORD_WINDOW: Duration = Duration::from_secs(1);
 
 struct RecordWindow {
     opened: Instant,
     written: usize,
+    bytes: usize,
     unwritten: usize,
 }
 
 impl Default for RecordWindow {
     fn default() -> Self {
-        Self {
-            opened: Instant::now(),
-            written: 0,
-            unwritten: 0,
-        }
+        Self::opened_at(Instant::now())
     }
 }
 
 impl RecordWindow {
-    /// Whether one more record may be written at `now`, and the count a
-    /// window that passed before it did not write.
-    fn admit(&mut self, now: Instant) -> (bool, Option<usize>) {
+    fn opened_at(opened: Instant) -> Self {
+        Self {
+            opened,
+            written: 0,
+            bytes: 0,
+            unwritten: 0,
+        }
+    }
+
+    /// Whether one more record of `bytes` may be written at `now`, and the
+    /// count a window that passed before it did not write.
+    fn admit(&mut self, now: Instant, bytes: usize) -> (bool, Option<usize>) {
         let passed = if now.saturating_duration_since(self.opened) >= DEVICE_RECORD_WINDOW {
             let unwritten = std::mem::take(&mut self.unwritten);
-            *self = Self {
-                opened: now,
-                written: 0,
-                unwritten: 0,
-            };
+            *self = Self::opened_at(now);
             (unwritten > 0).then_some(unwritten)
         } else {
             None
         };
-        if self.written < DEVICE_RECORDS_PER_WINDOW {
+        if self.written < DEVICE_RECORDS_PER_WINDOW
+            && self.bytes.saturating_add(bytes) <= DEVICE_RECORD_BYTES_PER_WINDOW
+        {
             self.written += 1;
+            self.bytes += bytes;
             (true, passed)
         } else {
             self.unwritten += 1;
@@ -805,7 +811,11 @@ impl Drop for ProxyShared {
     fn drop(&mut self) {
         // The last window's count, once nothing is left to open another:
         // a flood that ends the link is still counted in the log.
-        if let Some(count) = lock(&self.records).close() {
+        let records = self
+            .records
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = records.close() {
             self.log_records_unwritten(count);
         }
     }
@@ -968,14 +978,22 @@ impl ProxyShared {
         }
     }
 
-    /// Whether one more record from this link's lines may be written now.
-    /// The window that passed before it is logged with what it did not write.
-    fn may_record(&self) -> bool {
-        let (admitted, passed) = lock(&self.records).admit(Instant::now());
+    /// Whether one more record of `bytes` from this link's lines may be
+    /// written now. The window that passed before it is logged with what it
+    /// did not write.
+    fn may_record(&self, bytes: usize) -> bool {
+        let (admitted, passed) = lock(&self.records).admit(Instant::now(), bytes);
         if let Some(count) = passed {
             self.log_records_unwritten(count);
         }
         admitted
+    }
+
+    /// Writes `record` when the cap leaves room for it, counts it otherwise.
+    fn record(&self, record: serde_json::Value) {
+        if self.may_record(record.to_string().len()) {
+            crate::diagnostic!(record);
+        }
     }
 
     fn log_records_unwritten(&self, count: usize) {
@@ -993,15 +1011,13 @@ impl ProxyShared {
         let up = match serde_json::from_slice::<TerminalLine<TerminalUp>>(line) {
             Ok(line) => line.terminal,
             Err(error) => {
-                if self.may_record() {
-                    crate::diagnostic!(json!({
-                        "component": "device_terminal",
-                        "kind": "terminal.up_unreadable",
-                        "device": self.device,
-                        "class": format!("{:?}", error.classify()),
-                        "bytes": line.len(),
-                    }));
-                }
+                self.record(json!({
+                    "component": "device_terminal",
+                    "kind": "terminal.up_unreadable",
+                    "device": self.device,
+                    "class": format!("{:?}", error.classify()),
+                    "bytes": line.len(),
+                }));
                 return;
             }
         };
@@ -1010,17 +1026,13 @@ impl ProxyShared {
                 Ok(bytes) => self
                     .sink
                     .output(&self.device, &output.pane, &bytes, output.full),
-                Err(message) => {
-                    if self.may_record() {
-                        crate::diagnostic!(json!({
-                            "component": "device_terminal",
-                            "kind": "terminal.output_unreadable",
-                            "device": self.device,
-                            "pane_id": device_text(&output.pane, DEVICE_RECORD_NAME),
-                            "message": device_text(&message, DEVICE_RECORD_TEXT),
-                        }));
-                    }
-                }
+                Err(message) => self.record(json!({
+                    "component": "device_terminal",
+                    "kind": "terminal.output_unreadable",
+                    "device": self.device,
+                    "pane_id": device_text(&output.pane, DEVICE_RECORD_NAME),
+                    "message": device_text(&message, DEVICE_RECORD_TEXT),
+                })),
             },
             TerminalUp::Report { report } => {
                 // A device's errors are its own word about its panes: they
@@ -1040,8 +1052,10 @@ impl ProxyShared {
                     report => report,
                 };
                 // A note is only a log record, so it counts against the
-                // same cap; a state or an input's outcome is never dropped.
-                if matches!(report, TerminalReport::Note { .. }) && !self.may_record() {
+                // same cap, at its line's size, which the record the core
+                // writes from it never exceeds; a state or an input's
+                // outcome is never dropped.
+                if matches!(report, TerminalReport::Note { .. }) && !self.may_record(line.len()) {
                     return;
                 }
                 if let TerminalReport::State { pane, state } = &report {
@@ -1058,11 +1072,7 @@ impl ProxyShared {
                 }
                 self.sink.report(&self.device, report);
             }
-            TerminalUp::Diagnostic { record } => {
-                if self.may_record() {
-                    crate::diagnostic!(device_record(&self.device, record));
-                }
-            }
+            TerminalUp::Diagnostic { record } => self.record(device_record(&self.device, record)),
         }
     }
 }

@@ -733,26 +733,94 @@ fn a_devices_error_reaches_the_core_as_a_note() {
     ));
 }
 
+/// A proxy with no writer, whose record window stays open for the test, so
+/// the records its lines make are emitted on the test's thread and no
+/// second can pass mid-flood.
+fn held_proxy() -> (ProxyShared, Arc<Heard>) {
+    let heard = Arc::new(Heard::default());
+    let shared = ProxyShared {
+        device: "mini".into(),
+        link: 7,
+        state: Mutex::default(),
+        ready: Condvar::new(),
+        sink: Arc::clone(&heard) as Arc<dyn DeviceSink>,
+        records: Mutex::new(RecordWindow::opened_at(
+            Instant::now() + Duration::from_secs(3600),
+        )),
+    };
+    (shared, heard)
+}
+
+fn kinds(records: &[serde_json::Value], kind: &str) -> Vec<serde_json::Value> {
+    records
+        .iter()
+        .filter(|record| record["kind"] == kind)
+        .cloned()
+        .collect()
+}
+
 /// What a device's lines make this machine log is capped per second, so a
-/// flood of unreadable lines writes at most the cap and counts the rest.
+/// flood of unreadable lines writes at most the cap, and the rest are
+/// counted in one record when the link's proxy ends.
 #[test]
 fn a_devices_unreadable_lines_write_at_most_the_record_cap() {
-    let (proxy, _link, _heard) = proxy();
-    let inbound = proxy.inbound();
-    for _ in 0..DEVICE_RECORDS_PER_WINDOW + 36 {
-        inbound(b"not a terminal line");
+    let ((), records) = crate::diagnostics::capture(|| {
+        let (shared, _heard) = held_proxy();
+        for _ in 0..DEVICE_RECORDS_PER_WINDOW + 36 {
+            shared.inbound(b"not a terminal line");
+        }
+        drop(shared);
+    });
+    assert_eq!(
+        kinds(&records, "terminal.up_unreadable").len(),
+        DEVICE_RECORDS_PER_WINDOW
+    );
+    let counted = kinds(&records, "terminal.device_records_unwritten");
+    assert_eq!(counted.len(), 1);
+    assert_eq!(counted[0]["count"], 36);
+    assert_eq!(counted[0]["device"], "mini");
+}
+
+/// The cap is on bytes too: a device's largest diagnostics, every field cut
+/// to its longest, write no more than the byte budget in one second.
+#[test]
+fn a_devices_largest_diagnostics_write_at_most_the_byte_budget() {
+    let mut fields = serde_json::Map::new();
+    for index in 0..DEVICE_RECORD_FIELDS {
+        fields.insert(
+            format!("field_{index}"),
+            "x".repeat(DEVICE_RECORD_TEXT * 2).into(),
+        );
     }
-    let records = lock(&proxy.shared.records);
-    assert_eq!(records.written, DEVICE_RECORDS_PER_WINDOW);
-    assert_eq!(records.unwritten, 36);
+    let line = line_of(TerminalUp::Diagnostic {
+        record: serde_json::Value::Object(fields),
+    })
+    .unwrap();
+    let ((), records) = crate::diagnostics::capture(|| {
+        let (shared, _heard) = held_proxy();
+        for _ in 0..DEVICE_RECORDS_PER_WINDOW {
+            shared.inbound(&line);
+        }
+        drop(shared);
+    });
+    let written: Vec<usize> = records
+        .iter()
+        .filter(|record| record["field_0"].is_string())
+        .map(|record| record.to_string().len())
+        .collect();
+    assert_eq!(written.len(), 1);
+    assert!(written.iter().sum::<usize>() <= DEVICE_RECORD_BYTES_PER_WINDOW);
+    let counted = kinds(&records, "terminal.device_records_unwritten");
+    assert_eq!(counted.len(), 1);
+    assert_eq!(counted[0]["count"], DEVICE_RECORDS_PER_WINDOW - 1);
 }
 
 /// A device's notes and errors are log records too, so they count against
 /// the same cap, while a pane's state still reaches the core past it.
 #[test]
 fn a_devices_notes_count_against_the_record_cap_and_its_states_do_not() {
-    let (proxy, _link, heard) = proxy();
-    let inbound = proxy.inbound();
+    let (shared, heard) = held_proxy();
+    let inbound = |line: &[u8]| shared.inbound(line);
     let error = line_of(TerminalUp::Report {
         report: TerminalReport::Error {
             pane: "w1:p1".into(),
@@ -792,7 +860,6 @@ fn a_devices_notes_count_against_the_record_cap_and_its_states_do_not() {
         reports.last(),
         Some((_, TerminalReport::State { pane, .. })) if pane == "w1:p1"
     ));
-    assert_eq!(lock(&proxy.shared.records).unwritten, 36);
 }
 
 /// A window writes the cap, and what it did not write is counted once:
@@ -800,24 +867,31 @@ fn a_devices_notes_count_against_the_record_cap_and_its_states_do_not() {
 #[test]
 fn a_record_window_counts_what_it_did_not_write_once() {
     let opened = Instant::now();
-    let mut window = RecordWindow {
-        opened,
-        written: 0,
-        unwritten: 0,
-    };
+    let mut window = RecordWindow::opened_at(opened);
     let admitted = (0..DEVICE_RECORDS_PER_WINDOW + 36)
-        .filter(|_| window.admit(opened).0)
+        .filter(|_| window.admit(opened, 100).0)
         .count();
     assert_eq!(admitted, DEVICE_RECORDS_PER_WINDOW);
     assert_eq!(
-        window.admit(opened + DEVICE_RECORD_WINDOW),
+        window.admit(opened + DEVICE_RECORD_WINDOW, 100),
         (true, Some(36))
     );
     for _ in 0..DEVICE_RECORDS_PER_WINDOW + 5 {
-        window.admit(opened + DEVICE_RECORD_WINDOW);
+        window.admit(opened + DEVICE_RECORD_WINDOW, 100);
     }
     assert_eq!(window.close(), Some(6));
     assert_eq!(window.close(), None);
+
+    // Past the byte budget a record is counted even under the count cap,
+    // and a smaller one that still fits is written.
+    let later = opened + DEVICE_RECORD_WINDOW * 2;
+    assert_eq!(
+        window.admit(later, DEVICE_RECORD_BYTES_PER_WINDOW - 100),
+        (true, None)
+    );
+    assert_eq!(window.admit(later, 101), (false, None));
+    assert_eq!(window.admit(later, 100), (true, None));
+    assert_eq!(window.close(), Some(1));
 }
 
 #[test]
