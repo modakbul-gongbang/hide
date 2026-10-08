@@ -516,6 +516,8 @@ test("⌘K lists a typed URL as unavailable in a browser tab, and opens it as a 
         pickFolder: async () => null,
         probePaths: async () => [],
         openPath: () => undefined,
+        notify: () => undefined,
+        onNotificationOpen: () => () => undefined,
         browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: () => () => undefined },
       };
     }, process.platform);
