@@ -293,6 +293,74 @@ fn native_call_and_id_capacity_is_a_reported_read_failure() {
 }
 
 #[test]
+fn oversized_native_questions_and_answers_cannot_return_stale_or_missing_facts() {
+    for agent in [Agent::Claude, Agent::Codex] {
+        for answering in [false, true] {
+            let mut session = Session::question(agent);
+            let asked = session.read();
+            assert_eq!(fact(&asked).unwrap().kind, UserTurnKind::Question);
+            session.resume(&asked);
+            let mut record = if answering {
+                session.result("question-1")
+            } else {
+                session.native_question("question-large", question("", &["A"]))
+            };
+            let path = if agent == Agent::Claude {
+                "/message/content/0/content"
+            } else {
+                "/payload/output"
+            };
+            if answering {
+                *record.pointer_mut(path).unwrap() = json!("");
+            }
+            // Include the physical newline in the source-admission budget.
+            let huge =
+                "x".repeat(hide_session::SESSION_LINE_LIMIT_BYTES - record.to_string().len());
+            if answering {
+                *record.pointer_mut(path).unwrap() = json!(huge);
+            } else {
+                record = session.native_question("question-large", question(&huge, &["A"]));
+            }
+            assert_eq!(
+                record.to_string().len() + 1,
+                hide_session::SESSION_LINE_LIMIT_BYTES + 1
+            );
+            session.append(&record);
+            assert_eq!(
+                read(session.home.path(), &session.request).unwrap_err(),
+                format!(
+                    "session_capacity:line_bytes:{}",
+                    hide_session::SESSION_LINE_LIMIT_BYTES
+                )
+            );
+        }
+    }
+}
+
+#[test]
+fn a_large_native_question_at_the_record_cap_still_truncates_its_content() {
+    for agent in [Agent::Claude, Agent::Codex] {
+        let mut session = Session::question(agent);
+        let asked = session.read();
+        session.resume(&asked);
+        session.append(&session.result("question-1"));
+        let envelope = session.native_question("question-large", question("", &["A"]));
+        let text =
+            "x".repeat(hide_session::SESSION_LINE_LIMIT_BYTES - envelope.to_string().len() - 1);
+        let record = session.native_question("question-large", question(&text, &["A"]));
+        assert_eq!(
+            record.to_string().len() + 1,
+            hide_session::SESSION_LINE_LIMIT_BYTES
+        );
+        session.append(&record);
+        let content = fact(&session.read()).unwrap().content.unwrap();
+        assert_eq!(content.text(), "x".repeat(8192));
+        assert_eq!(content.choices(), ["A"]);
+        assert!(content.truncated());
+    }
+}
+
+#[test]
 fn a_native_question_without_a_valid_correlation_is_a_reported_read_failure() {
     for agent in [Agent::Claude, Agent::Codex] {
         for invalid in [None, Some(Value::Null), Some(json!("")), Some(json!(17))] {

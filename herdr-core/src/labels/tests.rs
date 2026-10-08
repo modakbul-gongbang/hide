@@ -1585,6 +1585,83 @@ fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
     assert_eq!(answered["demand"], "none");
 }
 
+#[test]
+fn a_failed_same_state_follow_up_forgets_structured_question_without_ai() {
+    for unavailable in [true, false] {
+        let harness = Harness::new();
+        let (mut worker, woken, source) = harness.worker(harness.store());
+        worker.set_summaries(false, Instant::now());
+        let path = harness.session("question-follow-up", "native-question", &[]);
+        let question = json!({"type":"assistant","sessionId":"native-question",
+            "message":{"role":"assistant","content":[{"type":"tool_use",
+            "id":"question-call","name":"AskUserQuestion","input":{"questions":[{
+            "question":"어디에 배포할까요?","options":[{"label":"미리보기"}]}]}}]}});
+        std::fs::write(&path, format!("{question}\n")).unwrap();
+        // A working state without its prompt arms one bounded follow-up read.
+        let current = agent(&path, "working", 5);
+        observe(&mut worker, &current);
+        settle(&mut worker, &woken);
+        assert_eq!(
+            waits(&worker, &current),
+            (Some(Waiting::Question), Some(true))
+        );
+        let fact = |worker: &LabelWorker| {
+            let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+                "pane_id":current.pane_id,"agent":current.agent,"agent_status":current.status,
+                "state_change_seq":5,"agent_session":{"kind":"path","value":path.display().to_string()}
+            }]})).unwrap();
+            worker.overlay().apply(&mut payload);
+            payload
+                .agents
+                .remove(0)
+                .facts
+                .and_then(|facts| facts.user_turn)
+        };
+        assert!(fact(&worker).is_some());
+        let reads = source.reads.load(Ordering::SeqCst);
+        while woken.try_recv().is_ok() {}
+        if unavailable {
+            std::fs::remove_file(&path).unwrap();
+        } else {
+            let mut invalid = question.clone();
+            invalid["message"]["content"][0]["id"] = json!("");
+            std::fs::write(&path, format!("{invalid}\n")).unwrap();
+        }
+        worker.tick(Instant::now() + Duration::from_secs(4));
+        // A rejected reread must announce removal even though Herdr did not move.
+        woken.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(worker.drain(Instant::now(), 100));
+        assert_eq!(waits(&worker, &current), (None, Some(false)));
+        assert!(fact(&worker).is_none());
+        assert_eq!(source.reads.load(Ordering::SeqCst), reads + 1);
+        assert_eq!(harness.backend.calls(), 0);
+        // Refusal has no retry; unavailable waits its existing fifteen seconds.
+        worker.tick(Instant::now() + Duration::from_secs(5));
+        assert_eq!(source.reads.load(Ordering::SeqCst), reads + 1);
+        let answer = json!({"type":"user","sessionId":"native-question",
+            "message":{"role":"user","content":[{"type":"tool_result",
+            "tool_use_id":"question-call","content":"미리보기"}]}});
+        std::fs::write(&path, format!("{question}\n{answer}\n")).unwrap();
+        let recovered = if unavailable {
+            worker.tick(Instant::now() + Duration::from_secs(16));
+            current
+        } else {
+            let next = ObservedAgent {
+                state_change_seq: 6,
+                ..current
+            };
+            observe(&mut worker, &next);
+            next
+        };
+        settle(&mut worker, &woken);
+        assert_eq!(
+            waits(&worker, &recovered),
+            (Some(Waiting::Nothing), Some(false))
+        );
+        assert_eq!(source.reads.load(Ordering::SeqCst), reads + 2);
+    }
+}
+
 /// B5: a default-mode turn whose end Codex has not written yet, when Herdr
 /// already reads done, waits for nothing; only a plan-mode turn could wait.
 #[test]

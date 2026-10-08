@@ -627,7 +627,8 @@ Pre-migration byte fixtures pin Claude Code and Codex commands and complete inst
 
 Each row explicitly declares six Factory capabilities as available, unavailable or unconfirmed: direct questions and their refusal dialect, user turns, turn end and final answer, startup guidance, resume and next-prompt letters.
 These declarations activate no new guard, transcript reader or Factory policy.
-`hide-session::turns::UserTurnFact` carries a turn kind and optional structured content only when records supply it; current readers leave that content absent.
+`hide-session::turns::UserTurnFact` carries a turn kind and optional bounded structured content when Claude Code or Codex native records supply it.
+Missing content remains absent; a failed or incomplete read certifies no structured fact for the current Herdr state.
 The content constructor bounds text to 8 KiB, choices to eight and each choice to 256 bytes before copying, preserves UTF-8 boundaries and marks any truncation.
 
 A device report with an unknown adapter id contributes no Settings row rather than a row with an empty feature table.
@@ -1028,8 +1029,10 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   Native tool-call ids correlate question results; ordinary prose never supplies structured question content.
   The tracker bounds native call identities to 256 bytes and eight calls per turn, and a capacity breach fails the read explicitly.
   Optional `UserTurnContent` keeps at most 8 KiB of text and eight 256-byte choices, preserving UTF-8 boundaries and marking cuts.
+  A native wait-lifecycle record beyond the separate 256 KiB physical-line admission cap fails the read rather than being discarded as unrelated tool output; its content is not certified as absent or answered.
   The tracker rides on the read's request and answer beside the checkpoint, so an incremental read continues the turn it was in, a read from the start or a rescan starts over, and a record replayed from the anchor is not folded twice.
   The record keeps the tracker and the Herdr `state_change_seq` the read was asked under (`PaneRecord::turns`, `turns_seq`, set only once the backlog is read), and the overlay answers the wait (`LabelOverlay::waiting`) only for that state and the proven session, so a fact read for an earlier state never stands for a newer one.
+  A failed reread invalidates that proof and publishes no structured fact, while retaining the bounded tracker/checkpoint for a later successful continuation and the existing unavailable-read retry interval.
   A restart resumes without a read only when the wait was read for the stored state; a record from before turns were read is read once, from its anchor, where the turn's mode is not seen and the wait stays not known until Herdr's next state.
   A device helper answers the same field; one that predates it answers without it, which reads as not known.
   The coordinator takes the overlay before delivery observes the payload, and the doorbell holds on a wait or on not knowing (`docs/delivery.md`, A menu Herdr reads as a stop); the sidebar draws the typed question or approval and carries `user_turn` only for the proven current session/state (`docs/status-model.md`).

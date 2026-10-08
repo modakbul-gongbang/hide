@@ -740,11 +740,11 @@ impl LabelWorker {
                 if let Some(pane) = self.panes.get_mut(pane_id) {
                     pane.follow_up_at = Some(now + UNAVAILABLE_RETRY);
                 }
-                return false;
+                return self.invalidate_turn_read(pane_id);
             }
             Err(ReadFailure::Refused(reason)) => {
                 self.log_failure(pane_id, "read.refused", &reason);
-                return false;
+                return self.invalidate_turn_read(pane_id);
             }
         };
         let mut changed = false;
@@ -880,6 +880,18 @@ impl LabelWorker {
                 pane.follow_up_at = Some(now + FOLLOW_UP_READ);
             }
         }
+        changed
+    }
+
+    /// A failed reread cannot certify the previous native wait for this state.
+    /// Keep its bounded tracker/checkpoint for a later successful continuation.
+    fn invalidate_turn_read(&mut self, pane_id: &str) -> bool {
+        let changed = self
+            .records
+            .get_mut(pane_id)
+            .and_then(|record| record.turns_seq.take())
+            .is_some();
+        self.dirty |= changed;
         changed
     }
 

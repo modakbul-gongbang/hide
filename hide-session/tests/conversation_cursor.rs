@@ -101,6 +101,121 @@ fn oversized_conversation_and_unclassifiable_records_still_fail() {
 }
 
 #[test]
+fn oversized_native_questions_answers_and_plan_records_fail_without_consuming_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    let huge = "x".repeat(SESSION_LINE_LIMIT_BYTES + 1);
+    let records = [
+        (
+            Agent::Claude,
+            json!({"type":"assistant","message":{"content":[{
+                "type":"tool_use","id":"question-1","name":"AskUserQuestion",
+                "input":{"questions":[{"question":huge}]}
+            }]}}),
+        ),
+        (
+            Agent::Claude,
+            json!({"type":"user","message":{"content":[{
+                "type":"tool_result","tool_use_id":"question-1","content":huge
+            }]}}),
+        ),
+        (
+            Agent::Codex,
+            json!({"type":"response_item","payload":{
+                "type":"function_call","call_id":"question-1","name":"request_user_input",
+                "arguments":json!({"questions":[{"question":huge}]}).to_string()
+            }}),
+        ),
+        (
+            Agent::Codex,
+            json!({"type":"response_item","payload":{
+                "type":"function_call_output","call_id":"question-1","output":huge
+            }}),
+        ),
+        (
+            Agent::Codex,
+            json!({"type":"event_msg","payload":{
+                "type":"item_completed","turn_id":"turn-1","item":{"type":"Plan","text":huge}
+            }}),
+        ),
+        (
+            Agent::Codex,
+            json!({"type":"event_msg","payload":{
+                "type":"task_started","turn_id":"turn-1","collaboration_mode_kind":"plan","extra":huge
+            }}),
+        ),
+        (
+            Agent::Codex,
+            json!({"type":"event_msg","payload":{
+                "type":"task_complete","turn_id":"turn-1","extra":huge
+            }}),
+        ),
+        (
+            Agent::Codex,
+            json!({"type":"event_msg","payload":{
+                "type":"turn_aborted","turn_id":"turn-1","extra":huge
+            }}),
+        ),
+    ];
+    for (agent, record) in records {
+        fs::write(&path, format!("{record}\n{}", human("after native record"))).unwrap();
+        let mut reader = ConversationCursor::new();
+        for _ in 0..2 {
+            assert!(
+                matches!(reader.read(agent, &path),
+                Err(SessionError::Capacity { resource: "line_bytes", limit })
+                    if limit == SESSION_LINE_LIMIT_BYTES as u64),
+                "{agent:?}"
+            );
+            assert_eq!(reader.checkpoint().offset(), 0);
+        }
+    }
+}
+
+#[test]
+fn a_split_native_question_cannot_be_discarded_after_checkpoint_restore() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    // Both native discriminators arrive after the discarded body, so the
+    // scanner must finish the same bounded block after a durable restore.
+    let complete = format!(
+        "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"input\":{{\"questions\":[{{\"question\":\"{}\"}}]}},\"name\":\"AskUserQuestion\",\"type\":\"tool_use\",\"id\":\"question-1\"}}]}}}}\n",
+        "x".repeat(SESSION_LINE_LIMIT_BYTES + 1)
+    );
+    let split = complete.find("\"name\"").unwrap();
+    fs::write(&path, &complete[..split]).unwrap();
+    let mut reader = ConversationCursor::new();
+    assert!(
+        reader
+            .read(Agent::Claude, &path)
+            .unwrap()
+            .turn_marks
+            .is_empty()
+    );
+    assert!(!reader.has_more(), "a torn record waits for its append");
+    let checkpoint = serde_json::to_value(reader.checkpoint()).unwrap();
+    fs::write(&path, &complete).unwrap();
+    for old_checkpoint in [false, true] {
+        let mut checkpoint = checkpoint.clone();
+        if old_checkpoint {
+            checkpoint["classifier"]
+                .as_object_mut()
+                .unwrap()
+                .remove("user_turn_scanned");
+        }
+        let mut restored = ConversationCursor::restore(serde_json::from_value(checkpoint).unwrap());
+        assert!(matches!(
+            restored.read(Agent::Claude, &path),
+            Err(SessionError::Capacity {
+                resource: "line_bytes",
+                ..
+            })
+        ));
+        assert_eq!(restored.checkpoint().offset(), split as u64);
+    }
+}
+
+#[test]
 fn replacement_during_discard_keeps_the_new_session_human_turn() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.jsonl");
