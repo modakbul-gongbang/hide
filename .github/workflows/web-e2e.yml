@@ -247,8 +247,8 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--grep "With no workspace bound|closing a primary checkout|A new tab in a plain folder" --repeat-each 60 --retries 0 --workers 3)
-          for _ in 1 2 3 4; do ( while :; do :; done ) & done
+          args=(--grep "Selecting an Agent tab moves|Agent tabs shrink in stages|session started before the hook|a real external Herdr focus|a dropped file reaches" --repeat-each 30 --retries 0 --workers 4)
+          for _ in 1 2 3 4 5 6; do ( while :; do :; done ) & done
           if [ "${SHARD#*/}" -gt 1 ]; then
             # The shard's tests are dealt by their recorded durations, not by
             # Playwright's equal counts. Playwright counts a `--test-list` that
