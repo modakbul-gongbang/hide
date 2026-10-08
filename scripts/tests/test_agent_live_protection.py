@@ -999,6 +999,41 @@ else:raise RuntimeError("group_survived_reap")
         self.assertEqual(unknown, [orphan])
 
 
+    def test_argument_replies_keep_independent_lengths_capacity_and_refusals(self):
+        # Each sysctl reply owns only its returned prefix. Earlier PID bytes
+        # cannot claim a later process, including after a shorter or denied read.
+        marker = b"HIDE_LIVE_CHECK_OWNER=fixture-run"
+        subjects = {pid: Process(pid, 1, pid, 10, 0, False, os.getuid())
+                    for pid in (111, 112, 113, 114)}
+        replies = {111: procargs(b"OTHER=" + b"x" * 8192, marker),
+                   112: procargs(b"OTHER=fixture"),
+                   113: procargs(b"OTHER=" + b"x" * 16384, marker),
+                   114: None}
+        library = Mock()
+
+        def query(mib, unused, buffer, size, *rest):
+            data = replies[mib[2]]
+            if data is None or len(data) > size._obj.value:
+                ctypes.set_errno(errno.EPERM if data is None else errno.ENOMEM)
+                return -1
+            ctypes.memmove(buffer, data, len(data))
+            size._obj.value = len(data)
+            return 0
+
+        def read_info(pid, flavor, unused, buffer, size):
+            info = buffer._obj
+            info.sec, info.usec, info.uid, info.flags = 0, 10, os.getuid(), 0x10
+            return size
+
+        library.sysctl.side_effect, library.proc_pidinfo.side_effect = query, read_info
+        unknown = []
+        with patch.object(sys, "platform", "darwin"), \
+                patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+            actual = marked_descendants(subjects, "fixture-run", 1, unknown=unknown.append)
+        self.assertEqual(actual, {111: subjects[111], 113: subjects[113]})
+        self.assertEqual(unknown, [subjects[114]])
+
+
     def test_owner_refusal_distinguishes_opaque_shapes_without_payload_contents(self):
         owner = b"HIDE_LIVE_CHECK_OWNER=private-owner-token"
         good = procargs(b"OTHER=private-environment")

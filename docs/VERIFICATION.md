@@ -209,6 +209,8 @@ This ownership boundary follows the explicitly recorded B8/D-09 scope decision; 
 Linux fixture supervision uses a child subreaper and validates its procfs namespace and visibility before using process identities.
 Darwin group enumeration uses Apple's [process-group API](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c).
 Token lookup preserves the existing target-width alignment and birth checks and records no argument, environment or marker contents.
+Each Darwin token scan reuses one buffer of at most 1 MiB, supplies its full capacity for every query and interprets only that query's returned prefix.
+Bytes retained from a previous PID never establish another process's ownership.
 `--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
 
 Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.

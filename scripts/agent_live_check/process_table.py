@@ -361,6 +361,7 @@ def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, 
         library.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
                                    ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
                                    ctypes.c_void_p, ctypes.c_size_t]
+        buffer = None
     expected = marker if callable(marker) else ("HIDE_LIVE_CHECK_OWNER=" + marker).encode()
     result = {}
     for pid, process in table.items():
@@ -398,8 +399,9 @@ def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, 
                     unknown(process)
             continue
         mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2, pid (installed SDK).
-        size = ctypes.c_size_t(1024 * 1024)
-        buffer = ctypes.create_string_buffer(size.value)
+        size = ctypes.c_size_t(MAX_PROC_CONTEXT_BYTES)
+        if buffer is None:
+            buffer = ctypes.create_string_buffer(MAX_PROC_CONTEXT_BYTES)
         if library.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0):
             error = ctypes.get_errno()
             if error == errno.ESRCH:
@@ -421,7 +423,9 @@ def marked_descendants(table: dict[int, Process], marker, earliest: int = 0, *, 
                 table.vanished.append(pid)
             continue
         try:
-            owned = procargs_owned(buffer.raw[:size.value], process.pointer_width, expected)
+            # Only this reply's prefix has kernel provenance. Reusing one
+            # bounded buffer avoids allocating and copying 1 MiB per PID.
+            owned = procargs_owned(buffer[:size.value], process.pointer_width, expected)
         except OwnerEnvironmentUnavailable:
             if unknown:
                 unknown(process)
