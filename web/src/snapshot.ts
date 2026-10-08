@@ -722,10 +722,10 @@ export type PaneLayout = {
 export type PaneHeader = {
   working: boolean;
   pull: PaneHeaderAction | null;
-  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; child_tag: SessionTag | null} | null;
+  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; child_tag: SessionTag | null; facts?: {kind: "approval_command_unavailable"} | {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
 };
 export type PaneHeaderTone = "muted" | "warning" | "error" | "success" | "pr";
-export type PaneHeaderAction = {kind: "pr"; workspace_id: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
+export type PaneHeaderAction = {kind: "pr"; workspace_id: string; url: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
 
 export type TerminalPane = {
   pane_id: string;

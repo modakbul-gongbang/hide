@@ -138,3 +138,15 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     expect(opened("d4", "main")).toBeNull();
   });
 });
+
+
+it("numbers a plain-folder row even when its project expansion is false", () => {
+  // Literal core scope membership, independent of the retired test projector.
+  const parent = agent("folder-pane");
+  const scope = { ...emptyScope(), sidebar_tree: { ...emptyScope().sidebar_tree, rows: [{pane_id: parent.pane_id, occurrence: 0, depth: 0, descendants: 0}] } };
+  const folder = { ...checkoutWith(["folder-tab"]), id: "folder-checkout", agent_scope: scope };
+  const project = { id: "folder", device_id: "local", is_git: false, expanded: false, pinned: false, checkouts: [folder], agent_scope: scope, inactive_checkouts: {expanded: false, checkout_ids: []} } as unknown as Workspace;
+  const rest = { navigator: {focused_device_id: "local", workspaces: [project], devices: [{id: "local", kind: "local", agent_scope: scope}]}, status: {remote: []} } as unknown as SnapshotRest;
+  expect([...numberedAgents(agentListOrder({rest, agents: [parent]}))]).toEqual([[1, "folder-pane"]]);
+  expect(numberedTarget("agents", 1, {rest, agents: [parent]})).toBe("folder-pane");
+});

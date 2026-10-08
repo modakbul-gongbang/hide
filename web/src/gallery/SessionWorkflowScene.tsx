@@ -29,8 +29,8 @@ const BANDS: [string, PaneHeader["band"]][] = [
   ["device", { kind: "device_offline", tone: "muted", reason: "mini", since_unix_ms: null, action: null, more: 0, exit_code: null, child_tag: null }],
   ["approval", { kind: "approval", tone: "warning", reason: "검증 명령 실행 권한이 필요합니다", since_unix_ms: null, action: null, more: 0, exit_code: null, child_tag: null }],
   ["answer", { kind: "answer", tone: "warning", reason: "기존 stdin 종료 경로도 남길까요?", since_unix_ms: null, action: null, more: 0, exit_code: null, child_tag: null }],
-  ["fix", { kind: "fix", tone: "error", reason: "verify 실패", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", number: 221, checks: "failed", tone: "error" }, more: 0, exit_code: null, child_tag: null }],
-  ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null, child_tag: null }],
+  ["fix", { kind: "fix", tone: "error", reason: "verify 실패", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "failed", tone: "error" }, more: 0, exit_code: null, child_tag: null }],
+  ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null, child_tag: null }],
   ["raised", { kind: "raised_child", tone: "warning", reason: "한국어 입력 경계 검토", since_unix_ms: null, action: { kind: "child", pane_id: "a1c1", label: "한국어 입력 경계 검토" }, more: 1, exit_code: null, child_tag: "approval" }],
   ["result", { kind: "result", tone: "success", reason: "보고서가 준비됐습니다", since_unix_ms: null, action: null, more: 0, exit_code: null, child_tag: null }],
   ["working", null], ["idle", null],
@@ -75,7 +75,7 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
     base.rest.navigator!.focused_checkout_id = checkout.id;
     base.rest.navigator!.focused_workspace_id = project.id;
     const children = base.agents.filter((row) => ["a1c1", "a1c2"].includes(row.pane_id));
-    const headers = Object.fromEntries(BANDS.map(([id, band]) => [id, { working: id === "working", pull: null, band }]));
+    const headers = Object.fromEntries(BANDS.map(([id, band]) => [id, { working: id === "working", pull: band?.action?.kind === "pr" ? band.action : null, band: band && { ...band, since_unix_ms: ["approval", "answer", "fix", "merge", "raised", "result"].includes(id) ? Date.now() - 180_000 : band.since_unix_ms } }]));
     const headerAgents = BANDS.map(([id]) => ({ ...seed, id, pane_id: id, lineage_child_pane_ids: ["a1c1", "a1c2"] }));
     base.rest.terminal = { headers };
     return { ...base, agents: [...agents, ...children, ...headerAgents], pane };

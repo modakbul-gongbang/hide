@@ -47,7 +47,7 @@ export function DescendantBadge({
           className="relative shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:ring-1 data-[state=open]:ring-ring"
         >
           <Badge variant="secondary" className="gap-xs font-mono">
-            {parts.length > 0 ? <BadgeMarks parts={parts} /> : `↳${descendants}`}
+            <span aria-hidden="true">↳</span>{parts.length > 0 ? <BadgeMarks parts={parts} /> : descendants}
           </Badge>
         </button>
       }

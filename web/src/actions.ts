@@ -1315,6 +1315,15 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "links_close", payload: {} });
     },
 
+    /** A session link retains repository identity even when its maker moved projects. */
+    openSessionPullRequest(pull: {workspace_id: string; url: string; number: number}) {
+      const projects = catalogWorkspaces(rest());
+      const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.url === pull.url))
+        ?? projects.find((row) => row.pull_requests?.some((pr) => pr.url === pull.url));
+      if (project) this.openPullRequestRow(project.id, pull.number);
+      else this.openLink(pull.url, false);
+    },
+
     /** A pull request's row on its Project's PRs tab with its panel open (PRD overview-lenses-prs B21, link-graph B36); ⌘-click stays GitHub's. */
     openPullRequestRow(projectId: string, number: number | null) {
       const project = catalogWorkspaces(rest()).find((row) => row.id === projectId);

@@ -155,7 +155,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions }: { row: Lens
         <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
       </button>
       {issues.map((task) => <IssueChip key={task.key} project={project} task={task} handlers={handlers} now={Date.now()} />)}
-      {pull ? <Hint label={pullHint}><button type="button" disabled={!model.available} onClick={(event) => { event.stopPropagation(); actions.openPullRequestRow(project.id, pull.number); }} className="flex shrink-0 items-center gap-xxs rounded-xs text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" data-session-pr={pull.number} style={stale ? {opacity: 0.5} : undefined}>
+      {pull ? <Hint label={pullHint}><button type="button" disabled={!model.available} onClick={(event) => { event.stopPropagation(); actions.openSessionPullRequest({workspace_id: project.id, url: pull.url, number: pull.number}); }} className="flex shrink-0 items-center gap-xxs rounded-xs text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" data-session-pr={pull.number} style={stale ? {opacity: 0.5} : undefined}>
         <GitPullRequestIcon className="size-(--size-icon-sm)" /><span>#{pull.number}</span>
         {pull.checks === "passing" || pull.checks === "failed" || pull.checks === "pending" ? <ChecksMark checks={pull.checks} /> : null}
         {work && work.more > 0 ? <span>+{work.more}</span> : null}

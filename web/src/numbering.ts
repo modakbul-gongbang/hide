@@ -10,7 +10,7 @@ import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { frontDeviceId } from "./devices";
 import { deviceListedAgents } from "./navigation";
-import { projectRows, activeCheckouts, inactiveCheckouts } from "./projects";
+import { projectRows, activeCheckouts, inactiveCheckouts, folderCheckout } from "./projects";
 import { checkoutAgentRows } from "./projectBoard";
 import { contextWorkspaces, contextAgents, contextHome } from "./remote";
 import { DIGITS, type Digit } from "./shortcuts";
@@ -62,8 +62,14 @@ function sidebarAgentOrder(state: { rest: SnapshotRest | null; agents: AgentRow[
     }
   };
   for (const row of projects) {
-    if (row.kind !== "workspace" || row.workspace.expanded === false) continue;
+    if (row.kind !== "workspace") continue;
     const workspace = row.workspace;
+    const folder = folderCheckout(workspace);
+    if (folder) {
+      if (!workspace.session_folds?.cleanup.includes(folder.id)) checkout(workspace, folder);
+      continue;
+    }
+    if (workspace.expanded === false) continue;
     for (const value of activeCheckouts(workspace)) checkout(workspace, value);
     if (workspace.session_folds?.empty_open) for (const value of workspace.checkouts.filter((value) => workspace.session_folds!.empty.includes(value.id))) checkout(workspace, value);
     if (workspace.inactive_checkouts.expanded) for (const value of inactiveCheckouts(workspace)) checkout(workspace, value);

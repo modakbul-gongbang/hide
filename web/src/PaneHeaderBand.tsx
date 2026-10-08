@@ -1,4 +1,5 @@
 import { CircleAlertIcon, CornerDownRightIcon, GitPullRequestIcon, MessageCircleIcon, MoonIcon } from "lucide-react";
+import type { TFunction } from "i18next";
 import type { Actions } from "./actions";
 import { DescendantBadge } from "./components/agent-row";
 import { Elapsed } from "./components/elapsed";
@@ -21,6 +22,7 @@ const LABELS: Record<string, MessageKey> = {
   raised_child: "agentSessions.children",
 };
 const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-open/10 text-pr-open" };
+const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-open text-status-foreground" };
 
 export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; header: PaneHeader | undefined; actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -35,13 +37,13 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const action = band.action;
   const tracked = action?.kind === "child" && relation?.sourcePaneId === paneId && relation.targetPaneId === action.pane_id ? relation : null;
   const progress = relationState(tracked, outcome, t);
-  const reason = progress?.phase === "failed" ? progress.message : progress?.phase === "pending" ? t("panes.relation.opening", { name: tracked!.label }) : band.reason;
+  const reason = progress?.phase === "failed" ? progress.message : progress?.phase === "pending" ? t("panes.relation.opening", { name: tracked!.label }) : bandReason(band, t);
   return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", TONES[band.tone])} data-pane-header-band={band.kind}>
     <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
     <Hint label={reason ?? label}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
     {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}
     <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />
-    {action ? <button type="button" data-pane-band-open={paneId} disabled={progress?.phase === "pending" || (progress?.phase === "failed" && !progress.retryable)} aria-busy={progress?.phase === "pending"} className="shrink-0 rounded-xs px-xs py-xxs text-micro outline-none hover:bg-background/40 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50" onClick={() => action.kind === "child" ? actions.followRelation(paneId, action.pane_id, action.label) : actions.openPullRequestRow(action.workspace_id, action.number)}>{progress?.phase === "failed" && progress.retryable ? t("common.retry") : action.kind === "child" ? t("common.open") : t("agentSessions.openPr")}</button> : null}
+    {action ? <button type="button" data-pane-band-open={paneId} disabled={progress?.phase === "pending" || (progress?.phase === "failed" && !progress.retryable)} aria-busy={progress?.phase === "pending"} className={cn("shrink-0 rounded-xs px-xs py-xxs text-micro outline-none hover:brightness-95 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", ACTION_TONES[band.tone])} onClick={() => action.kind === "child" ? actions.followRelation(paneId, action.pane_id, action.label) : actions.openSessionPullRequest(action)}>{progress?.phase === "failed" && progress.retryable ? t("common.retry") : action.kind === "child" ? t("common.open") : t("agentSessions.openPr")}</button> : null}
   </div></div>;
 }
 
@@ -58,4 +60,12 @@ export function PaneChildrenBadge({ paneId, actions }: { paneId: string; actions
   const children = (parent.lineage_child_pane_ids ?? []).map((id) => agents.find((agent) => agent.pane_id === id)).filter((agent): agent is AgentRow => agent !== undefined);
   if (!children.length) return null;
   return <DescendantBadge agent={parent} descendants={children.length} childRows={children} onOpenChild={(id) => actions.followRelation(paneId, id, children.find((child) => child.pane_id === id)!.identity_label)} onUnfold={() => actions.openAgentsOverview()} returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-view="${paneId}"] [data-descendant-badge]`)?.focus()} />;
+}
+
+/** Localize the core's facts; no verb or attention decision lives here. */
+function bandReason(band: NonNullable<PaneHeader["band"]>, t: TFunction<"translation">): string | null {
+  const facts = band.facts;
+  if (!facts) return band.reason;
+  if (facts.kind === "approval_command_unavailable") return t("agentSessions.approvalCommandUnavailable");
+  return [t(`agentSessions.checks.${facts.checks}`), t(`agentSessions.review.${facts.review ?? "unknown"}`), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
 }
