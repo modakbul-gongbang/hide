@@ -125,53 +125,105 @@ def stamp(path: Path) -> FileStamp | None:
     return value[0] if value is not None else None
 
 
-def fingerprint(roots: list[Path], histories: list[Path] | None = None) -> dict[str, dict]:
-    """Inventory whole config trees. Link targets are never traversed or read."""
-    result = {}
-    histories = histories or []
-    total = 0
-    pending = list(roots)
-    while pending:
-        path = pending.pop()
-        if len(result) + len(pending) > MAX_CONFIG_FILES:
-            raise ProtectionError("config_tree_file_budget")
+@dataclass
+class ConfigInventory:
+    entries: dict
+    listed: set
+    scanned: int
+    excluded_subtrees: int
+    omitted_entries_lower_bound: int
+    uninspected_subtrees: int
+
+    def summary(self) -> dict:
+        return {"complete": not self.uninspected_subtrees,
+                "scanned_entries": self.scanned,
+                "excluded_subtrees": self.excluded_subtrees,
+                "omitted_entries_lower_bound": self.omitted_entries_lower_bound,
+                "uninspected_subtrees": self.uninspected_subtrees}
+
+    def observed_absence(self, path: str) -> bool:
+        current = Path(path)
+        while current != current.parent:
+            if str(current) in self.entries:
+                return self.entries[str(current)]["kind"] == "absent"
+            if str(current.parent) in self.listed:
+                return True
+            current = current.parent
+        return False
+
+
+def excluded_installation(path: Path) -> bool:
+    name = path.name.lower()
+    # Registry/config files directly in plugins remain observable; the
+    # installed code directories beneath it do not belong to this inventory.
+    return (name in {"node_modules", "extensions", "marketplace", "marketplaces", "bundled"}
+            or "cache" in name or path.parent.name.lower() == "plugins")
+
+
+def inventory_directory(path: Path) -> int:
+    """Open directories only, without following a link in any component."""
+    descriptor = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def fingerprint(roots: list[Path]) -> ConfigInventory:
+    """Bounded metadata only; never open a file or read a link target."""
+    result, listed, pending = {}, set(), []
+    scanned = excluded = omitted = 0
+
+    def record(path, info):
+        nonlocal excluded
+        if info is None:
+            result[str(path)] = {"kind": "absent"}
+        elif stat.S_ISDIR(info.st_mode):
+            if excluded_installation(path):
+                excluded += 1
+            else:
+                result[str(path)] = {"kind": "directory"}
+                pending.append(path)
+        else:
+            kind = "file" if stat.S_ISREG(info.st_mode) else "link" if stat.S_ISLNK(info.st_mode) else "other"
+            result[str(path)] = {"kind": kind, "size": info.st_size,
+                                 "mtime_ns": info.st_mtime_ns}
+
+    for path in dict.fromkeys(roots):
+        if scanned == MAX_CONFIG_FILES:
+            omitted += 1
+            continue
+        scanned += 1
         try:
             info = path.lstat()
         except FileNotFoundError:
-            continue
-        name = str(path)
-        if stat.S_ISLNK(info.st_mode):
-            result[name] = {"kind": "link", "digest": hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()}
-        elif stat.S_ISDIR(info.st_mode):
-            # Count directory entries as well as files, including empty trees.
-            result[name] = {"kind": "directory", "mode": stat.S_IMODE(info.st_mode)}
-            with os.scandir(path) as entries:
+            info = None
+        record(path, info)
+    while pending and scanned < MAX_CONFIG_FILES:
+        path = pending.pop()
+        descriptor = inventory_directory(path)
+        try:
+            with os.scandir(descriptor) as entries:
                 for entry in entries:
-                    pending.append(Path(entry.path))
-                    if len(result) + len(pending) > MAX_CONFIG_FILES:
-                        raise ProtectionError("config_tree_file_budget")
-        elif stat.S_ISREG(info.st_mode):
-            if info.st_size > MAX_BACKUP_BYTES or any(beneath(path, history) for history in histories):
-                # History contents may be large and contain private prompts.
-                # Existing histories are immutable in the native sandbox; the
-                # full tree inventory records retained additions and changes.
-                result[name] = {"kind": "metadata", "size": info.st_size,
-                                "mtime_ns": info.st_mtime_ns,
-                                "ctime_ns": info.st_ctime_ns,
-                                "mode": stat.S_IMODE(info.st_mode),
-                                "identity": [info.st_dev, info.st_ino]}
-                continue
-            total += info.st_size
-            if total > MAX_CONFIG_BYTES:
-                raise ProtectionError("config_tree_byte_budget")
-            value = stamp(path)
-            if value is None:
-                raise ProtectionError("config_disappeared_during_inventory")
-            result[name] = {"kind": "file", "digest": value.digest,
-                            "size": value.size, "mode": value.mode}
-        else:
-            result[name] = {"kind": "other"}
-    return result
+                    if scanned == MAX_CONFIG_FILES:
+                        # One sentinel establishes a lower bound without
+                        # walking an unbounded remainder just to count it.
+                        omitted += 1
+                        break
+                    scanned += 1
+                    record(path / entry.name, entry.stat(follow_symlinks=False))
+                else:
+                    listed.add(str(path))
+        finally:
+            os.close(descriptor)
+    return ConfigInventory(result, listed, scanned, excluded, omitted,
+                           len(pending) + omitted)
 
 
 class ConfigGuard:
@@ -197,12 +249,16 @@ class ConfigGuard:
             raise ProtectionError("exclusive_recovery_root_must_be_owned_by_run")
         self.before = {}
         self.writes = {}
-        self.inventory = fingerprint(roots, self.histories)
+        self.inventory = fingerprint(roots)
+        total = 0
         for index, path in enumerate(self.known):
             value = configuration_bytes(path)
             before = value[0] if value is not None else None
             self.before[path] = before
             if value is not None:
+                total += value[0].size
+                if total > MAX_CONFIG_BYTES:
+                    raise ProtectionError("config_backup_byte_budget")
                 write_private(backup / str(index), value[1])
         write_private(backup / "index.json", json.dumps([
             {"path": str(path), "backup": str(index),
@@ -274,19 +330,26 @@ class ConfigGuard:
                 # subject and cannot skip the other safe comparisons.
                 failures.append({"path": str(path), "reason": str(error)})
         try:
-            after = fingerprint(self.roots, self.histories)
+            after = fingerprint(self.roots)
         except (OSError, ProtectionError) as error:
             failures.append({"reason": "configuration_inventory_unavailable", "detail": str(error)})
             return {"restored": changes, "failures": failures,
                     "directory_changes": None, "inventory_checked": False}
-        directory_changes = [{"path": key, "kind": "added" if key not in self.inventory else "removed" if key not in after else "changed"}
-                             for key in sorted(self.inventory.keys() | after.keys())
-                             if self.inventory.get(key) != after.get(key)]
-        known_names = {str(path) for path in self.known}
-        for change in directory_changes:
-            path = Path(change["path"])
-            if (change["path"] not in known_names
-                    and not any(beneath(path, history) for history in self.histories)):
-                failures.append({"path": change["path"], "reason": "configuration_tree_change_preserved"})
+        directory_changes, uncompared = [], 0
+        before_entries, after_entries = self.inventory.entries, after.entries
+        for key in sorted(before_entries.keys() | after_entries.keys()):
+            before_value, after_value = before_entries.get(key), after_entries.get(key)
+            if before_value == after_value:
+                continue
+            if before_value is None and not self.inventory.observed_absence(key):
+                uncompared += 1
+                continue
+            if after_value is None and not after.observed_absence(key):
+                uncompared += 1
+                continue
+            kind = "added" if before_value is None or before_value["kind"] == "absent" else "removed" if after_value is None or after_value["kind"] == "absent" else "changed"
+            directory_changes.append({"path": key, "kind": kind})
         return {"restored": changes, "failures": failures,
-                "directory_changes": directory_changes, "inventory_checked": True}
+                "directory_changes": directory_changes, "inventory_checked": True,
+                "inventory": {"before": self.inventory.summary(), "after": after.summary(),
+                              "uncompared_entries": uncompared}}

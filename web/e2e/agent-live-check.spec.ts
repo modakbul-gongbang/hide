@@ -73,8 +73,10 @@ function assertClean(run: string, configurationFailure = false, serverLoss = fal
   if (configurationFailure) {
     expect(report.configuration.failures).toContainEqual({ path: path.join(run, "daemon-home", ".claude.json"),
       reason: "config_not_private_regular_file" });
-    expect(report.configuration.inventory_checked).toBe(false);
-    expect(report.configuration.directory_changes).toBeNull();
+    // Letter 2686: a known-file byte failure does not invalidate metadata.
+    expect(report.configuration.inventory_checked).toBe(true);
+    expect(report.configuration.directory_changes.some((row: { kind: string; path: string }) =>
+      row.kind === "added" && row.path.endsWith("unexpected-link"))).toBe(true);
     expect(report.configuration.restored).toContainEqual({ path: path.join(run, "daemon-home", ".claude", "settings.local.json"),
       result: "restored" });
   } else expect(report.configuration.failures).toEqual([]);

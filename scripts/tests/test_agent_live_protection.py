@@ -105,6 +105,66 @@ class ConfigurationProtection(unittest.TestCase):
         with self.assertRaises(ProtectionError):
             self.guard()
 
+    def test_unknown_configuration_is_metadata_only_and_preserved(self):
+        # Lead letter 2686: only adapter-listed files have a byte guard.
+        unknown = self.home / "unknown-settings.json"
+        unknown.write_bytes(b"private-before")
+        fifo = self.home / "unknown-pipe"
+        os.mkfifo(fifo, 0o600)
+        link = self.home / "unknown-link"
+        link.symlink_to(self.root / "missing-target")
+        real_open, real_readlink = os.open, os.readlink
+        def refuse_file_read(path, *args, **kwargs):
+            if Path(path) == unknown:
+                raise PermissionError("unknown_file_contents_are_not_available")
+            return real_open(path, *args, **kwargs)
+        def refuse_link_read(path, *args, **kwargs):
+            if Path(path) == link:
+                raise PermissionError("unknown_link_target_is_not_available")
+            return real_readlink(path, *args, **kwargs)
+        with patch.object(os, "open", refuse_file_read), patch.object(os, "readlink", refuse_link_read):
+            guard = self.guard()
+            unknown.write_bytes(b"private-after-longer")
+            result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(result["inventory_checked"])
+        self.assertIn({"path": str(unknown), "kind": "changed"}, result["directory_changes"])
+        self.assertEqual(unknown.read_bytes(), b"private-after-longer")
+        self.assertNotIn("private-after", json.dumps(result))
+
+    def test_installation_subtrees_are_excluded_but_plugin_registry_is_reported(self):
+        directories = ["node_modules", "model-cache", "extensions", "marketplace", "plugins/installed-code"]
+        for name in directories:
+            directory = self.home / name
+            directory.mkdir(parents=True, exist_ok=True)
+            os.mkfifo(directory / "unreadable-code", 0o600)
+        registry = self.home / "plugins" / "installed_plugins.json"
+        registry.write_bytes(b"before")
+        guard = self.guard()
+        for name in directories:
+            (self.home / name / "new-code").write_bytes(b"unreported")
+        registry.write_bytes(b"after-longer")
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["directory_changes"], [{"path": str(registry), "kind": "changed"}])
+        self.assertEqual(result["inventory"]["after"]["excluded_subtrees"], 5)
+
+    def test_inventory_entry_cap_reports_partial_counts_without_failing_byte_guard(self):
+        # A real bounded directory covers the unchanged 50,000-entry boundary.
+        for index in range(50_000):
+            (self.home / f"entry-{index}").touch()
+        guard = self.guard()
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(result["inventory_checked"])
+        for phase in ("before", "after"):
+            inventory = result["inventory"][phase]
+            self.assertFalse(inventory["complete"])
+            self.assertEqual(inventory["scanned_entries"], 50_000)
+            self.assertGreaterEqual(inventory["omitted_entries_lower_bound"], 1)
+            self.assertGreaterEqual(inventory["uninspected_subtrees"], 1)
+        self.assertEqual(result["directory_changes"], [])
+
     def test_invalid_known_file_keeps_named_failure_and_independent_recovery(self):
         peer = self.home / "peer.json"
         peer.write_bytes(b"original-peer")
@@ -113,16 +173,16 @@ class ConfigurationProtection(unittest.TestCase):
         before = stamp(peer)
         peer.write_bytes(b"owned-peer")
         guard.record_write(peer, before, stamp(peer))
-        # An unexpected hard link makes both its recovery and the final
-        # inventory unavailable. Neither failure may erase a peer's result.
+        # Letter 2686 keeps the known-file byte failure independent of the
+        # metadata inventory, which can still report the unexpected link.
         os.link(self.config, self.home / "unexpected-link")
         result = guard.finish()
         self.assertEqual(peer.read_bytes(), b"original-peer")
         self.assertIn({"path": str(peer), "result": "restored"}, result["restored"])
         self.assertIn({"path": str(self.config), "reason": "config_not_private_regular_file"}, result["failures"])
-        self.assertFalse(result["inventory_checked"])
-        self.assertIsNone(result["directory_changes"])
-        self.assertTrue(any(row["reason"] == "configuration_inventory_unavailable" for row in result["failures"]))
+        self.assertTrue(result["inventory_checked"])
+        self.assertIn({"path": str(self.home / "unexpected-link"), "kind": "added"}, result["directory_changes"])
+        self.assertFalse(any(row["reason"] == "configuration_inventory_unavailable" for row in result["failures"]))
 
     def test_fifo_replacement_during_open_refuses_without_blocking(self):
         program = f"""
