@@ -5450,6 +5450,13 @@ mod wire_enum_tests {
         checked.insert("factory_pause_reason");
         assert_wire(&contract, "factory_observer_mode", &ObserverMode::ALL);
         checked.insert("factory_observer_mode");
+        use hide_factory::judgment::WorkerTextSource;
+        assert_wire(
+            &contract,
+            "factory_diagnosis_source",
+            &WorkerTextSource::ALL,
+        );
+        checked.insert("factory_diagnosis_source");
 
         let unchecked = contract
             .keys()

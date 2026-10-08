@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::dag;
+use crate::judgment::WorkerTextSource;
 use crate::model::{
     Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionKind, DecisionRecord,
     Discovery, EnvHold, Factory, FactoryAi, Gate, MergeMode, NoticeCode, PauseReason, PullRequest,
@@ -918,6 +919,8 @@ pub struct TaskDetail {
     /// When the engine woke the resting worker and asked for a diagnosis.
     pub woke_at: Option<UnixMs>,
     pub diagnosed_at: Option<UnixMs>,
+    /// The worker text that diagnosis read (D-37).
+    pub diagnosed_from: Option<WorkerTextSource>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1059,6 +1062,7 @@ pub fn detail(
         ai_pick_reason: task.ai_pick.as_ref().map(|pick| pick.reason.clone()),
         woke_at: task.recovery.as_ref().and_then(|r| r.woke_at),
         diagnosed_at: task.recovery.as_ref().and_then(|r| r.diagnosed_at),
+        diagnosed_from: task.recovery.as_ref().and_then(|r| r.diagnosed_from),
     }
 }
 
@@ -1252,5 +1256,14 @@ mod tests {
             ObserverMode::Autonomous => 2,
         });
         assert_eq!(wire(&ObserverMode::ALL), ["manual", "assist", "autonomous"]);
+        complete(&WorkerTextSource::ALL, |source| match source {
+            WorkerTextSource::UserTurn => 0,
+            WorkerTextSource::LastAnswer => 1,
+            WorkerTextSource::Screen => 2,
+        });
+        assert_eq!(
+            wire(&WorkerTextSource::ALL),
+            ["user_turn", "last_answer", "screen"]
+        );
     }
 }

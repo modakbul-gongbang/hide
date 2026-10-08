@@ -18,6 +18,7 @@
   "factory_decision_kind": ["A", "B", "C", "D", "E"],
   "factory_pause_reason": ["person", "pane_closed"],
   "factory_observer_mode": ["manual", "assist", "autonomous"],
+  "factory_diagnosis_source": ["user_turn", "last_answer", "screen"],
   "factory_task_state": ["drafting", "waiting", "running", "paused", "blocked", "verifying", "merge_waiting", "landed", "done", "stopped", "relanding", "outside", "cancelled"],
   "factory_waiting_for": ["predecessors", "slot", "environment", "answer"],
   "kit_agent_availability": ["available", "not_installed", "unsupported_system"],

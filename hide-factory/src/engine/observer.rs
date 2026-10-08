@@ -854,11 +854,6 @@ impl Engine {
         let Some(task) = self.task(factory, id).cloned() else {
             return;
         };
-        self.with_task(factory, id, |t| {
-            let recovery = t.recovery.get_or_insert_default();
-            recovery.diagnosed_at = Some(now);
-            recovery.diagnosing = true;
-        });
         // One text, the first the adapter declares and has (D-37).
         let texts = self.ports.workers.texts(worker);
         let capabilities = worker.runtime.adapter().factory;
@@ -879,6 +874,13 @@ impl Engine {
         .find_map(|(declared, source, text)| {
             text.filter(|text| declared && !text.trim().is_empty())
                 .map(|text| WorkerText::bounded(source, &text))
+        });
+        let read = worker_text.as_ref().map(|text| text.source);
+        self.with_task(factory, id, |t| {
+            let recovery = t.recovery.get_or_insert_default();
+            recovery.diagnosed_at = Some(now);
+            recovery.diagnosing = true;
+            recovery.diagnosed_from = read;
         });
         let (card, decisions, attachment) = self.observer_context(&task);
         let judgment = Judgment {
@@ -1015,7 +1017,11 @@ impl Engine {
         self.with_task(factory, id, |task| {
             task.stop = Some(StopReason::NoReport);
             task.diagnosis = diagnosis.filter(|line| !line.is_empty());
-            task.recovery = None;
+            // The wake and diagnosis stay for the Task page's rest record
+            // (B43); a retry, a resume or a new start clears them.
+            if let Some(recovery) = &mut task.recovery {
+                recovery.diagnosing = false;
+            }
         });
         self.record(factory, Some(id), "worker.no_report", json!({}));
     }

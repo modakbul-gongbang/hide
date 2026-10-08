@@ -6,7 +6,7 @@ mod support;
 
 use hide_factory::adapters::{PreMerge, WorkerStatus};
 use hide_factory::command::{CardInput, Command};
-use hide_factory::judgment::JudgmentInput;
+use hide_factory::judgment::{JudgmentInput, WorkerTextSource};
 use hide_factory::model::*;
 use serde_json::{Value, json};
 use support::*;
@@ -634,6 +634,7 @@ fn a_diagnosed_stop_tells_the_person_what_factory_ai_read() {
     h.world()
         .diagnosis
         .push_back(json!({"verdict": "stuck", "reason": "테스트 실행을 기다리다 멈춤"}));
+    h.world().texts.screen = Some("cargo test 실행 중".into());
     let since = h.world().now;
     h.world()
         .worker_status
@@ -650,6 +651,11 @@ fn a_diagnosed_stop_tells_the_person_what_factory_ai_read() {
         inbox["items"][0]["observer_reason"],
         "테스트 실행을 기다리다 멈춤"
     );
+    // The Task page keeps the wake and the diagnosis, and says which text it
+    // read: the screen, as the worker had no turn or answer text.
+    let detail = h.engine.show(&f, &t).unwrap();
+    assert!(detail.woke_at.is_some() && detail.diagnosed_at.is_some());
+    assert_eq!(detail.diagnosed_from, Some(WorkerTextSource::Screen));
 }
 
 #[test]

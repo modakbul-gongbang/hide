@@ -125,6 +125,10 @@ pub enum WorkerTextSource {
     Screen,
 }
 
+impl WorkerTextSource {
+    pub const ALL: [Self; 3] = [Self::UserTurn, Self::LastAnswer, Self::Screen];
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerText {
     pub source: WorkerTextSource,

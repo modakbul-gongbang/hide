@@ -1313,6 +1313,9 @@ pub struct Recovery {
     pub diagnosed_at: Option<UnixMs>,
     #[serde(default)]
     pub diagnosing: bool,
+    /// The one worker text the diagnosis read, if it had any (D-37).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosed_from: Option<crate::judgment::WorkerTextSource>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
