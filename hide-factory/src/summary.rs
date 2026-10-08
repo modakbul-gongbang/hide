@@ -912,6 +912,12 @@ pub struct TaskDetail {
     pub resting_since: Option<UnixMs>,
     /// The candidate a person pinned, 1 first.
     pub pinned_worker: Option<usize>,
+    /// The candidate the review picked, 1 first, and why (D-41).
+    pub ai_picked_worker: Option<usize>,
+    pub ai_pick_reason: Option<String>,
+    /// When the engine woke the resting worker and asked for a diagnosis.
+    pub woke_at: Option<UnixMs>,
+    pub diagnosed_at: Option<UnixMs>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1049,6 +1055,10 @@ pub fn detail(
         auto_restarts: task.auto_restarts,
         resting_since: task.rest_seen.filter(|_| task.state == TaskState::Running),
         pinned_worker: task.human.worker.map(|index| index + 1),
+        ai_picked_worker: task.ai_pick.as_ref().map(|pick| pick.index + 1),
+        ai_pick_reason: task.ai_pick.as_ref().map(|pick| pick.reason.clone()),
+        woke_at: task.recovery.as_ref().and_then(|r| r.woke_at),
+        diagnosed_at: task.recovery.as_ref().and_then(|r| r.diagnosed_at),
     }
 }
 

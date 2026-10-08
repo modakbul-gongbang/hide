@@ -830,6 +830,12 @@ fn the_review_picks_a_candidate_and_the_worker_starts_with_its_model_and_effort(
         json!({"questions": [], "dependencies": [], "flags": [], "split": [], "fits_scope": null, "worker": 1, "worker_reason": "큰 변경"}),
     );
     let t = h.ready("Refactor", &[]);
+    // The pick shows before the worker starts, so a person can change it.
+    let detail = h.engine.show(&f, &t).unwrap();
+    assert_eq!(
+        (detail.ai_picked_worker, detail.ai_pick_reason.as_deref()),
+        (Some(2), Some("큰 변경"))
+    );
     let review = h
         .world()
         .judged
