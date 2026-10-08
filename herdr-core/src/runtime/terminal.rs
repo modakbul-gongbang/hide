@@ -1596,12 +1596,14 @@ impl Runtime {
     /// key into another pane as moving the keyboard back (B1), however long
     /// the operator kept typing there.
     pub(crate) fn sync_terminal_focus(&mut self) {
-        let focus = self.terminal_keyboard_pane().map(str::to_owned);
-        if focus != self.terminal_intents.focus {
-            self.terminal_intents.focus = focus.clone();
-            self.terminals
-                .control(TerminalControl::Focus { pane: focus });
+        let focus = self.terminal_keyboard_pane();
+        if focus == self.terminal_intents.focus.as_deref() {
+            return;
         }
+        let focus = focus.map(str::to_owned);
+        self.terminal_intents.focus = focus.clone();
+        self.terminals
+            .control(TerminalControl::Focus { pane: focus });
     }
 
     /// What the nodes reported about their panes since the last batch.
