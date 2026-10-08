@@ -22,9 +22,20 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
         // runtime for, or Hide's OpenCode plugin, which the kit installs.
         let hook = crate::agent_hooks::runtime_of(kind).is_some()
             || adapter.hook == hide_kit::HookSupport::Plugin;
-        for feature in [Feature::Letters, Feature::Memory, Feature::Subagents] {
+        for feature in [Feature::Letters, Feature::Memory] {
             assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
         }
+        // The pane header reads a count for the agents the leaf names a
+        // counting dialect for: the instrumented ones, and Grok's and
+        // Cursor's own hooks (PRD grok-cursor-hooks).
+        let counted = hide_agent_adapter::adapter(kind)
+            .and_then(|row| row.subagent_counts)
+            .is_some();
+        assert_eq!(
+            adapter.supports(Feature::Subagents),
+            counted,
+            "{kind}: subagents"
+        );
         // Letters reach exactly the kinds the mailbox hands them to.
         assert_eq!(
             adapter.supports(Feature::Letters),
@@ -38,12 +49,13 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
             "{kind}: bell"
         );
         // The guard is the hook's `PreToolUse` entry or the plugin's
-        // `tool.execute.before`, so an agent has it exactly when the session
-        // is instrumented.
+        // `tool.execute.before`, so an agent has it exactly when a hook or
+        // the plugin counts for it.
         assert_eq!(
             adapter.supports(Feature::SpawnGuard),
-            hook && hide_agent_hooks::HookEvent::ALL
-                .contains(&hide_agent_hooks::HookEvent::PreToolUse),
+            counted
+                && hide_agent_hooks::HookEvent::ALL
+                    .contains(&hide_agent_hooks::HookEvent::PreToolUse),
             "{kind}: spawn guard"
         );
         assert_eq!(

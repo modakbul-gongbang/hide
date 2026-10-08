@@ -1130,9 +1130,10 @@ async fn scoped_client_loop(
                                     && session.len() <= 256
                                     && !session.chars().any(char::is_control)
                             });
-                            let runtime = value["runtime"]
-                                .as_str()
-                                .filter(|runtime| matches!(*runtime, "claude-code" | "codex"));
+                            // The same agents the CLI and the hook route here.
+                            let runtime = value["runtime"].as_str().filter(|runtime| {
+                                hide_agent_adapter::direct_ask_kind(runtime).is_some()
+                            });
                             match (session, runtime) {
                                 (Some(session), Some(runtime)) => {
                                     Some(ScopedRequest::FactoryQuestionGuard {

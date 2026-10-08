@@ -14,9 +14,10 @@
 //!   ([`SkillDir`]); the folder is shared by every agent that reads it, so
 //!   the stub stays while any of them is on;
 //! - a hook: Claude Code and Codex keep their kit parts
-//!   ([`HookSupport::Part`]), the other agents with documented command hooks
-//!   get the SessionStart guidance hook ([`HookSupport::Guidance`]), and
-//!   OpenCode gets Hide's plugin ([`HookSupport::Plugin`]);
+//!   ([`HookSupport::Part`]); Cursor and Grok, whose documented command hooks
+//!   can refuse a shell call and report subagents, get Hide's hook file of
+//!   the basic tier ([`HookSupport::Guidance`]); and OpenCode gets Hide's
+//!   plugin ([`HookSupport::Plugin`]);
 //! - nothing else. What Hide never writes is listed in `docs/agent-hooks.md`.
 
 use std::ffi::OsString;
@@ -91,8 +92,9 @@ fn skill_file_in(root: &Path) -> PathBuf {
 pub enum HookSupport {
     /// Claude Code and Codex: the six-event hook that is also one kit part.
     Part(ComponentId),
-    /// The SessionStart guidance hook for an agent with documented command
-    /// hooks (`hide_agent_hooks::guidance`).
+    /// Hide's hook for an agent of the basic tier with documented command
+    /// hooks: the spawn guard, the subagent count and, for Cursor, the session
+    /// guidance (`hide_agent_hooks::guidance`).
     Guidance(GuidanceAgent),
     /// OpenCode: Hide's own plugin file in its plugin folder
     /// (`hide_agent_hooks::opencode`), judged like the skill stub.
@@ -151,13 +153,21 @@ const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> Agen
                 HookSupport::Part(ComponentId::ClaudeCodeHook)
             }
             HookInstall::Runtime(HookDialect::Codex) => HookSupport::Part(ComponentId::CodexHook),
-            // OpenCode's dialect is spoken by its plugin, never by a settings
-            // file; the table is a constant, so this fails the build.
+            // OpenCode's dialect is spoken by its plugin, and Grok's and
+            // Cursor's by the guidance file, never by a settings file; the
+            // table is a constant, so a declaration saying otherwise fails
+            // the build.
             HookInstall::Runtime(HookDialect::OpenCode) => {
                 panic!("OpenCode's hook is its plugin, not a settings file")
             }
+            HookInstall::Runtime(HookDialect::Grok | HookDialect::Cursor) => {
+                panic!("Grok and Cursor hooks are installed as a guidance file")
+            }
             HookInstall::Guidance(GuidanceDialect::Cursor) => {
                 HookSupport::Guidance(GuidanceAgent::Cursor)
+            }
+            HookInstall::Guidance(GuidanceDialect::Grok) => {
+                HookSupport::Guidance(GuidanceAgent::Grok)
             }
             HookInstall::Plugin(PluginDialect::OpenCode) => HookSupport::Plugin,
             HookInstall::None => HookSupport::None,

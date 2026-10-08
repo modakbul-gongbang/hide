@@ -1170,11 +1170,18 @@ impl Runtime {
         let diagnosis = self.hook_diagnosis.clone();
         let local_kit = self.kit_states.get(self.node.as_str());
         // Claude Code's and Codex's hooks are read from their files; OpenCode's
-        // plugin from this Mac's kit, the one place that judges it, read here
-        // once rather than holding the kit across the pass.
-        let opencode = local_kit.and_then(|kit| {
-            crate::agent_hooks::kit_hook_status(kit, hide_agent_adapter::HookDialect::OpenCode)
-        });
+        // plugin and Grok's and Cursor's hooks from this Mac's kit, the one
+        // place that judges them, read here once rather than holding the kit
+        // across the pass.
+        let from_kit: Vec<_> = hide_agent_adapter::HookDialect::ALL
+            .into_iter()
+            .filter(|dialect| hide_agent_hooks::AgentRuntime::from_dialect(*dialect).is_none())
+            .map(|dialect| {
+                let status =
+                    local_kit.and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect));
+                (dialect, status)
+            })
+            .collect();
         let codex_daemon_on = local_kit.is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let status_of = |dialect: hide_agent_adapter::HookDialect| {
             match hide_agent_hooks::AgentRuntime::from_dialect(dialect) {
@@ -1182,7 +1189,10 @@ impl Runtime {
                     .as_ref()
                     .and_then(|diagnosis| diagnosis.status_of(runtime))
                     .cloned(),
-                None => opencode.clone(),
+                None => from_kit
+                    .iter()
+                    .find(|(known, _)| *known == dialect)
+                    .and_then(|(_, status)| status.clone()),
             }
         };
         let mut changed = false;
