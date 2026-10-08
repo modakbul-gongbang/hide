@@ -45,10 +45,10 @@ fn env(root: &Path, herdr: Option<&PrivateHerdr>) -> Env {
     }
 }
 
-/// A ledger holding one letter that missed its delivery deadline an hour ago
+/// A ledger holding letters that missed its delivery deadline an hour ago
 /// and has not been announced to the operator. Its times are recent because
 /// the ledger drops a finished letter once its retention passed.
-fn seed_undelivered_letter(state: &Path) {
+fn seed_undelivered_letters(state: &Path, ids: &[&str]) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -58,17 +58,19 @@ fn seed_undelivered_letter(state: &Path) {
         json!({"pane_id": name, "name": name, "kind": "claude", "device_id": "local",
             "session": format!("{name}-session")})
     };
-    let ledger = json!({
-        "version": 1, "next_id": 8,
-        "letters": [{
-            "id": "letter-7", "intent": "held", "sender": actor("sender"),
-            "recipient": actor("lead"), "kind": "report", "body": BODY,
-            "state": "undelivered", "waiting_answer": false, "reply_to": null,
-            "created_at_unix_ms": now - hour, "finished_at_unix_ms": now,
-            "bell_errors": 0, "bell_sent": false, "human_notified": false,
-        }],
-        "watches": [],
-    });
+    let letters = ids
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id, "intent": "held", "sender": actor("sender"),
+                "recipient": actor("lead"), "kind": "report", "body": BODY,
+                "state": "undelivered", "waiting_answer": false, "reply_to": null,
+                "created_at_unix_ms": now - hour, "finished_at_unix_ms": now,
+                "bell_errors": 0, "bell_sent": false, "human_notified": false,
+            })
+        })
+        .collect::<Vec<_>>();
+    let ledger = json!({"version": 1, "next_id": 100, "letters": letters, "watches": []});
     // The seed is a valid ledger as the daemon's loader judges it, so a
     // refusal below names the seed and not the daemon.
     serde_json::from_value::<herdr_core::delivery::ledger::Ledger>(ledger.clone())
@@ -124,7 +126,7 @@ async fn without_a_herdr_socket_the_record_names_both_skipped_channels() {
     let _alone = ONE_DAEMON.lock().await;
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("home")).unwrap();
-    seed_undelivered_letter(&root.path().join("state"));
+    seed_undelivered_letters(&root.path().join("state"), &["letter-7"]);
     let running = hided::start_daemon(env(root.path(), None))
         .await
         .expect("hided starts");
@@ -150,7 +152,7 @@ async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
         .tempdir_in("/tmp")
         .unwrap();
     let mut herdr = PrivateHerdr::start(bin, root.path());
-    seed_undelivered_letter(&root.path().join("state"));
+    seed_undelivered_letters(&root.path().join("state"), &["letter-7"]);
     let running = hided::start_daemon(env(root.path(), Some(&herdr)))
         .await
         .expect("hided starts");
@@ -169,10 +171,11 @@ async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
     herdr.stop().expect("the private Herdr server exits");
 }
 
-/// A stand-in push service on loopback (a debug build accepts that endpoint):
-/// it answers 201 to the first request and reports the request line.
+/// A stand-in push service on loopback (a debug build accepts that endpoint).
+/// It reads each whole request, answers the first with 201 and every later
+/// one with 500, and reports each request line.
 fn fake_push_service() -> (String, std::sync::mpsc::Receiver<String>) {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!(
         "http://127.0.0.1:{}/push/1",
@@ -180,22 +183,43 @@ fn fake_push_service() -> (String, std::sync::mpsc::Receiver<String>) {
     );
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let Ok((stream, _)) = listener.accept() else {
-            return;
-        };
-        let mut reader = BufReader::new(stream);
-        let mut request_line = String::new();
-        reader.read_line(&mut request_line).unwrap();
-        let _ = sent.send(request_line);
-        let _ = reader
-            .get_mut()
-            .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        for status in ["201 Created", "500 Internal Server Error"] {
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            let mut length = 0_usize;
+            let mut line = String::new();
+            // Headers to the blank line, then the body the client sends, so
+            // closing the socket never resets a request still being written.
+            while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+                if request_line.is_empty() {
+                    request_line = line.clone();
+                } else if let Some(value) =
+                    line.to_ascii_lowercase().strip_prefix("content-length:")
+                {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                if line == "\r\n" {
+                    break;
+                }
+                line.clear();
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let _ = sent.send(request_line);
+            let _ = reader.get_mut().write_all(
+                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            );
+        }
     });
     (endpoint, received)
 }
 
 #[tokio::test]
-async fn a_reachable_phone_still_gets_the_notice_and_nothing_is_recorded_as_failed() {
+async fn a_reachable_phone_still_gets_the_notice_and_only_the_one_that_failed_is_recorded() {
     let _alone = ONE_DAEMON.lock().await;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -204,7 +228,11 @@ async fn a_reachable_phone_still_gets_the_notice_and_nothing_is_recorded_as_fail
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("home")).unwrap();
     let state = root.path().join("state");
-    seed_undelivered_letter(&state);
+    // Two letters are announced one after the other by the same pass: the
+    // first reaches the phone (201) and the second does not (500). Seeing the
+    // second's record therefore proves the first was fully handled, so its
+    // absence from the log is a fact and not a read that came too early.
+    seed_undelivered_letters(&state, &["letter-7", "letter-8"]);
     // Push mode always, one paired phone with a subscription: the phone's
     // key is a fresh P-256 point, as a browser's would be.
     let rng = ring::rand::SystemRandom::new();
@@ -237,17 +265,21 @@ async fn a_reachable_phone_still_gets_the_notice_and_nothing_is_recorded_as_fail
         .expect("hided starts");
     // The delivery pass runs on a blocking thread; the hang guard only ends
     // a daemon that never sends.
-    let request =
-        tokio::task::spawn_blocking(move || received.recv_timeout(Duration::from_secs(60)))
-            .await
-            .unwrap()
-            .expect("the phone's push service received the notice");
+    let first = tokio::task::spawn_blocking(move || {
+        let first = received.recv_timeout(Duration::from_secs(60));
+        (first, received)
+    })
+    .await
+    .unwrap();
+    let request = first
+        .0
+        .expect("the phone's push service received the notice");
     assert!(request.starts_with("POST /push/1 "), "{request}");
-    let log =
-        std::fs::read_to_string(root.path().join("state/Logs/core.jsonl")).unwrap_or_default();
-    assert!(
-        !log.contains("human.channels_failed"),
-        "a notice that reached a phone is not a failure: {log}"
-    );
+    // The only failure record is the second letter's, and it names the push
+    // as the cause: letter-7 reached the phone and is not recorded.
+    let row = channels_failed(&state).await;
+    assert_eq!(row["letter_id"], "letter-8");
+    assert_eq!(row["push"], "send_failed");
+    assert_eq!(row["herdr"], "no_socket");
     running.stop();
 }
