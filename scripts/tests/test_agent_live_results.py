@@ -26,6 +26,25 @@ def safe_agent():
 
 
 class MeasurementResults(unittest.TestCase):
+    def test_unavailable_snapshot_keeps_unknown_rows_and_recovery_guidance(self):
+        unavailable = safe_agent()
+        unavailable["id"] = "omp"
+        unavailable["bell_target"] = False
+        unavailable["unavailable"] = {"reason": "credential_snapshot_unavailable",
+                                      "next_action": "Close all omp instances and rerun."}
+        unavailable["scenes"] = [{"scene": scene, "arrival": "unreached", "status": "unknown",
+                                  "effect": "not_tested", "reason": "credential_snapshot_unavailable"}
+                                 for scene in SCENES]
+        with tempfile.TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            report = {"herdr": {}, "agents": [unavailable, safe_agent()], "configuration": {},
+                      "cleanup": {"confirmed": True}, "failures": [], "resources": {}}
+            self.assertEqual(save(run, report), 3)
+            saved = json.loads((run / "report.json").read_text())
+            self.assertEqual([a["verdict"] for a in saved["agents"]], ["unknown", "safe_useful"])
+            self.assertEqual(len(saved["agents"][0]["scenes"]), 10)
+            self.assertIn("Close all omp instances and rerun.", (run / "report.md").read_text())
+
     def test_question_requires_a_menu_row_and_rejects_echo_or_prose(self):
         checkout = Path(__file__).resolve().parents[2]
         data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])

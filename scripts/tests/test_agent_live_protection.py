@@ -1240,11 +1240,21 @@ class NativeWriteProtection(unittest.TestCase):
             mailbox = state / "mailbox.json"
             mailbox.write_text("fresh-test-marker")
             guard = WriteSandbox(run, sockets, home, checkout=root / "candidate")
+            settings = guard.probe / "integration/.claude/settings.json"
+            settings.parent.mkdir(parents=True, mode=0o700)
+            settings.write_text("fixture-settings")
             guard.allow_reference(reference)
             with OwnedProcesses() as owner:
                 standin = owner.spawn([sys.executable, "-c", "import time; time.sleep(5)", "fixture-process-marker"],
                                      env=dict(os.environ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 program = ("import ctypes,errno,os; from pathlib import Path"
+                           # Native settings readers vet every path component.
+                           # Metadata access must not disclose controller data.
+                           f"\nfor parent in Path({str(settings)!r}).parents: parent.lstat()"
+                           f"\nassert Path({str(settings)!r}).read_text() == 'fixture-settings'"
+                           f"\ntry: list(Path({str(run)!r}).iterdir())"
+                           "\nexcept PermissionError: pass"
+                           "\nelse: raise SystemExit(33)"
                            f"\nassert Path({str(reference)!r}).read_text() == 'fixture-reference'"
                            f"\nPath({str(reference.with_suffix('.claimed'))!r}).write_text('claim')"
                            f"\ntry: Path({str(mailbox)!r}).read_text()"

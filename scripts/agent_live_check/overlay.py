@@ -7,10 +7,11 @@ refreshed only in the disposable tree; it is never written back to the account.
 from pathlib import Path
 import os
 
+from .credential_snapshot import snapshot
 from .protection import MAX_BACKUP_BYTES, ProtectionError, beneath, private_directory, stamp, write_private
 
 
-def prepare(recipe: dict, probe: Path, operator: Path) -> dict:
+def prepare(recipe: dict, probe: Path, operator: Path, *, owner=None, env=None) -> dict:
     data = recipe.get("overlay")
     if not data:
         return {"env": {}, "copies": [], "settings": [], "session_root": None}
@@ -24,15 +25,21 @@ def prepare(recipe: dict, probe: Path, operator: Path) -> dict:
                 or source.is_symlink()
                 or any(parent.is_symlink() for parent in source.parents if beneath(parent, operator))):
             raise ProtectionError("credential_copy_alias_or_path_refused")
+        if source.suffix == ".db":
+            for member, original, content in snapshot(source, operator, MAX_BACKUP_BYTES - total,
+                                                       owner, env if env is not None else dict(os.environ)):
+                target = Path(str(destination) + str(member)[len(str(source)):])
+                private_directory(target.parent)
+                write_private(target, content)
+                if stamp(target).digest != original.digest:
+                    raise ProtectionError("credential_private_copy_integrity_failure")
+                copied.append({"source": str(member.relative_to(operator)),
+                               "private_name": str(target.relative_to(root))})
+                total += len(content)
+            continue
         before = stamp(source)
         if before is None:
             continue
-        # SQLite copies are accepted only when their WAL is absent or empty,
-        # and both the DB and WAL remain unchanged throughout the snapshot.
-        wal = Path(str(source) + "-wal") if source.suffix == ".db" else None
-        wal_before = stamp(wal) if wal else None
-        if wal_before and wal_before.size:
-            raise ProtectionError("credential_database_has_uncheckpointed_wal")
         total += before.size
         if total > MAX_BACKUP_BYTES:
             raise ProtectionError("credential_copy_total_over_budget")
@@ -43,8 +50,7 @@ def prepare(recipe: dict, probe: Path, operator: Path) -> dict:
                 raise ProtectionError("credential_changed_during_private_copy")
             content = stream.read(MAX_BACKUP_BYTES + 1)
         if (len(content) > MAX_BACKUP_BYTES or stamp(source) != before
-                or any(parent.is_symlink() for parent in source.parents if beneath(parent, operator))
-                or (wal and stamp(wal) != wal_before)):
+                or any(parent.is_symlink() for parent in source.parents if beneath(parent, operator))):
             raise ProtectionError("credential_changed_during_private_copy")
         private_directory(destination.parent)
         write_private(destination, content)

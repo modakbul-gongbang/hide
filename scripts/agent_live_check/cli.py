@@ -16,6 +16,7 @@ from .contracts import SCENES, recipes, source_contract
 from .authentication import AuthenticationRequired, require_no_login
 from .delivery import measure as measure_delivery
 from .overlay import prepare as prepare_overlay
+from .credential_snapshot import CredentialSnapshotUnavailable
 from .history import LABEL as PREVIOUS_LABEL, seed as seed_history
 from .integration import (prepare as prepare_integration, project_args, observe as observe_integration,
                           provenance as integration_provenance)
@@ -178,8 +179,20 @@ def main(argv=None):
                 launch = wrapper(runtime, recipe, Path(executable), sandbox)
                 if recipe.get("overlay") and not args.fixture_bin:
                     runtime.credential_roots.add(runtime.probe / ("config-" + recipe["id"]))
-                overlay = prepare_overlay(recipe, runtime.probe, agent_home) if not args.fixture_bin else {
-                    "env": {}, "copies": [], "settings": [], "session_root": None}
+                try:
+                    overlay = prepare_overlay(recipe, runtime.probe, agent_home, owner=owner,
+                                              env=clean_env()) if not args.fixture_bin else {
+                        "env": {}, "copies": [], "settings": [], "session_root": None}
+                except CredentialSnapshotUnavailable as error:
+                    reason = {"reason": "credential_snapshot_unavailable", "detail": str(error),
+                              "next_action": f"Close all {recipe['executable']} instances and rerun."}
+                    provider["unavailable"] = reason
+                    evidence = recipe["id"] + "-credential-snapshot.json"
+                    write_private(run / evidence, json.dumps(reason, indent=2).encode())
+                    provider["scenes"] = [{"scene": scene, "arrival": "unreached", "status": "unknown",
+                                           "effect": "not_tested", "reason": reason["reason"],
+                                           "evidence": evidence} for scene in SCENES]
+                    continue
                 integration = prepare_integration(runtime, recipe, overlay)
                 provider["private_configuration"] = {key: value for key, value in overlay.items()
                                                       if key in ("copies", "provenance")}

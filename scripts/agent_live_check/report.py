@@ -63,6 +63,9 @@ def save(run, report: dict) -> int:
                           row["effect"], row.get("evidence") or row["reason"])) + " |")
         if agent.get("skipped"):
             lines.extend(["", f"{cell(agent['id'])}: {cell(agent['skipped'])}. {cell(agent['login'])}"])
+        if agent.get("unavailable"):
+            reason = agent["unavailable"]
+            lines.extend(["", f"{cell(agent['id'])}: {cell(reason['reason'])}. {cell(reason['next_action'])}"])
     lines.extend(["", "## Configuration and cleanup", "",
                   "```json", json.dumps({key: report[key] for key in
                   ("configuration", "cleanup", "failures", "resources")}, indent=2), "```", "",

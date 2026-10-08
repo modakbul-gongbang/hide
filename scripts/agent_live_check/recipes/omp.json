@@ -108,7 +108,7 @@
       "trust.json"
     ],
     "sessions": "sessions",
-    "provenance": "Installed omp 18.7.0 --help documents PI_CODING_AGENT_DIR and --session-dir; credential DB copy must have empty/absent unchanged WAL."
+    "provenance": "Installed omp 18.7.0 --help documents PI_CODING_AGENT_DIR and --session-dir; DB/WAL/SHM copy requires no observed openers and unchanged size, mtime, identity and bytes."
   },
   "mcp": {
     "format": "mcpServers",

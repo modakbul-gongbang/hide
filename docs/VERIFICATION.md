@@ -265,6 +265,13 @@ Only the test lane's exclusively owned disposable HOME permits attributed restor
 Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.
 The controller generates the marker after the earlier prompt and holds it only in memory; it writes no helper or marker receipt for the agent to read.
 The native sandbox denies other-process argument inspection and private mailbox storage access; its exact candidate capability and claim files remain available for ordinary `hide inbox`.
+Only the run root's own metadata is readable so native settings readers can vet every ancestor of a private probe path.
+The run root's directory listing and controller-file contents remain denied, and the pre-provider self-test checks both denials alongside ancestor metadata access.
+For omp's credential database, the tool queries the system's open-file table and copies the DB, WAL and SHM together only when no opener is observed and every source's identity, size, mtime and bytes remain unchanged.
+It never opens the original through SQLite or checkpoints it; any recovery happens in the private copy.
+An open or changing bundle leaves all omp scenes UNKNOWN without launching omp, prints guidance to close all omp instances and rerun, and lets the other providers continue.
+Alias, integrity and copy-budget failures remain fatal.
+The opener queries and file checks are observations rather than an atomic lock against another process opening the original later.
 The owned pane claims and verifies its exact persistent reference before the native CLI starts, preventing unclaimed-reference expiry during a long scene.
 The Info request used for that claim may return the explicit `renderer_unavailable` refusal in this headless run; the daemon validates the capability first, and the CLI must still complete the claim and leave its claim file.
 Other refusals and missing claim files fail the measurement.

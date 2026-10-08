@@ -70,7 +70,7 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
   A pane that entered `working` was submitted to as well, which is how an answered menu or a custom slash command that starts a turn clears the hold.
   A key after both is an unsent draft, an Esc-restored prompt or a recalled input; a pane held by one stays held until the next real prompt.
 - The pane still hosts the native session the letter was written for, and the agent kind is one the bell targets.
-- For an agent whose session read reports its turns (today Codex), that read, made for Herdr's current state, says nothing waits for the operator (see [A menu Herdr reads as a stop](#a-menu-herdr-reads-as-a-stop)).
+- For Claude Code and Codex, whose session readers report turns, a read made for Herdr's current state says no native question or plan approval waits for the operator (see [A menu Herdr reads as a stop](#a-menu-herdr-reads-as-a-stop)).
 - Herdr does not report the agent as starting or not ready.
   Herdr reports readiness only for an agent it launched itself (`herdr agent start`, which `hide agent spawn` uses): `launch_pending: true` while that start settles or is blocked, then `interactive_ready: true`.
   An agent the operator started by typing its program in a Herdr shell, the usual way a lead is started, carries neither flag; its readiness is unreported, not refused, and the facts above decide it.
@@ -140,11 +140,12 @@ Records the parser does not recognise are not known rather than "nothing waits":
 The rule and its basis (codex-cli 0.160.1) are written beside the Codex parser, and nothing outside it names Codex.
 The answer is kept with the Herdr `state_change_seq` the read was asked under, and it holds for that state only.
 Herdr can read the agent at rest before Codex writes how the turn ended; that state's read then does not settle a plan-mode turn, so the bell holds and the row shows no wait until Herdr's next state is read, because this rule adds no session reads of its own (PRD codex-plan-approval-hold B10).
-While it says a plan waits, the bell holds with `awaiting_operator`.
+The same turn tracker reads Claude Code's native `AskUserQuestion` calls and matching tool-result records.
+When a supported session reader says a native question or plan approval waits, the bell holds with `awaiting_operator`.
 For an agent whose read reports turns, a state that no read has settled holds the bell too, with `session_unread`: a session file not found (Codex is looked up in its seven newest day folders), a failed read, a device helper that predates the field, a read still behind Herdr's newest state, or a daemon that does not hold the label generator lock and so reads nothing.
 That lock is one per Herdr server and taken with `flock` (`herdr-core/src/labels/generator.rs`): the operator's single daemon lacks it only while another hided follows the same Herdr server (a candidate or development daemon pointed at the operator's socket, even with a private HOME), or, after a restart that overlapped the old daemon, until its next attempt, at most thirty seconds after the old one exits; the kernel frees a crashed holder's lock.
 Unknown is never read as "nothing waits".
-An agent whose read reports no turns (Claude Code and every other kind) is belled exactly as before.
+Kinds whose session readers report no turns retain the other delivery guards; this does not enable a new bell target.
 "No, stay in Plan mode" writes nothing to the session (measured with Codex CLI 0.160.1), so the wait, the hold and the row in Needs You last until Codex's next turn starts or a person's message is written.
 The first start of a build with this rule resumes a stored session at its last person's message, after that turn's `task_started`, so a plan already waiting then is not known until Herdr's next state; that start holds the bell rather than ringing it.
 The rule reads the session Herdr reports for the pane, so a pane reported with another session is judged by that session.
