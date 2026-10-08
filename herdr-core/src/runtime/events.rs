@@ -2278,6 +2278,14 @@ impl Runtime {
                 true
             }
             Event::SessionFoldToggle(payload) => {
+                if !self.session_fold_keys().contains(&payload.key) {
+                    self.set_error(
+                        "session_fold.unavailable",
+                        "This project or device is no longer available".to_owned(),
+                        false,
+                    );
+                    return true;
+                }
                 let keys = &mut self.snapshot.ui_state.session_open_folds;
                 if keys.contains(&payload.key) {
                     keys.retain(|key| key != &payload.key);

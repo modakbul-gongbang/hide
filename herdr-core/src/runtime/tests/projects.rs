@@ -2177,11 +2177,11 @@ fn invalid_purpose_fails_the_sheet_operation_with_the_shared_scalar_limit() {
     );
 }
 
-/// B5, B12. The two fold events own independent persisted keys and update
+/// Session B7, B8. The fold events own independent persisted keys and update
 /// the snapshot immediately. Repeating each toggle converges back to the
 /// default collapsed state without changing project disclosure.
 #[test]
-fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
+fn session_fold_events_toggle_project_and_cleanup_state_independently() {
     let mut runtime = runtime();
     let path = "/tmp/hide-runtime-inactive";
     let settled = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
@@ -2192,6 +2192,7 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
         path: checkout_path.to_owned(),
         is_worktree,
         is_primary: !is_worktree,
+        exists: true,
         worktree: Some(crate::model::WorktreeSnapshot {
             merged: Some(true),
             ..Default::default()
@@ -2210,65 +2211,46 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
     )];
     runtime.refresh_inactive_groups();
     assert_eq!(
-        runtime.snapshot.navigator.workspaces[0]
-            .inactive_checkouts
-            .checkout_ids,
+        runtime.snapshot.navigator.workspaces[0].session_folds.empty,
         ["secondary"]
     );
     assert_eq!(runtime.snapshot.navigator.inactive_projects.len(), 1);
 
     let checkout_toggle = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
-        "kind": "inactive_checkouts_toggle",
-        "payload": { "project_path": path }
+        "kind": "session_fold_toggle",
+        "payload": { "key": "workspace-inactive" }
     }))
     .unwrap();
     let project_toggle = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
-        "kind": "inactive_projects_toggle",
-        "payload": { "device_id": crate::node::TEST_NODE }
+        "kind": "session_fold_toggle",
+        "payload": { "key": format!("cleanup/{}", crate::node::TEST_NODE) }
     }))
     .unwrap();
 
     assert!(runtime.dispatch_json(&checkout_toggle));
     assert!(
         runtime.snapshot.navigator.workspaces[0]
-            .inactive_checkouts
-            .expanded
+            .session_folds
+            .empty_open
     );
     assert_eq!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_checkout_project_paths,
-        [path]
+        runtime.snapshot.ui_state.session_open_folds,
+        ["workspace-inactive"]
     );
     assert!(runtime.dispatch_json(&project_toggle));
-    assert!(runtime.snapshot.navigator.inactive_projects[0].expanded);
-    assert_eq!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_project_device_ids,
-        [crate::node::TEST_NODE]
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .session_folds
+            .cleanup_open
     );
+    assert_eq!(runtime.snapshot.ui_state.session_open_folds.len(), 2);
 
     assert!(runtime.dispatch_json(&checkout_toggle));
     assert!(runtime.dispatch_json(&project_toggle));
-    assert!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_checkout_project_paths
-            .is_empty()
-    );
-    assert!(
-        runtime
-            .snapshot
-            .ui_state
-            .expanded_inactive_project_device_ids
-            .is_empty()
-    );
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
+    assert!(runtime.snapshot.ui_state.session_open_folds.is_empty());
 }
 
 #[test]

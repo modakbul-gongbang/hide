@@ -383,6 +383,7 @@ mod tests {
             agent_scope: Default::default(),
             id: id.to_owned(),
             is_primary: true,
+            exists: true,
             worktree: last_commit_unix_seconds.map(|seconds| WorktreeSnapshot {
                 last_commit_unix_seconds: Some(seconds),
                 ..Default::default()
@@ -467,6 +468,7 @@ mod tests {
             label: id.to_owned(),
             path: format!("/fixture/{workspace_id}/{id}"),
             is_worktree: true,
+            exists: true,
             worktree: Some(WorktreeSnapshot {
                 last_commit_unix_seconds,
                 ..Default::default()
@@ -578,12 +580,10 @@ mod tests {
         assert_eq!(projects[0].last_activity_unix_ms, Some(3_000_000));
     }
 
-    /// B2, B6, B9, B16. Landed work, settled PR, and the seven-day boundary
-    /// decide membership. The primary stays outside its project's checkout
-    /// fold, a checkout with no known activity is not guessed stale, and one
-    /// Git reads as merged only because it has no commits of its own stays.
+    /// Session B7. Agentless worktrees enter their own fold before the
+    /// legacy inactivity fold, irrespective of commit age or PR state.
     #[test]
-    fn inactive_checkouts_cover_settled_stale_boundary_primary_and_unknown_activity() {
+    fn agentless_worktrees_fold_before_legacy_inactivity_regardless_of_age() {
         let now_ms = 20 * 24 * 60 * 60 * 1_000;
         let old_seconds = (now_ms - (7 * 24 + 1) * 60 * 60 * 1_000) / 1_000;
         let recent_seconds = (now_ms - (6 * 24 + 23) * 60 * 60 * 1_000) / 1_000;
@@ -613,8 +613,15 @@ mod tests {
         ));
 
         assert_eq!(
-            navigator.workspaces[0].inactive_checkouts.checkout_ids,
-            ["merged", "stale", "closed"]
+            navigator.workspaces[0].session_folds.empty,
+            [
+                "merged",
+                "untouched",
+                "stale",
+                "recent",
+                "unknown",
+                "closed"
+            ]
         );
         assert!(
             !navigator.workspaces[0]
@@ -660,7 +667,7 @@ mod tests {
     /// B3, B7. Every live-work exception wins over a settled branch, including
     /// the operator's current selection.
     #[test]
-    fn live_work_and_focus_exceptions_stay_visible() {
+    fn dirty_unpushed_and_focused_checkouts_stay_out_of_the_agentless_fold() {
         let now_ms = 20 * 24 * 60 * 60 * 1_000;
         let mut project = project("alpha", "local", None, &[]);
         let ids = [
@@ -679,6 +686,8 @@ mod tests {
         }
         project.checkouts[1].agent_summary.working = 1;
         project.checkouts[2].agent_summary.needs_you = 1;
+        project.checkouts[1].tabs = checkout("working", None, &["working-pane"]).tabs;
+        project.checkouts[2].tabs = checkout("needs-you", None, &["blocked-pane"]).tabs;
         project.checkouts[3].dirty = true;
         project.checkouts[4].unpushed = Some(UnpushedSnapshot {
             remote: "origin".to_owned(),
@@ -686,13 +695,14 @@ mod tests {
         });
         let mut navigator = navigator(vec![project]);
         navigator.focused_checkout_id = Some("focused".to_owned());
+        navigator.agents = agents(json!([
+            {"pane_id": "working-pane", "agent_status": "working", "state_change_seq": 1},
+            {"pane_id": "blocked-pane", "agent_status": "blocked", "state_change_seq": 1}
+        ]));
 
         refresh_inactive_groups(&mut navigator, &UiStateSnapshot::default(), now_ms);
 
-        assert_eq!(
-            navigator.workspaces[0].inactive_checkouts.checkout_ids,
-            ["control"]
-        );
+        assert_eq!(navigator.workspaces[0].session_folds.empty, ["control"]);
     }
 
     /// B11, B12, B16. A primary can make its whole project inactive even
@@ -814,10 +824,7 @@ mod tests {
 
         assert_eq!(navigator.inactive_projects.len(), 1);
         assert_eq!(navigator.inactive_projects[0].project_ids, ["folded"]);
-        assert_eq!(
-            navigator.workspaces[0].inactive_checkouts.checkout_ids,
-            ["old-topic"]
-        );
+        assert_eq!(navigator.workspaces[0].session_folds.empty, ["old-topic"]);
     }
 
     /// B2. A pane's agent moving is enough to raise its project, and the move

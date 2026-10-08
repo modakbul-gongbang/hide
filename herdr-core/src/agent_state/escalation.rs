@@ -139,6 +139,109 @@ mod tests {
         row
     }
 
+    fn actor(pane: &str) -> Actor {
+        Actor {
+            pane_id: pane.into(),
+            name: pane.into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: Some(format!("{pane}-session")),
+        }
+    }
+
+    #[test]
+    fn session_escalation_clears_on_ack_reply_cancel_or_successful_bell() {
+        let child = child();
+        for hold in [Hold::Blocked, Hold::Draft, Hold::Exhausted] {
+            let mut ledger = Ledger::default();
+            mailbox::send(
+                &mut ledger,
+                &actor("child"),
+                &actor("parent"),
+                "request",
+                "question",
+                "request",
+                None,
+                100,
+            )
+            .unwrap();
+            let id = ledger.letters[0].id.clone();
+            let holds = BTreeMap::from([(id.clone(), hold)]);
+            assert!(of(&child, Some(&ledger), &holds).is_some());
+            assert!(
+                of(&child, Some(&ledger), &BTreeMap::new()).is_none(),
+                "a successful bell clears the hold"
+            );
+            for state in [State::Acknowledged, State::Cancelled, State::Expired] {
+                ledger.letters[0].state = state;
+                assert!(of(&child, Some(&ledger), &holds).is_none());
+            }
+            ledger.letters[0].state = State::Pending;
+            mailbox::send(
+                &mut ledger,
+                &actor("parent"),
+                &actor("child"),
+                "reply",
+                "answer",
+                "reply",
+                Some(id),
+                200,
+            )
+            .unwrap();
+            assert!(
+                of(&child, Some(&ledger), &holds).is_none(),
+                "a causal parent answer clears the request"
+            );
+        }
+    }
+
+    #[test]
+    fn session_watch_escalates_only_the_unanswered_human_notified_current_episode() {
+        let child = child();
+        let mut ledger = Ledger::default();
+        crate::delivery::watch::start(&mut ledger, &actor("parent"), &actor("child"), 100).unwrap();
+        mailbox::send(
+            &mut ledger,
+            &actor("observer"),
+            &actor("parent"),
+            "warning",
+            "warning",
+            "request",
+            None,
+            200,
+        )
+        .unwrap();
+        ledger.letters[0].watch_warning = Some(crate::delivery::watch::WarningReceipt {
+            target: actor("child"),
+            activity_at_unix_ms: 100,
+            ordinal: 1,
+            parent_notified: false,
+        });
+        assert!(of(&child, Some(&ledger), &BTreeMap::new()).is_none());
+        ledger.letters[0]
+            .watch_warning
+            .as_mut()
+            .unwrap()
+            .parent_notified = true;
+        let raised = of(&child, Some(&ledger), &BTreeMap::new()).unwrap();
+        assert_eq!(raised.cause, Cause::ObserverUnconfirmed);
+        assert!(
+            raised.human_notice,
+            "the existing watch notice owns the push"
+        );
+        ledger.watches[0].last_activity_at_unix_ms = 300;
+        assert!(
+            of(&child, Some(&ledger), &BTreeMap::new()).is_none(),
+            "new activity ends the episode"
+        );
+        ledger.watches[0].last_activity_at_unix_ms = 100;
+        ledger.watches.clear();
+        assert!(
+            of(&child, Some(&ledger), &BTreeMap::new()).is_none(),
+            "cancelling the watch clears the raise"
+        );
+    }
+
     #[test]
     fn session_child_escalates_only_for_a_current_parent_hold_or_undelivered_letter() {
         let mut child = child();

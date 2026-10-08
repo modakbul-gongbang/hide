@@ -4,6 +4,29 @@ use super::*;
 use crate::agent_state::{escalation, sessions};
 
 impl Runtime {
+    pub(super) fn session_fold_keys(&self) -> HashSet<String> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.workspaces),
+            )
+            .map(|workspace| workspace.id.clone())
+            .chain(
+                self.snapshot
+                    .navigator
+                    .devices
+                    .iter()
+                    .map(|device| format!("cleanup/{}", device.id)),
+            )
+            .collect()
+    }
     /// Uses the existing runtime clock; idle ticks compare one deadline.
     pub(super) fn tick_session_day(&mut self, at: u64) -> bool {
         if at < self.session_next_day_unix_ms {
@@ -31,7 +54,7 @@ impl Runtime {
             return false;
         };
         self.session_next_day_unix_ms = next;
-        self.project_session_state() | self.refresh_agent_scopes()
+        self.project_session_state_at(at) | self.refresh_agent_scopes()
     }
     fn session_date(&self, at: u64) -> Option<String> {
         let zone = self.session_day_zone.as_ref().ok()?;
@@ -200,7 +223,11 @@ impl Runtime {
     }
 
     fn project_session_state(&mut self) -> bool {
-        let today = self.session_date(unix_milliseconds());
+        self.project_session_state_at(unix_milliseconds())
+    }
+
+    fn project_session_state_at(&mut self, at: u64) -> bool {
+        let today = self.session_date(at);
         let mut rows = self.session_rows().cloned().collect::<Vec<_>>();
         let mut invalid = Vec::new();
         for row in &mut rows {

@@ -1297,7 +1297,7 @@ fn a_descendants_demand_or_completion_turns_every_ancestor_unread_and_nothing_el
 // stays Working on its own account; a quiet root with a busy child is waiting
 // on it and also stays Working (sidebar-agent-status D-01).
 #[test]
-fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_you() {
+fn a_blocked_child_raises_its_own_turn_while_its_parent_keeps_its_own_group() {
     let mut runtime = runtime();
     ingest_lineage(
         &mut runtime,
@@ -1325,14 +1325,10 @@ fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_y
         ),
         (1, 1)
     );
-    assert!(
-        runtime
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .all(|row| row.group != "needs_you")
-    );
+    // Session-first-ui D33(5)/B28: the child, rather than the root, is raised.
+    assert_eq!(agent_row(&runtime, "w1:p3").group, "needs_you");
+    assert_eq!(agent_row(&runtime, "w1:p2").group, "seen");
+    assert_eq!(root.raised_children[0].pane_id, "w1:p3");
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 
@@ -1529,7 +1525,7 @@ fn the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_o
 // PRD B1, D-03: no clock, no notice, no escalated ownership. The wire says
 // nothing about a stall and a row's ownership is operator or delegated.
 #[test]
-fn the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated() {
+fn escalation_is_explicit_while_ownership_remains_operator_or_delegated() {
     let mut runtime = runtime();
     ingest_lineage(
         &mut runtime,
@@ -1542,7 +1538,7 @@ fn the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated()
     let bytes = crate::runtime::serialize_snapshot_delta(&payload).expect("snapshot encodes");
     let text = String::from_utf8(bytes).unwrap();
     assert!(!text.contains("stall_"), "no stall field reaches the shell");
-    assert!(!text.contains("escalat"));
+    assert!(text.contains("\"cause\":\"child_blocked\""));
     for row in &runtime.snapshot.navigator.agents {
         assert!(matches!(
             crate::agent_state::ownership_of(row),

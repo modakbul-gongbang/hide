@@ -733,9 +733,9 @@ pub mod push {
         pub place: String,
     }
 
-    /// Each root agent's effective state: its own group, raised to Needs You
-    /// when a descendant asks for something (delegated rows stay Working or
-    /// Seen themselves, docs/status-model.md), plus what its notification says.
+    /// Root rows and escalated children use their core group. Ordinary child
+    /// questions stay with their parent. Existing human delivery notices own
+    /// undelivered-letter and unconfirmed-watch notifications.
     fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
         let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
         for agent in projection.agents() {
