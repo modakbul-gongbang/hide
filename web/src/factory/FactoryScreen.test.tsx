@@ -12,6 +12,7 @@ import { createActions } from "../actions";
 import { english } from "../i18n/catalogs";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { useShellStore } from "../store";
+import type { SnapshotRest } from "../snapshot";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace } from "../ui";
 import type { DispatchFn } from "../ws";
 import { InitFailure } from "./CreateSheet";
@@ -22,14 +23,14 @@ import type { CardView, FactorySummary, FactoryView, InboxItem, TaskDetail, Task
 const NOW = Date.now();
 
 function card(task: string, state: TaskState, patch: Partial<CardView> = {}): CardView {
-  return { task, display_id: task, column: null, title: `${task} 제목`, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch };
+  return { task, display_id: task, column: null, title: `${task} 제목`, summary: "작업 요약", issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 1, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch };
 }
 
 function factory(patch: Partial<FactoryView> = {}): FactoryView {
   return {
     id: "f1", project: "/fixture", project_name: "fixture", source: "github", verification: "ci", closed: false,
-    flow: { drafting: 0, waiting: 0, running: 1, done_today: 0 }, my_turn: 1,
-    columns: [{ column: "running", label: "running", cards: [card("T-1", "running", { column: "running" })] }],
+    flow: { before: 0, stuck: 0, moving: 1, done_today: 0 }, my_turn: 1,
+    columns: [{ column: "moving", label: "running", cards: [card("T-1", "running", { column: "moving" })] }],
     cancelled: [], graph: { nodes: ["T-1"], edges: [], unrelated: ["T-1"] }, dependencies: [],
     outside_read_at: NOW - 600_000, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "manual", ...patch,
   };
@@ -133,7 +134,7 @@ async function answerConfig(summary: FactorySummary, events: Parameters<Dispatch
 }
 
 it("keeps Close disabled while the Running column holds a Task in any of its states, as the engine refuses then (B22)", async () => {
-  const waiting = factory({ columns: [{ column: "running", label: "running", cards: [card("T-1", "merge_waiting", { column: "running" })] }] });
+  const waiting = factory({ columns: [{ column: "moving", label: "running", cards: [card("T-1", "merge_waiting", { column: "moving" })] }] });
   const summary = { my_turn: 0, factories: [waiting], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
@@ -364,7 +365,7 @@ it("shows a done Task's criteria met, names what the verification count counts, 
 it("keeps the graph in columns and logs why when the layout worker cannot start (D-08)", async () => {
   // jsdom has no Worker, so the layered layout refuses the way a failed worker does.
   const graphed = factory({
-    columns: [{ column: "waiting", label: "waiting", cards: [card("T-1", "waiting", { column: "waiting" }), card("T-2", "waiting", { column: "waiting" })] }],
+    columns: [{ column: "before", label: "waiting", cards: [card("T-1", "waiting", { column: "before" }), card("T-2", "waiting", { column: "before" })] }],
     graph: { nodes: ["T-1", "T-2"], edges: [["T-1", "T-2"]], unrelated: [] },
     dependencies: [["T-1", "T-2"]],
   });
@@ -377,4 +378,63 @@ it("keeps the graph in columns and logs why when the layout worker cannot start 
   });
   expect(container.querySelector("[data-dependency-graph]")!.getAttribute("data-dependency-layout")).toBe("columns");
   expect(container.querySelectorAll("[data-dependency-layer]")).toHaveLength(2);
+});
+
+// These fail if a card sends another command, navigates on an action, or forgets its taken request.
+it.each([
+  ["blocked", { ...MERGE, group: "answer", kind: "blocking", question: "q1", suggestion: "WS", choices: ["REST"], text: "Which endpoint?" }, { verb: "answer", task: "f1/T-1", question: "q1", choice: "suggestion", text: null }],
+  ["merge_waiting", MERGE, { verb: "merge", task: "f1/T-1" }],
+  ["stopped", { ...MERGE, group: "stopped", kind: "stopped", suggestion: "retry", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
+  ["stopped", { ...MERGE, group: "stopped", kind: "action", question: "q1", suggestion: "retry", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
+  ["stopped", { ...MERGE, group: "answer", kind: "new_task_cap", question: "q1", suggestion: "raise cap", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
+] as const)("sends the %s card's canonical command once, preserves a refusal and allows retry", async (state, item, expected) => {
+  const task = card("T-1", state, { column: "stuck", waiting_group: "person", needs_person: true, stop: state === "stopped" ? "verify_failed" : null });
+  const summary = { my_turn: 1, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [{ ...item, choices: [...item.choices], gates: [...item.gates], unblocks: [...item.unblocks] } as InboxItem] };
+  if (state === "merge_waiting" || item.kind === "stopped") summary.inbox.unshift({ ...MERGE, kind: "action", question: "older-question", suggestion: "approve", gates: [] });
+  const { container, events } = await mount(summary, { tab: "board" });
+  const send = container.querySelector<HTMLButtonElement>("[data-factory-card-send]")!;
+  expect(send).not.toBeNull();
+  await act(async () => send.click());
+  expect((events.at(-1)!.payload as { command: unknown }).command).toEqual(expected);
+  expect(useUiStore.getState().screen).toMatchObject({ place: { task: null } });
+  expect(send.disabled).toBe(true);
+  const sent = events.at(-1)!;
+  await act(async () => send.click());
+  expect(events.at(-1)).toBe(sent);
+  const request = sent.payload as { request_id: string };
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: request.request_id, answer: { ok: false, reason: "action_not_allowed_in_state", next_action: "Read current task" } }] } }));
+  expect(container.querySelector("[data-factory-refused]")).not.toBeNull();
+  expect(send.disabled).toBe(false);
+  await act(async () => send.click());
+  const retry = events.at(-1)!.payload as { request_id: string };
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: retry.request_id, answer: { ok: true } }] } }));
+  expect(send.disabled).toBe(true);
+});
+
+it("opens the corresponding inbox item for another answer and keeps issue/PR controls separate from card navigation", async () => {
+  const task = card("T-1", "blocked", { column: "stuck", waiting_group: "person", needs_person: true, issue: "#12", issue_url: "https://example.invalid/issues/12", pr: { number: 34, url: "https://example.invalid/pull/34", head: "change", by_factory: true, open: true } });
+  const item: InboxItem = { ...MERGE, group: "answer", kind: "blocking", question: "q1", suggestion: "WS", choices: ["REST"] };
+  const { container } = await mount({ my_turn: 1, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [item] }, { tab: "board" });
+  expect(container.querySelector("[data-factory-card] a")!.getAttribute("href")).toBe(task.issue_url);
+  expect(container.querySelectorAll("button button").length).toBe(0);
+  const other = [...container.querySelectorAll<HTMLButtonElement>("[data-factory-card] button")].find((button) => button.textContent === english["factory.card.otherAnswer"])!;
+  await act(async () => other.click());
+  expect(container.querySelector("[data-factory-item-open='true']")!.getAttribute("data-factory-item")).toBe("f1/T-1/q1");
+  expect(useUiStore.getState().screen).toMatchObject({ place: { tab: "turn", task: null } });
+});
+
+it("opens a local issue through its catalog identity without opening the Factory task", async () => {
+  const rest = { navigator: { focused_device_id: "remote", devices: [{ id: "remote", kind: "remote" }, { id: "local", kind: "local" }], workspaces: [
+    { id: "remote-project", path: "/fixture", device_id: "remote", tasks: { tasks: [{ id: "L-7", key: "remote:/fixture#7", source: "local" }] } },
+    { id: "project", path: "/fixture", device_id: "local", tasks: { tasks: [{ id: "L-7", key: "local:/fixture#7", source: "local" }] } },
+  ] } } as unknown as SnapshotRest;
+  useShellStore.setState({ rest });
+  const task = card("T-1", "running", { issue: "L-7" });
+  const { container } = await mount({ my_turn: 0, factories: [factory({ columns: [{ column: "moving", label: "", cards: [task] }] })], inbox: [] }, { tab: "board" });
+  useUiStore.setState({ overviewProjectId: "project" });
+  const issue = [...container.querySelectorAll<HTMLButtonElement>("[data-factory-card] button")].find((button) => button.textContent === "L-7")!;
+  await act(async () => issue.click());
+  expect(useUiStore.getState().overviewLens.panel).toBe("local:/fixture#7");
+  expect(useUiStore.getState().screen).toMatchObject({ kind: "main", deviceId: "local" });
+  useShellStore.setState({ rest: null });
 });

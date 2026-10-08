@@ -8,7 +8,7 @@ import codexMark from "./assets/agent-codex.png";
 // A vendor's mark is bundled in the format it publishes: SVG, or PNG where no SVG exists.
 const bundled = import.meta.glob<string>("./assets/agents/*.{svg,png}", { eager: true, query: "?url", import: "default" });
 
-const LOGOS: Record<string, string> = { "claude-code": claudeMark, codex: codexMark };
+const LOGOS: Record<string, string> = { "claude-code": claudeMark, claude: claudeMark, codex: codexMark };
 for (const [path, url] of Object.entries(bundled)) {
   const id = /\/([^/]+)\.(?:svg|png)$/.exec(path)?.[1];
   if (id) LOGOS[id] = url;

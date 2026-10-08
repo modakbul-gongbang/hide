@@ -891,9 +891,9 @@ fn factory_workers_leave_requests_and_overview_count_without_leaving_physical_li
     let summary = serde_json::from_value(serde_json::json!({
         "my_turn": 1, "inbox": [], "factories": [{
             "id": "f-1", "project": "/fixture", "project_name": "Fixture", "source": "local", "verification": "none", "closed": false,
-            "flow": {"drafting": 0, "waiting": 0, "running": 1, "done_today": 0}, "my_turn": 1,
-            "columns": [{"column": "running", "label": "", "cards": [{
-                "task": "T-1", "display_id": "T-1", "column": "running", "title": "Fixture", "state": "running", "state_label": "", "needs_person": true,
+            "flow": {"before": 0, "moving": 1, "stuck": 0, "done_today": 0}, "my_turn": 1,
+            "columns": [{"column": "moving", "label": "", "cards": [{
+                "task": "T-1", "display_id": "T-1", "column": "moving", "title": "Fixture", "summary": "Fixture", "stage": 1, "state": "running", "state_label": "", "needs_person": true,
                 "waiting_on": [], "priority": 0, "since": 0, "unread": false, "folded": false, "archived": false, "failures": 0, "external": [], "worker_pane": "root"
             }]}], "cancelled": [], "graph": {"nodes": [], "edges": [], "unrelated": []}, "dependencies": [],
             "stale": false, "main_broken": false, "auto_merge_available": false, "merge_mode": "manual"

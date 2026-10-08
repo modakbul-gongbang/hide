@@ -6,7 +6,7 @@
 // that command is a Node script, not a Playwright spec.
 
 /** The boxes whose direct children share one line: a part of one must not overlap another or pass the box's edge. */
-const LINES = "[data-factory-header], [data-factory-flow], [data-factory-tabs], [data-factory-item-open='false'], [data-factory-card], [data-factory-chain-card]";
+const LINES = "[data-factory-header], [data-factory-flow], [data-factory-tabs], [data-factory-item-open='false'], [data-factory-card-top], [data-factory-card-title-line], [data-factory-chain-card]";
 
 /** Parts of one line that overlap each other or run past the line's right edge. */
 async function partProblems(page) {

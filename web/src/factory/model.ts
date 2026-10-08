@@ -11,7 +11,7 @@ export const TASK_STATES = ["drafting", "waiting", "running", "paused", "blocked
 export type TaskState = (typeof TASK_STATES)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_column`. */
-export const COLUMNS = ["drafting", "waiting", "running", "done"] as const;
+export const COLUMNS = ["before", "moving", "stuck", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_question_kind`. */
@@ -65,7 +65,7 @@ export type FactorySummary = {
   inbox: InboxItem[];
 };
 
-export type Flow = { drafting: number; waiting: number; running: number; done_today: number };
+export type Flow = { before: number; moving: number; stuck: number; done_today: number };
 
 export type FactoryView = {
   id: string;
@@ -98,6 +98,14 @@ export type CardView = {
   display_id: string;
   column: Column | null;
   title: string;
+  summary: string;
+  issue: string | null;
+  issue_url: string | null;
+  pr: PullRequest | null;
+  worker_runtime: string | null;
+  resume_at: UnixMs | null;
+  waiting_group: "person" | "other" | null;
+  stage: number;
   state: TaskState;
   state_label: string;
   needs_person: boolean;
