@@ -479,28 +479,14 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
+    /// The ledger store with its doorbell and watch producers, as the core
+    /// runs it.
     pub(crate) fn spawn(
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
         path: PathBuf,
     ) -> Result<(Self, Client), String> {
-        let (requests, receiver) = mpsc::sync_channel(QUEUE_LIMIT);
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopped = Arc::clone(&stop);
-        let store_runtime = runtime.clone();
-        let thread = thread::Builder::new()
-            .name("hide-delivery-store".into())
-            .spawn(move || run(store_runtime, notifier, path, receiver, stopped))
-            .map_err(|_| "delivery_unavailable".to_owned())?;
-        let client = Client {
-            requests,
-            runtime: runtime.clone(),
-        };
-        let mut worker = Self {
-            stop,
-            thread: Some(thread),
-            producers: Vec::new(),
-        };
+        let (mut worker, client) = Self::store(runtime.clone(), notifier, path)?;
         let bell_runtime = runtime.clone();
         let bell_client = client.clone();
         let bell_stop = Arc::clone(&worker.stop);
@@ -517,6 +503,31 @@ impl Worker {
             .spawn(move || watch_loop(watch_runtime, watch_client, watch_stop))
             .map_err(|_| "delivery_unavailable".to_owned())?;
         worker.producers.push(producer);
+        Ok((worker, client))
+    }
+
+    /// The ledger store alone. A caller that drives the doorbell passes
+    /// itself needs it without the timed producers, whose real-clock passes
+    /// would race its own.
+    pub(crate) fn store(
+        runtime: Weak<Mutex<Runtime>>,
+        notifier: ChangeNotifier,
+        path: PathBuf,
+    ) -> Result<(Self, Client), String> {
+        let (requests, receiver) = mpsc::sync_channel(QUEUE_LIMIT);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let store_runtime = runtime.clone();
+        let thread = thread::Builder::new()
+            .name("hide-delivery-store".into())
+            .spawn(move || run(store_runtime, notifier, path, receiver, stopped))
+            .map_err(|_| "delivery_unavailable".to_owned())?;
+        let client = Client { requests, runtime };
+        let worker = Self {
+            stop,
+            thread: Some(thread),
+            producers: Vec::new(),
+        };
         Ok((worker, client))
     }
 }
