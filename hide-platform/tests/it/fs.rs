@@ -26,12 +26,6 @@ use hide_platform::fs::space;
 const ROLE: &str = "HIDE_PLATFORM_FS_ROLE";
 const HELD: &str = "HIDE_PLATFORM_FS_HELD";
 
-/// How long a lock taken again after its holder was dropped may wait. Tests
-/// in this file run on threads of one process and some start children; a
-/// child started while a lock is held keeps a copy of its descriptor until it
-/// starts its program, and the lock is free only once that copy is closed.
-const RELEASED_WITHIN: Duration = Duration::from_secs(10);
-
 fn folder() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
@@ -524,7 +518,7 @@ fn an_exclusive_lock_on_a_folder_keeps_every_other_lock_out_until_it_is_dropped(
         ));
     }
     drop(held);
-    locked(lock::lock_dir(&second, Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
+    locked(lock::lock_dir(&second, Mode::Exclusive, Duration::ZERO, &never).unwrap());
 }
 
 #[test]
@@ -542,7 +536,7 @@ fn shared_locks_on_a_folder_admit_each_other_and_keep_an_exclusive_one_out() {
         Waited::TimedOut
     ));
     drop((first, second));
-    locked(lock::lock_dir(&three, Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
+    locked(lock::lock_dir(&three, Mode::Exclusive, Duration::ZERO, &never).unwrap());
 }
 
 #[test]
@@ -563,7 +557,59 @@ fn a_lock_on_a_file_is_taken_through_the_file_that_stays_open() {
         Waited::TimedOut
     ));
     drop(held);
-    locked(lock::lock_file(open(), Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
+    locked(lock::lock_file(open(), Mode::Exclusive, Duration::ZERO, &never).unwrap());
+}
+
+/// A child another thread starts while the lock is held has a copy of its
+/// descriptor until it starts its program. Here the child stops in that
+/// moment, after the fork and before its program, until the test lets it go;
+/// the lock dropped meanwhile is free at once to a single try (issue 820).
+#[cfg(unix)]
+#[test]
+fn a_dropped_lock_is_free_while_a_child_started_meanwhile_still_holds_its_descriptor() {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+
+    let outer = folder();
+    let path = outer.path().join(".lock");
+    let open = || {
+        fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .unwrap()
+    };
+    let held = locked(lock::lock_file(open(), Mode::Exclusive, Duration::ZERO, &never).unwrap());
+    let (mut forked, forked_writer) = std::io::pipe().unwrap();
+    let (go_reader, mut go) = std::io::pipe().unwrap();
+    let (forked_fd, go_fd) = (forked_writer.as_raw_fd(), go_reader.as_raw_fd());
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "exit 0"]);
+    // SAFETY: the closure runs in the forked child before its program and
+    // calls only `write` and `read`, which are async-signal-safe.
+    unsafe {
+        command.pre_exec(move || {
+            let mut byte = [1u8];
+            libc::write(forked_fd, byte.as_ptr().cast(), 1);
+            libc::read(go_fd, byte.as_mut_ptr().cast(), 1);
+            Ok(())
+        });
+    }
+    let _ends = (forked_writer, go_reader);
+    thread::scope(|scope| {
+        // `spawn` returns only once the child has started its program, so it
+        // runs on a thread of its own, as a concurrent start does.
+        let starter = scope.spawn(move || command.spawn().unwrap());
+        let mut byte = [0u8];
+        forked.read_exact(&mut byte).unwrap();
+        drop(held);
+        let free = lock::lock_file(open(), Mode::Exclusive, Duration::ZERO, &never).unwrap();
+        go.write_all(&[1]).unwrap();
+        starter.join().unwrap().wait().unwrap();
+        locked(free);
+    });
 }
 
 /// A wait asks `cancelled` after every try that found the lock held, so its

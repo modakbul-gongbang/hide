@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, BanIcon, CircleCheckIcon, CircleIcon, ExternalLinkIcon, GitPullRequestIcon, ListChecksIcon, MessageSquareIcon, PaperclipIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, BanIcon, CircleAlertIcon, CircleCheckIcon, CircleIcon, CirclePauseIcon, ExternalLinkIcon, GitPullRequestIcon, ListChecksIcon, MessageSquareIcon, PaperclipIcon, SparklesIcon, SquareTerminalIcon, UserIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed, useRemaining } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { agentAdapter } from "../agentAdapters";
 import { Hint } from "../components/ui/tooltip";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
@@ -11,8 +13,8 @@ import { useUiStore, type FactoryPlace } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
 import { StateMark, stateIcon } from "./FactoryCard";
 import { useTaskDetail } from "./FactoryScreen";
-import { ACTION_LABEL, GATE_LABEL, OUTCOME_LABEL, STAGE_LABEL, STOP_LABEL, TONE_TEXT, stateTone } from "./labels";
-import type { AttemptView, CardView, FactorySummary, FactoryView, Question, TaskDetail } from "./model";
+import { actionKey, DECISION_KIND_LABEL, DIAGNOSIS_SOURCE_LABEL, GATE_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, STAGE_LABEL, STOP_LABEL, TONE_TEXT, stateTone } from "./labels";
+import type { AttemptView, CardView, DecisionRecord, FactorySummary, FactoryView, Question, TaskDetail, WorkerCandidate } from "./model";
 import { Refusal } from "./MyTurn";
 import { Revive } from "./FactoryBoard";
 import { useFactoryRequest, type FactoryRequest } from "./request";
@@ -79,7 +81,6 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
           <span className="flex items-center gap-xs rounded-full bg-muted px-sm py-xxs">
             <StateMark card={card} />
           </span>
-          {detail.stop_code ? <span className="text-caption text-warning" data-factory-stop={detail.stop_code}>{t(STOP_LABEL[detail.stop_code])}</span> : null}
           <span className="flex-1" />
           <PageActions detail={detail} task={task} send={send} sending={request.state.phase === "sending"} form={form} actions={actions} />
         </div>
@@ -94,6 +95,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
             </>
           ) : null}
         </span>
+        <StopLine detail={detail} />
         <Refusal state={request.state} />
         <Refusal state={form.state} />
         {card.state === "cancelled" || card.state === "outside" ? <Revive factory={factory.id} card={card} actions={actions} /> : null}
@@ -160,7 +162,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
         </div>
         <div className="flex min-w-0 flex-col gap-lg">
           <Progress factory={factory} detail={detail} actions={actions} />
-          <Decisions detail={detail} />
+          <Decisions detail={detail} factory={factory} actions={actions} />
         </div>
       </div>
     </div>
@@ -271,7 +273,7 @@ function PageActions({ detail, task, send, sending, form, actions }: { detail: T
   if (allowed.length === 0) return null;
   const button = (action: (typeof PAGE_ACTIONS)[number], onClick: () => void, variant: "default" | "secondary" | "ghost" = "secondary") => (
     <Button key={action} variant={variant} size="sm" disabled={sending} data-factory-action={action} onClick={onClick}>
-      {t(ACTION_LABEL[action]!)}
+      {t(actionKey(action, detail.card.state === "paused"))}
     </Button>
   );
   return (
@@ -345,7 +347,13 @@ function Progress({ factory, detail, actions }: { factory: FactoryView; detail: 
           <span className="flex min-w-0 items-center gap-xs">
             <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate">{detail.worker_name ?? t("factory.task.worker")}</span>
-            {detail.worktree ? <span className="min-w-0 truncate font-mono text-caption text-muted-foreground">{detail.worktree.split("/").pop()}</span> : null}
+            {detail.worker ? (
+              <span className="min-w-0 truncate text-caption text-muted-foreground" data-factory-worker-line="true">
+                {candidateText({ agent: detail.worker.agent, model: detail.worker.model, effort: detail.worker.effort, description: "" }, t("factory.settings.cliDefault"))}
+              </span>
+            ) : detail.worktree ? (
+              <span className="min-w-0 truncate font-mono text-caption text-muted-foreground">{detail.worktree.split("/").pop()}</span>
+            ) : null}
             <span className="flex-1" />
             {card.worker_pane ? (
               <Button variant="outline" size="sm" data-factory-worker={card.worker_pane} onClick={() => actions.openAgent(card.worker_pane!)}>
@@ -354,6 +362,9 @@ function Progress({ factory, detail, actions }: { factory: FactoryView; detail: 
             ) : null}
           </span>
         ) : null}
+        {detail.worker === null && !["done", "landed", "cancelled", "outside"].includes(card.state) && factory.workers.length > 1 ? <WorkerPick factory={factory} detail={detail} actions={actions} /> : null}
+        {detail.worker?.picked ? <PickedLine description={detail.worker.picked} reason={detail.worker.pick_reason} /> : null}
+        <RestLine detail={detail} />
         {detail.attempts.map((attempt) => (
           <Attempt key={`${attempt.stage}:${attempt.number}`} attempt={attempt} actions={actions} />
         ))}
@@ -413,23 +424,171 @@ function ShortenedText({ text, className }: { text: string; className?: string }
   );
 }
 
-function Decisions({ detail }: { detail: TaskDetail }) {
+/** Who made a decision, as the record names them: Factory AI, a worker, the engine, or a person's pane. */
+function DecisionBy({ by }: { by: string }) {
+  const { t } = useInterfaceTranslation();
+  const [Icon, words] = by === "observer" ? [SparklesIcon, t("factory.task.by.observer")] : by.startsWith("worker") ? [SquareTerminalIcon, t("factory.task.by.worker")] : by === "engine" ? [ListChecksIcon, t("factory.task.by.engine")] : [UserIcon, t("factory.task.by.person")];
+  return (
+    <span className="flex w-[calc(var(--size-control-lg)*3)] shrink-0 items-center gap-xxs text-caption text-muted-foreground" data-factory-decision-by={by === "observer" || by === "engine" ? by : by.startsWith("worker") ? "worker" : "person"}>
+      <Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+      {words}
+    </span>
+  );
+}
+
+/**
+ * The decision record (B37): who decided, what, and when, newest first; a
+ * decision Factory AI made can be answered differently while the Task is not
+ * finished (D-19), which records the change as its own decision.
+ */
+function Decisions({ detail, factory, actions }: { detail: TaskDetail; factory: FactoryView; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   if (detail.decisions.length === 0) return null;
+  const finished = ["done", "landed", "cancelled", "outside"].includes(detail.card.state);
+  // The question Factory AI answered with a decision: stamped in the same step.
+  const answered = (decision: DecisionRecord) => (decision.by === "observer" && !finished ? (detail.questions.find((question) => question.answer?.relayed_by === "observer" && question.answer.at === decision.at && !question.routing?.overridden) ?? null) : null);
   return (
     <Field title={t("factory.task.decisions")}>
       <ol className="flex flex-col gap-sm" data-factory-decisions={detail.decisions.length}>
         {[...detail.decisions].reverse().map((decision, at) => (
-          <li key={`${decision.at}:${at}`} className="flex min-w-0 items-start gap-sm text-body">
-            <ShortenedText text={decision.text} className="min-w-0 flex-1 [overflow-wrap:anywhere]" />
-            <span className="flex shrink-0 gap-xxs text-caption text-muted-foreground">
-              {decision.by}
-              <span>·</span>
-              <Elapsed since={decision.at} />
-            </span>
-          </li>
+          <DecisionRow key={`${decision.at}:${at}`} decision={decision} question={answered(decision)} task={taskRef(factory.id, detail.card.task)} actions={actions} kindLabel={decision.kind ? t(DECISION_KIND_LABEL[decision.kind]) : null} />
         ))}
       </ol>
     </Field>
+  );
+}
+
+function DecisionRow({ decision, question, task, actions, kindLabel }: { decision: DecisionRecord; question: Question | null; task: string; actions: Actions; kindLabel: string | null }) {
+  const { t } = useInterfaceTranslation();
+  const request = useFactoryRequest(actions);
+  const [text, setText] = useState<string | null>(null);
+  const busy = request.state.phase === "sending" || request.state.phase === "taken";
+  return (
+    <li className="flex min-w-0 flex-col gap-xs text-body" data-factory-decision={decision.by}>
+      <div className="flex min-w-0 items-start gap-sm">
+        <DecisionBy by={decision.by} />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <ShortenedText text={decision.text} className="[overflow-wrap:anywhere]" />
+          {kindLabel || decision.reason ? <span className="text-caption text-muted-foreground">{[kindLabel, decision.reason].filter((part) => part).join(" · ")}</span> : null}
+        </span>
+        {question && text === null ? (
+          <Button variant="ghost" size="sm" data-factory-decision-override={question.id} onClick={() => setText("")}>
+            {t("factory.turn.override")}
+          </Button>
+        ) : null}
+        <Elapsed since={decision.at} className="shrink-0 text-caption text-muted-foreground" />
+      </div>
+      {question && text !== null ? (
+        <form className="flex items-center gap-xs pl-[calc(var(--size-control-lg)*3)]" onSubmit={(event) => { event.preventDefault(); if (text.trim() && !busy) request.send({ verb: "answer", task, question: question.id, choice: null, text: text.trim(), change: true }); }}>
+          <Input autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={t("factory.turn.overridePlaceholder")} aria-label={t("factory.turn.overridePlaceholder")} data-factory-override-text="true" />
+          <Button type="submit" size="sm" disabled={!text.trim() || busy}>{t("factory.turn.overrideSend")}</Button>
+        </form>
+      ) : null}
+      <Refusal state={request.state} />
+    </li>
+  );
+}
+
+/** Why the Task stopped or paused, in red when a person has to act, with Factory AI's reading under it (B23, D-25, D-26). */
+function StopLine({ detail }: { detail: TaskDetail }) {
+  const { t } = useInterfaceTranslation();
+  const card = detail.card;
+  if (card.state === "paused" && card.pause_reason) {
+    return (
+      <p className="flex items-center gap-xs text-body text-subtle-foreground" data-factory-pause-reason={card.pause_reason}>
+        <CirclePauseIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+        {t(PAUSE_REASON_LABEL[card.pause_reason])}
+      </p>
+    );
+  }
+  if (!detail.stop_code) return null;
+  const more = detail.stop_code === "worker_gone" ? t("factory.turn.goneWhy") : detail.stop_code === "no_report" ? t("factory.card.noReply") : null;
+  return (
+    <div className="flex flex-col gap-xxs">
+      <p className="flex items-center gap-xs text-body text-destructive" data-factory-stop={detail.stop_code}>
+        <CircleAlertIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
+        {[t(STOP_LABEL[detail.stop_code]), more].filter((part) => part !== null).join(" · ")}
+      </p>
+      {detail.diagnosis ? (
+        <p className="flex items-center gap-xs pl-(--size-icon) text-caption text-subtle-foreground" data-factory-diagnosis="true">
+          <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+          <span className="[overflow-wrap:anywhere]">{[t("factory.task.diagnosis", { text: detail.diagnosis }), detail.diagnosed_from ? t(DIAGNOSIS_SOURCE_LABEL[detail.diagnosed_from]) : null].filter((part) => part !== null).join(" · ")}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** A candidate as one line: agent · model · effort, the CLI's own default where none is set. */
+function candidateText(candidate: Pick<WorkerCandidate, "agent" | "model" | "effort" | "description">, cliDefault: string): string {
+  const label = agentAdapter(candidate.agent)?.label ?? candidate.agent;
+  const parts = [label, candidate.model, candidate.effort].filter((part): part is string => !!part);
+  return parts.length > 1 ? parts.join(" · ") : `${label} · ${cliDefault}`;
+}
+
+function PickedLine({ description, reason }: { description: string; reason: string | null }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <span className="flex min-w-0 items-center gap-xs text-caption text-subtle-foreground" data-factory-picked="true">
+      <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+      <span className="[overflow-wrap:anywhere]">{t("factory.task.picked", { description: reason ? `${description} · ${reason}` : description })}</span>
+    </span>
+  );
+}
+
+/**
+ * Picking the worker before one starts (D-41): the candidates, Factory AI's
+ * pick marked; another choice pins it and Factory AI no longer picks.
+ */
+function WorkerPick({ factory, detail, actions }: { factory: FactoryView; detail: TaskDetail; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const request = useFactoryRequest(actions);
+  const picked = detail.pinned_worker ?? detail.ai_picked_worker ?? 1;
+  const ai = detail.ai_picked_worker;
+  const task = taskRef(factory.id, detail.card.task);
+  return (
+    <div className="flex flex-col gap-xs" data-factory-worker-pick={picked}>
+      <div className="flex min-w-0 items-center gap-xs">
+        <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" />
+        <span className="flex-1">{t("factory.settings.workers")}</span>
+        <Select value={String(picked)} onValueChange={(value) => request.send({ verb: "worker", task, worker: value === String(ai) && detail.pinned_worker !== null ? null : Number(value) })}>
+          <SelectTrigger size="sm" className="w-[calc(var(--size-settings-control-w)*1.2)] max-w-3/5" aria-label={t("factory.settings.workers")} data-factory-worker-select="true">
+            {/* The trigger names the candidate; its line and the AI mark stay in the menu. */}
+            <SelectValue>{factory.workers[picked - 1] ? candidateText(factory.workers[picked - 1]!, t("factory.settings.cliDefault")) : null}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {factory.workers.map((candidate, at) => (
+              <SelectItem key={at} value={String(at + 1)} data-factory-worker-option={at + 1}>
+                <span className="flex flex-col">
+                  <span>{candidateText(candidate, t("factory.settings.cliDefault"))}</span>
+                  <span className="text-caption text-muted-foreground">{[candidate.description, at + 1 === ai ? t("factory.task.pickAuto") : null].filter((part) => part).join(" · ")}</span>
+                </span>
+              </SelectItem>
+            ))}
+            <p className="px-sm py-xs text-caption text-muted-foreground">{t("factory.task.pickHint")}</p>
+          </SelectContent>
+        </Select>
+      </div>
+      {ai !== null && detail.pinned_worker === null ? <PickedLine description={factory.workers[ai - 1]?.description ?? ""} reason={detail.ai_pick_reason} /> : null}
+      <span className="text-caption text-muted-foreground">{t("factory.task.pickEffect")}</span>
+      <Refusal state={request.state} />
+    </div>
+  );
+}
+
+/** How the engine treated a quiet worker: how long it rested, the one wake, no reply, one diagnosis, the automatic restart (D-22-D-25). */
+function RestLine({ detail }: { detail: TaskDetail }) {
+  const { t } = useInterfaceTranslation();
+  const parts: React.ReactNode[] = [];
+  if (detail.resting_since !== null) parts.push(<span key="rest">{t("factory.task.rest")} <Elapsed since={detail.resting_since} /></span>);
+  if (detail.woke_at !== null) parts.push(<span key="woke">{t("factory.task.woke")}</span>);
+  if (detail.woke_at !== null && detail.stop_code === "no_report") parts.push(<span key="reply" className="text-destructive">{t("factory.task.noReply")}</span>);
+  if (detail.diagnosed_at !== null) parts.push(<span key="diagnosed">{t("factory.task.diagnosed")}</span>);
+  if (detail.auto_restarts > 0) parts.push(<span key="restarts">{t("factory.task.restarted", { count: detail.auto_restarts })}</span>);
+  if (parts.length === 0) return null;
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-md text-caption text-muted-foreground" data-factory-rest="true">
+      {parts}
+    </span>
   );
 }

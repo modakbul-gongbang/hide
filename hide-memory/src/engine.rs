@@ -115,6 +115,7 @@ impl HideNativeAnalyzer {
             output_schema: output_schema(),
             deadline: Duration::from_secs(45),
             schema_version: SCHEMA_VERSION.into(),
+            pick: None,
         })
     }
 

@@ -114,6 +114,38 @@ pub struct AiRequest {
     /// Version of the feature's prompt and schema pair, for the log only.
     #[serde(deserialize_with = "owned::cow")]
     pub schema_version: Cow<'static, str>,
+    /// The caller's own agent, model and effort for this request (a
+    /// Factory's AI). `None` runs it on the operator's Hide AI order.
+    #[serde(default)]
+    pub pick: Option<AiPick>,
+}
+
+/// One agent, and optionally its model and reasoning effort, chosen by the
+/// caller for one request. The router asks only that agent; an effort the
+/// agent does not declare is refused rather than dropped.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub struct AiPick {
+    pub provider: ProviderId,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+impl AiRequest {
+    /// The model this request is asked with: the caller's pick, else the one
+    /// the backend was configured with.
+    pub fn model<'a>(&'a self, configured: &'a str) -> &'a str {
+        self.pick
+            .as_ref()
+            .and_then(|pick| pick.model.as_deref())
+            .unwrap_or(configured)
+    }
+
+    /// The reasoning effort the caller picked, if any.
+    pub fn effort(&self) -> Option<&str> {
+        self.pick.as_ref().and_then(|pick| pick.effort.as_deref())
+    }
 }
 
 /// Provider readiness as the router sees it. Every variant except `Ready`

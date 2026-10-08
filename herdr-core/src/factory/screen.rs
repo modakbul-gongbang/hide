@@ -105,6 +105,10 @@ pub fn screen_may_send(command: &Command) -> bool {
             | Command::Config { .. }
             | Command::Close { .. }
             | Command::Check { .. }
+            | Command::PauseFactory { .. }
+            | Command::ResumeFactory { .. }
+            | Command::AckNotices { .. }
+            | Command::Worker { .. }
     )
 }
 

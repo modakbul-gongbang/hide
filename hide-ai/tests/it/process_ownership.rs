@@ -74,6 +74,7 @@ fn request(n: usize) -> AiRequest {
         output_schema: json!({"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}),
         deadline: Duration::from_secs(10),
         schema_version: "process.v1".into(),
+        pick: None,
     }
 }
 

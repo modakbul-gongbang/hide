@@ -47,6 +47,13 @@ impl CodexDaemon {
     }
 }
 
+/// Whether a start of `kind` needs the machine's kit answer first: only a
+/// start this module may put the flag on does.
+pub(crate) fn needs_kit_answer(kind: &str) -> bool {
+    hide_agent_adapter::adapter(kind).and_then(|row| row.start)
+        == Some(hide_agent_adapter::LaunchDialect::Codex)
+}
+
 /// `args` for a start of `kind`, with `--no-daemon` first for a Codex that
 /// has the daemon, once (the caller may already carry it).
 pub(crate) fn start_arguments(
@@ -54,9 +61,7 @@ pub(crate) fn start_arguments(
     daemon: CodexDaemon,
     args: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    if hide_agent_adapter::adapter(kind).and_then(|row| row.start)
-        != Some(hide_agent_adapter::LaunchDialect::Codex)
-    {
+    if !needs_kit_answer(kind) {
         return Ok(args);
     }
     match daemon {

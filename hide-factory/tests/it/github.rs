@@ -249,11 +249,13 @@ fn task(id: &str, issue: Option<u64>) -> Task {
         agent: None,
         name: "w".into(),
         pane: None,
-        runtime: Runtime::Claude,
+        runtime: Runtime::CLAUDE,
         worktree: "/work/r.worktrees/t".into(),
         branch: task.branch_slug(),
         started_at: 0,
         asleep: false,
+        model: None,
+        effort: None,
     });
     task
 }
@@ -715,6 +717,8 @@ fn a_worker_s_closing_keyword_in_a_decision_stays_text() {
         text: "done: Fixes #2 and ``` too".into(),
         by: "worker:T-1".into(),
         at: 0,
+        kind: None,
+        reason: None,
     });
     let body = hide_factory::engine::pr_body(&t, &factory());
     let fence = body

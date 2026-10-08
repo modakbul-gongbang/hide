@@ -397,21 +397,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_codex_installed_by_pnpm_11_is_found_and_runs_with_its_node() {
-        use std::os::unix::fs::PermissionsExt;
-
         let home = tempfile::tempdir().unwrap();
-        let script = |path: PathBuf, body: &str| {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, body).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            path
-        };
-        let shim = script(
-            home.path().join("Library/pnpm/bin/hide-fixture-codex"),
-            "#!/bin/sh\nexec hide-fixture-node \"$@\"\n",
-        );
-        script(
-            home.path().join(".local/bin/hide-fixture-node"),
+        let shim = home.path().join("Library/pnpm/bin/hide-fixture-codex");
+        crate::stand_ins::program(&shim, "#!/bin/sh\nexec hide-fixture-node \"$@\"\n");
+        crate::stand_ins::program(
+            &home.path().join(".local/bin/hide-fixture-node"),
             concat!(
                 "#!/bin/sh\n",
                 "case \"$1 $2\" in\n",
@@ -430,23 +420,19 @@ mod tests {
         );
     }
 
-    /// A stand-in `codex` whose `features` command keeps the setting in a
-    /// file beside it, so the test never touches an account's real one.
+    /// A stand-in `codex` whose `features` command keeps the setting in the
+    /// file `setting` in its HOME, so the test never touches an account's
+    /// real one.
     #[cfg(unix)]
     fn stand_in(home: &Path, disable: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let bin = home.join("bin/hide-fixture-codex-switch");
-        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
         std::fs::write(home.join("setting"), "true").unwrap();
-        std::fs::write(
+        crate::stand_ins::program(
             &bin,
-            format!(
-                "#!/bin/sh\ncase \"$1 $2\" in\n  'features list') echo \"daemon_auto_start  stable  $(cat '{0}/setting')\" ;;\n  'features disable') {disable} ;;\n  *) exit 2 ;;\nesac\n",
-                home.display()
+            &format!(
+                "#!/bin/sh\ncase \"$1 $2\" in\n  'features list') echo \"daemon_auto_start  stable  $(cat \"$HOME/setting\")\" ;;\n  'features disable') {disable} ;;\n  *) exit 2 ;;\nesac\n"
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         bin
     }
 
@@ -466,10 +452,7 @@ mod tests {
             "a refusal leaves the setting as it was"
         );
 
-        let working = stand_in(
-            home.path(),
-            &format!("echo false > '{}/setting'", home.path().display()),
-        );
+        let working = stand_in(home.path(), "echo false > \"$HOME/setting\"");
         assert_eq!(turn_off(&working, home.path(), &stop), Ok(()));
         assert_eq!(
             read_setting(&working, home.path(), &stop),
@@ -515,12 +498,9 @@ mod tests {
     /// each call is logged with the `CODEX_HOME` it was given.
     #[cfg(unix)]
     fn fake_daemon() -> (tempfile::TempDir, PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
-
         let home = tempfile::tempdir().unwrap();
         let codex = home.path().join("bin/codex");
-        std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
-        std::fs::write(
+        crate::stand_ins::program(
             &codex,
             concat!(
                 "#!/bin/sh\n",
@@ -539,9 +519,7 @@ mod tests {
                 "esac\n",
                 "exit 2\n",
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         (home, codex)
     }
 

@@ -192,6 +192,10 @@ pub trait TaskSource {
     /// The PRD file at `path` a Task attaches; `Err` names why it cannot be
     /// read.
     fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String>;
+    /// Whether this machine has the agent a worker candidate names (B28).
+    fn installed(&mut self, _agent: Runtime) -> bool {
+        true
+    }
 }
 
 /// What a review judgment is told of a project (`repo_context`).
@@ -335,8 +339,12 @@ pub struct WorkerSpawn {
     pub project: String,
     pub branch: String,
     pub prompt: String,
-    /// The runtime's extra arguments from the Factory's configuration.
+    /// The runtime's extra arguments from the Factory's configuration,
+    /// then the candidate's model and effort arguments.
     pub args: Vec<String>,
+    /// The candidate's model and effort, kept on the worker it starts.
+    pub model: Option<String>,
+    pub effort: Option<String>,
     /// Reuse the worktree and session (retry, wake, relanding).
     pub resume: Option<crate::model::WorkerRef>,
     /// How many earlier fresh starts were refused: each attempt is its own
@@ -354,6 +362,17 @@ pub enum WorkerStatus {
     },
     Blocked,
     Gone,
+    /// The agent's activity cannot be read: never counted as resting (B43).
+    Unknown,
+}
+
+/// What a resting worker last showed, each as its adapter declares it can
+/// be read; `None` when undeclared or empty (D-37, D-52).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkerTexts {
+    pub user_turn: Option<String>,
+    pub last_answer: Option<String>,
+    pub screen: Option<String>,
 }
 
 /// How much of a Task's worktree a removal may take.
@@ -399,6 +418,10 @@ pub trait WorkerRuntime {
         removal: Removal,
     ) -> Result<(), Failure>;
     fn usage_limited(&mut self, runtime: Runtime) -> Option<UnixMs>;
+    /// The worker's texts a diagnosis may read.
+    fn texts(&mut self, _worker: &crate::model::WorkerRef) -> WorkerTexts {
+        WorkerTexts::default()
+    }
 }
 
 /// Submits judgments and hands back finished answers (D-13, D-44).
@@ -407,6 +430,11 @@ pub trait Judge {
     fn submit(&mut self, judgment: Judgment) -> Result<(), Failure>;
     /// Answers finished since the last call.
     fn finished(&mut self) -> Vec<JudgmentAnswer>;
+    /// Whether a Factory AI choice names an agent, model and effort Hide AI
+    /// can run; the reason when it cannot (B31).
+    fn check_ai(&mut self, _ai: &crate::model::FactoryAi) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,9 +451,9 @@ pub trait Environment {
 }
 
 /// Where a person is told (D-30): an inbox item exists in the store; this
-/// only reaches the optional macOS notification and a producer pane.
+/// only reaches a producer pane. The macOS notification is the desktop
+/// app's, read from the summary (D-50).
 pub trait Notifier {
-    fn macos(&mut self, title: &str, body: &str);
     /// Sends a pending review's result to the producer pane; false when the
     /// pane is gone (B11).
     fn producer(&mut self, factory: &str, pane: &str, body: &str) -> bool;

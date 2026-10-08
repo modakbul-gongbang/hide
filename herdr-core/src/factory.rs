@@ -16,11 +16,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hide_factory::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, Removal,
-    WorkerRuntime, WorkerSpawn, WorkerStatus,
+    WorkerRuntime, WorkerSpawn, WorkerStatus, WorkerTexts,
 };
 use hide_factory::exec::Machine;
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentOutcome};
-use hide_factory::model::{Runtime as AgentRuntime, UnixMs, WorkerRef};
+use hide_factory::model::{FactoryAi, Runtime as AgentRuntime, UnixMs, WorkerRef};
 use hide_factory::project::{IssueBook, SharedProjects};
 use hide_factory::role::Role;
 use hide_factory::{Command, Engine, Inbound, Ports, Refusal};
@@ -49,6 +49,10 @@ const START_GRACE_MS: u64 = 3 * 60_000;
 /// The longest prompt argument; the rest is read with `hide factory show`.
 const PROMPT_LIMIT: usize = 6 * 1024;
 const JUDGMENT_DEADLINE: Duration = Duration::from_secs(180);
+/// The screen a diagnosis reads: the last lines, cut again to 4 KiB by the
+/// engine (D-37).
+const SCREEN_LINES: u32 = 80;
+const SCREEN_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn now_ms() -> UnixMs {
     SystemTime::now()
@@ -119,10 +123,14 @@ enum Request {
     /// From a Factory screen, through a runtime event (PRD
     /// software-factory-ui); its answer comes back on the snapshot.
     Screen(ScreenRequest),
+    /// The operator closed panes in Hide (D-26): a wake-up only, the panes
+    /// themselves wait in the runtime until the engine takes them.
+    PanesClosed,
 }
 
-/// The runtime's way to the engine thread for the screens: a full queue is
-/// refused at once, never waited on under the runtime lock.
+/// The runtime's way to the engine thread for the screens and the panes the
+/// operator closes: a full queue is refused at once, never waited on under
+/// the runtime lock.
 #[derive(Clone)]
 pub(crate) struct ScreenPort {
     requests: SyncSender<Request>,
@@ -130,8 +138,21 @@ pub(crate) struct ScreenPort {
 
 impl ScreenPort {
     pub(crate) fn send(&self, request: ScreenRequest) -> Result<(), &'static str> {
+        self.try_send(Request::Screen(request))
+    }
+
+    /// Wakes the engine to take closed panes; a full queue still leaves
+    /// them to the next tick. False only when no engine thread is left.
+    pub(crate) fn panes_closed(&self) -> bool {
+        !matches!(
+            self.requests.try_send(Request::PanesClosed),
+            Err(mpsc::TrySendError::Disconnected(_))
+        )
+    }
+
+    fn try_send(&self, request: Request) -> Result<(), &'static str> {
         self.requests
-            .try_send(Request::Screen(request))
+            .try_send(request)
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => "factory_busy",
                 mpsc::TrySendError::Disconnected(_) => "factory_unavailable",
@@ -489,7 +510,7 @@ fn run(
         // node's (PRD core-host-node D-01).
         let machine = Machine::new(guard(&lock(&runtime)?).own_node(), Arc::clone(&runner_stop));
         let started = JudgeThread::start(runtime.clone(), home.clone());
-        let port = started.port();
+        let port = started.port(runtime.clone(), home.clone());
         *judge = Some(started);
         let projects = SharedProjects::new(
             machine.clone(),
@@ -628,6 +649,10 @@ fn run_requests(
                 let _ = reply.send(answer);
                 false
             }
+            Ok(Request::PanesClosed) => {
+                take_closes(engine.as_mut(), publisher, &runtime);
+                false
+            }
             Ok(Request::Screen(request)) => {
                 if engine.is_none() && !matches!(request, ScreenRequest::CloseTask) {
                     *engine = open();
@@ -652,6 +677,9 @@ fn run_requests(
         };
         if tick_due {
             last_tick = now;
+            // A close whose wake-up found the queue full is taken here, before
+            // the tick could read its worker as gone.
+            take_closes(Some(&mut *engine), publisher, &runtime);
             pump_letters(engine, &runtime);
             engine.tick();
             // A running attempt's log tail grows on the open page between
@@ -689,6 +717,31 @@ fn run_requests(
         // Off the runtime lock; an unchanged summary hands nothing over.
         publisher.publish(Some(&*engine as &dyn ScreenSource), sink);
     }
+}
+
+/// Takes the panes the operator closed since the last take: a worker among
+/// them pauses its Task (D-26). A closed pane matters only to an engine
+/// already running; either way the close is taken.
+fn take_closes(
+    engine: Option<&mut Engine>,
+    publisher: &mut Publisher,
+    runtime: &Weak<Mutex<Runtime>>,
+) {
+    let Some(core) = lock(runtime) else {
+        return;
+    };
+    let panes = guard(&core).factory_closes_take();
+    drop(core);
+    let Some(engine) = engine else {
+        return;
+    };
+    if panes.is_empty() {
+        return;
+    }
+    for pane in &panes {
+        engine.worker_closed(pane);
+    }
+    publisher.touched();
 }
 
 fn request_wait(engine: Option<&Engine>, last_tick: Instant, now: Instant) -> Duration {
@@ -881,6 +934,15 @@ fn handle(
             set,
         },
         Command::Close { project } => Command::Close {
+            project: project.or_else(here),
+        },
+        Command::PauseFactory { project } => Command::PauseFactory {
+            project: project.or_else(here),
+        },
+        Command::ResumeFactory { project } => Command::ResumeFactory {
+            project: project.or_else(here),
+        },
+        Command::AckNotices { project } => Command::AckNotices {
             project: project.or_else(here),
         },
         Command::Check {
@@ -1232,9 +1294,7 @@ impl WorkerRuntime for CoreWorkers {
             return answer;
         }
         let runtime = self.runtime()?;
-        if request.runtime == hide_factory::model::Runtime::Codex
-            && !guard(&runtime).factory_kit_read()
-        {
+        if !guard(&runtime).factory_kit_read(request.runtime.as_str()) {
             return Err(Failure::starting("worker.spawn", "kit_not_read"));
         }
         drop(runtime);
@@ -1291,6 +1351,11 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn sleep(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
+        // An agent whose adapter declares no sleep keeps working, so the
+        // engine must not count it asleep (D-28).
+        if !crate::agent_sleep::sleeps_kind(worker.runtime.as_str()) {
+            return Err(Failure::task("worker.sleep", "agent_cannot_sleep"));
+        }
         let pane = worker
             .pane
             .clone()
@@ -1349,36 +1414,47 @@ impl WorkerRuntime for CoreWorkers {
             .lock()
             .is_ok_and(|state| state.pending_sleep.contains(pane));
         let Ok(runtime) = self.runtime() else {
-            return WorkerStatus::Working;
+            return WorkerStatus::Unknown;
         };
         let probe = guard(&runtime).factory_worker_probe(pane);
-        if probe.asleep || pending {
-            return WorkerStatus::Resting {
-                since: probe.status_changed_at_unix_ms,
-            };
-        }
-        if !probe.present {
-            return if now_ms().saturating_sub(worker.started_at) < START_GRACE_MS {
-                WorkerStatus::Working
-            } else {
-                WorkerStatus::Gone
-            };
-        }
-        if probe.working {
-            WorkerStatus::Working
-        } else if probe.waiting {
-            WorkerStatus::Blocked
+        drop(runtime);
+        worker_status(&probe, pending, worker.started_at, now_ms())
+    }
+
+    /// What a diagnosis reads about a quiet worker, in the order D-37 takes
+    /// them; the screen is read from Herdr only when neither of the others
+    /// is there, off the runtime lock.
+    fn texts(&mut self, worker: &WorkerRef) -> WorkerTexts {
+        let Some(pane) = &worker.pane else {
+            return WorkerTexts::default();
+        };
+        let Ok(runtime) = self.runtime() else {
+            return WorkerTexts::default();
+        };
+        let sources = guard(&runtime).factory_worker_texts(pane);
+        drop(runtime);
+        let screen = if sources.user_turn.is_some() || sources.last_answer.is_some() {
+            None
         } else {
-            WorkerStatus::Resting {
-                since: probe.status_changed_at_unix_ms,
-            }
+            sources
+                .raw_pane
+                .as_deref()
+                .zip(sources.connector.as_deref())
+                .and_then(|(raw, connector)| read_screen(connector, raw))
+        };
+        WorkerTexts {
+            user_turn: sources.user_turn,
+            last_answer: sources.last_answer,
+            screen,
         }
     }
 
     fn stop(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
         // The agent ends through agent sleep once its turn ends, so its pane
         // and session stay for a revive (B50, B55); the ledger record ends now.
+        // An agent that declares no sleep stays in its pane (D-28).
         if let Some(pane) = &worker.pane
+            && crate::agent_sleep::sleeps_kind(worker.runtime.as_str())
             && let Ok(mut state) = self.state.lock()
         {
             state.pending_sleep.insert(pane.clone());
@@ -1454,9 +1530,72 @@ impl WorkerRuntime for CoreWorkers {
         )
     }
 
+    /// The usage row the agent's adapter declares (D-52).
     fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
+        let provider = runtime.adapter().usage?.adapter().herdr.name;
         let core = self.runtime().ok()?;
-        guard(&core).factory_usage_limit(runtime.as_str(), now_ms())
+        guard(&core).factory_usage_limit(provider, now_ms())
+    }
+}
+
+/// What a worker is doing, from what the runtime sees in its pane.
+fn worker_status(
+    probe: &crate::runtime::WorkerProbe,
+    pending_sleep: bool,
+    started_at: UnixMs,
+    now: UnixMs,
+) -> WorkerStatus {
+    use crate::agent_state::AgentUse;
+    // A pane Hide is closing is neither gone nor resting until its close
+    // lands as `worker_closed`; reading it as gone would restart it.
+    if probe.closing {
+        return WorkerStatus::Unknown;
+    }
+    // A rest starts when the core saw the agent's state change (D-52).
+    let resting = || match probe.changed_at_unix_ms {
+        Some(since) => WorkerStatus::Resting { since },
+        None => WorkerStatus::Unknown,
+    };
+    if probe.asleep || pending_sleep {
+        return resting();
+    }
+    if !probe.present {
+        return if now.saturating_sub(started_at) < START_GRACE_MS {
+            WorkerStatus::Working
+        } else {
+            WorkerStatus::Gone
+        };
+    }
+    match probe.activity {
+        AgentUse::Working => WorkerStatus::Working,
+        AgentUse::Waiting => WorkerStatus::Blocked,
+        AgentUse::Quiet => resting(),
+        // What Hide cannot tell is never counted as rest (D-52).
+        AgentUse::Unknown => WorkerStatus::Unknown,
+    }
+}
+
+/// The lines a worker's screen shows now, for a diagnosis; a read Herdr
+/// does not answer in time is no screen text.
+fn read_screen(connector: &dyn hide_herdr_client::ApiConnector, pane: &str) -> Option<String> {
+    let params = crate::wire::pane_read_params(pane, "recent_unwrapped", SCREEN_LINES).ok()?;
+    let answer = hide_herdr_client::request_small_response(
+        connector,
+        "pane.read",
+        params,
+        SCREEN_READ_TIMEOUT,
+    );
+    match answer
+        .map_err(|error| error.to_string())
+        .and_then(crate::wire::pane_text)
+    {
+        Ok(read) => Some(read.text).filter(|text| !text.trim().is_empty()),
+        Err(reason) => {
+            crate::diagnostic!(
+                json!({"component":"factory","kind":"worker.screen_unread","pane_id":pane,"reason":reason})
+            );
+            None
+        }
     }
 }
 
@@ -1475,7 +1614,11 @@ fn start_worker(
     let parent = crate::coordination::register_code_owned(&client, &authority, &actor)
         .map_err(|reason| Failure::task("worker.spawn", reason))?;
     let mut args = request.args.clone();
-    args.push(prompt_argument(&request.prompt, &request.task)?);
+    args.extend(prompt_arguments(
+        request.runtime,
+        &request.prompt,
+        &request.task,
+    )?);
     let (intent, path) = match &request.resume {
         Some(previous) => {
             if let Some(agent) = &previous.agent {
@@ -1541,6 +1684,8 @@ fn start_worker(
         branch: request.branch.clone(),
         started_at: now_ms(),
         asleep: false,
+        model: request.model.clone(),
+        effort: request.effort.clone(),
     })
 }
 
@@ -1563,6 +1708,23 @@ fn spawn_failure(reason: &str) -> Failure {
         }
         _ => Failure::task("worker.spawn", reason),
     }
+}
+
+/// The first prompt behind the flag the agent's start declares: `--`, or
+/// OpenCode's `--prompt`, whose positional argument is a project (B28).
+fn prompt_arguments(
+    runtime: AgentRuntime,
+    prompt: &str,
+    task: &str,
+) -> Result<[String; 2], Failure> {
+    let dialect = runtime
+        .adapter()
+        .start
+        .ok_or_else(|| Failure::task("worker.spawn", "agent_not_startable"))?;
+    Ok([
+        dialect.prompt_flag().to_owned(),
+        prompt_argument(prompt, task)?,
+    ])
 }
 
 /// The worker's first prompt as the one argument Herdr types into the pane
@@ -1670,25 +1832,6 @@ struct CoreNotifier {
 }
 
 impl Notifier for CoreNotifier {
-    fn macos(&mut self, title: &str, body: &str) {
-        let Some(runtime) = lock(&self.runtime) else {
-            return;
-        };
-        let connector = {
-            let guard = guard(&runtime);
-            guard.delivery_connector(guard.node().as_str())
-        };
-        drop(runtime);
-        if let Some(connector) = connector {
-            let _ = hide_herdr_client::request_small_response(
-                connector.as_ref(),
-                "notification.show",
-                json!({"title": title, "body": body}),
-                Duration::from_millis(500),
-            );
-        }
-    }
-
     /// A pending review's result goes to the pane that added the Task (B11).
     fn producer(&mut self, factory: &str, pane: &str, body: &str) -> bool {
         let Some(runtime) = lock(&self.runtime) else {
@@ -1747,10 +1890,12 @@ impl JudgeThread {
         Self { shared, thread }
     }
 
-    fn port(&self) -> JudgePort {
+    fn port(&self, runtime: Weak<Mutex<Runtime>>, home: Option<PathBuf>) -> JudgePort {
         JudgePort {
             shared: Arc::clone(&self.shared),
             alive: self.thread.is_some(),
+            runtime,
+            home,
         }
     }
 }
@@ -1769,7 +1914,43 @@ impl Drop for JudgeThread {
 struct JudgePort {
     shared: Arc<JudgeShared>,
     alive: bool,
+    runtime: Weak<Mutex<Runtime>>,
+    home: Option<PathBuf>,
 }
+
+/// The Hide AI settings the core holds, else the ones on disk.
+fn ai_settings(
+    runtime: &Weak<Mutex<Runtime>>,
+    home: Option<&Path>,
+) -> Option<(hide_ai::AiSettings, Arc<dyn crate::node_access::NodeLink>)> {
+    let core = lock(runtime)?;
+    let (settings, node) = {
+        let core = guard(&core);
+        (core.factory_ai_settings(), core.own_node())
+    };
+    drop(core);
+    let settings = settings
+        .or_else(|| home.and_then(|home| hide_ai::settings::load(home).ok()))
+        .unwrap_or_default();
+    Some((settings, node))
+}
+
+/// The pick a judgment carries to Hide AI: the Factory AI the Factory chose
+/// (D-40), or none for the app's own choice. A chosen agent Hide AI does not
+/// know is never replaced by the app's choice; it is refused (B31).
+fn ai_pick(ai: Option<&FactoryAi>) -> Result<Option<hide_ai::AiPick>, UnknownAgent> {
+    let Some(ai) = ai else { return Ok(None) };
+    let provider = hide_ai::ProviderId::from_id(&ai.provider).ok_or(UnknownAgent)?;
+    Ok(Some(hide_ai::AiPick {
+        provider,
+        model: ai.model.clone(),
+        effort: ai.effort.clone(),
+    }))
+}
+
+/// A Factory AI naming an agent Hide AI does not know.
+#[derive(Debug, PartialEq, Eq)]
+struct UnknownAgent;
 
 impl Judge for JudgePort {
     fn submit(&mut self, judgment: Judgment) -> Result<(), Failure> {
@@ -1808,6 +1989,36 @@ impl Judge for JudgePort {
             .map(|mut answers| std::mem::take(&mut *answers))
             .unwrap_or_default()
     }
+
+    /// A Factory AI choice names an agent Hide AI has, a model it can pass,
+    /// an effort the agent declares, and an agent ready to answer (B31).
+    /// Asked only when the operator changes the choice.
+    fn check_ai(&mut self, ai: &FactoryAi) -> Result<(), String> {
+        let provider =
+            hide_ai::ProviderId::from_id(&ai.provider).ok_or("factory_ai_unknown_agent")?;
+        if let Some(model) = &ai.model
+            && !hide_agent_adapter::valid_model(model)
+        {
+            return Err("factory_ai_model_invalid".into());
+        }
+        if let Some(effort) = &ai.effort
+            && !provider.efforts().contains(&effort.as_str())
+        {
+            return Err("factory_ai_effort_not_declared".into());
+        }
+        let (settings, node) =
+            ai_settings(&self.runtime, self.home.as_deref()).ok_or("core_stopped")?;
+        let router = crate::ai::factory_router(&node, &settings);
+        match router
+            .availability()
+            .into_iter()
+            .find(|(id, _)| *id == provider)
+        {
+            Some((_, hide_ai::Availability::Ready)) => Ok(()),
+            Some((_, availability)) => Err(format!("factory_ai_{}", availability.class())),
+            None => Err("factory_ai_unknown_agent".into()),
+        }
+    }
 }
 
 fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Option<PathBuf>) {
@@ -1831,18 +2042,9 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             }
         };
         // The core ended: nothing is left to answer the judgment to.
-        let Some(core) = lock(&runtime) else { return };
-        let (settings, node) = {
-            let core = guard(&core);
-            (core.factory_ai_settings(), core.own_node())
+        let Some((settings, node)) = ai_settings(&runtime, home.as_deref()) else {
+            return;
         };
-        drop(core);
-        let settings = settings
-            .or_else(|| {
-                home.as_deref()
-                    .and_then(|home| hide_ai::settings::load(home).ok())
-            })
-            .unwrap_or_default();
         if router
             .as_ref()
             .is_none_or(|(current, _)| *current != settings)
@@ -1853,6 +2055,12 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             ));
         }
         let Some((_, router)) = &router else { continue };
+        // An unknown Factory AI fails as having no provider and goes to a
+        // person, so the count it took is given back (B31, D-34).
+        let (pick, unknown) = match ai_pick(judgment.ai.as_ref()) {
+            Ok(pick) => (pick, false),
+            Err(UnknownAgent) => (None, true),
+        };
         let request = hide_ai::AiRequest {
             feature_id: judgment.feature_id().into(),
             request_id: hide_ai::RequestId(judgment.id.clone()),
@@ -1865,15 +2073,22 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
             output_schema: judgment.schema(),
             deadline: JUDGMENT_DEADLINE,
             schema_version: hide_factory::judgment::SCHEMA_VERSION.into(),
+            pick,
         };
         let started = Instant::now();
-        let outcome = match router.execute(&request, &shared.cancel) {
-            Ok(result) => JudgmentOutcome::Answered {
-                value: result.value,
-            },
-            Err(error) => JudgmentOutcome::Failed {
-                reason: error.class().to_owned(),
-            },
+        let outcome = if unknown {
+            JudgmentOutcome::Failed {
+                reason: "no_provider".to_owned(),
+            }
+        } else {
+            match router.execute(&request, &shared.cancel) {
+                Ok(result) => JudgmentOutcome::Answered {
+                    value: result.value,
+                },
+                Err(error) => JudgmentOutcome::Failed {
+                    reason: error.class().to_owned(),
+                },
+            }
         };
         crate::diagnostic!(json!({"component":"factory","kind":"judgment.finished",
             "feature":request.feature_id,"factory":judgment.factory,"task":judgment.task,
@@ -1894,6 +2109,67 @@ mod tests {
     use super::*;
     use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    #[test]
+    fn a_worker_s_first_prompt_follows_the_flag_its_agent_declares() {
+        for (agent, flag) in [
+            ("claude", "--"),
+            ("codex", "--"),
+            ("grok", "--"),
+            ("opencode", "--prompt"),
+            ("pi", "--"),
+            ("omp", "--"),
+            ("cursor", "--"),
+        ] {
+            let runtime = AgentRuntime::parse(agent).expect(agent);
+            let [first, prompt] =
+                prompt_arguments(runtime, "Factory: 이어서 진행하세요.", "T-1").expect(agent);
+            assert_eq!(first, flag, "{agent}");
+            assert!(prompt.contains("이어서 진행하세요"), "{agent}: {prompt}");
+        }
+    }
+
+    #[test]
+    fn a_factory_ai_hide_ai_does_not_know_is_refused_rather_than_replaced() {
+        let ai = |provider: &str| FactoryAi {
+            provider: provider.into(),
+            model: Some("sonnet".into()),
+            effort: None,
+        };
+        assert_eq!(ai_pick(None), Ok(None));
+        assert_eq!(ai_pick(Some(&ai("no-such-agent"))), Err(UnknownAgent));
+        let picked = ai_pick(Some(&ai("claude"))).unwrap().unwrap();
+        assert_eq!(
+            (picked.provider.as_str(), picked.model.as_deref()),
+            ("claude", Some("sonnet"))
+        );
+    }
+
+    #[test]
+    fn a_worker_pane_hide_is_closing_is_never_read_as_gone_or_resting() {
+        use crate::agent_state::AgentUse;
+        let probe = |present, closing| crate::runtime::WorkerProbe {
+            present,
+            closing,
+            asleep: false,
+            activity: AgentUse::Unknown,
+            changed_at_unix_ms: Some(5_000),
+        };
+        let late = START_GRACE_MS + 10;
+        assert_eq!(
+            worker_status(&probe(false, false), false, 0, late),
+            WorkerStatus::Gone
+        );
+        assert_eq!(
+            worker_status(&probe(false, true), false, 0, late),
+            WorkerStatus::Unknown,
+            "the close lands as worker_closed, never as a vanished worker to restart"
+        );
+        assert_eq!(
+            worker_status(&probe(true, true), true, 0, late),
+            WorkerStatus::Unknown
+        );
+    }
 
     fn question_caller(herdr: &crate::fake_herdr::FakeHerdr) -> QuestionCaller {
         let actor = delivery::Actor {
@@ -2056,6 +2332,10 @@ mod tests {
                 watch_sent_today: 0,
                 watch_last_at: Some(now_ms()),
                 github_approval: None,
+                paused: false,
+                observer_day: 0,
+                observer_calls: 0,
+                observer_cap_notice_day: 0,
             };
             hide_factory::store::Store::open(&paths.store, &paths.files)
                 .unwrap()
@@ -2094,6 +2374,8 @@ mod tests {
                         judge: Box::new(JudgePort {
                             shared: Arc::clone(&judgments),
                             alive: true,
+                            runtime: Weak::new(),
+                            home: None,
                         }),
                         environment: Box::new(MachineEnvironment(machine)),
                         notifier: Box::new(CoreNotifier {
@@ -2273,11 +2555,13 @@ mod tests {
             factory: "f-1".into(),
             task: task.into(),
             name: format!("w-{task}"),
-            runtime: hide_factory::model::Runtime::Claude,
+            runtime: hide_factory::model::Runtime::CLAUDE,
             project: "/work/p".into(),
             branch: format!("factory/{task}"),
             prompt: "p".into(),
             args: Vec::new(),
+            model: None,
+            effort: None,
             resume,
             attempt: 0,
         }
@@ -2294,6 +2578,29 @@ mod tests {
             branch: job.branch.clone(),
             started_at: 1,
             asleep: false,
+            model: None,
+            effort: None,
+        }
+    }
+
+    #[test]
+    fn a_worker_whose_agent_declares_no_sleep_is_refused_rather_than_queued() {
+        let state = Arc::new(Mutex::new(WorkerState::default()));
+        let mut port = CoreWorkers {
+            runtime: Weak::new(),
+            state: state.clone(),
+        };
+        let mut job = request("T-1", None);
+        for (agent, sleeps) in [("claude", true), ("codex", true), ("grok", false)] {
+            job.runtime = AgentRuntime::parse(agent).expect(agent);
+            let answer = port.sleep(&worker(&job));
+            assert_eq!(answer.is_ok(), sleeps, "{agent}: {answer:?}");
+            assert_eq!(
+                state.lock().unwrap().pending_sleep.contains("pane-T-1"),
+                sleeps,
+                "{agent}"
+            );
+            state.lock().unwrap().pending_sleep.clear();
         }
     }
 
@@ -2412,6 +2719,7 @@ mod tests {
             task: None,
             priority,
             input: hide_factory::judgment::JudgmentInput::Watch { board: json!({}) },
+            ai: None,
         }
     }
 
@@ -2428,6 +2736,8 @@ mod tests {
         let mut port = JudgePort {
             shared: Arc::clone(&shared),
             alive: true,
+            runtime: Weak::new(),
+            home: None,
         };
         port.submit(judgment("f-1", "watch", Priority::Factory))
             .unwrap();
@@ -2456,6 +2766,8 @@ mod tests {
         let mut dead = JudgePort {
             shared,
             alive: false,
+            runtime: Weak::new(),
+            home: None,
         };
         assert!(dead.submit(judgment("f-3", "x", Priority::Intake)).is_err());
     }
