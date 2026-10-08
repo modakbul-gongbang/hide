@@ -268,7 +268,7 @@ A judgment that cannot run is never skipped and never read as a pass.
 A failed review marks the Task and puts a retry-or-cancel question in the inbox, and `add` answers `pending`.
 While Hide AI is off or no agent is chosen to run it, every judgment fails as `disabled`, and the question says to turn it on in Settings › Hide AI.
 A failed drift or check sends the Task to `merge_waiting` for a person, and so does a check that answers `pass: false` with nothing to ask or flag, or one that cannot read the Task's diff.
-A judgment that answers after its Task was cancelled, taken outside or finished is dropped and logged as `judgment.dropped`.
+A judgment that answers after its Task was cancelled, taken outside or finished is dropped and logged as `judgment.dropped`; a request it was sorting and that is still open goes to a person, so a revived Task shows it.
 A failed watch or diagnosis changes no Task and is logged.
 
 The Factory has its own judgment queue on its own router (see [AI_PROVIDERS.md](AI_PROVIDERS.md#the-factorys-judgments)): one request in flight, intake reviews before every other judgment, and 16 waiting judgments per Factory.
@@ -304,13 +304,14 @@ The prompts tell Factory AI that the request and the worker's recorded decisions
 
 **Notices.**
 A notice is a line under the inbox that a person reads and never answers: `ai_answered` (a request Factory AI answered), `ai_card_fixed`, `ai_new_task`, `ai_risk_merge` and `daily_limit`.
-Notices are counted apart from 내 차례 (`FactorySummary.notices`), and `hide factory ack-notices` clears every notice at once: of the named or current checkout's Factory, else of every open Factory.
+Notices are counted apart from 내 차례 (`FactorySummary.notices`), and `hide factory ack-notices` clears every notice at once: of the named or current checkout's Factory, else of every Factory, a closed one's included.
 `hide factory answer <task> --question <id> --change --choose <choice>|--text <answer>` replaces an answer Factory AI gave, which 다른 답 on its notice sends.
 It is refused for an answer a person gave (`already_answered`) and on a finished Task (`task_finished`); it records "뒤집음: <question> -> <answer>", settles the notice, and a Task in `verifying` or `merge_waiting` goes back to `running` with its verification cancelled and its worker woken with the new answer, while any other Task's worker gets it by reply.
 
 **The daily cap.**
 A Factory sends at most `observer_daily_limit` (100, from 1 to 1000) Observer calls a day, counted by the machine's local day.
-A call the provider never received gives its count back: Hide AI off, no agent to run it, a full queue or spent budget, an unsupported request, a paused Factory, or a provider that refused it before it was submitted (not logged in, at its usage limit, unavailable, or a refusal that may clear on its own).
+A call the provider never received gives its count back: Hide AI off, no agent to run it, a full judgment queue, an unsupported request, a paused Factory, or a provider that refused it before any model turn (not logged in, at its usage limit, or unavailable).
+A transient failure and a spent Hide AI budget count, since either can follow a turn.
 At the cap nothing is sent, the request goes to a person, and the first refusal of the day leaves one `daily_limit` notice.
 
 **A quiet worker.**
@@ -334,14 +335,16 @@ A restart that waits for its agent's usage reset spends nothing until it starts.
 A pane the operator closes in Hide pauses the Task with `pause_reason` `pane_closed`, which lists it in the inbox with `resume` and `cancel`; nothing starts it again until a person resumes it.
 
 **A risk-path merge.**
-In a 맡김 Factory, a verified Task whose only gate is a risk path asks Factory AI once per attempt whether it may merge.
+In a 맡김 Factory, a verified Task whose only gate is a risk path asks Factory AI once per attempt whether it may merge, never while main is broken.
 An approval merges through the path `hide factory merge` takes, with the pre-merge check run again and the head pinned, records "위험 경로 머지 승인" with the reason and leaves an `ai_risk_merge` notice; a refusal or a failure leaves the Task in `merge_waiting` for a person, and so does an approval that answers after the Factory left 맡김, closed or saw main break.
 In 직접 and 함께 a risk path always waits for a person.
 
 **Pausing a Factory.**
 `hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends; a request that arrives meanwhile goes to a person.
-A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing, a verified Task moves to its merge step only after the resume, and a risk-path approval that answers after the pause merges nothing.
-`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path.
+A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing.
+A Task verified while paused that a person must merge shows in `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
+A Factory AI verdict asked before the pause still lands: an answer reaches the sleeping worker on resume, while a risk-path approval merges nothing and is asked again on resume, and a diagnosis is set aside.
+`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path unless main is broken.
 
 **The Factory AI and the workers.**
 `factory_ai` chooses the agent, and `factory_ai_model` and `factory_ai_effort` its model and effort, that run every judgment of this Factory; unset, the Factory uses the agent Settings › Hide AI chose.
@@ -556,7 +559,7 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 | `verify_timeout_minutes` | Minutes per bundle run, at least 1 | 60 |
 | `disk_floor_gb` | Gigabytes | 20 |
 | `default_runtime` | An agent Factory can start and this machine has; replaces the first worker candidate with that agent on its defaults | Claude Code when `init` finds it on the path, else Codex when it finds that, else `claude` |
-| `workers` | A JSON list of 1 to 5 `{agent, model, effort, description}`, each description at most 200 characters, the first the default; `default_runtime` follows it | The default runtime on its CLI's defaults |
+| `workers` | A JSON list of 1 to 5 `{agent, model, effort, description}`, each description at most 200 characters (`worker_description_too_long`), the first the default; `default_runtime` follows it | The default runtime on its CLI's defaults |
 | `observer_mode` | `manual`, `assist` or `autonomous` (직접, 함께, 맡김) | `assist` |
 | `observer_daily_limit` | 1 to 1000 Factory AI calls a local day | 100 |
 | `factory_ai` | An agent id, or `default` for the Hide AI choice | `default` |
@@ -612,7 +615,7 @@ Add --json to print the answer as JSON.
 | `config`, `check` | Reads and sets settings, and adds a natural-language check. A check cannot be removed once added. |
 | `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in an active lifecycle state (anything except drafting, waiting, done or cancelled). `pause --factory` and `resume --factory` pause and resume a whole Factory. |
 | `worker` | Pins the Task's worker candidate by its number from 1, or `auto` for the review's pick (`worker_out_of_range`). `add --worker <n>` pins at add. |
-| `ack-notices` | Clears every notice of the Factory and answers how many; with no Factory named or current, every open Factory's in one command. |
+| `ack-notices` | Clears every notice of the Factory and answers how many; with no Factory named or current, every Factory's, a closed one's included, in one command. |
 
 Without `--project`, `add`, `config`, `check`, `close` and a Factory's `pause` and `resume` use the only open Factory, and answer `factory_ambiguous` when there are several.
 A project path is made absolute by the CLI.

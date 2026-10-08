@@ -464,7 +464,7 @@ impl Runtime {
             .find(|agent| agent.pane_id == pane);
         WorkerProbe {
             present: agent.is_some(),
-            closing: self.panes_closing.contains(pane),
+            closing: self.panes_closing.contains(pane) || self.factory_closes_sent.contains(pane),
             asleep,
             activity: match agent {
                 None => AgentUse::Unknown,
@@ -520,21 +520,32 @@ impl Runtime {
 
     /// Panes the operator closed in Hide: a Factory worker among them pauses
     /// its Task instead of being started again (D-26).
-    pub(crate) fn factory_panes_closed(&self, panes: &[String]) {
+    pub(crate) fn factory_panes_closed(&mut self, panes: &[String]) {
         if panes.is_empty() {
             return;
         }
         let sent = match &self.factory_screen {
             Some(port) => port.panes_closed(panes.to_vec()),
-            None => Ok(()),
+            None => return,
         };
-        if let Err(reason) = sent {
-            crate::diagnostic!(serde_json::json!({
+        match sent {
+            // Marked under the same lock as the send, so a tick that reads a
+            // worker after the close guard cleared still sees it closing.
+            Ok(()) => self.factory_closes_sent.extend(panes.iter().cloned()),
+            Err(reason) => crate::diagnostic!(serde_json::json!({
                 "component": "factory",
                 "kind": "worker.close_unsent",
                 "panes": panes,
                 "reason": reason,
-            }));
+            })),
+        }
+    }
+
+    /// The engine has taken these closes: its Tasks are paused, so the
+    /// panes need no closing mark any more.
+    pub(crate) fn factory_closes_taken(&mut self, panes: &[String]) {
+        for pane in panes {
+            self.factory_closes_sent.remove(pane);
         }
     }
 

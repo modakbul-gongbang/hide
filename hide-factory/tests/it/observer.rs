@@ -2,15 +2,12 @@
 //! worker candidates and a Factory's pause, through the engine's commands
 //! and ticks over the fake world (factory-observer PRD).
 
-#[path = "support/mod.rs"]
-mod support;
-
-use hide_factory::adapters::{PreMerge, WorkerStatus};
+use crate::support::*;
+use hide_factory::adapters::{Failure, MainCheck, OutsideEvent, PreMerge, WorkerStatus};
 use hide_factory::command::{CardInput, Command};
 use hide_factory::judgment::{JudgmentInput, WorkerTextSource};
 use hide_factory::model::*;
 use serde_json::{Value, json};
-use support::*;
 
 fn config(h: &mut Bench, key: &str, value: &str) -> Value {
     h.op(Command::Config {
@@ -274,14 +271,15 @@ fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_notice() {
 
 #[test]
 fn a_call_hide_ai_never_sent_is_not_counted() {
-    // Hide AI's classes for a request no provider took, and one that was
-    // submitted and timed out (D-34).
+    // Hide AI's classes for a request no provider took, and ones that may
+    // follow a model turn (D-34).
     for (reason, counted) in [
         ("disabled", 0),
         ("not_authenticated", 0),
         ("usage_limited", 0),
         ("provider_unavailable", 0),
-        ("transient", 0),
+        ("transient", 1),
+        ("over_budget", 1),
         ("timeout", 1),
     ] {
         let mut h = Bench::new(false);
@@ -294,6 +292,16 @@ fn a_call_hide_ai_never_sent_is_not_counted() {
         assert_eq!(view["observer_today"], counted, "{reason}");
         assert_eq!(inbox(&mut h)["count"], 1, "a person decides: {reason}");
     }
+    // A judgment the engine could not queue was never sent either.
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Queue full", &[]);
+    h.world().judge_down = true;
+    ask(&mut h, &f, &t, "Which?", &[]);
+    h.engine.tick();
+    let view = &h.op(Command::Status { project: None })["factories"][0];
+    assert_eq!(view["observer_today"], 0);
+    assert_eq!(inbox(&mut h)["count"], 1);
 }
 
 #[test]
@@ -435,6 +443,39 @@ fn a_verdict_that_lands_after_its_task_was_cancelled_leaves_nothing_waiting_on_r
 }
 
 #[test]
+fn a_request_still_sorting_when_its_task_went_outside_is_a_person_s_on_revive() {
+    let mut h = Bench::new(true);
+    let f = h.factory(true);
+    let t = h.ready("Taken outside", &[]);
+    let issue = h.task(&f, &t).issue.unwrap();
+    h.world().hold_judgments = true;
+    block(&mut h, &f, &t, "Which table?");
+    h.world().outside.push_back(OutsideEvent::ClosingPr {
+        issue,
+        pr: 55,
+        url: "pr/55".into(),
+        merged: false,
+    });
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Outside);
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    let revived = h.op(Command::Revive { task: t.clone() });
+    assert_eq!(revived["ok"], true, "{revived}");
+    h.engine.tick();
+    let asked = inbox(&mut h);
+    assert!(
+        asked["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["task"] == t.as_str() && item["text"] == "Which table?"),
+        "{asked}"
+    );
+}
+
+#[test]
 fn ack_notices_clears_every_notice_and_leaves_the_count() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -484,6 +525,24 @@ fn ack_notices_without_a_project_clears_every_open_factory_in_one_command() {
     assert_eq!(inbox(&mut h)["notices"], 2);
     let acked = h.op(Command::AckNotices { project: None });
     assert_eq!(acked["cleared"], 2, "{acked}");
+    assert_eq!(inbox(&mut h)["notices"], 0);
+}
+
+#[test]
+fn ack_notices_without_a_project_also_clears_a_closed_factory_s_notices() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Finished", &[]);
+    h.world().observer.push_back(classified("B", "postgres"));
+    ask(&mut h, &f, &t, "Which database?", &[]);
+    h.engine.tick();
+    h.done(&f, &t);
+    tick_until_state(&mut h, &f, &t, TaskState::Done);
+    let closed = h.op(Command::Close { project: None });
+    assert_eq!(closed["ok"], true, "{closed}");
+    assert_eq!(inbox(&mut h)["notices"], 1);
+    let acked = h.op(Command::AckNotices { project: None });
+    assert_eq!(acked["cleared"], 1, "{acked}");
     assert_eq!(inbox(&mut h)["notices"], 0);
 }
 
@@ -659,6 +718,75 @@ fn a_risk_merge_approved_after_the_mode_left_autonomous_does_not_merge() {
     }
     assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
     assert_eq!(h.world().merge_attempts, attempts);
+}
+
+/// An outside push turns main red; the next main read finds it broken.
+fn break_main(h: &mut Bench) {
+    {
+        let mut world = h.world();
+        world.head = "outside-red".into();
+        world.main_checks.insert(
+            "outside-red".into(),
+            MainCheck::Red {
+                link: "run/9".into(),
+            },
+        );
+    }
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    assert!(h.engine.factories().next().unwrap().main.broken);
+}
+
+fn merge_asks(h: &Bench) -> usize {
+    h.world()
+        .judged
+        .iter()
+        .filter(|j| matches!(j.input, JudgmentInput::ObserverMerge { .. }))
+        .count()
+}
+
+#[test]
+fn a_risk_merge_approved_after_main_broke_does_not_merge() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    h.world().risk_merge = Some(json!({"approve": true, "reason": "카드 범위"}));
+    let t = risk_only(&mut h, &f, "Infra");
+    tick_until_state(&mut h, &f, &t, TaskState::MergeWaiting);
+    // The approval was asked with the move; it answers only when released.
+    h.world().hold_judgments = true;
+    let attempts = h.world().merge_attempts;
+    break_main(&mut h);
+    h.world().hold_judgments = false;
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    assert_eq!(merge_asks(&h), 1);
+    assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
+    assert_eq!(h.world().merge_attempts, attempts, "nothing merges on red");
+}
+
+#[test]
+fn resuming_on_a_red_main_asks_no_risk_merge_approval() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    h.world().risk_merge = Some(json!({"approve": true, "reason": "카드 범위"}));
+    let t = risk_only(&mut h, &f, "Infra");
+    tick_until_state(&mut h, &f, &t, TaskState::MergeWaiting);
+    // The approval was asked with the move; it answers only when released.
+    h.world().hold_judgments = true;
+    // The approval lands while paused, so the resume would ask again.
+    h.op(Command::PauseFactory { project: None });
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    break_main(&mut h);
+    h.op(Command::ResumeFactory { project: None });
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    assert_eq!(merge_asks(&h), 1, "no second approval asked on red");
+    assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
 }
 
 #[test]
@@ -914,6 +1042,28 @@ fn a_vanished_worker_restarts_once_then_stops_and_a_retry_gives_the_restart_back
 }
 
 #[test]
+fn a_vanished_worker_whose_restart_is_refused_stops_for_a_person_instead_of_asking_again() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Refused again", &[]);
+    let asked = h.world().spawn_asks.len();
+    h.world().spawn_failure = Some(Failure::task("worker.spawn", "refused"));
+    for _ in 0..3 {
+        h.world()
+            .worker_status
+            .insert(t.clone(), WorkerStatus::Gone);
+        h.advance(5 * MINUTE_MS);
+        h.engine.tick();
+    }
+    let task = h.task(&f, &t);
+    assert_eq!(
+        (task.state, task.stop),
+        (TaskState::Stopped, Some(StopReason::WorkerGone))
+    );
+    assert_eq!(h.world().spawn_asks.len() - asked, 1, "one restart asked");
+}
+
+#[test]
 fn closing_a_worker_pane_in_hide_pauses_its_task_for_a_person() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -1041,6 +1191,38 @@ fn a_task_reported_while_its_factory_is_paused_is_checked_on_resume_and_merges_o
         task.state,
         task.gates
     );
+}
+
+#[test]
+fn a_task_verified_while_its_factory_is_paused_waits_for_a_person_s_merge_and_reads_nothing() {
+    let mut h = Bench::new(false);
+    let f = h.factory(false);
+    let t = h.ready("Verified while paused", &[]);
+    // Its checks are asked before the pause and answer after it.
+    h.world().hold_judgments = true;
+    h.done(&f, &t);
+    h.op(Command::PauseFactory { project: None });
+    h.world().hold_judgments = false;
+    let premerge = h.world().premerge_calls;
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    assert_eq!(
+        h.state(&f, &t),
+        TaskState::MergeWaiting,
+        "a person can merge (B41)"
+    );
+    assert_eq!(
+        h.world().premerge_calls,
+        premerge,
+        "nothing is read per tick"
+    );
+    let merged = h.op(Command::Merge { task: t.clone() });
+    assert_eq!(merged["ok"], true, "{merged}");
+    assert!(matches!(
+        h.state(&f, &t),
+        TaskState::Landed | TaskState::Done
+    ));
 }
 
 #[test]
@@ -1210,7 +1392,7 @@ fn worker_and_observer_settings_are_checked_and_old_values_keep_reading() {
     let refused = config(&mut h, "workers", &long);
     assert_eq!(
         (refused["reason"].clone(), refused["detail"]["max"].clone()),
-        (json!("out_of_range"), json!(200))
+        (json!("worker_description_too_long"), json!(200))
     );
     h.world().missing_agents.push(Runtime::CODEX);
     let missing = config(&mut h, "default_runtime", "codex");

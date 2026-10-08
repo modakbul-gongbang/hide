@@ -644,14 +644,17 @@ fn run_requests(
                 false
             }
             Ok(Request::PanesClosed(panes)) => {
-                // A closed pane matters only to an engine already running.
-                let Some(engine) = engine.as_mut() else {
-                    continue;
-                };
-                for pane in &panes {
-                    engine.worker_closed(pane);
+                // A closed pane matters only to an engine already running;
+                // either way the close is taken, so its mark goes.
+                if let Some(engine) = engine.as_mut() {
+                    for pane in &panes {
+                        engine.worker_closed(pane);
+                    }
+                    publisher.touched();
                 }
-                publisher.touched();
+                if let Some(runtime) = lock(&runtime) {
+                    guard(&runtime).factory_closes_taken(&panes);
+                }
                 false
             }
             Ok(Request::Screen(request)) => {
@@ -1504,8 +1507,6 @@ impl WorkerRuntime for CoreWorkers {
     }
 }
 
-/// The lines a worker's screen shows now, for a diagnosis; a read Herdr
-/// does not answer in time is no screen text.
 /// What a worker is doing, from what the runtime sees in its pane.
 fn worker_status(
     probe: &crate::runtime::WorkerProbe,
@@ -1543,6 +1544,8 @@ fn worker_status(
     }
 }
 
+/// The lines a worker's screen shows now, for a diagnosis; a read Herdr
+/// does not answer in time is no screen text.
 fn read_screen(connector: &dyn hide_herdr_client::ApiConnector, pane: &str) -> Option<String> {
     let params = crate::wire::pane_read_params(pane, "recent_unwrapped", SCREEN_LINES).ok()?;
     let answer = hide_herdr_client::request_small_response(

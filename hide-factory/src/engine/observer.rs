@@ -21,19 +21,19 @@ use crate::model::*;
 use crate::role::Role;
 
 /// Failure classes of a call the provider never received, not counted
-/// against the daily cap (D-34): the engine's own (`paused`, a full
-/// queue's `over_budget`) and Hide AI's refusals whose request was never
-/// submitted (`hide_ai::AiError`).
-const NOT_SENT: [&str; 9] = [
+/// against the daily cap (D-34): the engine's own (`paused`, `queue_full`)
+/// and Hide AI's refusals that come before any model turn
+/// (`hide_ai::AiError`). A transient failure or a spent budget can follow
+/// a turn, so it counts.
+const NOT_SENT: [&str; 8] = [
     "disabled",
     "no_provider",
-    "over_budget",
     "unsupported",
     "paused",
+    "queue_full",
     "not_authenticated",
     "usage_limited",
     "provider_unavailable",
-    "transient",
 ];
 
 /// The most recorded decisions an Observer call carries.
@@ -161,7 +161,7 @@ impl Engine {
             }
             Err(failure) => {
                 // Never sent: a full queue or no judgment thread.
-                self.observer_not_sent(factory, "over_budget");
+                self.observer_not_sent(factory, "queue_full");
                 self.record(
                     factory,
                     Some(task),
@@ -218,7 +218,13 @@ impl Engine {
     }
 
     /// The request waits for a person, with why the Observer did not decide.
-    fn send_to_person(&mut self, factory: &str, id: &str, question: &str, fallback: &str) {
+    pub(super) fn send_to_person(
+        &mut self,
+        factory: &str,
+        id: &str,
+        question: &str,
+        fallback: &str,
+    ) {
         self.set_routing(factory, id, question, |routing| {
             routing.to = RouteTo::Person;
             routing.fallback = Some(fallback.to_owned());
@@ -1069,9 +1075,10 @@ impl Engine {
             return;
         };
         if task.auto_restarts == 0 {
-            // A start that has to wait (its agent's usage is used up) keeps
-            // the one restart for when it can start (D-25).
-            if self.start(factory, id) {
+            // A start that waits for its agent's usage reset asks nothing and
+            // keeps the one restart; a refused one spends it, so the next
+            // disappearance stops the Task for a person (D-25).
+            if self.start(factory, id) != super::Start::Waiting {
                 self.with_task(factory, id, |t| t.auto_restarts += 1);
                 self.record(factory, Some(id), "worker.gone", json!({"restart": true}));
             }
@@ -1114,7 +1121,12 @@ impl Engine {
         let Some(f) = self.factories.get(factory).cloned() else {
             return;
         };
-        if f.config.observer_mode != ObserverMode::Autonomous || f.paused {
+        // Nothing merges on a red main, so its approval is not asked.
+        if f.config.observer_mode != ObserverMode::Autonomous
+            || f.paused
+            || f.closed
+            || f.main.broken
+        {
             return;
         }
         let Some(task) = self.task(factory, id).cloned() else {

@@ -106,7 +106,7 @@ export function MyTurn({ summary, factory, actions }: { summary: FactorySummary;
             <div key={key} role="listitem" className="flex flex-col">
               {/* Notices are only read, so they sit under a rule and stay out of the count (D-43). */}
               {head && item.group === "notice" ? (
-                <NoticesHead count={notices} project={factory === null ? null : (view?.project ?? null)} actions={actions} />
+                <NoticesHead count={notices} project={factory === null ? null : views.get(factory)?.project} actions={actions} />
               ) : head ? (
                 <h2 className="pt-md pb-xs text-caption text-subtle-foreground" data-factory-group={item.group}>
                   {t(GROUP_LABEL[item.group])} {count}
@@ -139,9 +139,10 @@ function KindIcon({ item, className }: { item: InboxItem; className?: string }) 
 
 /**
  * The notices' head: how many, that they are only read, and one action that clears them all (D-43).
- * `project` is the filtered Factory's; without a filter one request clears every open Factory.
+ * `project` is the filtered Factory's; null, without a filter, clears every Factory's in one request.
+ * A filter whose Factory the summary no longer has offers no action rather than clearing them all.
  */
-function NoticesHead({ count, project, actions }: { count: number; project: string | null; actions: Actions }) {
+function NoticesHead({ count, project, actions }: { count: number; project: string | null | undefined; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const [asked, setAsked] = useState<string | null>(null);
   // A refusal stays in place with the engine's next action.
@@ -157,9 +158,11 @@ function NoticesHead({ count, project, actions }: { count: number; project: stri
         </h2>
         <span className="min-w-0 truncate text-muted-foreground">{t("factory.turn.noticesHint")}</span>
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" data-factory-ack-all="true" onClick={() => setAsked(actions.factoryAction({ verb: "ack_notices", project }))}>
-          {t("factory.turn.ackAll")}
-        </Button>
+        {project === undefined ? null : (
+          <Button variant="ghost" size="sm" data-factory-ack-all="true" onClick={() => setAsked(actions.factoryAction({ verb: "ack_notices", project }))}>
+            {t("factory.turn.ackAll")}
+          </Button>
+        )}
       </div>
       {refused ? <Refusal state={{ phase: "refused", answer: refused }} /> : null}
     </div>

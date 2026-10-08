@@ -282,6 +282,7 @@ export const REFUSAL_REASONS = [
   "task_not_found",
   "text_required",
   "verify_command_required",
+  "worker_description_too_long",
   "worker_out_of_range",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
@@ -345,6 +346,7 @@ export const REFUSAL_LABEL: Record<RefusalReason, MessageKey> = {
   task_not_found: "factory.refusal.task_not_found",
   text_required: "factory.refusal.text_required",
   verify_command_required: "factory.refusal.verify_command_required",
+  worker_description_too_long: "factory.refusal.worker_description_too_long",
   worker_out_of_range: "factory.refusal.worker_out_of_range",
 };
 

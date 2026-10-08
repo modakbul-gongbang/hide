@@ -100,6 +100,17 @@ const PUBLISH_RETRY_MS: u64 = 60_000;
 const PUBLISH_PENDING: &str = "publish_pending";
 /// A reported Task whose checks wait for its paused Factory to resume (D-48).
 const CHECKS_DEFERRED: &str = "checks_deferred";
+
+/// What one attempt to start or resume a Task's worker came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Start {
+    /// The worker started, or its start is on its way and holds the slot.
+    Started,
+    /// Every candidate agent is at its usage limit; nothing was asked.
+    Waiting,
+    /// The start was asked and refused, or cannot be asked.
+    Refused,
+}
 const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 
 struct VerifyState {
@@ -953,15 +964,11 @@ impl Engine {
             }
             Command::AckNotices { project } => {
                 // "모두 확인" is one action: without a project it clears
-                // every open Factory's notices (D-43).
+                // every Factory's notices, a closed one's too, since the
+                // inbox shows them all (D-43).
                 let factories: Vec<String> = match project.as_deref() {
                     Some(project) => vec![self.factory_id(Some(project))?],
-                    None => self
-                        .factories
-                        .values()
-                        .filter(|f| !f.closed)
-                        .map(|f| f.id.clone())
-                        .collect(),
+                    None => self.factories.keys().cloned().collect(),
                 };
                 if factories.is_empty() {
                     return Err(refuse(
@@ -3163,11 +3170,19 @@ impl Engine {
             .ok_or_else(|| refuse("factory_not_found", "?"))?;
         self.start_checks(factory_id, id);
         if !factory.config.verification.configured() {
-            // No verification: straight to merge waiting (B2, B35).
+            // No verification: merge waiting once the checks pass (B2, B35);
+            // the answer says where the Task actually is.
             self.advance_merge(factory_id, id);
-            return Ok(
-                json!({"message": "검증 없음: 머지 대기로 갑니다", "state": "merge_waiting"}),
-            );
+            let state = self
+                .task(factory_id, id)
+                .ok_or_else(|| refuse("task_not_found", "?"))?
+                .state;
+            let message = if state == TaskState::MergeWaiting {
+                "검증 없음: 머지 대기로 갑니다"
+            } else {
+                "검증 없음: 점검이 끝나면 머지 대기로 갑니다. 지금은 차례를 끝내세요."
+            };
+            return Ok(json!({"message": message, "state": state.as_str()}));
         }
         self.start_verification(factory_id, id, AttemptStage::Task);
         Ok(
@@ -3546,11 +3561,6 @@ impl Engine {
         if !verified {
             return;
         }
-        // A paused Factory reads nothing more toward a merge (D-48): the
-        // pre-merge check and its verification wait for the resume.
-        if factory.paused {
-            return;
-        }
         let now = self.now();
         // Questions with a default wait only here, until answer or deadline (B26).
         let waiting_question = task.open_questions().any(|q| {
@@ -3563,9 +3573,11 @@ impl Engine {
             return;
         }
         let mode = task.merge_mode(&factory);
-        if factory.main.broken && mode == MergeMode::Auto {
-            // Auto merge is stopped until main is green again (B44, D-47):
-            // a person's gate still shows now, and nothing is read per tick.
+        if factory.paused || (factory.main.broken && mode == MergeMode::Auto) {
+            // Auto merge is stopped while the Factory is paused (D-48) and
+            // until main is green again (B44, D-47): a person's gate still
+            // shows now, so a person can merge (B41), and nothing is read
+            // per tick.
             let mut gates = self.person_gates(&factory, &task, mode);
             if waits_on_answer(&task) {
                 gates.push(Gate::OpenQuestion);
@@ -3642,7 +3654,7 @@ impl Engine {
             self.set_state(factory_id, id, TaskState::MergeWaiting);
             // In 맡김 the Observer may approve a risk path that is the only
             // gate of a verified Task (D-21); a person still can first.
-            if risk_only && !factory.main.broken {
+            if risk_only {
                 self.ask_risk_merge(factory_id, id);
             }
             return;
@@ -4645,7 +4657,7 @@ impl Engine {
                     for candidate in &workers {
                         if candidate.description.chars().count() > WORKER_DESCRIPTION_LIMIT {
                             return Err(refuse(
-                                "out_of_range",
+                                "worker_description_too_long",
                                 format!(
                                     "Keep a worker description to {WORKER_DESCRIPTION_LIMIT} characters"
                                 ),
@@ -5067,6 +5079,16 @@ impl Engine {
                 {
                     *count = count.saturating_sub(1);
                 }
+                // A request still being sorted when its Task was taken
+                // outside is a person's if the Task is revived; a cancel
+                // has already answered it.
+                if let Purpose::Classify { question } = &purpose
+                    && self
+                        .task(&factory, id)
+                        .is_some_and(|t| t.questions.iter().any(|q| &q.id == question && q.open()))
+                {
+                    self.send_to_person(&factory, id, question, "dropped");
+                }
                 self.record(
                     &factory,
                     Some(id),
@@ -5370,7 +5392,7 @@ impl Engine {
             if free == 0 && !relanding {
                 continue;
             }
-            if self.start(&task.factory, &task.id) && !relanding {
+            if self.start(&task.factory, &task.id) == Start::Started && !relanding {
                 free -= 1;
             }
         }
@@ -5388,12 +5410,12 @@ impl Engine {
         }
     }
 
-    fn start(&mut self, factory_id: &str, id: &str) -> bool {
+    fn start(&mut self, factory_id: &str, id: &str) -> Start {
         let Some(factory) = self.factories.get(factory_id).cloned() else {
-            return false;
+            return Start::Refused;
         };
         let Some(task) = self.task(factory_id, id).cloned() else {
-            return false;
+            return Start::Refused;
         };
         let now = self.now();
         self.read_usage_limits();
@@ -5413,7 +5435,7 @@ impl Engine {
             // A new start moves to the next candidate whose usage is not
             // used up; a pinned one, or a worker resuming, waits (D-42).
             if pinned || task.worker.is_some() {
-                return false;
+                return Start::Waiting;
             }
             let candidates = factory.config.candidates();
             let from = index.map_or(0, |i| i + 1);
@@ -5421,7 +5443,7 @@ impl Engine {
                 .map(|offset| &candidates[(from + offset) % candidates.len()])
                 .find(|c| !self.runtime_blocked.contains_key(&c.agent))
             else {
-                return false;
+                return Start::Waiting;
             };
             candidate = next.clone();
         }
@@ -5442,7 +5464,7 @@ impl Engine {
                     t.stop = Some(StopReason::WorkerStart);
                     t.stop_detail = Some(detail);
                 });
-                return false;
+                return Start::Refused;
             }
         }
         let relanding = task.state == TaskState::Relanding;
@@ -5510,17 +5532,17 @@ impl Engine {
                         );
                     }
                     self.set_state(factory_id, id, TaskState::Running);
-                    true
+                    Start::Started
                 }
                 // A restart still on its way holds the slot like a new one.
                 Err(failure) if failure.starting => {
                     self.worker_starting(factory_id, id, &failure);
-                    true
+                    Start::Started
                 }
                 Err(failure) => {
                     self.starting.remove(&key);
                     self.external_failure(factory_id, Some(id), &failure);
-                    false
+                    Start::Refused
                 }
             }
         } else {
@@ -5561,11 +5583,11 @@ impl Engine {
                         }),
                     );
                     self.set_state(factory_id, id, TaskState::Running);
-                    true
+                    Start::Started
                 }
                 Err(failure) if failure.starting => {
                     self.worker_starting(factory_id, id, &failure);
-                    true
+                    Start::Started
                 }
                 Err(failure) => {
                     self.starting.remove(&key);
@@ -5581,7 +5603,7 @@ impl Engine {
                             t.spawn_refusals += 1;
                         });
                     }
-                    false
+                    Start::Refused
                 }
             }
         }

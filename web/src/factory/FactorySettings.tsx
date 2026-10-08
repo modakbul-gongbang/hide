@@ -592,7 +592,6 @@ function WorkersGroup({ config, machine, reset, set, actions }: { config: Factor
   );
 }
 
-/** `reset` changes when the engine refuses a write, which leaves the config as it was, so the draft shows it again. */
 /** A small heading inside 고급 설정 and the rows it groups, hairlines between the rows only. */
 function Subgroup({ title, children, ...data }: { title: string; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
@@ -646,6 +645,7 @@ function AddCheck({ onAdd, written, refused, sending }: { onAdd: (at: (typeof CH
   );
 }
 
+/** `reset` changes when the engine refuses a write, which leaves the config as it was, so the draft shows it again. */
 function TextField({ value, onCommit, placeholder, numeric = false, mono = false, wide = false, valid, data, reset }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; mono?: boolean; wide?: boolean; valid?: (text: string) => boolean; data: string; reset: number }) {
   const [draft, setDraft] = useState(value);
   // The draft last sent, so the blur after Enter does not send it again.

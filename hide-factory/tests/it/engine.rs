@@ -1,11 +1,9 @@
 //! The engine's rules, driven through its command, letter and tick entry
 //! points over a recording fake world and an injected clock.
 
-#[path = "support/mod.rs"]
-mod support;
-
 use std::collections::BTreeMap;
 
+use crate::support::*;
 use hide_factory::Inbound;
 use hide_factory::adapters::{
     EnvSignal, Failure, MainCheck, MemoryPressure, OutsideEvent, VerifyPoll, WorkerStatus,
@@ -14,7 +12,6 @@ use hide_factory::command::{CardInput, Command, VerificationChoice};
 use hide_factory::judgment::JudgmentInput;
 use hide_factory::model::*;
 use serde_json::json;
-use support::*;
 
 fn set_workers(h: &mut Bench, factory: &str, n: u32) {
     let answer = h.op(Command::Config {

@@ -179,6 +179,33 @@ fn the_host_answers_a_screen_and_publishes_an_empty_machine() {
     host.shutdown();
 }
 
+/// A worker pane Hide closed stays closing to the Factory from the moment
+/// the close lands until the engine has taken it, so a tick between the two
+/// never reads the worker as gone and starts it again (D-26).
+#[test]
+fn a_closed_worker_pane_reads_closing_until_the_factory_takes_the_close() {
+    let state = scratch_dir("herdr-core-factory-close-");
+    let shared = Arc::new(Mutex::new(runtime()));
+    let mut host = crate::factory::FactoryHost::start(
+        state.path(),
+        None,
+        Arc::downgrade(&shared),
+        ChangeNotifier::noop(),
+    )
+    .expect("the Factory host starts");
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.set_factory_screen_port(host.screen_port());
+        runtime.factory_panes_closed(&["w-1".to_owned()]);
+        let probe = runtime.factory_worker_probe("w-1");
+        assert!(probe.closing && !probe.present, "{probe:?}");
+    }
+    wait(&shared, "the engine to take the close", |runtime| {
+        !runtime.factory_worker_probe("w-1").closing
+    });
+    host.shutdown();
+}
+
 fn secretary(runtime: &mut Runtime, pane_id: &str) -> bool {
     runtime.dispatch_json(
         &serde_json::to_vec(&serde_json::json!({
