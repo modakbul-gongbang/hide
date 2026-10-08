@@ -29,7 +29,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::label_transcript::{
-    LabelEvent, LabelEventKind, LabelTranscript, LabelTranscriptRequest,
+    LabelEvent, LabelEventKind, LabelTranscript, LabelTranscriptRequest, MemoryReceiptPart,
 };
 use crate::{
     ConfirmedLabelSession, ConversationCheckpoint, MAX_SIGHTINGS_PER_OUTPUT, PrSighting,
@@ -56,6 +56,12 @@ const ROW_LIMIT_BYTES: i64 = SESSION_LINE_LIMIT_BYTES as i64;
 /// A message row holds the message's metadata, never its text; one over
 /// this is skipped without being loaded.
 const MESSAGE_LIMIT_BYTES: i64 = 64 * 1024;
+/// The most Memory receipts one read reports; Hide writes at most one a prompt.
+const RECEIPTS_PER_READ: usize = 64;
+/// A receipt line names item ids, revisions and a 64-character tag; a longer
+/// line is not one Hide wrote.
+const RECEIPT_LINE_LIMIT_BYTES: usize = 4 * 1024;
+const RECEIPT_MARKER: &str = "<hide-memory-receipt ";
 /// The most characters of a session title a read takes.
 const TITLE_LIMIT_CHARS: i64 = 512;
 
@@ -160,6 +166,7 @@ pub(crate) fn read(
     let mut transcript = Read {
         events: Vec::new(),
         sightings: Vec::new(),
+        receipts: Vec::new(),
         skipped: std::collections::BTreeMap::new(),
     };
     let mut next = start;
@@ -296,6 +303,7 @@ pub(crate) fn read(
         title: title.filter(|title| !title.trim().is_empty()),
         custom_title: None,
         pr_sightings: transcript.sightings,
+        memory_receipts: transcript.receipts,
         subagents: Default::default(),
         turns: None,
     })
@@ -304,6 +312,7 @@ pub(crate) fn read(
 struct Read {
     events: Vec<LabelEvent>,
     sightings: Vec<PrSighting>,
+    receipts: Vec<MemoryReceiptPart>,
     skipped: std::collections::BTreeMap<&'static str, usize>,
 }
 
@@ -325,9 +334,13 @@ impl Read {
                     let Some(body) = part.get("text").and_then(Value::as_str) else {
                         continue;
                     };
-                    // OpenCode's own text (a compaction's request) is no
-                    // one's message.
+                    // OpenCode's own text (a compaction's request) and Hide's
+                    // plugin's are no one's message; a receipt in Hide's is
+                    // reported for Memory to check.
                     if part.get("synthetic").and_then(Value::as_bool) == Some(true) {
+                        if role == Some("user") {
+                            self.receipts(body, offset);
+                        }
                         continue;
                     }
                     text.push(body.to_owned());
@@ -360,6 +373,22 @@ impl Read {
             images: if human { images } else { 0 },
             sender,
         });
+    }
+
+    fn receipts(&mut self, body: &str, offset: u64) {
+        for line in body.lines().map(str::trim) {
+            if !line.starts_with(RECEIPT_MARKER) {
+                continue;
+            }
+            if line.len() > RECEIPT_LINE_LIMIT_BYTES || self.receipts.len() >= RECEIPTS_PER_READ {
+                self.skip("memory_receipt_capacity");
+                continue;
+            }
+            self.receipts.push(MemoryReceiptPart {
+                offset,
+                text: line.to_owned(),
+            });
+        }
     }
 
     fn tool(&mut self, part: &Value, message_at: u64) {

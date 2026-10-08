@@ -26,7 +26,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use hide_session::label_transcript::{
-    LabelEvent, LabelEventKind, LabelTranscript, LabelTranscriptRequest,
+    LabelEvent, LabelEventKind, LabelTranscript, LabelTranscriptRequest, MemoryReceiptPart,
 };
 use hide_session::{Agent, PrSighting, label_reference_token};
 use serde_json::json;
@@ -55,6 +55,9 @@ const UNAVAILABLE_RETRY: Duration = Duration::from_secs(15);
 /// The most sighted pull requests waiting between two takes; a read that
 /// finds more keeps the newest.
 const SIGHTED_LIMIT: usize = 32;
+/// The most Memory receipts waiting between two takes; Hide's plugin writes at
+/// most one a prompt, so more means the core stopped taking them.
+const RECEIPT_LIMIT: usize = 64;
 /// How long after a session printed a pull request's address its absence from
 /// GitHub's answer still sets off a read: a session prints the address of a
 /// pull request it has just made, while an older sighting is a session read
@@ -99,6 +102,21 @@ pub(crate) struct SightedPullRequest {
     pub(crate) repository: String,
     pub(crate) number: u64,
     pub(crate) at_unix_ms: u64,
+}
+
+/// A Memory receipt an agent's session stored, with what Memory needs to
+/// check and record it; the coordinator hands it to
+/// `Runtime::record_memory_receipts`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SightedMemoryReceipt {
+    /// Memory's provider id: the agent's Herdr kind.
+    pub(crate) provider: &'static str,
+    pub(crate) session_id: String,
+    /// The pane's cwd, which names the Project.
+    pub(crate) cwd: String,
+    /// The message's index in the session; with the session it names the turn.
+    pub(crate) offset: u64,
+    pub(crate) text: String,
 }
 
 /// One agent as the coordinator's replica holds it.
@@ -219,6 +237,9 @@ pub(crate) struct LabelWorker {
     /// What the reads since the last `take_sighted` found that the core has
     /// not read; see `note_sighted`.
     sighted: Vec<SightedPullRequest>,
+    /// What the reads since the last `take_memory_receipts` found; see
+    /// `note_receipts`.
+    receipts: Vec<SightedMemoryReceipt>,
     /// The operator's agent-summary switch (D-11). Off, no analysis is
     /// asked for and the overlay lays no AI field; reads go on, because the
     /// rows stand on what they find.
@@ -254,6 +275,7 @@ impl LabelWorker {
             dirty: false,
             pull_request_times: Arc::default(),
             sighted: Vec::new(),
+            receipts: Vec::new(),
             summaries: true,
         })
     }
@@ -490,6 +512,49 @@ impl LabelWorker {
                 "dropped": dropped,
             }));
         }
+    }
+
+    /// Keeps the Memory receipts a read of this Mac's session found. Only an
+    /// id-referenced session in a known cwd can name the Project and session
+    /// Memory checks a receipt against; a device's Memory is its own.
+    fn note_receipts(&mut self, pane_id: &str, receipts: &[MemoryReceiptPart]) {
+        if receipts.is_empty() || self.target != self.store.node() {
+            return;
+        }
+        let Some(pane) = self.panes.get(pane_id) else {
+            return;
+        };
+        let (Some((kind, session_id)), Some(cwd)) = (&pane.reference, &pane.cwd) else {
+            return;
+        };
+        if kind != "id" {
+            return;
+        }
+        let provider = pane.agent.as_str();
+        self.receipts
+            .extend(receipts.iter().map(|receipt| SightedMemoryReceipt {
+                provider,
+                session_id: session_id.clone(),
+                cwd: cwd.clone(),
+                offset: receipt.offset,
+                text: receipt.text.clone(),
+            }));
+        if self.receipts.len() > RECEIPT_LIMIT {
+            let dropped = self.receipts.len() - RECEIPT_LIMIT;
+            self.receipts.drain(..dropped);
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "read.memory_receipts_capped",
+                "target": self.target,
+                "pane_id": pane_id,
+                "dropped": dropped,
+            }));
+        }
+    }
+
+    /// Takes the Memory receipts the reads since the last take found.
+    pub(crate) fn take_memory_receipts(&mut self) -> Vec<SightedMemoryReceipt> {
+        std::mem::take(&mut self.receipts)
     }
 
     /// Takes what the reads since the last take sighted (`note_sighted`).
@@ -833,6 +898,7 @@ impl LabelWorker {
         );
         changed |= record.facts.judge_created(&self.pull_request_times);
         self.note_sighted(pane_id, &transcript.pr_sightings, now_unix_ms);
+        self.note_receipts(pane_id, &transcript.memory_receipts);
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         let new_reason = transcript
             .skipped_reasons
