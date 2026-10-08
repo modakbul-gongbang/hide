@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use hide_agent_adapter::HookDialect;
 use hide_platform::fs::{self, private};
 use hide_platform::process::{CaptureFailureKind, OwnedChild};
 use serde::Deserialize;
@@ -126,8 +127,18 @@ pub struct Call {
     pub cwd: Option<PathBuf>,
 }
 
+/// Claude Code's, Codex's and Cursor's payload: snake_case keys.
 #[derive(Deserialize)]
 struct Payload {
+    tool_name: Option<String>,
+    tool_input: Option<ToolInput>,
+    cwd: Option<String>,
+}
+
+/// Grok's payload: camelCase keys (Grok's hooks guide, Writing Hook Scripts).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GrokPayload {
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
     cwd: Option<String>,
@@ -144,12 +155,18 @@ pub fn may_hold_question(payload: &[u8]) -> bool {
         b"AskUserQuestion".as_slice(),
         b"ExitPlanMode".as_slice(),
         b"request_user_input".as_slice(),
+        b"ask_user_question".as_slice(),
+        b"exit_plan_mode".as_slice(),
     ]
     .iter()
     .any(|tool| payload.windows(tool.len()).any(|window| window == *tool))
 }
 
-pub fn read_question(payload: &[u8], truncated: bool, runtime: &str) -> Option<QuestionCall> {
+pub fn read_question(
+    payload: &[u8],
+    truncated: bool,
+    dialect: HookDialect,
+) -> Option<QuestionCall> {
     if truncated {
         return None;
     }
@@ -158,11 +175,28 @@ pub fn read_question(payload: &[u8], truncated: bool, runtime: &str) -> Option<Q
         tool_name: String,
         session_id: String,
     }
-    let payload: QuestionPayload = serde_json::from_slice(payload).ok()?;
-    let tool = match (runtime, payload.tool_name.as_str()) {
-        ("claude-code", "AskUserQuestion") => "AskUserQuestion",
-        ("claude-code", "ExitPlanMode") => "ExitPlanMode",
-        ("codex", "request_user_input") => "request_user_input",
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GrokQuestionPayload {
+        tool_name: String,
+        session_id: String,
+    }
+    let payload = match dialect {
+        HookDialect::Grok => serde_json::from_slice::<GrokQuestionPayload>(payload)
+            .ok()
+            .map(|payload| QuestionPayload {
+                tool_name: payload.tool_name,
+                session_id: payload.session_id,
+            })?,
+        _ => serde_json::from_slice::<QuestionPayload>(payload).ok()?,
+    };
+    // Cursor asks its questions in plain text: it has no question tool.
+    let tool = match (dialect, payload.tool_name.as_str()) {
+        (HookDialect::ClaudeCode, "AskUserQuestion") => "AskUserQuestion",
+        (HookDialect::ClaudeCode, "ExitPlanMode") => "ExitPlanMode",
+        (HookDialect::Codex, "request_user_input") => "request_user_input",
+        (HookDialect::Grok, "ask_user_question") => "ask_user_question",
+        (HookDialect::Grok, "exit_plan_mode") => "exit_plan_mode",
         _ => return None,
     };
     if payload.session_id.is_empty()
@@ -183,25 +217,52 @@ pub const QUESTION_REASON: &str = "This pane is the current Software Factory wor
 #[derive(Deserialize)]
 struct ToolInput {
     command: Option<serde_json::Value>,
+    /// Cursor's shell call names the folder it runs in.
+    working_directory: Option<String>,
 }
 
-/// The shell call in a `PreToolUse` payload. A truncated or unreadable payload,
-/// another tool and a command that is not one string yield nothing, so the call
-/// runs.
-pub fn read_call(payload: &[u8], truncated: bool) -> Option<Call> {
+/// The shell call in a `PreToolUse` payload, in `dialect`'s shape: the shell
+/// tool is `Bash` in Claude Code and Codex, `run_terminal_command` in Grok
+/// (which a hook may also see as its alias `Bash`), and `Shell` in Cursor,
+/// whose call carries its own `working_directory`. A truncated or unreadable
+/// payload, another tool and a command that is not one string yield nothing,
+/// so the call runs.
+pub fn read_call(payload: &[u8], truncated: bool, dialect: HookDialect) -> Option<Call> {
     if truncated {
         return None;
     }
-    let payload: Payload = serde_json::from_slice(payload).ok()?;
-    if payload.tool_name.as_deref() != Some("Bash") {
+    let (tool, input, cwd) = match dialect {
+        HookDialect::Grok => {
+            let payload: GrokPayload = serde_json::from_slice(payload).ok()?;
+            (payload.tool_name, payload.tool_input, payload.cwd)
+        }
+        HookDialect::ClaudeCode | HookDialect::Codex | HookDialect::Cursor => {
+            let payload: Payload = serde_json::from_slice(payload).ok()?;
+            (payload.tool_name, payload.tool_input, payload.cwd)
+        }
+    };
+    let shell = match dialect {
+        HookDialect::ClaudeCode | HookDialect::Codex => &["Bash"][..],
+        HookDialect::Grok => &["run_terminal_command", "Bash"][..],
+        HookDialect::Cursor => &["Shell"][..],
+    };
+    if !tool.is_some_and(|tool| shell.contains(&tool.as_str())) {
         return None;
     }
-    let serde_json::Value::String(command) = payload.tool_input?.command? else {
+    let input = input?;
+    let serde_json::Value::String(command) = input.command? else {
         return None;
+    };
+    let cwd = match dialect {
+        HookDialect::Cursor => input
+            .working_directory
+            .filter(|cwd| !cwd.is_empty())
+            .or(cwd),
+        _ => cwd,
     };
     Some(Call {
         command,
-        cwd: payload.cwd.filter(|cwd| !cwd.is_empty()).map(PathBuf::from),
+        cwd: cwd.filter(|cwd| !cwd.is_empty()).map(PathBuf::from),
     })
 }
 
@@ -1392,7 +1453,7 @@ mod tests {
 
     #[test]
     fn the_payload_of_a_shell_call_is_read_and_nothing_else() {
-        let call = |json: &str| read_call(json.as_bytes(), false);
+        let call = |json: &str| read_call(json.as_bytes(), false, HookDialect::ClaudeCode);
         assert_eq!(
             call(r#"{"tool_name":"Bash","cwd":"/r","tool_input":{"command":"ls"}}"#),
             Some(Call {
@@ -1413,7 +1474,8 @@ mod tests {
         assert_eq!(
             read_call(
                 br#"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#,
-                true
+                true,
+                HookDialect::ClaudeCode
             ),
             None
         );
@@ -1422,6 +1484,107 @@ mod tests {
         assert!(!may_hold_launch(
             br#"{"tool_name":"Bash","tool_input":{"command":"cargo test"}}"#
         ));
+    }
+
+    #[test]
+    fn grok_and_cursor_shell_calls_are_read_in_their_own_documented_shapes() {
+        // Grok's hooks guide, Writing Hook Scripts: camelCase keys.
+        let grok = br#"{"hookEventName":"pre_tool_use","hook_event_name":"PreToolUse","sessionId":"abc-123",
+            "cwd":"/Users/you/project","toolName":"run_terminal_command","toolInput":{"command":"npm test"},
+            "toolUseId":"t","toolInputTruncated":false}"#;
+        assert_eq!(
+            read_call(grok, false, HookDialect::Grok),
+            Some(Call {
+                command: "npm test".into(),
+                cwd: Some(PathBuf::from("/Users/you/project"))
+            })
+        );
+        assert_eq!(
+            read_call(
+                br#"{"toolName":"Bash","toolInput":{"command":"ls"}}"#,
+                false,
+                HookDialect::Grok
+            )
+            .map(|call| call.command),
+            Some("ls".to_owned())
+        );
+        assert_eq!(
+            read_call(
+                br#"{"toolName":"read_file","toolInput":{"command":"ls"}}"#,
+                false,
+                HookDialect::Grok
+            ),
+            None
+        );
+        // Grok's keys are not Claude Code's.
+        assert_eq!(read_call(grok, false, HookDialect::ClaudeCode), None);
+
+        // Cursor's hooks page, preToolUse: the shell call carries its folder.
+        let cursor = br#"{"conversation_id":"c","generation_id":"g","hook_event_name":"preToolUse",
+            "tool_name":"Shell","tool_input":{"command":"npm install","working_directory":"/project/web"},
+            "tool_use_id":"abc123","cwd":"/project"}"#;
+        assert_eq!(
+            read_call(cursor, false, HookDialect::Cursor),
+            Some(Call {
+                command: "npm install".into(),
+                cwd: Some(PathBuf::from("/project/web"))
+            })
+        );
+        assert_eq!(
+            read_call(
+                br#"{"tool_name":"Shell","tool_input":{"command":"ls"},"cwd":"/p"}"#,
+                false,
+                HookDialect::Cursor
+            )
+            .and_then(|call| call.cwd),
+            Some(PathBuf::from("/p"))
+        );
+        assert_eq!(
+            read_call(
+                br#"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#,
+                false,
+                HookDialect::Cursor
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_grok_question_tool_is_read_with_its_session_and_cursor_has_none() {
+        let question = read_question(
+            br#"{"toolName":"ask_user_question","sessionId":"s-1","toolInput":{}}"#,
+            false,
+            HookDialect::Grok,
+        )
+        .unwrap();
+        assert_eq!(
+            (question.tool, question.session.as_str()),
+            ("ask_user_question", "s-1")
+        );
+        let plan = read_question(
+            br#"{"toolName":"exit_plan_mode","sessionId":"s-1"}"#,
+            false,
+            HookDialect::Grok,
+        )
+        .unwrap();
+        assert_eq!(plan.tool, "exit_plan_mode");
+        assert!(may_hold_question(br#"{"toolName":"exit_plan_mode"}"#));
+        assert!(
+            read_question(
+                br#"{"toolName":"AskUserQuestion","sessionId":"s-1"}"#,
+                false,
+                HookDialect::Grok
+            )
+            .is_none()
+        );
+        assert!(
+            read_question(
+                br#"{"tool_name":"AskUserQuestion","session_id":"s-1"}"#,
+                false,
+                HookDialect::Cursor
+            )
+            .is_none()
+        );
     }
 
     #[test]

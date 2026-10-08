@@ -173,33 +173,52 @@ fn inside_grok_or_opencode_the_hook_takes_and_confirms_no_letter() {
 }
 
 #[test]
-fn inside_grok_or_opencode_guidance_and_counters_are_what_they_are_outside() {
+fn inside_opencode_guidance_and_counters_are_what_they_are_outside() {
     let outside = Machine::new();
     let guidance = outside.run("SessionStart", &[]);
     outside.run("SubagentStart", &[]);
     assert!(guidance.contains("hookSpecificOutput"), "{guidance}");
     assert!(!outside.files().is_empty(), "the counters wrote a record");
 
-    for origin in [
-        &[("OPENCODE", "1")][..],
-        &[("GROK_HOOK_EVENT", "SessionStart")][..],
+    let inside = Machine::new();
+    let origin = &[("OPENCODE", "1")][..];
+    let stdout = inside.run("SessionStart", origin);
+    inside.run("SubagentStart", origin);
+
+    assert_eq!(stdout, guidance);
+    let names = |machine: &Machine| {
+        machine
+            .files()
+            .into_keys()
+            .map(|path| path.strip_prefix(&machine.home).unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&inside), names(&outside));
+    assert!(inside.calls().is_empty());
+}
+
+/// Grok and Cursor run Claude Code's hooks beside their own, and Hide's own
+/// hook for each is the one that counts and refuses (PRD grok-cursor-hooks
+/// D-05). Grok's session start is passive, so the guidance Claude Code's hook
+/// printed there never reached the model.
+#[test]
+fn inside_grok_the_whole_hook_is_silent() {
+    let machine = Machine::new();
+    let origin = &[
+        ("GROK_HOOK_EVENT", "SessionStart"),
+        ("GROK_SESSION_ID", "s1"),
+    ][..];
+    for event in [
+        "SessionStart",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+        "PreToolUse",
     ] {
-        let inside = Machine::new();
-
-        let stdout = inside.run("SessionStart", origin);
-        inside.run("SubagentStart", origin);
-
-        assert_eq!(stdout, guidance, "{origin:?}");
-        let names = |machine: &Machine| {
-            machine
-                .files()
-                .into_keys()
-                .map(|path| path.strip_prefix(&machine.home).unwrap().to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(names(&inside), names(&outside), "{origin:?}");
-        assert!(inside.calls().is_empty(), "{origin:?}");
+        assert_eq!(machine.run(event, origin), "", "{event}");
     }
+    assert!(machine.calls().is_empty());
+    assert!(machine.files().is_empty());
 }
 
 #[test]

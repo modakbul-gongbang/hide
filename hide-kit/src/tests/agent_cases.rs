@@ -124,7 +124,10 @@ fn an_agent_that_is_not_on_gets_nothing_until_the_operator_switches_it_on() {
     assert!(
         std::fs::read_to_string(cursor_hooks(&fixture))
             .unwrap()
-            .contains("hide-guidance@1")
+            .contains(&format!(
+                "hide-guidance@{}",
+                hide_agent_hooks::guidance::GUIDANCE_VERSION
+            ))
     );
     assert_eq!(record(&fixture)["agents"]["cursor"], true);
 }
@@ -751,7 +754,10 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
     let hook = agent(&report, "cursor").hook.as_ref().unwrap();
     assert_eq!(hook.state, ComponentState::Installed, "{hook:?}");
     let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
-    assert!(written.contains("hide-guidance@1"));
+    assert!(written.contains(&format!(
+        "hide-guidance@{}",
+        hide_agent_hooks::guidance::GUIDANCE_VERSION
+    )));
 
     let report = apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
@@ -771,11 +777,16 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
     let expected: [(&str, &[Feature]); 7] = [
         ("claude-code", &Feature::ALL),
         ("codex", &Feature::ALL),
-        ("grok", &[Skill, HerdrIntegration]),
+        // PRD grok-cursor-hooks: the spawn guard and the subagent count from
+        // their official hooks; Grok discards a session-start hook's output.
+        ("grok", &[Skill, Subagents, SpawnGuard, HerdrIntegration]),
         ("opencode", &[Skill, HerdrIntegration]),
         ("pi", &[Skill, HerdrIntegration]),
         ("omp", &[Skill, HerdrIntegration]),
-        ("cursor", &[Skill, Guidance, HerdrIntegration]),
+        (
+            "cursor",
+            &[Skill, Guidance, Subagents, SpawnGuard, HerdrIntegration],
+        ),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -796,8 +807,9 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters, Memory and subagent counts are the six-event hook, which the
-    // hook crate has a runtime for; an agent claiming them without one would
+    // Letters and Memory are the six-event hook, which the hook crate has a
+    // runtime for; the subagent count and the spawn guard also come from the
+    // basic tier's own hook file. An agent claiming them without a hook would
     // be a popover that says more than the kit installs.
     let with_runtime: Vec<&str> = ADAPTERS
         .iter()
@@ -822,11 +834,97 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}",
             row.id
         );
-        assert_eq!(
-            row.supports(crate::agents::Feature::Subagents),
-            part,
-            "{}",
-            row.id
-        );
+        let hook = !matches!(row.hook, HookSupport::None);
+        for feature in [
+            crate::agents::Feature::Subagents,
+            crate::agents::Feature::SpawnGuard,
+        ] {
+            assert_eq!(row.supports(feature), hook, "{}: {feature:?}", row.id);
+        }
     }
+}
+
+fn grok_hooks(fixture: &Fixture) -> PathBuf {
+    fixture.home().join(".grok/hooks/hide.json")
+}
+
+#[test]
+fn grok_gets_its_own_hook_file_beside_the_others_and_only_inside_its_own_folder() {
+    let fixture = Fixture::new();
+    install(&fixture, "grok", ".grok");
+    // Herdr's and Orca's files are already there and stay byte for byte.
+    let herdr = br#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/herdr.sh"}]}]}}"#;
+    set_up(&fixture, ".grok/hooks");
+    std::fs::write(fixture.home().join(".grok/hooks/herdr.json"), herdr).unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    let grok = agent(&report, "grok");
+    assert_eq!(
+        grok.hook.as_ref().unwrap().state,
+        ComponentState::Installed,
+        "{grok:?}"
+    );
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(grok_hooks(&fixture)).unwrap()).unwrap();
+    for event in [
+        "SessionStart",
+        "PreToolUse",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+    ] {
+        let command = written["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{event}: {written}"));
+        assert!(command.contains("--runtime grok"), "{command}");
+        assert!(command.contains(&format!("--event {event}")), "{command}");
+    }
+    assert_eq!(
+        written["hooks"]["PreToolUse"][0]["matcher"],
+        "Bash|ask_user_question|exit_plan_mode"
+    );
+    assert_eq!(
+        std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
+        herdr
+    );
+
+    // An entry the operator edited reads Outdated, and the next pass puts
+    // Hide's back.
+    let edited = std::fs::read_to_string(grok_hooks(&fixture))
+        .unwrap()
+        .replace("--event Stop", "--event Stop --verbose");
+    std::fs::write(grok_hooks(&fixture), &edited).unwrap();
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        agent(&report, "grok").hook.as_ref().unwrap().state,
+        ComponentState::Installed
+    );
+    assert!(
+        !std::fs::read_to_string(grok_hooks(&fixture))
+            .unwrap()
+            .contains("--verbose")
+    );
+
+    // Switched off, Hide's own file goes and Herdr's stays.
+    let report = apply(&fixture.target, &Scope::agents([], ["grok"]));
+    assert_eq!(
+        agent(&report, "grok").hook.as_ref().unwrap().state,
+        ComponentState::Off
+    );
+    assert!(!grok_hooks(&fixture).exists());
+    assert_eq!(
+        std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
+        herdr
+    );
+}
+
+#[test]
+fn grok_without_its_own_folder_gets_no_folder_and_its_row_says_why() {
+    let fixture = Fixture::new();
+    executable(&fixture.home().join(".local/bin/grok"), "#!/bin/sh\n");
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    let hook = agent(&report, "grok").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent, "{hook:?}");
+    assert!(hook.reason.unwrap().contains(".grok"));
+    assert!(!fixture.home().join(".grok").exists());
 }

@@ -109,15 +109,17 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         executables: &["grok"],
         skill_location: SkillLocation::Shared,
         skill_os: Os::UNIX,
-        hook: HookInstall::None,
+        hook: HookInstall::Guidance(GuidanceDialect::Grok),
         herdr: HerdrIntegration {
             name: "grok",
             folder: &[".grok"],
         },
         default_on: false,
+        // Grok discards what a prompt hook prints, so letters stay with
+        // `hide inbox` and its bell stays off.
         prompt_hook: None,
-        spawn_guard: None,
-        subagent_counts: None,
+        spawn_guard: Some(HookDialect::Grok),
+        subagent_counts: Some(HookDialect::Grok),
         memory: None,
         bell: false,
         session: None,
@@ -291,9 +293,11 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".cursor"],
         },
         default_on: false,
+        // Cursor documents no context a prompt hook may add, so letters stay
+        // with `hide inbox` and its bell stays off.
         prompt_hook: None,
-        spawn_guard: None,
-        subagent_counts: None,
+        spawn_guard: Some(HookDialect::Cursor),
+        subagent_counts: Some(HookDialect::Cursor),
         memory: None,
         bell: false,
         session: None,
@@ -309,7 +313,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         install_url: "https://cursor.com/docs/cli/installation",
         logo_id: "cursor",
         factory: FactoryCapabilities {
-            direct_ask: Unconfirmed,
+            direct_ask: Unavailable,
             user_turn: Unconfirmed,
             turn_end_and_answer: Unconfirmed,
             startup_guidance: Available(HookInstall::Guidance(GuidanceDialect::Cursor)),

@@ -97,7 +97,7 @@ fn gemini_writes_the_documented_settings_shape_with_milliseconds() {
     assert_eq!(hook["timeout"], 8000, "Gemini CLI counts milliseconds");
     let command = hook["command"].as_str().unwrap();
     assert!(command.contains("--runtime gemini-cli --event SessionStart"));
-    assert!(command.contains("--source hide-guidance@1"));
+    assert!(command.contains(&format!("--source hide-guidance@{GUIDANCE_VERSION}")));
     assert!(command.starts_with("if [ -x '"), "guarded: {command}");
 }
 
@@ -239,6 +239,21 @@ fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
         installed_helper_path(GuidanceAgent::Cursor, fixture.home()).as_deref(),
         Some(fixture.helper.to_str().unwrap())
     );
+    // PRD grok-cursor-hooks D-01: the guard on the shell tool and the subagent
+    // and turn events, each under Cursor's camelCase key.
+    for (key, event, matcher) in [
+        ("preToolUse", "PreToolUse", Some("Shell")),
+        ("subagentStart", "SubagentStart", None),
+        ("subagentStop", "SubagentStop", None),
+        ("stop", "Stop", None),
+    ] {
+        let entry = &cursor["hooks"][key][0];
+        let command = entry["command"].as_str().unwrap();
+        assert!(command.contains("--runtime cursor"), "{command}");
+        assert!(command.contains(&format!("--event {event} ")), "{command}");
+        assert_eq!(entry["matcher"].as_str(), matcher, "{key}");
+        assert_eq!(entry["timeout"], 8, "{key}");
+    }
 
     let fixture = Fixture::new(GuidanceAgent::Augment);
     install(GuidanceAgent::Augment, fixture.home(), &fixture.helper).unwrap();
@@ -310,10 +325,14 @@ fn another_tools_entries_survive_install_and_remove_in_every_shared_file() {
             found.iter().any(|command| command == "/theirs.sh"),
             "{agent:?}"
         );
-        assert_eq!(found.len(), 2, "{agent:?}: theirs and Hide's");
+        assert_eq!(
+            found.len(),
+            1 + agent.slots().len(),
+            "{agent:?}: theirs and Hide's"
+        );
 
         let removed = remove(agent, fixture.home()).unwrap();
-        assert_eq!(removed.removed_entries, 1, "{agent:?}");
+        assert_eq!(removed.removed_entries, agent.slots().len(), "{agent:?}");
         let after = commands(&fixture.read(agent));
         assert_eq!(after, vec!["/theirs.sh".to_owned()], "{agent:?}");
     }
@@ -334,10 +353,13 @@ fn a_second_install_changes_nothing_and_a_removal_leaves_no_trace_of_an_own_file
         assert_eq!(first, fs::read(agent.config_path(fixture.home())).unwrap());
         assert!(matches!(
             status(agent, fixture.home()),
-            HookStatus::Installed { version: 1 }
+            HookStatus::Installed {
+                version: GUIDANCE_VERSION
+            }
         ));
+        assert!(matches_install(agent, fixture.home(), &fixture.helper));
         let removed = remove(agent, fixture.home()).unwrap();
-        assert_eq!(removed.removed_entries, 1, "{agent:?}");
+        assert_eq!(removed.removed_entries, agent.slots().len(), "{agent:?}");
         assert!(matches!(
             status(agent, fixture.home()),
             HookStatus::NotInstalled
@@ -390,9 +412,10 @@ fn an_older_marker_reads_outdated_and_a_gone_helper_reads_failed() {
     let fixture = Fixture::new(GuidanceAgent::Qwen);
     install(GuidanceAgent::Qwen, fixture.home(), &fixture.helper).unwrap();
     let path = GuidanceAgent::Qwen.config_path(fixture.home());
-    let text = fs::read_to_string(&path)
-        .unwrap()
-        .replace("hide-guidance@1", "hide-guidance@0");
+    let text = fs::read_to_string(&path).unwrap().replace(
+        &format!("hide-guidance@{GUIDANCE_VERSION}"),
+        "hide-guidance@0",
+    );
     fs::write(&path, text).unwrap();
     assert!(matches!(
         status(GuidanceAgent::Qwen, fixture.home()),
@@ -427,26 +450,29 @@ fn each_agent_reads_context_in_the_field_its_documentation_names() {
     assert!(context.ends_with("workspace guidance"));
     assert!(session_context(None).contains("`hide browser help`"));
 
-    let gemini: Value = serde_json::from_str(&stdout(GuidanceAgent::Gemini, &context)).unwrap();
+    let stdout = |agent| super::stdout(agent, &context).unwrap();
+    let gemini: Value = serde_json::from_str(&stdout(GuidanceAgent::Gemini)).unwrap();
     assert_eq!(gemini["hookSpecificOutput"]["additionalContext"], context);
     for agent in [GuidanceAgent::Qwen, GuidanceAgent::Droid] {
-        let value: Value = serde_json::from_str(&stdout(agent, &context)).unwrap();
+        let value: Value = serde_json::from_str(&stdout(agent)).unwrap();
         assert_eq!(value["hookSpecificOutput"]["hookEventName"], "SessionStart");
         assert_eq!(value["hookSpecificOutput"]["additionalContext"], context);
     }
-    let copilot: Value = serde_json::from_str(&stdout(GuidanceAgent::Copilot, &context)).unwrap();
+    let copilot: Value = serde_json::from_str(&stdout(GuidanceAgent::Copilot)).unwrap();
     assert_eq!(copilot, json!({ "additionalContext": context }));
-    assert_eq!(stdout(GuidanceAgent::Kiro, &context), context);
-    let augment: Value = serde_json::from_str(&stdout(GuidanceAgent::Augment, &context)).unwrap();
+    assert_eq!(stdout(GuidanceAgent::Kiro), context);
+    let augment: Value = serde_json::from_str(&stdout(GuidanceAgent::Augment)).unwrap();
     assert_eq!(
         augment["hookSpecificOutput"]["hookEventName"],
         "SessionStart"
     );
     assert_eq!(augment["hookSpecificOutput"]["additionalContext"], context);
-    let junie: Value = serde_json::from_str(&stdout(GuidanceAgent::Junie, &context)).unwrap();
+    let junie: Value = serde_json::from_str(&stdout(GuidanceAgent::Junie)).unwrap();
     assert_eq!(junie, json!({ "additionalContext": context }));
-    let cursor: Value = serde_json::from_str(&stdout(GuidanceAgent::Cursor, &context)).unwrap();
+    let cursor: Value = serde_json::from_str(&stdout(GuidanceAgent::Cursor)).unwrap();
     assert_eq!(cursor, json!({ "additional_context": context }));
+    // Grok discards what a session-start hook prints, so it is told nothing.
+    assert_eq!(super::stdout(GuidanceAgent::Grok, &context), None);
 }
 
 #[test]
@@ -569,7 +595,8 @@ fn a_cursor_file_without_a_version_gets_one_and_keeps_the_operators_hooks() {
     install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
     let document = fixture.read(GuidanceAgent::Cursor);
     assert_eq!(document["version"], 1, "Cursor requires it");
-    assert_eq!(commands(&document).len(), 2);
+    // Theirs, and one of Hide's for each of Cursor's five events.
+    assert_eq!(commands(&document).len(), 6);
 
     // A version the operator wrote is theirs.
     let fixture = Fixture::new(GuidanceAgent::Cursor);
@@ -597,6 +624,159 @@ fn a_settings_file_that_holds_another_key_keeps_it_when_hides_hook_goes() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn grok_writes_its_own_file_of_the_events_its_documentation_names() {
+    let fixture = Fixture::new(GuidanceAgent::Grok);
+    install(GuidanceAgent::Grok, fixture.home(), &fixture.helper).unwrap();
+    let path = GuidanceAgent::Grok.config_path(fixture.home());
+    assert!(path.ends_with(".grok/hooks/hide.json"), "{path:?}");
+    let grok = fixture.read(GuidanceAgent::Grok);
+    let events: Vec<&str> = grok["hooks"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        events,
+        [
+            "SessionStart",
+            "PreToolUse",
+            "SubagentStart",
+            "SubagentStop",
+            "Stop"
+        ]
+    );
+    for event in events {
+        let hook = &grok["hooks"][event][0]["hooks"][0];
+        assert_eq!(hook["type"], "command");
+        // Grok's `Stop` waits 600 seconds by default; Hide's always says 8.
+        assert_eq!(hook["timeout"], 8, "{event}");
+        let command = hook["command"].as_str().unwrap();
+        assert!(command.starts_with("if [ -x '"), "{command}");
+        assert!(
+            command.contains(&format!("--runtime grok --event {event} ")),
+            "{command}"
+        );
+    }
+    assert_eq!(
+        grok["hooks"]["PreToolUse"][0]["matcher"],
+        "Bash|ask_user_question|exit_plan_mode"
+    );
+    assert!(grok["hooks"]["Stop"][0].get("matcher").is_none());
+    assert_eq!(
+        installed_helper_path(GuidanceAgent::Grok, fixture.home()).as_deref(),
+        Some(fixture.helper.to_str().unwrap())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn every_byte_another_tool_wrote_in_cursors_shared_file_survives_install_and_remove() {
+    // What Orca, Herdr and the operator keep in `~/.cursor/hooks.json`, in
+    // their own spacing and order (PRD grok-cursor-hooks Risks).
+    let theirs = "{\n  \"version\": 1,\n  \"hooks\": {\n    \"stop\": [ { \"command\": \"/orca/status.sh stop\" } ],\n    \"preToolUse\": [\n      {\"command\": \"/herdr/state.sh\", \"matcher\": \"Shell\"}\n    ]\n  },\n  \"zzz\": \"\\u00e9\"\n}\n";
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    fixture.write(GuidanceAgent::Cursor, theirs);
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    let installed = fs::read_to_string(GuidanceAgent::Cursor.config_path(fixture.home())).unwrap();
+    for kept in [
+        "\"stop\": [ { \"command\": \"/orca/status.sh stop\" }",
+        "{\"command\": \"/herdr/state.sh\", \"matcher\": \"Shell\"}",
+        "\"zzz\": \"\\u00e9\"",
+    ] {
+        assert!(installed.contains(kept), "{kept} in {installed}");
+    }
+    assert!(matches!(
+        status(GuidanceAgent::Cursor, fixture.home()),
+        HookStatus::Installed { .. }
+    ));
+    let removed = remove(GuidanceAgent::Cursor, fixture.home()).unwrap();
+    assert_eq!(removed.removed_entries, 5);
+    assert_eq!(
+        fs::read_to_string(GuidanceAgent::Cursor.config_path(fixture.home())).unwrap(),
+        theirs,
+        "removing Hide's entries leaves the file as the other tools wrote it"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_missing_event_or_an_edited_entry_is_not_current() {
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    // What version 1 wrote: the session start alone.
+    fixture.write(
+        GuidanceAgent::Cursor,
+        &format!(
+            r#"{{"version":1,"hooks":{{"sessionStart":[{{"command":"{} hook --runtime cursor --event SessionStart --source hide-guidance@1","timeout":8}}]}}}}"#,
+            fixture.helper.display()
+        ),
+    );
+    assert!(matches!(
+        status(GuidanceAgent::Cursor, fixture.home()),
+        HookStatus::Outdated { version: 1 }
+    ));
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    assert!(matches!(
+        status(GuidanceAgent::Cursor, fixture.home()),
+        HookStatus::Installed {
+            version: GUIDANCE_VERSION
+        }
+    ));
+    assert!(matches_install(
+        GuidanceAgent::Cursor,
+        fixture.home(),
+        &fixture.helper
+    ));
+    let path = GuidanceAgent::Cursor.config_path(fixture.home());
+    let edited = fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"Shell\"", "\"Shell|Read\"");
+    fs::write(&path, edited).unwrap();
+    assert!(!matches_install(
+        GuidanceAgent::Cursor,
+        fixture.home(),
+        &fixture.helper
+    ));
+    // One event's entry taken out by hand is missing.
+    let mut document = fixture.read(GuidanceAgent::Cursor);
+    document["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .shift_remove("subagentStop");
+    fs::write(&path, document.to_string()).unwrap();
+    assert!(matches!(
+        status(GuidanceAgent::Cursor, fixture.home()),
+        HookStatus::Outdated { .. }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cursor_helper_path_a_shell_would_read_still_answers_allow_when_it_is_gone() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir_all(home.path().join(".cursor")).unwrap();
+    let helper = home.path().join("Hide Kit/hide-agent-hooks");
+    install(GuidanceAgent::Cursor, home.path(), &helper).unwrap();
+    let document: Value = serde_json::from_str(
+        &fs::read_to_string(GuidanceAgent::Cursor.config_path(home.path())).unwrap(),
+    )
+    .unwrap();
+    for key in ["preToolUse", "subagentStart"] {
+        let command = document["hooks"][key][0]["command"].as_str().unwrap();
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{key}");
+        let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(answer, json!({ "permission": "allow" }), "{key}");
+    }
+    let stop = document["hooks"]["stop"][0]["command"].as_str().unwrap();
+    assert!(!stop.contains("permission"), "{stop}");
+}
+
 #[test]
 fn a_retired_agent_gets_no_new_hook_and_its_old_entry_comes_out() {
     for agent in [GuidanceAgent::Qwen, GuidanceAgent::Gemini] {
@@ -611,6 +791,10 @@ fn a_retired_agent_gets_no_new_hook_and_its_old_entry_comes_out() {
         assert_eq!(GuidanceAgent::from_id(agent.id()), None, "{agent:?}");
         assert!(GuidanceAgent::is_retired_id(agent.id()), "{agent:?}");
     }
-    assert_eq!(GuidanceAgent::LIVE, [GuidanceAgent::Cursor]);
+    assert_eq!(
+        GuidanceAgent::LIVE,
+        [GuidanceAgent::Grok, GuidanceAgent::Cursor]
+    );
     assert!(!GuidanceAgent::is_retired_id("cursor"));
+    assert!(!GuidanceAgent::is_retired_id("grok"));
 }

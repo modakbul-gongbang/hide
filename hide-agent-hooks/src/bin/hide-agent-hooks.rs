@@ -18,7 +18,9 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
-use hide_agent_hooks::counters;
+use hide_agent_adapter::HookDialect;
+use hide_agent_hooks::basic;
+use hide_agent_hooks::counters::{self, Change};
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::guidance::{self, GuidanceAgent};
 use hide_agent_hooks::report;
@@ -50,21 +52,25 @@ fn main() -> ExitCode {
         Ok(watch) => watch,
         // Exit 2 from a `PreToolUse` hook refuses the tool call. The outer hook
         // is what an agent runs, and it must never end that way; the inner one
-        // is only ever started by it.
+        // is only ever started by it. Cursor reads anything but a valid answer
+        // from a permission hook as a refusal, so it gets its allow.
         Err(_) if arguments.first().map(String::as_str) == Some("hook") => {
+            if cursor_permission_hook(&arguments) {
+                print_line(basic::CURSOR_ALLOW);
+            }
             return ExitCode::SUCCESS;
         }
         Err(_) => return ExitCode::from(2),
     };
     match arguments.first().map(String::as_str) {
         Some("hook") => {
-            // An agent beyond Claude Code and Codex has no counters, Memory
-            // or letters: its hook prints the session guidance and nothing
-            // else (`hide_agent_hooks::guidance`).
+            // Grok and Cursor have no Memory or letters: their hooks carry the
+            // spawn guard, the subagent count and Cursor's session guidance
+            // (`hide_agent_hooks::guidance`, `hide_agent_hooks::basic`).
             if let Some(agent) = argument_value("--runtime", &arguments)
                 .and_then(|value| GuidanceAgent::from_id(&value))
             {
-                run_guidance_hook(agent, &arguments);
+                run_basic_hook(agent, &arguments, started);
                 return ExitCode::SUCCESS;
             }
             // An entry an earlier build wrote for an agent Hide no longer
@@ -75,12 +81,12 @@ fn main() -> ExitCode {
             {
                 return ExitCode::SUCCESS;
             }
-            // Cursor loads Claude Code's hooks from `~/.claude/settings.json`
-            // beside its own and runs both, so under Cursor Claude Code's hook
-            // stays out and Cursor's own guidance hook is the one that speaks
-            // (`docs/agent-hooks.md`, Other agents). Grok and OpenCode run it
-            // too and have no hook of Hide's: it still speaks there, but takes
-            // no letters (`run_hook`).
+            // Cursor and Grok load Claude Code's hooks from
+            // `~/.claude/settings.json` beside their own and run both, so under
+            // them Claude Code's hook stays out and their own hook is the one
+            // that speaks, once (`docs/agent-hooks.md`, Other agents). OpenCode
+            // runs it too and has no hook of Hide's: it still speaks there, but
+            // takes no letters (`run_hook`).
             if argument_value("--runtime", &arguments).and_then(|value| AgentRuntime::parse(&value))
                 == Some(AgentRuntime::ClaudeCode)
                 && hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name))
@@ -131,38 +137,117 @@ fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
      --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop|PreToolUse> \
      [--memory-injection] [--source <install marker>]\n       \
-     hide-agent-hooks hook --runtime cursor \
-     --event SessionStart [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
+     hide-agent-hooks hook --runtime <grok|cursor> \
+     --event <SessionStart|PreToolUse|SubagentStart|SubagentStop|Stop> \
+     [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }
 
-/// The guidance hook of an agent that has no other Hide hook: one line of
-/// stdout in the field that agent reads, and nothing else. It never fails
-/// loudly, for the reason every hook does not.
-fn run_guidance_hook(agent: GuidanceAgent, arguments: &[String]) {
-    if argument_value("--event", arguments).as_deref() != Some("SessionStart") {
-        return;
-    }
-    let context = guidance::session_context(workspace_context::live_context().as_deref());
-    let output = guidance::stdout(agent, &context);
-    // PowerShell re-encodes what a Windows hook prints; ASCII survives it.
-    let output = if cfg!(windows) && output.starts_with('{') {
-        hide_agent_hooks::runtime::ascii_json(&output)
-    } else {
-        output
-    };
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
+/// Whether this is a Cursor permission hook (`preToolUse`, `subagentStart`)
+/// outside Grok: one whose every answer but a refusal must be Cursor's allow.
+fn cursor_permission_hook(arguments: &[String]) -> bool {
+    argument_value("--runtime", arguments).and_then(|value| GuidanceAgent::from_id(&value))
+        == Some(GuidanceAgent::Cursor)
+        && argument_value("--event", arguments)
+            .and_then(|value| HookEvent::parse(&value))
+            .is_some_and(basic::cursor_permission_event)
+        && !inside_grok()
 }
 
-/// The spawn guard (`hide_agent_hooks::spawn_guard`): refuses a shell call that
-/// starts an agent through Herdr and says how to start it through Hide. It
-/// prints something only to refuse, and every other path (not a launch, not in
-/// a registered checkout, the daemon unreachable, any failure of its own) prints
-/// nothing and lets the call run.
-fn run_spawn_guard(arguments: &[String], started: Instant) {
-    use hide_agent_hooks::spawn_guard::{self as guard, Registration};
+/// Grok sets this for every hook it runs, its own and the Claude Code and
+/// Cursor hooks it loads beside them (Grok's hooks guide, Environment
+/// Variables); a process a Grok session merely started does not carry it.
+fn inside_grok() -> bool {
+    std::env::var_os("GROK_HOOK_EVENT").is_some()
+}
 
+/// The hook of Grok or Cursor (PRD grok-cursor-hooks): the spawn guard on a
+/// shell call, the subagent count on the subagent and turn events, and
+/// Cursor's guidance at session start. It never fails loudly, and Cursor's
+/// permission events get an answer on every path.
+fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) {
+    let Some(dialect) = agent.dialect() else {
+        return;
+    };
+    let Some(event) =
+        argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
+    else {
+        return;
+    };
+    // Grok runs Cursor's `hooks.json` beside its own file; there only Grok's
+    // own hook speaks, so nothing is refused or counted twice (D-05).
+    if dialect == HookDialect::Cursor && inside_grok() {
+        return;
+    }
+    let answer = std::panic::catch_unwind(|| match event {
+        HookEvent::PreToolUse => guard_refusal(dialect, agent.id(), started).map(|reason| {
+            match dialect {
+                HookDialect::Cursor => basic::cursor_deny(&reason),
+                // Grok takes Claude Code's refusal envelope.
+                _ => hide_agent_hooks::spawn_guard::deny_output(&reason),
+            }
+        }),
+        HookEvent::SessionStart => guidance::stdout(
+            agent,
+            &guidance::session_context(workspace_context::live_context().as_deref()),
+        ),
+        _ => None,
+    })
+    .ok()
+    .flatten();
+    let answer = match answer {
+        None if dialect == HookDialect::Cursor && basic::cursor_permission_event(event) => {
+            Some(basic::CURSOR_ALLOW.to_owned())
+        }
+        answer => answer,
+    };
+    if let Some(answer) = answer {
+        // PowerShell re-encodes what a Windows hook prints; ASCII survives it.
+        let answer = if cfg!(windows) && answer.starts_with('{') {
+            hide_agent_hooks::runtime::ascii_json(&answer)
+        } else {
+            answer
+        };
+        print_line(&answer);
+    }
+    let _ = std::panic::catch_unwind(|| count_basic(dialect, event, started));
+}
+
+/// The count a Grok or Cursor event makes. Grok's `Stop` names the
+/// background subagents still running and comes from inside a subagent too,
+/// which leaves the count alone; Cursor's subagents end with the turn.
+fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
+    let change = match (dialect, event) {
+        (_, HookEvent::SessionStart) => Change::Reset,
+        (_, HookEvent::SubagentStart) => Change::Started,
+        (_, HookEvent::SubagentStop) => Change::Stopped,
+        (HookDialect::Grok, HookEvent::Stop) => {
+            let Some((payload, truncated)) =
+                read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+            else {
+                return;
+            };
+            match basic::grok_stop(&payload, truncated) {
+                basic::GrokStop::Ignore => return,
+                basic::GrokStop::Running(running) => Change::Settled { running },
+            }
+        }
+        (_, HookEvent::Stop) => Change::Settled { running: 0 },
+        (_, HookEvent::UserPromptSubmit | HookEvent::PreToolUse) => return,
+    };
+    let Some(home) = home_directory() else { return };
+    report_count(&home, event, change);
+}
+
+fn print_line(text: &str) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{text}").and_then(|_| stdout.flush());
+}
+
+/// The spawn guard (`hide_agent_hooks::spawn_guard`) of Claude Code's and
+/// Codex's hook: it prints Claude Code's refusal for a shell call that starts
+/// an agent through Herdr, and nothing on every other path.
+fn run_spawn_guard(arguments: &[String], started: Instant) {
     let Some(runtime) =
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value))
     else {
@@ -171,70 +256,67 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     if runtime.dialect().adapter().spawn_guard.is_none() {
         return;
     }
-    // Another agent that runs Claude Code's hooks (Grok, OpenCode, Cursor) has
-    // its own pre-tool contract, which Hide has not verified.
+    // Another agent that runs Claude Code's hooks (Grok, OpenCode, Cursor)
+    // speaks through its own hook, or Hide has not verified its contract.
     if hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name)).is_some() {
         return;
     }
+    if let Some(reason) = guard_refusal(runtime.dialect(), runtime.id(), started) {
+        print_line(&hide_agent_hooks::spawn_guard::deny_output(&reason));
+    }
+}
+
+/// The guard's decision for one tool call: the reason it is refused, or
+/// `None` to let it run (not a launch, not in a registered checkout, the
+/// daemon unreachable, any failure of its own). A refusal and an unreachable
+/// daemon are written to the guard's log here; the caller prints the answer
+/// in its runtime's form.
+fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Option<String> {
+    use hide_agent_hooks::spawn_guard::{self as guard, Registration};
+
     // Outside a Herdr pane there is nothing to redirect.
-    let Some(pane) = std::env::var("HERDR_PANE_ID")
+    let pane = std::env::var("HERDR_PANE_ID")
         .ok()
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
-    else {
-        return;
-    };
+        .filter(|value| !value.is_empty())?;
+    let (payload, truncated) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
     // Question tools have no shell command and take their own readonly route.
     if let Some(question) = guard::may_hold_question(&payload)
-        .then(|| guard::read_question(&payload, truncated, runtime.id()))
+        .then(|| guard::read_question(&payload, truncated, dialect))
         .flatten()
     {
-        let Some(home) = home_directory() else { return };
-        let Some(program) = workspace_context::cli_program() else {
-            return;
-        };
-        match guard::question_decision(
+        let home = home_directory()?;
+        let program = workspace_context::cli_program()?;
+        return match guard::question_decision(
             &program,
-            runtime.id(),
+            runtime_id,
             &question.session,
             started + GUARD_BUDGET,
         ) {
             guard::QuestionDecision::Worker => {
-                guard::record_question_refusal(&home, runtime.id(), &pane, question.tool);
-                let output = guard::deny_output(guard::QUESTION_REASON);
-                let mut stdout = std::io::stdout().lock();
-                let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
+                guard::record_question_refusal(&home, runtime_id, &pane, question.tool);
+                Some(guard::QUESTION_REASON.to_owned())
             }
-            guard::QuestionDecision::Allow => {}
+            guard::QuestionDecision::Allow => None,
             guard::QuestionDecision::Unreachable(cause) => {
-                guard::unreachable(&home, runtime.id(), cause)
+                guard::unreachable(&home, runtime_id, cause);
+                None
             }
-        }
-        return;
+        };
     }
     // Every shell call comes through here: this one search decides the rest.
     if !guard::may_hold_launch(&payload) {
-        return;
+        return None;
     }
-    let Some(call) = guard::read_call(&payload, truncated) else {
-        return;
-    };
-    let Some(launch) = guard::find_launch(&call.command, &|name| std::env::var(name).ok()) else {
-        return;
-    };
-    let Some(home) = home_directory() else { return };
-    let Some(program) = workspace_context::cli_program() else {
-        return;
-    };
+    let call = guard::read_call(&payload, truncated, dialect)?;
+    let launch = guard::find_launch(&call.command, &|name| std::env::var(name).ok())?;
+    let home = home_directory()?;
+    let program = workspace_context::cli_program()?;
     match guard::registration(&program, Instant::now() + GUARD_BUDGET) {
         Registration::Registered => {}
-        Registration::NotRegistered => return,
+        Registration::NotRegistered => return None,
         Registration::Unreachable(cause) => {
-            guard::unreachable(&home, runtime.id(), cause);
-            return;
+            guard::unreachable(&home, runtime_id, cause);
+            return None;
         }
     }
     let cwd = call
@@ -245,12 +327,10 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     let (repo, branch) = guard::checkout_facts(&cwd);
     let delegation = guard::spawn_command(&launch, repo.as_deref(), branch.as_deref(), true);
     let handoff = guard::spawn_command(&launch, repo.as_deref(), branch.as_deref(), false);
-    let output = guard::deny_output(&guard::refusal_reason(&delegation, &handoff));
     // The refusal is logged before it is printed, and the refusal stands even
     // when the log cannot be written.
-    guard::record_refusal(&home, runtime.id(), &pane, &launch);
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
+    guard::record_refusal(&home, runtime_id, &pane, &launch);
+    Some(guard::refusal_reason(&delegation, &handoff))
 }
 
 fn run_prompt_hook(arguments: &[String], deadline: Instant) {
@@ -383,20 +463,25 @@ fn run_hook(arguments: &[String], started: Instant) {
     if runtime.is_some_and(|runtime| runtime.dialect().adapter().subagent_counts.is_none()) {
         return;
     }
+    report_count(&home, event, Change::of(event));
+}
+
+/// Applies `change` to this pane's count and reports the pane's totals to
+/// Herdr. Outside a Herdr pane there is no pane to describe.
+fn report_count(home: &std::path::Path, event: HookEvent, change: Change) {
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty())
     else {
-        // Not inside a Herdr pane: there is no pane to describe.
         return;
     };
-    let Ok(counters) = counters::apply(&home, &pane_id, event) else {
+    let Ok(counters) = counters::change(home, &pane_id, change) else {
         return;
     };
     // `--source` on the command line is the install marker the diagnosis
     // reads out of the hook file; the report's own source is fixed in
     // `report::metadata_source`, because Herdr refuses the marker's `@`.
-    let socket_path = report::socket_path(&home);
+    let socket_path = report::socket_path(home);
     let outcome = match &socket_path {
         Ok(path) => report::report(path, &pane_id, counters),
         Err(error) => Err(error.clone()),
@@ -405,7 +490,7 @@ fn run_hook(arguments: &[String], started: Instant) {
     // stderr reaches nobody, and the record is what `doctor` and Settings
     // show (engineering rule 10).
     let socket_path = socket_path.unwrap_or_default();
-    let _ = report::record_outcome(&home, &pane_id, event, &socket_path, &outcome);
+    let _ = report::record_outcome(home, &pane_id, event, &socket_path, &outcome);
 }
 
 fn memory_output_before_deadline(

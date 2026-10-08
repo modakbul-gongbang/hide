@@ -6,6 +6,7 @@
 mod adapter_contract;
 mod bell_intake;
 mod codex_trust;
+mod grok_cursor_hooks;
 mod guidance_hook;
 mod hook_deadline;
 mod letter_origin;

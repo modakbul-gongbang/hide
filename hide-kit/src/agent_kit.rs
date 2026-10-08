@@ -151,11 +151,18 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
         HookStatus::Installed { .. } => {
             let wanted = helper(target);
             match guidance::installed_helper_path(agent, &target.home) {
-                Some(found) if Path::new(&found) == wanted => Observed::Current,
-                Some(found) => Observed::Stale(format!(
+                Some(found) if Path::new(&found) != wanted => Observed::Stale(format!(
                     "the hook runs {found}, not this build's {}",
                     wanted.display()
                 )),
+                Some(_) if guidance::matches_install(agent, &target.home, &wanted) => {
+                    Observed::Current
+                }
+                // Hide's marker over an entry Hide did not write: the operator
+                // edited it, and the pass or Reinstall puts Hide's back.
+                Some(_) => Observed::Stale(
+                    "Hide's hook entries were edited after Hide wrote them".to_owned(),
+                ),
                 None => Observed::Stale("the hook's command is not one Hide wrote".to_owned()),
             }
         }

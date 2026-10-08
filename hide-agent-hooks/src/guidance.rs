@@ -1,16 +1,18 @@
-//! The SessionStart guidance hook of the agents beyond Claude Code and Codex
-//! (issue #517): Cursor, the one of Hide's supported agents that has a
-//! documented command hook the guidance fits.
+//! Hide's hook for the agents beyond Claude Code and Codex whose official
+//! documentation gives command hooks: Cursor and Grok (issue #517, PRD
+//! grok-cursor-hooks).
 //!
 //! Claude Code and Codex are instrumented: their hooks count subagents,
-//! read Project Memory and pull letters (`install`, `runtime`). Every other
-//! agent whose official documentation describes a command hook gets one
-//! thing: at session start the hook prints Hide's guidance, in the field
-//! that agent's documentation says it reads as context. It counts nothing,
-//! reads no transcript and writes no pane metadata, so it is a separate
+//! read Project Memory and pull letters (`install`, `runtime`). Cursor and
+//! Grok are the basic tier: neither documents a prompt hook that adds text,
+//! so they get no letters, Memory or bell. What they do document is a
+//! refusal of a shell call and the start and end of a subagent, so their
+//! hooks carry the spawn guard and the subagent count, and Cursor's session
+//! start also prints Hide's guidance in the field its documentation names
+//! (Grok discards what a session-start hook prints). This is a separate
 //! module with its own marker rather than more variants of
-//! [`crate::AgentRuntime`], whose every other match would then need an arm
-//! for agents that never feed it (engineering rule 5, 13).
+//! [`crate::AgentRuntime`], whose six-event file, Memory and diagnosis these
+//! agents never feed (engineering rule 5, 13).
 //!
 //! The rules are the ones `install` states for the other hooks: a file that
 //! does not parse is never written, what another tool wrote is never
@@ -29,7 +31,8 @@
 //! | Gemini CLI (retired) | `~/.gemini/settings.json` | `hooks.SessionStart[{matcher, hooks[{name, type, command, timeout ms}]}]` |
 //! | Qwen Code (retired) | `~/.qwen/settings.json` | `hooks.SessionStart[{hooks[{name, type, command, timeout s}]}]` |
 //! | Factory Droid (retired) | `~/.factory/hooks.json`, else the `hooks` key of `settings.json` | `SessionStart[{hooks[{type, command, timeout s}]}]` |
-//! | Cursor | `~/.cursor/hooks.json` | `{version 1, hooks.sessionStart[{command, timeout s}]}` |
+//! | Cursor | `~/.cursor/hooks.json` | `{version 1, hooks.<camelCase event>[{command, timeout s, matcher?}]}` |
+//! | Grok | `~/.grok/hooks/hide.json`, Hide's own | `hooks.<Event>[{matcher?, hooks[{type, command, timeout s}]}]` |
 //! | Augment (retired) | `~/.augment/settings.json` | `hooks.SessionStart[{hooks[{type, command, timeout ms}]}]` |
 //! | Junie (retired) | `~/.junie/config.json` | `hooks.SessionStart[{hooks[{type, command, timeout s, async}]}]` |
 //! | Copilot CLI (retired) | `~/.copilot/hooks/hide-guidance.json`, Hide's own | `{version 1, hooks.sessionStart[{type, bash, powershell, timeoutSec}]}` |
@@ -44,14 +47,15 @@ use crate::install::{
     HookDocument, HookStatus, InstallFailure, InstallOutcome, Quoting, RemoveOutcome,
     read_document, write_document,
 };
-use crate::runtime::{PURPOSE_CONTEXT, marker_version_of};
+use crate::runtime::{HookEvent, PURPOSE_CONTEXT, marker_version_of};
 
 /// The marker Hide stamps into every guidance hook it installs, carried as
 /// the `--source` argument of the command like the other hooks' marker.
 pub const GUIDANCE_SOURCE_NAME: &str = "hide-guidance";
 
-/// Raise it when the command or entry Hide writes changes shape.
-pub const GUIDANCE_VERSION: u32 = 1;
+/// Raise it when the command or entry Hide writes changes shape. Version 2
+/// added the guard and subagent events beside Cursor's session start.
+pub const GUIDANCE_VERSION: u32 = 2;
 
 /// The one line every guidance hook adds after the shared instruction, so an
 /// agent that Hide cannot place in a Workspace still learns where the usage
@@ -74,10 +78,11 @@ pub enum GuidanceAgent {
     Cursor,
     Augment,
     Junie,
+    Grok,
 }
 
 impl GuidanceAgent {
-    pub const ALL: [GuidanceAgent; 8] = [
+    pub const ALL: [GuidanceAgent; 9] = [
         Self::Gemini,
         Self::Qwen,
         Self::Droid,
@@ -86,6 +91,7 @@ impl GuidanceAgent {
         Self::Cursor,
         Self::Augment,
         Self::Junie,
+        Self::Grok,
     ];
 
     /// The stable identifier: the agent's adapter id, and the `--runtime` of
@@ -100,11 +106,12 @@ impl GuidanceAgent {
             Self::Cursor => hide_agent_adapter::AgentId::Cursor.adapter().id,
             Self::Augment => "augment",
             Self::Junie => "junie",
+            Self::Grok => hide_agent_adapter::AgentId::Grok.adapter().id,
         }
     }
 
-    /// The agents Hide still writes a guidance hook for, in Settings order.
-    pub const LIVE: [GuidanceAgent; 1] = [Self::Cursor];
+    /// The agents Hide still writes a hook for, in Settings order.
+    pub const LIVE: [GuidanceAgent; 2] = [Self::Grok, Self::Cursor];
 
     /// The agents whose hook an earlier build wrote and this one only removes.
     pub fn is_retired(self) -> bool {
@@ -114,11 +121,58 @@ impl GuidanceAgent {
     /// The live agent whose id this is; a retired agent's id answers `None`,
     /// so a hook entry an earlier build left in its file runs nothing.
     pub fn from_id(id: &str) -> Option<Self> {
+        use hide_agent_adapter::{GuidanceDialect, HookInstall};
         match hide_agent_adapter::adapter(id)?.hook {
-            hide_agent_adapter::HookInstall::Guidance(
-                hide_agent_adapter::GuidanceDialect::Cursor,
-            ) => Some(Self::Cursor),
+            HookInstall::Guidance(GuidanceDialect::Cursor) => Some(Self::Cursor),
+            HookInstall::Guidance(GuidanceDialect::Grok) => Some(Self::Grok),
             _ => None,
+        }
+    }
+
+    /// The hook dialect this agent's payloads and answers are written in.
+    /// A retired agent has none: its entries run nothing.
+    pub fn dialect(self) -> Option<hide_agent_adapter::HookDialect> {
+        match self {
+            Self::Cursor => Some(hide_agent_adapter::HookDialect::Cursor),
+            Self::Grok => Some(hide_agent_adapter::HookDialect::Grok),
+            _ => None,
+        }
+    }
+
+    /// The events Hide registers for this agent, each under the key the
+    /// agent's documentation names. A retired agent only ever had the
+    /// session start. Grok's session start fires once per main session and
+    /// starts the pane's count over; Cursor's also prints the guidance.
+    fn slots(self) -> &'static [Slot] {
+        const CURSOR: &[Slot] = &[
+            Slot::new(HookEvent::SessionStart, "sessionStart", None),
+            Slot::new(HookEvent::PreToolUse, "preToolUse", Some("Shell")),
+            Slot::new(HookEvent::SubagentStart, "subagentStart", None),
+            Slot::new(HookEvent::SubagentStop, "subagentStop", None),
+            Slot::new(HookEvent::Stop, "stop", None),
+        ];
+        const GROK: &[Slot] = &[
+            Slot::new(HookEvent::SessionStart, "SessionStart", None),
+            // `Bash` is Grok's documented alias of `run_terminal_command`.
+            Slot::new(
+                HookEvent::PreToolUse,
+                "PreToolUse",
+                Some("Bash|ask_user_question|exit_plan_mode"),
+            ),
+            Slot::new(HookEvent::SubagentStart, "SubagentStart", None),
+            Slot::new(HookEvent::SubagentStop, "SubagentStop", None),
+            Slot::new(HookEvent::Stop, "Stop", None),
+        ];
+        const CAMEL_SESSION_START: &[Slot] =
+            &[Slot::new(HookEvent::SessionStart, "sessionStart", None)];
+        const SESSION_START: &[Slot] = &[Slot::new(HookEvent::SessionStart, "SessionStart", None)];
+        match self {
+            Self::Cursor => CURSOR,
+            Self::Grok => GROK,
+            Self::Copilot => CAMEL_SESSION_START,
+            Self::Gemini | Self::Qwen | Self::Droid | Self::Kiro | Self::Augment | Self::Junie => {
+                SESSION_START
+            }
         }
     }
 
@@ -140,14 +194,15 @@ impl GuidanceAgent {
             Self::Cursor => home.join(".cursor"),
             Self::Augment => home.join(".augment"),
             Self::Junie => home.join(".junie"),
+            Self::Grok => home.join(".grok"),
         }
     }
 
     /// Whether Hide writes this agent's hook on this system. Copilot CLI has a
     /// `powershell` key of its own; every other agent's hook is one command
     /// string whose documentation names no Windows shell (Gemini CLI, Qwen
-    /// Code, Factory Droid, Kiro, Cursor, Augment, Junie), so a guard written
-    /// for POSIX or PowerShell would be a guess there.
+    /// Code, Factory Droid, Kiro, Cursor, Augment, Junie, Grok), so a guard
+    /// written for POSIX or PowerShell would be a guess there.
     pub fn supported_here(self) -> Result<(), &'static str> {
         if cfg!(windows) && self != Self::Copilot {
             return Err("its documentation does not say which shell runs a hook on Windows");
@@ -163,8 +218,8 @@ impl GuidanceAgent {
     fn layout(self, home: &Path) -> Layout {
         let folder = self.home_directory(home);
         match self {
-            Self::Gemini => Layout::event_map(folder.join("settings.json"), true, "SessionStart"),
-            Self::Qwen => Layout::event_map(folder.join("settings.json"), true, "SessionStart"),
+            Self::Gemini => Layout::event_map(folder.join("settings.json"), true),
+            Self::Qwen => Layout::event_map(folder.join("settings.json"), true),
             Self::Droid => {
                 // Droid reads `hooks.json` when it exists and the `hooks` key
                 // of `settings.json` only when it does not, so creating the
@@ -172,9 +227,9 @@ impl GuidanceAgent {
                 let hooks_file = folder.join("hooks.json");
                 let settings = folder.join("settings.json");
                 if !hooks_file.exists() && settings_has_hooks(&settings) {
-                    Layout::event_map(settings, true, "SessionStart")
+                    Layout::event_map(settings, true)
                 } else {
-                    Layout::event_map(hooks_file, false, "SessionStart")
+                    Layout::event_map(hooks_file, false)
                 }
             }
             Self::Copilot => Layout {
@@ -195,8 +250,30 @@ impl GuidanceAgent {
                 shape: Shape::Cursor,
                 own_file: true,
             },
-            Self::Augment => Layout::event_map(folder.join("settings.json"), true, "SessionStart"),
-            Self::Junie => Layout::event_map(folder.join("config.json"), true, "SessionStart"),
+            Self::Augment => Layout::event_map(folder.join("settings.json"), true),
+            Self::Junie => Layout::event_map(folder.join("config.json"), true),
+            // Grok merges every `~/.grok/hooks/*.json`, so Hide's is a file of
+            // its own beside Herdr's and Orca's.
+            Self::Grok => Layout::event_map(folder.join("hooks").join("hide.json"), true),
+        }
+    }
+}
+
+/// One event Hide registers: the helper's `--event`, the key the agent's
+/// file keeps it under, and the matcher its entry selects with.
+#[derive(Clone, Copy, Debug)]
+struct Slot {
+    event: HookEvent,
+    key: &'static str,
+    matcher: Option<&'static str>,
+}
+
+impl Slot {
+    const fn new(event: HookEvent, key: &'static str, matcher: Option<&'static str>) -> Self {
+        Self {
+            event,
+            key,
+            matcher,
         }
     }
 }
@@ -220,34 +297,29 @@ struct Layout {
 
 #[derive(Clone, Debug)]
 enum Shape {
-    /// `{"hooks": {"SessionStart": [group]}}` (`under_hooks_key`), or the
-    /// events at the top of the file.
-    EventMap {
-        under_hooks_key: bool,
-        event: &'static str,
-    },
+    /// `{"hooks": {"<Event>": [group]}}` (`under_hooks_key`), or the events
+    /// at the top of the file.
+    EventMap { under_hooks_key: bool },
     /// `{"version": 1, "hooks": {"sessionStart": [entry]}}`.
     Copilot,
     /// `{"version": "v1", "hooks": [entry]}`.
     Kiro,
-    /// `{"version": 1, "hooks": {"sessionStart": [entry]}}`, Cursor's own
-    /// file of camelCase events.
+    /// `{"version": 1, "hooks": {"<camelCaseEvent>": [entry]}}`, Cursor's
+    /// own file.
     Cursor,
 }
 
 impl Layout {
-    fn event_map(path: PathBuf, under_hooks_key: bool, event: &'static str) -> Self {
+    fn event_map(path: PathBuf, under_hooks_key: bool) -> Self {
         Self {
             path,
-            shape: Shape::EventMap {
-                under_hooks_key,
-                event,
-            },
-            // A file Hide may have created: Droid's `hooks.json` (an emptied
-            // one is deleted, since left as `{}` it would still shadow the
-            // hooks the operator keeps in `settings.json`) and a settings file
-            // that did not exist. One that holds only what Hide's removal left
-            // empty goes, and any other key of the operator's keeps it.
+            shape: Shape::EventMap { under_hooks_key },
+            // A file Hide may have created: Grok's own file, Droid's
+            // `hooks.json` (an emptied one is deleted, since left as `{}` it
+            // would still shadow the hooks the operator keeps in
+            // `settings.json`) and a settings file that did not exist. One
+            // that holds only what Hide's removal left empty goes, and any
+            // other key of the operator's keeps it.
             own_file: true,
         }
     }
@@ -265,13 +337,14 @@ pub fn session_context(workspace: Option<&str>) -> String {
     }
 }
 
-/// What the agent's hook writes to stdout for `context`, in the form its
-/// documentation says it reads: Gemini CLI and Copilot CLI parse exactly one
-/// JSON value, Qwen Code, Factory Droid and Augment read the
-/// `hookSpecificOutput` envelope, Cursor reads `additional_context`, Junie
-/// reads `additionalContext`, and Kiro reads plain text.
-pub fn stdout(agent: GuidanceAgent, context: &str) -> String {
-    match agent {
+/// What the agent's session-start hook writes to stdout for `context`, in
+/// the form its documentation says it reads: Gemini CLI and Copilot CLI
+/// parse exactly one JSON value, Qwen Code, Factory Droid and Augment read
+/// the `hookSpecificOutput` envelope, Cursor reads `additional_context`,
+/// Junie reads `additionalContext`, and Kiro reads plain text. Grok discards
+/// what a session-start hook prints, so it is told nothing.
+pub fn stdout(agent: GuidanceAgent, context: &str) -> Option<String> {
+    Some(match agent {
         GuidanceAgent::Gemini => {
             json!({ "hookSpecificOutput": { "additionalContext": context } }).to_string()
         }
@@ -287,67 +360,87 @@ pub fn stdout(agent: GuidanceAgent, context: &str) -> String {
         }
         GuidanceAgent::Cursor => json!({ "additional_context": context }).to_string(),
         GuidanceAgent::Kiro => context.to_owned(),
-    }
+        GuidanceAgent::Grok => return None,
+    })
 }
 
 // --- Writing the entry -----------------------------------------------------------
 
-fn arguments(agent: GuidanceAgent) -> String {
+fn arguments(agent: GuidanceAgent, event: HookEvent) -> String {
     format!(
-        "hook --runtime {} --event SessionStart --source {GUIDANCE_SOURCE_NAME}@{GUIDANCE_VERSION}",
-        agent.id()
+        "hook --runtime {} --event {} --source {GUIDANCE_SOURCE_NAME}@{GUIDANCE_VERSION}",
+        agent.id(),
+        event.name()
     )
 }
 
 /// The guarded POSIX command: it runs the helper only while it is there, so
 /// a removed app or helper folder is a hook that does nothing and succeeds
-/// (`docs/agent-hooks.md`, Installing).
-fn posix_command(helper: &Path, agent: GuidanceAgent) -> String {
+/// (`docs/agent-hooks.md`, Installing). `otherwise` is what the command
+/// prints when the helper is gone.
+fn posix_command(
+    helper: &Path,
+    agent: GuidanceAgent,
+    event: HookEvent,
+    otherwise: Option<&str>,
+) -> String {
     let quoted = Quoting::Posix.quote(&helper.display().to_string());
-    format!(
-        "if [ -x {quoted} ]; then exec {quoted} {}; fi",
-        arguments(agent)
-    )
+    let arguments = arguments(agent, event);
+    match otherwise {
+        Some(text) => format!(
+            "if [ -x {quoted} ]; then exec {quoted} {arguments}; else printf '%s\\n' {}; fi",
+            Quoting::Posix.quote(text)
+        ),
+        None => format!("if [ -x {quoted} ]; then exec {quoted} {arguments}; fi"),
+    }
 }
 
 /// The same guard for PowerShell, the one Windows form a documented key
 /// exists for (Copilot CLI's `powershell`).
-fn powershell_command(helper: &Path, agent: GuidanceAgent) -> String {
+fn powershell_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> String {
     let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
     format!(
         "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} {} }}",
-        arguments(agent)
+        arguments(agent, event)
     )
 }
 
 /// Cursor's documentation calls `command` a "script path or command" and does
 /// not say whether a shell parses it, so Hide writes the one form that means
 /// the same either way: the helper's path and its arguments, with no shell
-/// syntax. A missing helper then fails the hook rather than being skipped,
-/// which for Cursor's fire-and-forget `sessionStart` costs nothing, and the
-/// status read-back reports the gone helper. A path with a character a shell
-/// would read keeps the quoted, guarded form.
-fn plain_command(helper: &Path, agent: GuidanceAgent) -> String {
+/// syntax. A missing helper then fails the hook, which Cursor documents as
+/// letting the action proceed (any exit but 2), and the status read-back
+/// reports the gone helper. A path with a character a shell would read keeps
+/// the quoted, guarded form, which for a permission event prints the allow
+/// answer itself when the helper is gone.
+fn plain_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> String {
     let path = helper.display().to_string();
     let plain = path
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || "/._+@:~-".contains(c));
     if plain {
-        format!("{path} {}", arguments(agent))
+        format!("{path} {}", arguments(agent, event))
     } else {
-        posix_command(helper, agent)
+        posix_command(
+            helper,
+            agent,
+            event,
+            crate::basic::cursor_permission_event(event).then_some(crate::basic::CURSOR_ALLOW),
+        )
     }
 }
 
-fn entry(agent: GuidanceAgent, helper: &Path) -> Value {
+/// The entry Hide writes for `slot`.
+fn entry(agent: GuidanceAgent, helper: &Path, slot: &Slot) -> Value {
+    let event = slot.event;
     let command = if cfg!(windows) {
-        powershell_command(helper, agent)
+        powershell_command(helper, agent, event)
     } else if agent == GuidanceAgent::Cursor {
-        plain_command(helper, agent)
+        plain_command(helper, agent, event)
     } else {
-        posix_command(helper, agent)
+        posix_command(helper, agent, event, None)
     };
-    match agent {
+    let mut value = match agent {
         GuidanceAgent::Gemini => json!({
             "matcher": "*",
             "hooks": [{
@@ -366,7 +459,9 @@ fn entry(agent: GuidanceAgent, helper: &Path) -> Value {
                 "timeout": TIMEOUT_SECONDS,
             }],
         }),
-        GuidanceAgent::Droid => json!({
+        // Grok's groups take the matcher; its hooks count seconds, and its
+        // `Stop` defaults to 600 of them, so the timeout is always written.
+        GuidanceAgent::Droid | GuidanceAgent::Grok => json!({
             "hooks": [{
                 "type": "command",
                 "command": command,
@@ -375,8 +470,8 @@ fn entry(agent: GuidanceAgent, helper: &Path) -> Value {
         }),
         GuidanceAgent::Copilot => json!({
             "type": "command",
-            "bash": posix_command(helper, agent),
-            "powershell": powershell_command(helper, agent),
+            "bash": posix_command(helper, agent, event, None),
+            "powershell": powershell_command(helper, agent, event),
             "timeoutSec": TIMEOUT_SECONDS,
         }),
         GuidanceAgent::Cursor => json!({
@@ -408,7 +503,11 @@ fn entry(agent: GuidanceAgent, helper: &Path) -> Value {
             "action": { "type": "command", "command": command },
             "timeout": TIMEOUT_SECONDS,
         }),
+    };
+    if let (Some(matcher), Some(object)) = (slot.matcher, value.as_object_mut()) {
+        object.insert("matcher".to_owned(), Value::from(matcher));
     }
+    value
 }
 
 // --- Reading and changing the document -----------------------------------------
@@ -420,77 +519,18 @@ fn failure_shape(path: &Path, detail: &str) -> InstallFailure {
     }
 }
 
-/// The array Hide's entry lives in, created when `create`.
+/// The array the entries under `key` live in, created when `create`.
 fn entries<'a>(
     document: &'a mut Value,
     layout: &Layout,
+    key: &str,
     create: bool,
 ) -> Result<Option<&'a mut Vec<Value>>, InstallFailure> {
     let path = &layout.path;
     let root = document
         .as_object_mut()
         .ok_or_else(|| failure_shape(path, "the document is not a JSON object"))?;
-    match &layout.shape {
-        Shape::EventMap {
-            under_hooks_key,
-            event,
-        } => {
-            let container: &mut Map<String, Value> = if *under_hooks_key {
-                let slot = if create {
-                    root.entry("hooks")
-                        .or_insert_with(|| Value::Object(Map::new()))
-                } else {
-                    match root.get_mut("hooks") {
-                        Some(slot) => slot,
-                        None => return Ok(None),
-                    }
-                };
-                slot.as_object_mut()
-                    .ok_or_else(|| failure_shape(path, "\"hooks\" is not an object"))?
-            } else {
-                root
-            };
-            let slot = if create {
-                container
-                    .entry(*event)
-                    .or_insert_with(|| Value::Array(Vec::new()))
-            } else {
-                match container.get_mut(*event) {
-                    Some(slot) => slot,
-                    None => return Ok(None),
-                }
-            };
-            slot.as_array_mut()
-                .map(Some)
-                .ok_or_else(|| failure_shape(path, &format!("\"{event}\" is not an array")))
-        }
-        Shape::Copilot | Shape::Cursor => {
-            let hooks = if create {
-                root.entry("hooks")
-                    .or_insert_with(|| Value::Object(Map::new()))
-            } else {
-                match root.get_mut("hooks") {
-                    Some(slot) => slot,
-                    None => return Ok(None),
-                }
-            };
-            let hooks = hooks
-                .as_object_mut()
-                .ok_or_else(|| failure_shape(path, "\"hooks\" is not an object"))?;
-            let slot = if create {
-                hooks
-                    .entry("sessionStart")
-                    .or_insert_with(|| Value::Array(Vec::new()))
-            } else {
-                match hooks.get_mut("sessionStart") {
-                    Some(slot) => slot,
-                    None => return Ok(None),
-                }
-            };
-            slot.as_array_mut()
-                .map(Some)
-                .ok_or_else(|| failure_shape(path, "\"hooks.sessionStart\" is not an array"))
-        }
+    let container: &mut Map<String, Value> = match &layout.shape {
         Shape::Kiro => {
             let slot = if create {
                 root.entry("hooks")
@@ -501,11 +541,45 @@ fn entries<'a>(
                     None => return Ok(None),
                 }
             };
-            slot.as_array_mut()
+            return slot
+                .as_array_mut()
                 .map(Some)
-                .ok_or_else(|| failure_shape(path, "\"hooks\" is not an array"))
+                .ok_or_else(|| failure_shape(path, "\"hooks\" is not an array"));
         }
-    }
+        Shape::EventMap {
+            under_hooks_key: false,
+        } => root,
+        Shape::EventMap {
+            under_hooks_key: true,
+        }
+        | Shape::Copilot
+        | Shape::Cursor => {
+            let slot = if create {
+                root.entry("hooks")
+                    .or_insert_with(|| Value::Object(Map::new()))
+            } else {
+                match root.get_mut("hooks") {
+                    Some(slot) => slot,
+                    None => return Ok(None),
+                }
+            };
+            slot.as_object_mut()
+                .ok_or_else(|| failure_shape(path, "\"hooks\" is not an object"))?
+        }
+    };
+    let slot = if create {
+        container
+            .entry(key)
+            .or_insert_with(|| Value::Array(Vec::new()))
+    } else {
+        match container.get_mut(key) {
+            Some(slot) => slot,
+            None => return Ok(None),
+        }
+    };
+    slot.as_array_mut()
+        .map(Some)
+        .ok_or_else(|| failure_shape(path, &format!("\"{key}\" is not an array")))
 }
 
 /// Every string anywhere in an entry. The marker is looked for in all of
@@ -577,7 +651,10 @@ fn owned(entries: &[Value]) -> impl Iterator<Item = &Value> {
         .filter(|entry| entry_marker_version(entry).is_some())
 }
 
-/// Judges one agent without changing anything.
+/// Judges one agent without changing anything. Every event Hide registers
+/// for the agent must carry Hide's entry for the hook to be Installed; one
+/// that lacks it (an earlier version wrote fewer events, or the operator took
+/// one out) reads Outdated, and the next pass writes it back.
 pub fn status(agent: GuidanceAgent, home: &Path) -> HookStatus {
     if !agent.home_directory(home).is_dir() {
         return HookStatus::RuntimeAbsent;
@@ -588,15 +665,28 @@ pub fn status(agent: GuidanceAgent, home: &Path) -> HookStatus {
         Ok(None) => return HookStatus::NotInstalled,
         Err(reason) => return HookStatus::Failed { reason },
     };
-    let found = match entries(&mut document, &layout, false) {
-        Ok(Some(found)) => found,
-        Ok(None) => return HookStatus::NotInstalled,
-        Err(reason) => return HookStatus::Failed { reason },
-    };
-    let Some(version) = owned(found).filter_map(entry_marker_version).min() else {
+    let mut lowest: Option<u32> = None;
+    let mut missing_event = false;
+    let mut helper = None;
+    for slot in agent.slots() {
+        let found = match entries(&mut document, &layout, slot.key, false) {
+            Ok(Some(found)) => found,
+            Ok(None) => {
+                missing_event = true;
+                continue;
+            }
+            Err(reason) => return HookStatus::Failed { reason },
+        };
+        match owned(found).filter_map(entry_marker_version).min() {
+            Some(version) => lowest = Some(lowest.map_or(version, |best| best.min(version))),
+            None => missing_event = true,
+        }
+        helper = helper.or_else(|| owned(found).find_map(entry_helper));
+    }
+    let Some(version) = lowest else {
         return HookStatus::NotInstalled;
     };
-    if let Some(helper) = owned(found).find_map(entry_helper)
+    if let Some(helper) = helper
         && !Path::new(&helper).exists()
     {
         return HookStatus::Failed {
@@ -606,7 +696,7 @@ pub fn status(agent: GuidanceAgent, home: &Path) -> HookStatus {
             },
         };
     }
-    if version < GUIDANCE_VERSION {
+    if missing_event || version < GUIDANCE_VERSION {
         HookStatus::Outdated { version }
     } else {
         HookStatus::Installed { version }
@@ -618,8 +708,36 @@ pub fn status(agent: GuidanceAgent, home: &Path) -> HookStatus {
 pub fn installed_helper_path(agent: GuidanceAgent, home: &Path) -> Option<String> {
     let layout = agent.layout(home);
     let mut document = read_document(&layout.path).ok()??;
-    let found = entries(&mut document, &layout, false).ok()??;
-    owned(found).find_map(entry_helper)
+    for slot in agent.slots() {
+        if let Some(found) = entries(&mut document, &layout, slot.key, false).ok()?
+            && let Some(helper) = owned(found).find_map(entry_helper)
+        {
+            return Some(helper);
+        }
+    }
+    None
+}
+
+/// Whether every entry of Hide's in `agent`'s file is exactly the one this
+/// build writes for `helper`: one per event, byte for byte as a value. An
+/// entry that carries Hide's marker over anything else was edited, and the
+/// kit reads it Outdated so the next pass puts Hide's back (PRD
+/// grok-cursor-hooks B8).
+pub fn matches_install(agent: GuidanceAgent, home: &Path, helper: &Path) -> bool {
+    let layout = agent.layout(home);
+    let Ok(Some(mut document)) = read_document(&layout.path) else {
+        return false;
+    };
+    agent.slots().iter().all(|slot| {
+        let Ok(Some(found)) = entries(&mut document, &layout, slot.key, false) else {
+            return false;
+        };
+        let wanted = entry(agent, helper, slot);
+        // A group another tool put a hook into beside Hide's differs too, and
+        // the reinstall that follows moves Hide's hook into a group of its own.
+        let mut mine = owned(found);
+        mine.next() == Some(&wanted) && mine.next().is_none()
+    })
 }
 
 fn blank_document(layout: &Layout) -> Value {
@@ -630,8 +748,8 @@ fn blank_document(layout: &Layout) -> Value {
     }
 }
 
-/// Appends Hide's entry, preserving everything already in the file; a
-/// second install converges on one entry.
+/// Appends Hide's entries, preserving everything already in the file; a
+/// second install converges on one entry per event.
 pub fn install(
     agent: GuidanceAgent,
     home: &Path,
@@ -674,17 +792,31 @@ fn install_any(
     {
         root.entry("version").or_insert_with(|| json!(1));
     }
-    let list = entries(&mut document, &layout, true)?
-        .ok_or_else(|| failure_shape(&layout.path, "the hook list could not be created"))?;
-    strip_owned(list);
-    let preserved = list.len();
-    list.push(entry(agent, helper));
+    let mut preserved = 0;
+    for slot in agent.slots() {
+        let list = entries(&mut document, &layout, slot.key, true)?
+            .ok_or_else(|| failure_shape(&layout.path, "the hook list could not be created"))?;
+        strip_owned(list);
+        preserved += list.len();
+        list.push(entry(agent, helper, slot));
+    }
     let after = serde_json::to_string(&document).unwrap_or_default();
     if before == after {
         return Ok(InstallOutcome {
             changed: false,
             preserved_entries: preserved,
         });
+    }
+    // Grok's own file sits in `~/.grok/hooks`, which a Grok that has made
+    // `~/.grok` may not have made yet; the agent's own folder is never made.
+    if layout.own_file
+        && agent.home_directory(home).is_dir()
+        && let Some(parent) = layout.path.parent()
+    {
+        std::fs::create_dir_all(parent).map_err(|error| InstallFailure::NotWritable {
+            path: layout.path.display().to_string(),
+            detail: error.to_string(),
+        })?;
     }
     write_document(&layout.path, &document)?;
     Ok(InstallOutcome {
@@ -702,8 +834,8 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
     if agent == GuidanceAgent::Droid {
         let folder = agent.home_directory(home);
         for layout in [
-            Layout::event_map(folder.join("hooks.json"), false, "SessionStart"),
-            Layout::event_map(folder.join("settings.json"), true, "SessionStart"),
+            Layout::event_map(folder.join("hooks.json"), false),
+            Layout::event_map(folder.join("settings.json"), true),
         ] {
             if !layouts.iter().any(|known| known.path == layout.path) {
                 layouts.push(layout);
@@ -716,7 +848,7 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
         preserved_entries: 0,
     };
     for layout in &layouts {
-        let outcome = remove_in(layout)?;
+        let outcome = remove_in(agent, layout)?;
         total.changed |= outcome.changed;
         total.removed_entries += outcome.removed_entries;
         total.preserved_entries += outcome.preserved_entries;
@@ -724,7 +856,7 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
     Ok(total)
 }
 
-fn remove_in(layout: &Layout) -> Result<RemoveOutcome, InstallFailure> {
+fn remove_in(agent: GuidanceAgent, layout: &Layout) -> Result<RemoveOutcome, InstallFailure> {
     let Some(mut document) = read_document(&layout.path)? else {
         return Ok(RemoveOutcome {
             changed: false,
@@ -732,24 +864,25 @@ fn remove_in(layout: &Layout) -> Result<RemoveOutcome, InstallFailure> {
             preserved_entries: 0,
         });
     };
-    let Some(list) = entries(&mut document, layout, false)? else {
-        return Ok(RemoveOutcome {
-            changed: false,
-            removed_entries: 0,
-            preserved_entries: 0,
-        });
-    };
-    let removed = strip_owned(list);
-    let preserved = list.len();
+    let mut removed = 0;
+    let mut preserved = 0;
+    for slot in agent.slots() {
+        let Some(list) = entries(&mut document, layout, slot.key, false)? else {
+            continue;
+        };
+        let taken = strip_owned(list);
+        removed += taken;
+        preserved += list.len();
+        if taken != 0 && list.is_empty() {
+            drop_empty(&mut document, layout, slot.key);
+        }
+    }
     if removed == 0 {
         return Ok(RemoveOutcome {
             changed: false,
             removed_entries: 0,
             preserved_entries: preserved,
         });
-    }
-    if preserved == 0 {
-        drop_empty(&mut document, layout);
     }
     if layout.own_file && only_scaffolding(&document, layout) {
         std::fs::remove_file(&layout.path).map_err(|error| InstallFailure::NotWritable {
@@ -768,30 +901,27 @@ fn remove_in(layout: &Layout) -> Result<RemoveOutcome, InstallFailure> {
 
 /// Drops the event key Hide emptied, so the operator's file does not keep an
 /// empty list Hide made.
-fn drop_empty(document: &mut Value, layout: &Layout) {
+fn drop_empty(document: &mut Value, layout: &Layout, key: &str) {
     let Some(root) = document.as_object_mut() else {
         return;
     };
     match &layout.shape {
-        Shape::EventMap {
-            under_hooks_key,
-            event,
-        } => {
+        Shape::EventMap { under_hooks_key } => {
             if *under_hooks_key {
                 if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-                    hooks.shift_remove(*event);
+                    hooks.shift_remove(key);
                     // An empty `hooks` object is Hide's scaffolding too.
                     if hooks.is_empty() {
                         root.shift_remove("hooks");
                     }
                 }
             } else {
-                root.shift_remove(*event);
+                root.shift_remove(key);
             }
         }
         Shape::Copilot | Shape::Cursor => {
             if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-                hooks.shift_remove("sessionStart");
+                hooks.shift_remove(key);
             }
         }
         Shape::Kiro => {

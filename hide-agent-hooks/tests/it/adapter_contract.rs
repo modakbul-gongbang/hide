@@ -13,18 +13,24 @@ fn every_installed_hook_dialect_resolves_through_the_shared_adapter() {
                     assert_eq!(runtime.dialect(), dialect);
                     assert_eq!(runtime.id(), row.id);
                 }
-                HookInstall::Guidance(_) => {
+                HookInstall::Guidance(dialect) => {
                     let guidance =
                         GuidanceAgent::from_id(&spelling).expect("installed guidance dialect");
-                    let actual: serde_json::Value = serde_json::from_str(
-                        &hide_agent_hooks::guidance::stdout(guidance, "fixture context"),
-                    )
-                    .unwrap();
-                    let expected: serde_json::Value = serde_json::from_str(include_str!(
-                        "../../../hide-agent-adapter/tests/fixtures/cursor-guidance.json"
-                    ))
-                    .unwrap();
-                    assert_eq!(actual, expected);
+                    assert_eq!(guidance.id(), row.id);
+                    let printed = hide_agent_hooks::guidance::stdout(guidance, "fixture context");
+                    if dialect.prints_guidance() {
+                        let actual: serde_json::Value =
+                            serde_json::from_str(&printed.expect("session guidance")).unwrap();
+                        let expected: serde_json::Value = serde_json::from_str(include_str!(
+                            "../../../hide-agent-adapter/tests/fixtures/cursor-guidance.json"
+                        ))
+                        .unwrap();
+                        assert_eq!(actual, expected);
+                    } else {
+                        assert_eq!(printed, None, "{}", row.id);
+                    }
+                    assert_eq!(guidance.dialect(), row.spawn_guard);
+                    assert_eq!(guidance.dialect(), row.subagent_counts);
                     assert!(AgentRuntime::parse(&spelling).is_none());
                 }
                 HookInstall::None => {

@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use hide_platform::process::OwnedChild;
 
-const PANE: &str = "w1:p2";
+pub(crate) const PANE: &str = "w1:p2";
 
 /// A freshly copied executable pays a first-exec validation cost on macOS that
 /// would eat the guard's own budget, so each is run once under its own bound
@@ -34,24 +34,24 @@ fn warm_first_exec(program: &Path) {
         .expect("first-exec warming must finish within its own bound");
 }
 
-struct Machine {
+pub(crate) struct Machine {
     _dir: tempfile::TempDir,
-    root: PathBuf,
-    home: PathBuf,
-    hook: PathBuf,
+    pub(crate) root: PathBuf,
+    pub(crate) home: PathBuf,
+    pub(crate) hook: PathBuf,
     /// A checkout on branch `topic`, the agent's working directory.
-    checkout: PathBuf,
+    pub(crate) checkout: PathBuf,
 }
 
-struct Run {
-    stdout: String,
-    stderr: String,
-    status_ok: bool,
-    elapsed: Duration,
+pub(crate) struct Run {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) status_ok: bool,
+    pub(crate) elapsed: Duration,
 }
 
 impl Machine {
-    fn new(daemon: &str) -> Self {
+    pub(crate) fn new(daemon: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let home = root.join("home");
@@ -110,9 +110,21 @@ impl Machine {
     /// One guard run as `runtime` runs its entry for `payload`, with `pane` as
     /// its pane and `extra` in its environment.
     fn run(&self, runtime: &str, payload: &str, pane: Option<&str>, extra: &[(&str, &str)]) -> Run {
+        self.run_event(runtime, "PreToolUse", payload, pane, extra)
+    }
+
+    /// One hook run as `runtime` runs its entry for `event`.
+    pub(crate) fn run_event(
+        &self,
+        runtime: &str,
+        event: &str,
+        payload: &str,
+        pane: Option<&str>,
+        extra: &[(&str, &str)],
+    ) -> Run {
         let mut command = Command::new(&self.hook);
         command
-            .args(["hook", "--runtime", runtime, "--event", "PreToolUse"])
+            .args(["hook", "--runtime", runtime, "--event", event])
             .args(["--source", "hide-subagents@6"])
             .env(hide_platform::host::HOME_VARIABLE, &self.home)
             .env("PATH", &self.home)
@@ -157,7 +169,7 @@ impl Machine {
     }
 
     /// The calls the guard made of `hide`.
-    fn calls(&self) -> Vec<String> {
+    pub(crate) fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.root.join("hide-calls"))
             .unwrap_or_default()
             .lines()
@@ -165,12 +177,12 @@ impl Machine {
             .collect()
     }
 
-    fn guard_log(&self) -> String {
+    pub(crate) fn guard_log(&self) -> String {
         std::fs::read_to_string(self.home.join(".hide/agent-hooks/spawn-guard.log"))
             .unwrap_or_default()
     }
 
-    fn reason(&self, run: &Run) -> String {
+    pub(crate) fn reason(&self, run: &Run) -> String {
         let answer: serde_json::Value = serde_json::from_str(run.stdout.trim()).expect(&run.stdout);
         assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "PreToolUse");
         assert_eq!(answer["hookSpecificOutput"]["permissionDecision"], "deny");
@@ -181,7 +193,7 @@ impl Machine {
     }
 }
 
-const START: &str = "herdr agent start set-g --kind claude --pane w1:p9 -- --model opus";
+pub(crate) const START: &str = "herdr agent start set-g --kind claude --pane w1:p9 -- --model opus";
 
 #[test]
 fn current_factory_worker_questions_are_redirected_through_one_authenticated_query() {

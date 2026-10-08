@@ -1,0 +1,13 @@
+{
+  "hookEventName": "pre_tool_use",
+  "hook_event_name": "PreToolUse",
+  "sessionId": "abc-123",
+  "cwd": "/Users/you/project",
+  "workspaceRoot": "/Users/you/project",
+  "permissionMode": "default",
+  "toolName": "run_terminal_command",
+  "toolInput": { "command": "npm test" },
+  "toolUseId": "toolu-1",
+  "toolInputTruncated": false,
+  "timestamp": "2026-04-14T12:00:00Z"
+}

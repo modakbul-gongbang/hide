@@ -64,13 +64,15 @@
   {
     "id": "grok",
     "hook": {
-      "absent": "No installed hook dialect in this build"
+      "sample": "hide-agent-hooks/tests/fixtures/grok-pre-tool-use.json"
     },
     "session": {
       "absent": "No session reader in this build"
     },
     "features": [
       "skill",
+      "subagents",
+      "spawn_guard",
       "herdr_integration"
     ],
     "factory": {
@@ -156,10 +158,12 @@
     "features": [
       "skill",
       "guidance",
+      "subagents",
+      "spawn_guard",
       "herdr_integration"
     ],
     "factory": {
-      "direct_ask": "unconfirmed",
+      "direct_ask": "unavailable",
       "user_turn": "unconfirmed",
       "turn_end_and_answer": "unconfirmed",
       "startup_guidance": "available",
