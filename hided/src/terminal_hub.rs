@@ -6,13 +6,17 @@
 //! carries, and shared: a pane's recent chunks (at most
 //! [`RETAINED_CHUNKS`] and [`RETAINED_BYTES`]) and every client's unsent
 //! queue hold the same allocation, so a pane's retention stays under
-//! `RETAINED_BYTES + MAX_UNSENT_OUTPUT_BYTES` however many clients are
-//! connected. One sequence numbers every chunk of every pane; a client's
+//! `RETAINED_BYTES + MAX_UNSENT_OUTPUT_BYTES` and its latest full frame
+//! however many clients are connected. One sequence numbers every chunk of every pane; a client's
 //! cursor is the last one it was sent, so one number resumes every pane.
 //!
 //! A client that leaves a pane's output unsent past
 //! [`MAX_UNSENT_OUTPUT_BYTES`] loses that pane's backlog and gets nothing
-//! more of it until a full frame, which it asks the pane's node for. A
+//! more of it until a full frame, which it asks the pane's node for. A full
+//! frame replaces whatever of its pane waits for a client, since it draws
+//! over it, and is never counted against the cap, and a chunk is always
+//! queued when nothing counted waits, so a pane whose full frame alone
+//! passes the cap still draws. A
 //! client that resumes from a cursor the retained chunks no longer reach,
 //! for a pane, is treated the same way for that pane. Either way the pane is
 //! drawn whole, never left blank or drawn from a broken stream, and the
@@ -43,6 +47,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Chunk {
     sequence: u64,
     pane: Arc<str>,
+    /// The chunk draws the whole screen.
+    full: bool,
     /// `{"pane_id": …, "bytes_base64": …}`, as a frame carries it.
     json: Box<str>,
 }
@@ -69,7 +75,7 @@ struct PaneRing {
 
 struct Client {
     queue: VecDeque<Arc<Chunk>>,
-    /// Each pane's bytes in `queue`.
+    /// Each pane's bytes in `queue` after its full frame, if one waits.
     unsent: HashMap<Arc<str>, usize>,
     /// Panes this client gets nothing of until their next full frame.
     awaiting_full: HashSet<Arc<str>>,
@@ -264,6 +270,7 @@ impl OutputSink for TerminalHub {
         let chunk = Arc::new(Chunk {
             sequence,
             pane: Arc::clone(&pane),
+            full,
             json,
         });
         if full {
@@ -300,7 +307,14 @@ impl OutputSink for TerminalHub {
                 client.awaiting_full.remove(&pane);
             }
             let unsent = client.unsent.entry(Arc::clone(&pane)).or_default();
-            if *unsent + chunk.size() > MAX_UNSENT_OUTPUT_BYTES {
+            if full {
+                *unsent = 0;
+                client.queue.retain(|queued| queued.pane != pane);
+                client.queue.push_back(Arc::clone(&chunk));
+                client.wake.notify_one();
+                continue;
+            }
+            if *unsent > 0 && *unsent + chunk.size() > MAX_UNSENT_OUTPUT_BYTES {
                 let dropped = *unsent;
                 *unsent = 0;
                 client.queue.retain(|queued| queued.pane != pane);
@@ -395,7 +409,9 @@ impl HubClient {
             let Some(chunk) = client.queue.pop_front() else {
                 break;
             };
-            if let Some(unsent) = client.unsent.get_mut(&chunk.pane) {
+            if !chunk.full
+                && let Some(unsent) = client.unsent.get_mut(&chunk.pane)
+            {
                 *unsent = unsent.saturating_sub(chunk.size());
             }
             if index > 0 {
@@ -607,5 +623,27 @@ mod tests {
         let (frame, redraws) = client.take();
         assert!(redraws.is_empty());
         assert_eq!(frame_chunks(&frame.unwrap()).0.len(), 2);
+    }
+
+    /// A full frame larger than a client's unsent cap reaches the client
+    /// whole when nothing of its pane waits, and no redraw is asked for it.
+    #[test]
+    fn a_full_frame_larger_than_the_cap_reaches_the_client_and_asks_no_redraw() {
+        let hub = TerminalHub::new();
+        let client = hub.connect(Resume::Fresh);
+        assert!(client.take().0.is_some(), "the fresh client's cursor");
+        let frame = [b"\x1bc".to_vec(), vec![b'w'; 2 * 1024 * 1024]].concat();
+        hub.output("w1:p1", &frame, true);
+        let (sent, redraws) = client.take();
+        assert!(redraws.is_empty());
+        assert_eq!(
+            frame_chunks(&sent.unwrap()).0,
+            [("w1:p1".to_owned(), frame.clone())]
+        );
+        hub.output("w1:p1", &frame, true);
+        hub.output("w1:p1", b"next", false);
+        let (sent, redraws) = client.take();
+        assert!(redraws.is_empty(), "nothing was dropped");
+        assert_eq!(frame_chunks(&sent.unwrap()).0.len(), 2);
     }
 }

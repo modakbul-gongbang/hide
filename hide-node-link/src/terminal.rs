@@ -26,6 +26,12 @@ pub const MAX_UNSENT_KEY_BYTES: usize = 256 * 1024;
 /// the link up from a device) before they are dropped and the pane is drawn
 /// again from a full frame once the reader has caught up (D-16).
 pub const MAX_UNSENT_OUTPUT_BYTES: usize = 1024 * 1024;
+/// The longest terminal line a device link carries either way. A full frame
+/// of a dense, coloured screen on a large display stays well under it once
+/// base64 has grown it by a third; a longer line ends the link rather than
+/// this process's memory, since a device's node is another machine's
+/// program.
+pub const MAX_TERMINAL_LINE_BYTES: usize = 8 * 1024 * 1024;
 /// Recent output kept for a screen that attaches again: the first of these
 /// two bounds to be reached (D-16).
 pub const RETAINED_CHUNKS: usize = 512;

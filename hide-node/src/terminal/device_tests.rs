@@ -182,7 +182,9 @@ struct GatedLink {
     open: Mutex<bool>,
     opened: Condvar,
     written: Mutex<Vec<Vec<u8>>>,
-    fail: Mutex<Option<String>>,
+    fail: Mutex<Option<LineRefused>>,
+    /// Lines answered busy before the link takes one.
+    busy: Mutex<usize>,
 }
 
 impl GatedLink {
@@ -206,13 +208,18 @@ impl GatedLink {
 }
 
 impl LineLink for GatedLink {
-    fn send_line(&self, line: &[u8]) -> Result<(), String> {
+    fn send_line(&self, line: &[u8]) -> Result<(), LineRefused> {
         let mut open = self.open.lock().unwrap();
         while !*open {
             open = self.opened.wait(open).unwrap();
         }
-        if let Some(reason) = self.fail.lock().unwrap().clone() {
-            return Err(reason);
+        if let Some(refused) = self.fail.lock().unwrap().clone() {
+            return Err(refused);
+        }
+        let mut busy = self.busy.lock().unwrap();
+        if *busy > 0 {
+            *busy -= 1;
+            return Err(LineRefused::Busy);
         }
         self.written.lock().unwrap().push(line.to_vec());
         Ok(())
@@ -494,7 +501,7 @@ fn a_waiting_run_of_keys_stops_at_a_pane_a_control_an_enter_and_an_escape() {
 #[test]
 fn a_failed_link_refuses_keys_once_per_pane_and_never_keeps_them() {
     let (proxy, link, heard) = proxy();
-    *link.fail.lock().unwrap() = Some("the link closed".into());
+    *link.fail.lock().unwrap() = Some(LineRefused::Ended("the link closed".into()));
     proxy.key(KeyTarget::Pane("w1:p1".into()), b"lost".to_vec(), 1);
     proxy.key(KeyTarget::Pane("w1:p1".into()), b"queued".to_vec(), 1);
     link.release();
@@ -536,4 +543,58 @@ fn output_from_the_device_reaches_the_hub_decoded_and_named_by_device() {
             true
         )]
     );
+}
+
+/// A link busy with another call past a line's wait sent nothing: the line
+/// is written again, the keys behind it follow in order, and the pane is
+/// not refused.
+#[test]
+fn a_busy_link_writes_the_line_again_and_refuses_nothing() {
+    let (proxy, link, heard) = proxy();
+    *link.busy.lock().unwrap() = 2;
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"a".to_vec(), 1);
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"\r".to_vec(), 2);
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"b".to_vec(), 3);
+    link.release();
+    wait_for(|| key_lines(&link).len() == 3);
+    assert_eq!(
+        key_lines(&link),
+        [
+            ("w1:p1".to_owned(), b"a".to_vec(), 1),
+            ("w1:p1".to_owned(), b"\r".to_vec(), 2),
+            ("w1:p1".to_owned(), b"b".to_vec(), 3),
+        ]
+    );
+    assert!(heard.reports.lock().unwrap().is_empty(), "nothing refused");
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"c".to_vec(), 4);
+    wait_for(|| key_lines(&link).len() == 4);
+}
+
+/// A frame larger than the unsent cap goes up whole when nothing of its pane
+/// waits, so a pane whose full frame alone passes the cap draws, and no
+/// redraw is asked for it again and again.
+#[test]
+fn a_frame_larger_than_the_cap_goes_up_whole_and_asks_no_redraw() {
+    let uplink = Uplink::default();
+    let frame = [b"\x1bc".to_vec(), vec![b'w'; 2 * 1024 * 1024]].concat();
+    uplink.push_output("w1:p1", &frame, true);
+    let (line, redraws) = uplink.next().unwrap();
+    assert!(redraws.is_empty());
+    let TerminalUp::Output(output) = up(&line.unwrap()) else {
+        panic!("output");
+    };
+    assert_eq!(decode_base64(&output.data).unwrap(), frame);
+    // A backlog that the next large chunk would push past the cap is the
+    // one thing dropped: one redraw is asked, and its full frame goes up.
+    uplink.push_output("w1:p1", b"small", false);
+    uplink.push_output("w1:p1", &frame[2..], false);
+    assert_eq!(uplink.next().unwrap(), (None, vec!["w1:p1".to_owned()]));
+    uplink.push_output("w1:p1", &frame, true);
+    let (line, redraws) = uplink.next().unwrap();
+    assert!(redraws.is_empty(), "the redraw was asked once");
+    let TerminalUp::Output(output) = up(&line.unwrap()) else {
+        panic!("output");
+    };
+    assert!(output.full);
+    assert_eq!(decode_base64(&output.data).unwrap(), frame);
 }

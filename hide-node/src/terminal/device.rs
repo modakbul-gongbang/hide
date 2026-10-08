@@ -6,7 +6,10 @@
 //! one line of output per pane in turn, so a pane that floods its output
 //! cannot hold another pane's frames or the core's answers back. A pane
 //! whose unsent output passes [`MAX_UNSENT_OUTPUT_BYTES`] loses it and is
-//! drawn again from a full frame once the link has caught up.
+//! drawn again from a full frame once the link has caught up. A full frame
+//! replaces what of its pane waits and is never counted against the cap,
+//! and a frame is always taken when nothing counted waits, so a pane whose
+//! every full frame passes the cap still draws.
 //!
 //! On the core's side, [`DeviceTerminals`] is the device's [`TerminalNode`]:
 //! it writes controls and keys down the link in the order they were given
@@ -19,7 +22,8 @@
 //! have, and a control or another pane's key ends a run. A pane
 //! past the cap reads ended and refuses keys until it is attached again;
 //! the keys it already took are written in order, or, when the link fails,
-//! named in the log as unwritten. A link that ends takes every flow with it
+//! named in the log as unwritten. A link busy with another call writes the
+//! line again once it is free; a link that ends takes every flow with it
 //! and refuses later keys rather than keep them for another link.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -27,9 +31,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread;
 
 use hide_node_link::terminal::{
-    GridSize, KeyTarget, MAX_UNSENT_KEY_BYTES, MAX_UNSENT_OUTPUT_BYTES, PaneTerminalState,
-    ReportSink, TerminalControl, TerminalDown, TerminalLine, TerminalNode, TerminalOutput,
-    TerminalReport, TerminalUp,
+    GridSize, KeyTarget, MAX_TERMINAL_LINE_BYTES, MAX_UNSENT_KEY_BYTES, MAX_UNSENT_OUTPUT_BYTES,
+    PaneTerminalState, ReportSink, TerminalControl, TerminalDown, TerminalLine, TerminalNode,
+    TerminalOutput, TerminalReport, TerminalUp,
 };
 use serde_json::json;
 
@@ -60,7 +64,9 @@ fn line_of<T: serde::Serialize>(terminal: T) -> Option<Vec<u8>> {
 
 #[derive(Default)]
 struct PaneUplink {
-    lines: VecDeque<Vec<u8>>,
+    /// Lines waiting, and whether each draws the whole screen.
+    lines: VecDeque<(Vec<u8>, bool)>,
+    /// The bytes of the waiting lines that do not.
     bytes: usize,
     /// Output was dropped: nothing but a full frame is sent until one comes.
     dropping: bool,
@@ -123,7 +129,26 @@ impl Uplink {
         })) else {
             return;
         };
-        if entry.bytes + line.len() > MAX_UNSENT_OUTPUT_BYTES {
+        if line.len() > MAX_TERMINAL_LINE_BYTES {
+            // No link takes a line this long. The pane waits for its next
+            // full frame; one that was already full is not asked again, so
+            // a pane whose every frame is this long cannot loop.
+            entry.dropping = true;
+            entry.redraw = !full;
+            drop(state);
+            self.ready.notify_one();
+            crate::diagnostic!(json!({
+                "component": "node_terminal",
+                "kind": "terminal.frame_too_long",
+                "pane_id": pane,
+                "bytes": line.len(),
+                "cap": MAX_TERMINAL_LINE_BYTES,
+            }));
+            return;
+        }
+        // Only a backlog is dropped, never the one frame that could repair
+        // it.
+        if !full && entry.bytes > 0 && entry.bytes + line.len() > MAX_UNSENT_OUTPUT_BYTES {
             let dropped = entry.bytes + line.len();
             entry.lines.clear();
             entry.bytes = 0;
@@ -143,8 +168,10 @@ impl Uplink {
             }));
             return;
         }
-        entry.bytes += line.len();
-        entry.lines.push_back(line);
+        if !full {
+            entry.bytes += line.len();
+        }
+        entry.lines.push_back((line, full));
         if !state.order.iter().any(|queued| queued == pane) {
             state.order.push_back(pane.to_owned());
         }
@@ -195,10 +222,12 @@ impl Uplink {
                 let Some(entry) = state.panes.get_mut(&pane) else {
                     continue;
                 };
-                let Some(line) = entry.lines.pop_front() else {
+                let Some((line, full)) = entry.lines.pop_front() else {
                     continue;
                 };
-                entry.bytes -= line.len();
+                if !full {
+                    entry.bytes -= line.len();
+                }
                 if !entry.lines.is_empty() {
                     state.order.push_back(pane);
                 }
@@ -408,10 +437,20 @@ pub trait DeviceSink: Send + Sync {
     fn report(&self, device: &str, report: TerminalReport);
 }
 
+/// Why a link did not write a line.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LineRefused {
+    /// Another call held the link's writer past the line's wait. Nothing
+    /// was sent and the link is as it was, so the line is written again.
+    Busy,
+    /// The link can take no more.
+    Ended(String),
+}
+
 /// The link a device's terminal lines are written on.
 pub trait LineLink: Send + Sync + 'static {
-    /// Writes one whole line; an error means the link can take no more.
-    fn send_line(&self, line: &[u8]) -> Result<(), String>;
+    /// Writes one whole line.
+    fn send_line(&self, line: &[u8]) -> Result<(), LineRefused>;
 }
 
 /// The most key bytes one waiting line gathers; a longer run of keys goes
@@ -714,60 +753,75 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
             }
         };
         // A run of keys stays counted against its pane until it is written.
-        let (keys, line) = match next {
-            Waiting::Line(line) => (None, line),
+        let encoded;
+        let line: &[u8] = match &next {
+            Waiting::Line(line) => line,
             Waiting::Keys {
                 pane,
                 bytes,
                 typed_at_unix_ms,
                 ..
             } => {
-                let line = line_of(TerminalDown::Key {
+                encoded = line_of(TerminalDown::Key {
                     target: KeyTarget::Pane(pane.clone()),
-                    data: encode_base64(&bytes),
-                    typed_at_unix_ms,
+                    data: encode_base64(bytes),
+                    typed_at_unix_ms: *typed_at_unix_ms,
                 })
                 .unwrap_or_default();
-                (Some((pane, bytes.len())), line)
+                &encoded
             }
         };
-        let sent = link.send_line(&line);
+        let sent = link.send_line(line);
         let mut state = lock(&shared.state);
-        if let Some((pane, written)) = &keys
-            && let Some(bytes) = state.key_bytes.get_mut(pane)
-        {
-            *bytes = bytes.saturating_sub(*written);
-            if *bytes == 0 {
-                state.key_bytes.remove(pane);
-            }
-        }
-        if let Err(reason) = sent {
-            // The keys still waiting were taken and will not be written:
-            // each pane's count goes to the log, never to another link.
-            let mut unwritten = HashMap::<String, usize>::new();
-            if let Some((pane, written)) = keys {
-                *unwritten.entry(pane).or_default() += written;
-            }
-            for waiting in state.lines.drain(..) {
-                if let Waiting::Keys { pane, bytes, .. } = waiting {
-                    *unwritten.entry(pane).or_default() += bytes.len();
+        let reason = match sent {
+            Ok(()) => {
+                if let Waiting::Keys { pane, bytes, .. } = &next
+                    && let Some(unsent) = state.key_bytes.get_mut(pane)
+                {
+                    *unsent = unsent.saturating_sub(bytes.len());
+                    if *unsent == 0 {
+                        state.key_bytes.remove(pane);
+                    }
                 }
+                continue;
             }
-            state.key_bytes.clear();
-            state.failed = Some(reason.clone());
-            drop(state);
-            for (pane, bytes) in unwritten {
+            Err(LineRefused::Busy) => {
+                // Nothing was sent: the line goes first again, its keys
+                // still counted against their pane's cap.
+                state.lines.push_front(next);
+                drop(state);
                 crate::diagnostic!(json!({
                     "component": "device_terminal",
-                    "kind": "terminal.keys_unwritten",
+                    "kind": "terminal.link_busy",
                     "device": shared.device,
-                    "pane_id": pane,
-                    "key_bytes": bytes,
-                    "reason": reason,
                 }));
+                continue;
             }
-            return;
+            Err(LineRefused::Ended(reason)) => reason,
+        };
+        // The keys still waiting were taken and will not be written: each
+        // pane's count goes to the log, never to another link.
+        let mut unwritten = HashMap::<String, usize>::new();
+        let waiting = std::iter::once(next).chain(state.lines.drain(..));
+        for waiting in waiting {
+            if let Waiting::Keys { pane, bytes, .. } = waiting {
+                *unwritten.entry(pane).or_default() += bytes.len();
+            }
         }
+        state.key_bytes.clear();
+        state.failed = Some(reason.clone());
+        drop(state);
+        for (pane, bytes) in unwritten {
+            crate::diagnostic!(json!({
+                "component": "device_terminal",
+                "kind": "terminal.keys_unwritten",
+                "device": shared.device,
+                "pane_id": pane,
+                "key_bytes": bytes,
+                "reason": reason,
+            }));
+        }
+        return;
     }
 }
 

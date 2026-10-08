@@ -733,14 +733,19 @@ impl RemoteHost {
     }
 }
 
-/// How long one terminal line may wait to be taken by the link before the
-/// link is ended as stalled.
+/// How long one terminal line may wait for the link's writer, after which
+/// it is written again, and how long its write may take before the link is
+/// ended as stalled.
 const TERMINAL_LINE_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl crate::terminal::device::LineLink for RemoteHost {
-    fn send_line(&self, line: &[u8]) -> Result<(), String> {
+    fn send_line(&self, line: &[u8]) -> Result<(), crate::terminal::device::LineRefused> {
+        use crate::terminal::device::LineRefused;
         self.write_line(line, TERMINAL_LINE_TIMEOUT, false)
-            .map_err(|error| error.to_string())
+            .map_err(|error| match error {
+                LinkError::Busy => LineRefused::Busy,
+                error => LineRefused::Ended(error.to_string()),
+            })
     }
 }
 
