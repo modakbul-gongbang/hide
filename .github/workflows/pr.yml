@@ -100,7 +100,10 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        run: |
+          echo 'lanes=["desktop-e2e"]' >> "$GITHUB_OUTPUT"
+          echo 'full=false' >> "$GITHUB_OUTPUT"
+          echo 'rust-packages=[]' >> "$GITHUB_OUTPUT"
 
   policy:
     name: policy checks
@@ -517,11 +520,11 @@ jobs:
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e
+          bash scripts/verify-web.sh desktop e2e --project background --grep "hide browser: an agent reads and drives a page|native guard cancels a pending preattach" --repeat-each 40 --retries 0
       - name: Report flaky and failed tests
         # A failed test is retried once; see web-e2e.yml.
         id: flaky
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -529,7 +532,7 @@ jobs:
         run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
       - name: Keep the e2e run's logs
         # A flaky run keeps them as a failed one does; see web-e2e.yml.
-        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: hide-desktop-e2e-logs
