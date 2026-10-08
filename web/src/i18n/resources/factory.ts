@@ -440,6 +440,8 @@ export const factoryEnglish = {
   "factory.refusal.task_finished": "A finished Task's decisions stay as they are",
   "factory.refusal.worker_out_of_range": "No such worker candidate. Check Settings › Workers",
   "factory.action.acknowledge": "Acknowledge",
+  "factory.card.goneAgain": "restarted, then it disappeared again",
+  "factory.card.noReply": "woken, no reply",
 } as const;
 
 const ko = {
@@ -881,6 +883,8 @@ const ko = {
   "factory.refusal.task_finished": "끝난 Task의 결정은 그대로 둡니다",
   "factory.refusal.worker_out_of_range": "그런 작업자 후보가 없습니다. 설정의 작업자를 확인하세요",
   "factory.action.acknowledge": "확인",
+  "factory.card.goneAgain": "다시 띄웠지만 또 사라짐",
+  "factory.card.noReply": "깨웠지만 답 없음",
 } satisfies Catalog<typeof factoryEnglish>;
 
 const zhCN = {
@@ -1322,6 +1326,8 @@ const zhCN = {
   "factory.refusal.task_finished": "已完成 Task 的决定保持不变",
   "factory.refusal.worker_out_of_range": "没有该 worker 候选。请检查设置中的 Worker",
   "factory.action.acknowledge": "确认",
+  "factory.card.goneAgain": "重新启动后又消失了",
+  "factory.card.noReply": "已唤醒，无回复",
 } satisfies Catalog<typeof factoryEnglish>;
 
 const ja = {
@@ -1763,6 +1769,8 @@ const ja = {
   "factory.refusal.task_finished": "終わった Task の決定はそのままです",
   "factory.refusal.worker_out_of_range": "その worker 候補はありません。設定の Worker を確認してください",
   "factory.action.acknowledge": "確認",
+  "factory.card.goneAgain": "起動し直したがまた消えた",
+  "factory.card.noReply": "起こしたが返事なし",
 } satisfies Catalog<typeof factoryEnglish>;
 
 export const factoryCatalogs = { en: factoryEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof factoryEnglish>;

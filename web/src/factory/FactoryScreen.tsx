@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { MessageSquareIcon, PlusIcon } from "lucide-react";
+import { CirclePauseIcon, MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
@@ -16,7 +16,8 @@ import { FactoryGraph } from "./FactoryGraph";
 import { FactorySettings } from "./FactorySettings";
 import { COLUMN_LABEL } from "./labels";
 import type { Column, FactorySummary, FactoryView } from "./model";
-import { MyTurn } from "./MyTurn";
+import { MyTurn, Refusal } from "./MyTurn";
+import { useFactoryRequest } from "./request";
 import { TaskPage } from "./TaskPage";
 import { outsideRead, shownFactories, shownFlow } from "./view";
 
@@ -97,6 +98,7 @@ function TabLabel({ tab, count }: { tab: FactoryTab; count: number }) {
 
 function FactoryHeader({ factories, factory, actions }: { factories: FactoryView[]; factory: string | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  const view = factories.find((other) => other.id === factory) ?? null;
   return (
     <div className="flex shrink-0 items-center gap-md px-lg pt-lg pb-sm" data-factory-header="true">
       <h1 className="text-title font-semibold">{t("factory.title")}</h1>
@@ -113,7 +115,14 @@ function FactoryHeader({ factories, factory, actions }: { factories: FactoryView
           ))}
         </SelectContent>
       </Select>
+      {view?.paused ? (
+        <span className="flex shrink-0 items-center gap-xxs rounded-full bg-muted px-sm py-xxs text-caption text-subtle-foreground" data-factory-paused-chip="true">
+          <CirclePauseIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+          {t("factory.pausedChip")}
+        </span>
+      ) : null}
       <span className="flex-1" />
+      {view ? <PauseFactory view={view} actions={actions} /> : null}
       <Button variant="ghost" size="sm" data-factory-create-open="true" onClick={() => useUiStore.getState().setFactoryPlace({ create: true })}>
         <PlusIcon />
         {t("factory.create.open")}
@@ -127,6 +136,32 @@ function FactoryHeader({ factories, factory, actions }: { factories: FactoryView
 }
 
 /**
+ * Pauses or resumes the one Factory the header shows (D-48): a paused Factory
+ * starts nothing, asks Factory AI nothing and keeps its workers asleep.
+ */
+function PauseFactory({ view, actions }: { view: FactoryView; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const request = useFactoryRequest(actions);
+  const sending = request.state.phase === "sending";
+  return (
+    <>
+      <Refusal state={request.state} />
+      {view.paused ? (
+        <Button variant="outline" size="sm" disabled={sending} data-factory-pause="resume" onClick={() => request.send({ verb: "resume_factory", project: view.project })}>
+          <PlayIcon />
+          {t("factory.resume")}
+        </Button>
+      ) : (
+        <Button variant="ghost" size="sm" disabled={sending} data-factory-pause="pause" onClick={() => request.send({ verb: "pause_factory", project: view.project })}>
+          <PauseIcon />
+          {t("factory.pause")}
+        </Button>
+      )}
+    </>
+  );
+}
+
+/**
  * The flow bar (B7, B12, B20): the Tasks moving, never a person's-turn cell;
  * a cell opens the board filtered to it. The last outside read sits at its
  * end and turns the warning colour after three failed reads in a row.
@@ -135,6 +170,8 @@ function FlowBar({ factories }: { factories: FactoryView[] }) {
   const { t } = useInterfaceTranslation();
   const flow = shownFlow(factories);
   const read = outsideRead(factories);
+  // A paused Factory's workers are asleep, so its moving cell says so.
+  const asleep = factories.length > 0 && factories.every((view) => view.paused);
   return (
     <div className="mx-lg flex shrink-0 items-stretch gap-xxs rounded-md bg-muted p-xxs" data-factory-flow="true">
       {FLOW_CELLS.map((cell) => (
@@ -145,7 +182,7 @@ function FlowBar({ factories }: { factories: FactoryView[] }) {
           data-factory-flow-cell={cell.column}
           onClick={() => useUiStore.getState().setFactoryPlace({ tab: "board", column: cell.column, cancelled: false })}
         >
-          <span className="truncate">{cell.column === "done" ? t("factory.flow.doneToday") : t(COLUMN_LABEL[cell.column])}</span>
+          <span className="truncate">{cell.column === "done" ? t("factory.flow.doneToday") : cell.column === "moving" && asleep ? t("factory.flow.asleep") : t(COLUMN_LABEL[cell.column])}</span>
           <span className="font-semibold text-foreground" data-factory-flow-count={flow[cell.count]}>
             {flow[cell.count]}
           </span>

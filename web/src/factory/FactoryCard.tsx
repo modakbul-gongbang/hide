@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import { CircleIcon, CircleDotIcon, CircleCheckIcon, CircleHelpIcon, CirclePauseIcon, CircleDashedIcon, GitMergeIcon, GitPullRequestIcon, LoaderCircleIcon, LockIcon, TriangleAlertIcon, SparklesIcon } from "lucide-react";
+import { CircleAlertIcon, CircleIcon, CircleDotIcon, CircleCheckIcon, CircleHelpIcon, CirclePauseIcon, CircleDashedIcon, GitMergeIcon, GitPullRequestIcon, LoaderCircleIcon, LockIcon, TriangleAlertIcon, SparklesIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { statusText } from "../agentStatus";
 import { AgentLogo } from "../components/agent-logo";
@@ -12,7 +12,7 @@ import { cn } from "../lib/utils";
 import { localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
-import { ACTION_LABEL, GATE_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
+import { ACTION_LABEL, GATE_LABEL, PAUSE_REASON_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
 import type { CardView, FactoryView, InboxItem, TaskState } from "./model";
 import { choiceCommand, itemChoices, Refusal } from "./MyTurn";
 import { useFactoryRequest } from "./request";
@@ -59,18 +59,23 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
   });
   const descendants = worker?.close_descendant_pane_ids?.length ?? children.length;
   const line = summaries ? worker?.request?.line : undefined;
-  const person = card.waiting_group === "person" || card.needs_person;
+  // A worker whose pane was closed in Hide waits for a person to resume it (D-26).
+  const closed = card.state === "paused" && card.pause_reason === "pane_closed";
+  const person = card.waiting_group === "person" || card.needs_person || (closed && item?.kind === "paused");
   const resting = card.resume_at !== null;
   const Icon = resting ? CirclePauseIcon : stateIcon(card.state);
   const state = resting ? t("factory.card.resting") : card.stop ? t(STOP_LABEL[card.stop]) : t(STATE_LABEL[card.state]);
   const tone = card.state === "stopped" ? "text-destructive" : card.state === "outside" ? "text-muted-foreground" : TONE_TEXT[stateTone(card.state, person)];
-  const problem = card.state === "stopped" && card.stop ? t(STOP_LABEL[card.stop])
+  const problem = card.state === "stopped" && card.stop ? [t(STOP_LABEL[card.stop]), card.stop === "worker_gone" ? t("factory.card.goneAgain") : card.stop === "no_report" ? t("factory.card.noReply") : null].filter((part) => part !== null).join(" · ")
+    : closed ? `${t(STATE_LABEL.paused)} · ${t(PAUSE_REASON_LABEL.pane_closed)}`
     : card.state === "merge_waiting" && item ? item.gates.map((gate) => t(GATE_LABEL[gate])).join(" · ")
     : resting ? t("factory.card.resumeAt", { time: new Date(card.resume_at!).toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit" }) })
     : card.state === "outside" && card.pr ? t("factory.card.outsidePr", { number: card.pr.number })
     : card.failures > 0 ? t("factory.card.failures", { count: card.failures })
     : card.waiting_code === "predecessors" ? waitingText(card, t) : null;
-  const ProblemIcon = resting ? CirclePauseIcon : card.state === "outside" ? GitPullRequestIcon : card.failures > 0 || card.state === "stopped" ? TriangleAlertIcon : LockIcon;
+  const ProblemIcon = resting || closed ? CirclePauseIcon : card.state === "stopped" ? CircleAlertIcon : card.state === "outside" ? GitPullRequestIcon : card.failures > 0 ? TriangleAlertIcon : LockIcon;
+  // Factory AI's reading of a quiet worker takes the place of the worker's own line (D-23).
+  const aiLine = item?.observer_reason ? t("factory.turn.diagnosis", { text: item.observer_reason }) : line;
   const open = () => useUiStore.getState().setFactoryPlace({ task: { factory: factory.id, task: card.task } });
   return <div className="factory-card-container">
     <article className={cn("factory-card relative min-w-0 overflow-hidden rounded-md border border-border bg-card text-muted-foreground hover:bg-accent", (dim || card.state === "done") && "opacity-(--opacity-dimmed)")} data-factory-card={card.task} data-factory-card-turn={person ? "true" : undefined}>
@@ -94,7 +99,7 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
         {problem ? <div className={cn("factory-card-normal flex min-w-0 items-center gap-xs text-caption", card.state === "stopped" ? "text-destructive" : card.failures > 0 || card.state === "merge_waiting" ? "text-warning" : "text-muted-foreground")} data-factory-problem="true" title={problem}><ProblemIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" /><span className="truncate">{problem}</span></div> : null}
         {person && item && actions && !resting ? <CardAction key={inboxKey(item)} card={card} item={item} actions={actions} onDetail={open} /> : null}
         <div className="factory-card-wide flex min-w-0 items-center gap-md text-caption"><span>{state}</span>{worker ? <span className="flex min-w-0 items-center gap-xxs"><StatusMark symbol={worker.symbol} className="text-muted-foreground" /><span className="truncate">{statusText(t, worker.status_code)}</span></span> : null}{showProject ? <span className="truncate">{factory.project_name}</span> : null}</div>
-        {line ? <div className="factory-card-wide flex min-w-0 items-center gap-xs border-t border-dashed border-border pt-sm text-caption" data-factory-ai="true"><SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" /><span className="truncate" title={line}>{line}</span></div> : null}
+        {aiLine ? <div className="factory-card-wide flex min-w-0 items-center gap-xs border-t border-dashed border-border pt-sm text-caption" data-factory-ai={item?.observer_reason ? "diagnosis" : "true"}><SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" /><span className="truncate" title={aiLine}>{aiLine}</span></div> : null}
       </div>
     </article>
   </div>;
@@ -113,7 +118,7 @@ function CardAction({ card, item, actions, onDetail }: { card: CardView; item: I
   const request = useFactoryRequest(actions);
   const busy = request.state.phase === "sending" || request.state.phase === "taken";
   const actionItem: InboxItem = card.state === "stopped" ? { ...item, kind: "stopped", suggestion: "retry" } : item;
-  const verb = actionItem.kind === "merge" || actionItem.kind === "stopped";
+  const verb = actionItem.kind === "merge" || actionItem.kind === "stopped" || actionItem.kind === "paused";
   const choices = itemChoices(item).filter((choice) => !choice.own);
   const send = (value: string) => {
     if (busy) return;
