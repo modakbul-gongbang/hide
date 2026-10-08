@@ -319,8 +319,8 @@ export type IssueSettings = {
  * model mean the CLI's own default.
  */
 export type AgentStartChoice = {
-  kind: "claude" | "codex" | null;
-  models: Partial<Record<"claude" | "codex", string>>;
+  kind: string | null;
+  models: Partial<Record<string, string>>;
 };
 
 /** A label as the issue's source colours it (`TaskLabel`); `color` is six hex digits. */

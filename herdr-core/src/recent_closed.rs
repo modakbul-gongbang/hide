@@ -314,6 +314,11 @@ pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
             Some(vec!["--resume".into(), session_id.clone()])
         }
         hide_agent_adapter::LaunchDialect::Codex => Some(vec!["resume".into(), session_id.clone()]),
+        hide_agent_adapter::LaunchDialect::Grok
+        | hide_agent_adapter::LaunchDialect::OpenCode
+        | hide_agent_adapter::LaunchDialect::Pi
+        | hide_agent_adapter::LaunchDialect::Omp
+        | hide_agent_adapter::LaunchDialect::Cursor => None,
     }
 }
 

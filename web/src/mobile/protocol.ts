@@ -56,7 +56,7 @@ export type ConversationMessage = {
 };
 
 /** The agent kinds a phone may start (hided/src/mobile/start.rs KINDS). */
-export type StartKind = "claude" | "codex";
+export type StartKind = string;
 
 /** One place a start can go; the folder it names never reaches the phone. */
 export type StartTarget = {

@@ -102,8 +102,8 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
-        [Feature::Skill, Feature::HerdrIntegration],
-        "omp gets the skill and Herdr's integration, like Pi"
+        [Feature::Skill, Feature::HerdrIntegration, Feature::Start],
+        "omp can start, independently of its reader and lifecycle features"
     );
     assert_eq!(
         omp.features

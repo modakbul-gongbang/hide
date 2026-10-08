@@ -81,6 +81,11 @@ impl SessionFormat {
 pub enum LaunchDialect {
     Claude,
     Codex,
+    Grok,
+    OpenCode,
+    Pi,
+    Omp,
+    Cursor,
 }
 
 impl LaunchDialect {
@@ -88,7 +93,27 @@ impl LaunchDialect {
         match self {
             Self::Claude => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::Grok => AgentId::Grok.adapter(),
+            Self::OpenCode => AgentId::OpenCode.adapter(),
+            Self::Pi => AgentId::Pi.adapter(),
+            Self::Omp => AgentId::Omp.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
         }
+    }
+
+    /// The first interactive prompt is an argument, held by the native CLI
+    /// through startup questions. OpenCode's positional argument is a project.
+    pub const fn prompt_flag(self) -> &'static str {
+        match self {
+            Self::OpenCode => "--prompt",
+            _ => "--",
+        }
+    }
+
+    /// Verified launch dialects that accept repeated extra permission roots.
+    /// A checkout cwd is independent of this optional CLI argument.
+    pub const fn accepts_extra_directories(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex | Self::Omp | Self::Cursor)
     }
 }
 

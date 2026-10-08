@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agent_areas;
-mod agent_choice;
+pub(crate) mod agent_choice;
 mod agent_close;
 mod agent_sleep;
 mod agents;

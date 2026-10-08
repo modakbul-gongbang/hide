@@ -26,7 +26,7 @@ import {
   type CloseWatchFrame,
 } from "./buffers";
 import { NO_GRAPH_FILTER } from "./agentGraph";
-import { createCatalogObserver } from "./agentPicker";
+import { createCatalogObserver, type AgentKind, type ProviderKind } from "./agentPicker";
 import { closeScope, closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
@@ -1204,7 +1204,7 @@ export function createActions(send: DispatchFn) {
     startAgent(request: {
       target: { checkoutPath: string } | { home: true };
       deviceId?: string;
-      provider: "claude" | "codex" | "terminal";
+      provider: AgentKind;
       model?: string | null;
       prompt?: string | null;
       requestId?: string;
@@ -1297,7 +1297,7 @@ export function createActions(send: DispatchFn) {
     },
 
     /** An agent started on a pull request's branch with `prompt` (D-12); it reports through `task_operation`. */
-    delegatePullRequest(workspaceId: string, prNumber: number, provider: "claude" | "codex", model: string | null, prompt: string) {
+    delegatePullRequest(workspaceId: string, prNumber: number, provider: ProviderKind, model: string | null, prompt: string) {
       dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, ...(model ? { model } : {}), prompt } });
     },
 
