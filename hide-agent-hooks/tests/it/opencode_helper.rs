@@ -5,13 +5,27 @@
 #![cfg(unix)]
 
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
 
+use crate::{programs, stand_ins};
+
 const PANE: &str = "w1:p1";
+
+/// The `hide` the helper asks: records each call beside the test's HOME and
+/// answers as Hide does for this pane.
+const FAKE_HIDE: &str = r#"#!/bin/sh
+echo "$@" >> "${HOME%/*}/hide-calls"
+case "$1 $2" in
+  "inbox --hook") echo '{"ok":true,"result":{"context":"LETTER-FOR-THIS-PANE","ids":["letter-1"],"remaining":0}}' ;;
+  "inbox --confirm") echo '{"ok":true,"result":{"confirmed":["letter-1"]}}' ;;
+  "workspace bootstrap") echo '{"ok":true}' ;;
+  "workspace factory-question-guard") echo '{"type":"workspace_result","ok":true,"result":{"deny":true}}' ;;
+  *) exit 1 ;;
+esac
+"#;
 
 struct Machine {
     _dir: tempfile::TempDir,
@@ -29,39 +43,15 @@ impl Machine {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&bin).unwrap();
         let helper = bin.join("hide-agent-hooks");
-        std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &helper).unwrap();
-        let calls = root.join("hide-calls");
-        let fake = bin.join("hide");
-        std::fs::write(
-            &fake,
-            format!(
-                r#"#!/bin/sh
-echo "$@" >> '{calls}'
-case "$1 $2" in
-  "inbox --hook") echo '{{"ok":true,"result":{{"context":"LETTER-FOR-THIS-PANE","ids":["letter-1"],"remaining":0}}}}' ;;
-  "inbox --confirm") echo '{{"ok":true,"result":{{"confirmed":["letter-1"]}}}}' ;;
-  "workspace bootstrap") echo '{{"ok":true}}' ;;
-  "workspace factory-question-guard") echo '{{"type":"workspace_result","ok":true,"result":{{"deny":true}}}}' ;;
-  *) exit 1 ;;
-esac
-"#,
-                calls = calls.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let machine = Self {
+        stand_ins::place(programs::hook(), &helper);
+        // The stand-in finds its record from HOME, which the helper hands on.
+        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
+        Self {
             _dir: dir,
+            calls: root.join("hide-calls"),
             home,
             helper,
-            calls,
-        };
-        // A copied executable's first run pays macOS's validation; both are
-        // paid here, outside the operations' budgets.
-        machine.run("warm", &json!({}), true);
-        Command::new(&fake).arg("warm").output().unwrap();
-        std::fs::remove_file(&machine.calls).ok();
-        machine
+        }
     }
 
     fn run(&self, operation: &str, input: &Value, in_pane: bool) -> Value {

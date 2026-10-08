@@ -26,17 +26,14 @@ fn the_plugin_keeps_its_pinned_bytes() {
 #[cfg(unix)]
 #[test]
 fn the_plugin_behaves_as_opencode_runs_it() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().unwrap();
     let helper = dir.path().join("hide-agent-hooks");
-    let stand_in = crate_dir().join("tests/opencode/helper.mjs");
-    std::fs::write(
+    // The plugin hands its environment on, so the stand-in is named there
+    // rather than written into the program, which then starts at once.
+    crate::stand_ins::program(
         &helper,
-        format!("#!/bin/sh\nexec node '{}' \"$@\"\n", stand_in.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        "#!/bin/sh\nexec node \"$HIDE_OPENCODE_HELPER_SCRIPT\" \"$@\"\n",
+    );
     // `.mjs`: Node reads the plugin as the ES module OpenCode loads.
     let plugin = dir.path().join("hide.mjs");
     std::fs::write(&plugin, plugin_text(&helper)).unwrap();
@@ -45,6 +42,10 @@ fn the_plugin_behaves_as_opencode_runs_it() {
         .args(["--test", "--test-timeout=60000"])
         .arg(crate_dir().join("tests/opencode/plugin.test.mjs"))
         .env("HIDE_OPENCODE_PLUGIN", &plugin)
+        .env(
+            "HIDE_OPENCODE_HELPER_SCRIPT",
+            crate_dir().join("tests/opencode/helper.mjs"),
+        )
         .env("HIDE_OPENCODE_HELPER_LOG", dir.path().join("calls.jsonl"))
         .env(
             "HIDE_OPENCODE_HELPER_ANSWERS",
