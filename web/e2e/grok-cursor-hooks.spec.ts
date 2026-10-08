@@ -183,7 +183,7 @@ test("the switches write Hide's Grok file and Cursor entries beside the others, 
   }
 });
 
-test("a Grok file the operator removed shows on its row until Reinstall, and an agent folder that is missing is not made", async ({ page }) => {
+test("a Grok file the operator removed shows on its row until Reinstall, and an agent whose folder is missing gets none and its row says why", async ({ page }) => {
   const stack = await start("grok-cursor-removed", { on: true });
   const { daemon, home } = stack;
   const wire = watchWire(page);
@@ -202,15 +202,21 @@ test("a Grok file the operator removed shows on its row until Reinstall, and an 
     await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
     expect(read(path.join(home, ".grok", "hooks", "herdr.json"))).toBe(HERDR_FILE);
 
-    // Grok has not made its folder: a switch pass creates nothing, and the kit's piece says why (the wire's
-    // reason; the Agents row draws a problem line only for a piece that needs Reinstall).
-    fs.rmSync(path.join(home, ".grok"), { recursive: true });
-    await list.locator(`[data-agent-switch="${daemon.node}:grok:on"]`).click();
-    await expect(list.locator(`[data-agent-switch="${daemon.node}:grok:off"]`)).toBeVisible();
-    await list.locator(`[data-agent-switch="${daemon.node}:grok:off"]`).click();
-    await expect(list.locator(`[data-agent-switch="${daemon.node}:grok:on"]`)).toBeVisible();
-    await expect.poll(() => wire.hook("grok"), { timeout: 60_000 }).toMatchObject({ state: "absent", reason: expect.stringContaining("has not created") });
-    expect(fs.existsSync(path.join(home, ".grok"))).toBe(false);
+    // B8: an agent that is on but has not made its folder gets nothing made, and its row says why in a quiet
+    // line without Reinstall (the kit piece's reason).
+    for (const folder of [".grok", ".cursor"]) fs.rmSync(path.join(home, folder), { recursive: true });
+    await list.locator("[data-agents-check]").click();
+    for (const [agent, folder] of [
+      ["grok", ".grok"],
+      ["cursor", ".cursor"],
+    ] as const) {
+      const waiting = list.locator(`[data-agent-hook-wait="${daemon.node}:${agent}"]`);
+      await expect(waiting).toContainText("has not created", { timeout: 60_000 });
+      await expect(waiting).toContainText(folder);
+      expect(wire.hook(agent)).toMatchObject({ state: "absent" });
+      expect(fs.existsSync(path.join(home, folder))).toBe(false);
+    }
+    await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
     await screenshot(page, "grok-cursor-hooks-no-folder");
   } finally {
     stop(stack);
@@ -219,7 +225,7 @@ test("a Grok file the operator removed shows on its row until Reinstall, and an 
 
 /**
  * A pane of its own in the fixture's checkout that runs the stand-in `kind`, which Herdr classifies by the
- * program in the pane's foreground. Returns the pane once the page lists its row in the Agents list.
+ * program in the pane's foreground. Returns the pane once the sidebar lists its row.
  */
 async function agentPane(page: Page, herdr: HerdrFixture, kind: "grok" | "cursor"): Promise<string> {
   const created = herdr.run(["workspace", "create", "--cwd", path.join(herdr.root, "fixture"), "--label", kind, "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
@@ -229,8 +235,7 @@ async function agentPane(page: Page, herdr: HerdrFixture, kind: "grok" | "cursor
   const screen = () => execFileSync(herdr.bin, ["pane", "read", pane, "--source", "recent", "--lines", "10"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   await expect.poll(screen, { message: `a prompt in pane ${pane}`, timeout: 20_000 }).toContain("fixture %");
   herdr.run(["agent", "start", kind, "--kind", kind, "--pane", pane]);
-  await page.locator('[data-sidebar-mode="agents"]').click();
-  await expect(page.locator(`[data-pane="${pane}"]`)).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"]`)).toBeVisible({ timeout: 30_000 });
   return pane;
 }
 
