@@ -8,7 +8,9 @@
 //! It connects with the operator's SSH configuration under `HOME` and
 //! installs this build's node on the device under the default consent
 //! folders, so run it only against an isolated device account: a private
-//! sshd with its own HOME and state, never an operator's.
+//! sshd with its own HOME and state, never an operator's. The fixture pane
+//! must be fresh: the scroll to the top of its history has to land on the
+//! probe's own first line.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Sender, channel};
@@ -26,11 +28,12 @@ const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 const TAIL_MARKER: &str = "HERDR_IDE_SCROLL_080";
 const HISTORY_MARKER: &str = "HERDR_IDE_SCROLL_001";
 
-/// What the probe heard from the device, and who waits on it.
-#[derive(Default)]
+/// What the probe heard from the device, and who waits on it. Herdr sends
+/// a repaint as the cells that changed, so the markers are read from the
+/// screen those bytes draw, at the view's grid, not from the bytes.
 struct Heard {
     pane: String,
-    screen: Mutex<String>,
+    screen: Mutex<vt100::Parser>,
     full_frame_seen: Mutex<bool>,
     scrolled: Mutex<bool>,
     states: Mutex<Vec<String>>,
@@ -51,13 +54,13 @@ impl DeviceSink for Heard {
             return;
         }
         let mut screen = self.screen.lock().unwrap();
-        screen.push_str(&String::from_utf8_lossy(bytes));
+        screen.process(bytes);
         *self.full_frame_seen.lock().unwrap() |= full;
-        if screen.contains(TAIL_MARKER) {
+        let shown = screen.screen().contents();
+        if shown.contains(TAIL_MARKER) {
             self.tell("tail");
         }
-        if *self.scrolled.lock().unwrap() && String::from_utf8_lossy(bytes).contains(HISTORY_MARKER)
-        {
+        if *self.scrolled.lock().unwrap() && shown.contains(HISTORY_MARKER) {
             self.tell("history");
         }
     }
@@ -112,9 +115,17 @@ fn official_remote_terminal_session_fixture_probe() {
         "remote terminal fixture must use the owned fixture namespace"
     );
 
+    let size = GridSize {
+        rows: 30,
+        cols: 100,
+    };
     let heard = Arc::new(Heard {
         pane: pane_id.clone(),
-        ..Heard::default()
+        screen: Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)),
+        full_frame_seen: Mutex::default(),
+        scrolled: Mutex::default(),
+        states: Mutex::default(),
+        progress: Mutex::default(),
     });
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is configured"));
     let transport = hide_node::ssh::Connector::new(Some(helper_dir))
@@ -182,10 +193,6 @@ fn official_remote_terminal_session_fixture_probe() {
     let (progress, heard_progress) = channel();
     *heard.progress.lock().unwrap() = Some(progress);
 
-    let size = GridSize {
-        rows: 30,
-        cols: 100,
-    };
     terminals.view(&pane_id, size, true);
     terminals.control(TerminalControl::Attach {
         pane: pane_id.clone(),
