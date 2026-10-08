@@ -13,6 +13,12 @@ class Deadline:
     def __init__(self, owner, seconds):
         self.end = min(owner.deadline, time.monotonic() + seconds)
 
+    @classmethod
+    def observation(cls, owner, seconds):
+        # The original observation window excluded guarded transport. Keep a
+        # fixed allowance for it, rather than renewing the end on each read.
+        return cls(owner, COMMAND_SECONDS + seconds)
+
     def remaining(self):
         seconds = self.end - time.monotonic()
         if seconds <= 0:

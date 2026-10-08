@@ -13,7 +13,7 @@ PROMPT = "Reply with exactly " + LABEL + ". Do not use tools."
 def seed(runtime, pane, recipe, home, overlay, seconds):
     if runtime.fixture_bin:
         return {"status": "fixture", "visible_tokens": ["fixture-previous"]}
-    deadline = Deadline(runtime.owner, seconds)
+    deadline = Deadline.observation(runtime.owner, seconds)
     sent = False
     working = False
     try:

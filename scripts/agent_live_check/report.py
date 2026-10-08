@@ -44,7 +44,13 @@ def save(run, report: dict) -> int:
         agent["verdict"] = verdict(agent)
     code = exit_code(report)
     report["exit_code"] = code
+    timing = report.get("timing")
+    budget = (f"Observation phase budget: {timing['transport_seconds']}s transport + "
+              f"{timing['observation_seconds']}s observation = {timing['phase_seconds']}s; "
+              "clamped to the remaining run budget. Arrival and effect have separate phases."
+              if timing else "")
     lines = ["# Local bell measurement", "", "Versions scope this result to this run.", "",
+             budget, "",
              f"Herdr: {cell(report['herdr'].get('version', 'not started'))}",
              f"Active detection manifests: {cell(json.dumps(report['herdr'].get('manifests', [])))}", "",
              "| Agent | CLI version | Model | Loaded integration | Declared bell | Verdict | Letter |",

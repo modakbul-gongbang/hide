@@ -96,9 +96,9 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
     try:
         if data["send"]:
             runtime.send(pane, data["send"])
-        # Observe after the trigger has been submitted. Guarded transport
-        # startup must not consume the window before its first screen read.
-        deadline = Deadline(runtime.owner, seconds)
+        # Start after the trigger, with a fixed transport allowance alongside
+        # the original observation window.
+        deadline = Deadline.observation(runtime.owner, seconds)
         while not deadline.expired():
             screen = runtime.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
             sample = {"phase": "arrival", "screen": screen, "agent": None}
@@ -138,7 +138,7 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         existing_probes = {path.name for path in cwd.glob("probe-*.txt")}
         runtime.send(pane, bell, deadline=deadline)
         phase = "effect"
-        deadline = Deadline(runtime.owner, seconds)
+        deadline = Deadline.observation(runtime.owner, seconds)
         effect = "ambiguous"
         reason = "no_positive_effect_evidence"
         while not deadline.expired():

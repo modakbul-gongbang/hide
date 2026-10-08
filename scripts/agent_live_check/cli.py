@@ -20,7 +20,7 @@ from .credential_snapshot import CredentialSnapshotUnavailable
 from .history import LABEL as PREVIOUS_LABEL, seed as seed_history
 from .integration import (prepare as prepare_integration, project_args, observe as observe_integration,
                           provenance as integration_provenance)
-from .processes import OwnedProcesses, ProcessError, ProcessSafetyError
+from .processes import COMMAND_SECONDS, OwnedProcesses, ProcessError, ProcessSafetyError
 from .protection import ConfigGuard, ProtectionError, beneath, private_directory, stamp, write_private
 from .report import save
 from .runtime import Runtime, clean_env
@@ -38,7 +38,8 @@ def parser():
     value.add_argument("--herdr-bin", type=Path, help="Previously fetched pinned Herdr; bytes are checked")
     value.add_argument("--socket", type=Path, help="Private socket; operator/default/existing paths are refused")
     value.add_argument("--state-dir", type=Path, help="Private state directory inside the run")
-    value.add_argument("--scene-seconds", type=float, default=30)
+    value.add_argument("--scene-seconds", type=float, default=30,
+                       help=f"Observation seconds; each phase also allows {COMMAND_SECONDS}s for transport")
     value.add_argument("--fixture-bin", type=Path, help="CI only: compiled Claude/Codex shim directory; uses private HOME")
     return value
 
@@ -129,6 +130,8 @@ def main(argv=None):
     owner = OwnedProcesses(diagnostics=run / "process-diagnostics")
     report = {"format": 1, "fixture": bool(args.fixture_bin), "herdr": {}, "agents": [],
               "source": contract["declaration_sha256"], "configuration": {},
+              "timing": {"transport_seconds": COMMAND_SECONDS, "observation_seconds": args.scene_seconds,
+                         "phase_seconds": COMMAND_SECONDS + args.scene_seconds},
               "cleanup": {"confirmed": False}, "failures": [], "resources": {}}
     runtime = guard = None
     previous_signals = {}

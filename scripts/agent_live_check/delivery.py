@@ -24,7 +24,7 @@ def measure(runtime, pane, recipe, home, cwd, bell, seconds, overlay):
     marker = "LIVE_MAIL_" + secrets.token_hex(16)
     letter_id = runtime.send_letter(pane, "live-proof-" + secrets.token_hex(8),
                                     "Reply with this marker in your own assistant text: " + marker)
-    deadline = Deadline(runtime.owner, seconds)
+    deadline = Deadline.observation(runtime.owner, seconds)
     sent = False
     try:
         while not deadline.expired():

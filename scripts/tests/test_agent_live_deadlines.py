@@ -1,7 +1,8 @@
 """Expired external replies cannot qualify a bounded observation or new input.
 
-The independent counterexample is Code C1: a one-second phase receives a
-matching reply after 1.1 seconds. Herdr responses and the clock are the only
+Root2952 fixes each phase at the command transport cap plus its observation
+window. Replies beyond that absolute end cannot certify a result or input.
+Herdr responses and the clock are the only
 substituted boundaries; the real screen, identity and input adapters run.
 """
 
@@ -18,18 +19,20 @@ from agent_live_check.delivery import measure
 from agent_live_check.history import LABEL, seed
 from agent_live_check.runtime import Runtime
 from agent_live_check.scenes import observe
-from agent_live_check.processes import OwnedProcesses, ProcessError
+from agent_live_check.processes import COMMAND_SECONDS, OwnedProcesses, ProcessError
 from agent_live_check.timing import Deadline
 
 
 class HerdrReplies(Runtime):
     """Finite external CLI replies, without a Herdr server or provider."""
 
-    def __init__(self, root, *, late=None, effect="NO MATCH", history=False, status="idle"):
+    def __init__(self, root, *, late=None, late_seconds=COMMAND_SECONDS + 1.1,
+                 effect="NO MATCH", history=False, status="idle"):
         self.clock = [100.0]
         self.owner = type("Owner", (), {"deadline": 500, "cancelled": threading.Event()})()
         self.fixture_bin = None
         self.root, self.late, self.effect, self.history = root, late, effect, history
+        self.late_seconds = late_seconds
         self.status = status
         self.counts, self.inputs, self.budgets, self.ends = {}, [], [], []
         self.session = {"kind": "path", "source": "herdr:claude", "value": str(root / "native.jsonl")}
@@ -43,7 +46,7 @@ class HerdrReplies(Runtime):
         self.ends.append(kwargs.get("deadline"))
         if kind == "input":
             self.inputs.append(args[-1])
-        self.clock[0] += 1.1 if (kind, ordinal) == self.late else 0.025
+        self.clock[0] += self.late_seconds if (kind, ordinal) == self.late else 0.025
         if self.history:
             status = ["idle", "working", "done"][min(self.counts.get("agent", 0), 2)]
             screen = LABEL + "\nREADY" if self.counts.get("agent", 0) >= 2 else "READY"
@@ -149,11 +152,11 @@ class ObservationDeadlines(unittest.TestCase):
         for effect, expected in (("NO MATCH", "no_match"), ("SELECTED", "selection")):
             with self.subTest(effect=effect), tempfile.TemporaryDirectory() as name:
                 root = Path(name)
-                runtime = HerdrReplies(root, effect=effect)
+                runtime = HerdrReplies(root, late=("screen", 1), late_seconds=1.1, effect=effect)
                 result, _ = self.observe(root, runtime)
                 self.assertEqual((result["arrival"], result["effect"]), ("reached", expected))
                 self.assertEqual(runtime.inputs, ["bell"])
-                self.assertTrue(all(0 < budget <= 1 for budget in runtime.budgets))
+                self.assertTrue(all(0 < budget <= COMMAND_SECONDS for budget in runtime.budgets))
                 self.assertTrue(all(end is not None for end in runtime.ends))
 
     def test_large_window_keeps_command_cap_and_global_owner_deadline(self):
