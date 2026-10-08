@@ -100,14 +100,16 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             screen = runtime.screen(pane)
+            sample = {"phase": "arrival", "screen": screen, "agent": None}
+            samples = [sample]
             require_no_login(screen)
             agent = runtime.agent(pane)
+            sample["agent"] = agent
             previous_visible = (scene != "resume_picker" or runtime.fixture_bin or
                                 (previous_session and any(token in screen for token in previous_session["visible_tokens"])))
             if agent and arrived(data, screen, bell) and previous_visible:
                 before = {"screen": screen, "agent": agent}
                 break
-            samples = [{"phase": "arrival", "screen": screen, "agent": agent}]
             runtime.wait(lambda: True, 0.01)
             runtime.owner.cancelled.wait(0.15)
             if runtime.owner.cancelled.is_set():
@@ -135,9 +137,11 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         reason = "no_positive_effect_evidence"
         while time.monotonic() < deadline:
             screen = runtime.screen(pane)
+            sample = {"phase": "after", "screen": screen, "agent": None}
+            samples = [samples[0], sample]
             require_no_login(screen)
             agent = runtime.agent(pane)
-            samples = [samples[0], {"phase": "after", "screen": screen, "agent": agent}]
+            sample["agent"] = agent
             if any(stamp(path) != original for path, original in configuration.items()):
                 effect, reason = "settings_write", "private_settings_or_trust_changed_after_bell"
                 break

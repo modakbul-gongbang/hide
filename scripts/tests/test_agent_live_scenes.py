@@ -20,10 +20,44 @@ from agent_live_check.runtime import Runtime
 from agent_live_check.authentication import AuthenticationRequired
 from agent_live_check.processes import ProcessError
 from agent_live_check.history import LABEL, seed
-from agent_live_check.scenes import startup_blocker
+from agent_live_check.scenes import observe, startup_blocker
 
 
 class ScenePreparation(unittest.TestCase):
+    def test_scene_keeps_received_frame_when_auth_or_identity_check_fails(self):
+        for phase in ("arrival", "after"):
+            for failure in ("identity", "authentication"):
+                with self.subTest(phase=phase, failure=failure), tempfile.TemporaryDirectory() as name:
+                    root = Path(name)
+                    evidence = root / "scene.json"
+                    screens, queries, sent = [], [], []
+                    ordinal = 1 if phase == "arrival" else 2
+                    current = "Sign in to continue" if failure == "authentication" else "current received frame"
+                    def screen(pane):
+                        screens.append(pane)
+                        return current if len(screens) == ordinal else "READY before"
+                    def agent(pane):
+                        queries.append(pane)
+                        if failure == "identity" and len(queries) == ordinal:
+                            raise ProcessError("fixture_identity_query_failed")
+                        return {"agent_status": "idle"}
+                    runtime = SimpleNamespace(fixture_bin=None, screen=screen, agent=agent,
+                                              send=lambda pane, text: sent.append(text),
+                                              owner=SimpleNamespace(cancelled=threading.Event()))
+                    recipe = {"kind": "claude", "scenes": {"rest": {
+                        "send": "", "arrived": "READY", "draft": "never", "no_match": "never", "unsafe": "never"}}}
+                    expected = ProcessError if failure == "identity" else AuthenticationRequired
+                    with self.assertRaises(expected):
+                        observe(runtime, "owned", recipe, "rest", "bell", root, 1,
+                                evidence, root, {"session_root": None, "settings": []})
+                    record = json.loads(evidence.read_text())
+                    sample = record["samples"][-1]
+                    self.assertEqual(sample, {"phase": phase, "screen": current, "agent": None})
+                    self.assertEqual(len(record["samples"]), ordinal)
+                    self.assertEqual(len(screens), ordinal)
+                    self.assertEqual(len(queries), ordinal if failure == "identity" else ordinal - 1)
+                    self.assertEqual(sent, [] if phase == "arrival" else ["bell"])
+
     def trust_fixture(self, root):
         checkout = Path(__file__).resolve().parents[2]
         recipe = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])["claude-code"]

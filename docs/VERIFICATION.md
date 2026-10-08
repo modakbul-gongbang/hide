@@ -154,6 +154,7 @@ The deadline starts before its first screen read; every screen query, identity q
 Each command retains the 15-second cap and the same absolute launch deadline through receipt checks, registry setup and the guardian's child admission.
 Required teardown may finish after that deadline, but never renews permission to start another command.
 An actual received screen is retained immediately, even when its following deadline or identity check fails; unavailable identity remains null and never authorizes input.
+Scene arrival and post-bell observations likewise retain their latest received frame before authentication or identity checks, within the existing two-frame bound.
 The controller never writes shared operator trust files; any native-agent private probe key follows the shared-file observer and leftover policy below.
 
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
