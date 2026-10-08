@@ -119,7 +119,11 @@ fn a_helper_path_that_spells_a_placeholder_keeps_it_and_the_constants_still_go_i
         let body = file.body(helper);
         assert_eq!(helper_of(&body).as_deref(), Some(helper.to_str().unwrap()));
         for (placeholder, value) in file.constants {
-            assert_eq!(body.matches(placeholder).count(), 1, "{placeholder}: the path's own");
+            assert_eq!(
+                body.matches(placeholder).count(),
+                1,
+                "{placeholder}: the path's own"
+            );
             assert!(body.contains(&format!("= {value};")), "{placeholder}");
         }
     }
