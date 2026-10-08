@@ -12,7 +12,7 @@ import { paneListed } from "./factory/secretary";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
-import { SidebarHeader, type DeviceMenu } from "./components/sidebar-header";
+import { SidebarHeader, type DeviceMenu, type FactoryProjectRow } from "./components/sidebar-header";
 import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
@@ -106,7 +106,9 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const overviewSelected = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main");
   const factoryChord = useShellStore((s) => commandLabel("factory_open", s.rest?.ui_state));
   const factoryCount = useFactoryTurnCount();
-  const factorySelected = useUiStore((s) => !s.overviewOpen && s.screen?.kind === "factory");
+  const factoryPlace = useUiStore((s) => (!s.overviewOpen && s.screen?.kind === "factory" ? s.screen.place.factory : undefined));
+  const factorySelected = factoryPlace === null;
+  const factoryProjects = useFactoryProjects(actions, factoryPlace);
   const secretary = useSecretaryRow(actions);
   const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
   // A drag draws the nav alone at the width under the pointer, over the
@@ -179,7 +181,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             projectChord={projectChord || null}
             agentChord={agentChord || null}
             overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
-            factory={{ selected: factorySelected, count: factoryCount, chord: factoryChord || null, onOpen: () => actions.openFactory(), secretary }}
+            factory={{ selected: factorySelected, count: factoryCount, chord: factoryChord || null, onOpen: () => openFactoryAt(actions, null), projects: factoryProjects, secretary }}
             searchChord={commandLabel("search") || null}
             newWorkspaceChord={commandLabel("new_workspace") || null}
             onMode={actions.showSidebarMode}
@@ -221,6 +223,31 @@ export function Sidebar({ actions }: { actions: Actions }) {
       </nav>
     </div>
   );
+}
+
+/** Opens the Factory where it was, filtered to one Factory or to all of them. */
+function openFactoryAt(actions: Actions, factory: string | null) {
+  actions.openFactory();
+  useUiStore.getState().setFactoryPlace(factory === null ? { factory } : { factory, task: null, column: null });
+}
+
+/**
+ * The Factories under the Factory row (PRD factory-observer B34): each
+ * project's 내 차례 number and pause, opening the Factory filtered to it.
+ */
+function useFactoryProjects(actions: Actions, place: string | null | undefined): FactoryProjectRow[] {
+  const summary = useShellStore((s) => s.factory?.summary ?? null);
+  return useMemo(() => {
+    const open = (summary?.factories ?? []).filter((view) => !view.closed);
+    return open.map((view) => ({
+      id: view.id,
+      name: view.project_name,
+      count: summary!.inbox.filter((item) => item.factory === view.id && item.group !== "notice").length,
+      paused: view.paused,
+      selected: place === view.id,
+      onOpen: () => openFactoryAt(actions, view.id),
+    }));
+  }, [summary, place, actions]);
 }
 
 /**
