@@ -1154,6 +1154,8 @@ A root that turned Seen rides the next notice's `clear` list, and the app closes
 A 404 or 410 answer drops that subscription, and the phone registers again on its next connection.
 While Mobile is on with a phone paired, hided skips the ten-minute idle exit.
 The records are `mobile_transport`, `mobile_pairing`, `mobile_phone`, `mobile_push` and `mobile_store` in `Logs/core.jsonl`, and none carries a code, a credential or a subscription key.
+The operator notice for a held letter or an unanswered inactivity warning uses the same delivery: `push::notice_route` judges, from values only and under the Mobile mutex rather than `Mutex<Runtime>`, whether a phone can be reached at all (key, mode against the connected renderers, the Mobile switch, a subscription), and a phone that cannot be reached is not sent to; Herdr is tried next unless this Mac has no socket for it.
+Each channel's reason is a code, and when both fail the one `human.channels_failed` record names them (`docs/delivery.md`).
 
 ### Panes, tabs and the attach window in the web shell
 
