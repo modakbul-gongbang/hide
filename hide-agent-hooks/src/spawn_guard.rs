@@ -1490,13 +1490,13 @@ mod tests {
     fn grok_and_cursor_shell_calls_are_read_in_their_own_documented_shapes() {
         // Grok's hooks guide, Writing Hook Scripts: camelCase keys.
         let grok = br#"{"hookEventName":"pre_tool_use","hook_event_name":"PreToolUse","sessionId":"abc-123",
-            "cwd":"/Users/you/project","toolName":"run_terminal_command","toolInput":{"command":"npm test"},
+            "cwd":"/work/project","toolName":"run_terminal_command","toolInput":{"command":"npm test"},
             "toolUseId":"t","toolInputTruncated":false}"#;
         assert_eq!(
             read_call(grok, false, HookDialect::Grok),
             Some(Call {
                 command: "npm test".into(),
-                cwd: Some(PathBuf::from("/Users/you/project"))
+                cwd: Some(PathBuf::from("/work/project"))
             })
         );
         assert_eq!(
