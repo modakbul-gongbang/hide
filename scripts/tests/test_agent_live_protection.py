@@ -106,6 +106,69 @@ class ConfigurationProtection(unittest.TestCase):
             self.guard()
         self.assertEqual(caught.exception.path, str(self.config))
 
+    def test_shared_files_preserve_concurrent_bytes_and_report_private_keys_only(self):
+        # Lead2702 withdraws shared-file recovery, including lingering entries.
+        # Both external formats must preserve every final byte and inode.
+        owned = str(self.run / "probe" / "changed")
+        added = str(self.run / "probe" / "new")
+        foreign = str(self.root / "other-session")
+        sibling = str(self.run) + "-peer"
+        escaped = str(self.run / ".." / "other-project")
+        for format in ("json", "toml"):
+            with self.subTest(format=format):
+                shared = self.home / ("shared." + format)
+                def content(entries):
+                    if format == "json":
+                        return (json.dumps({"foreign_secret": "never-report-this", "projects": entries}, indent=2) + "\n").encode()
+                    return ('foreign_secret = "never-report-this"\n' + "".join(
+                        f"[projects.{json.dumps(key)}]\ntrust_level = {json.dumps(value)}\n"
+                        for key, value in entries.items())).encode()
+                shared.write_bytes(content({owned: "before", foreign: "original"}))
+                guard = ConfigGuard(self.run / ("backup-" + format), [shared, self.config], [self.home],
+                                    shared={shared: format})
+                final = content({owned: "changed", added: "left-behind", foreign: "concurrent",
+                                 sibling: "not-ours", escaped: "not-ours"})
+                shared.write_bytes(final)
+                shared.chmod(0o400)
+                inode = shared.stat().st_ino
+                result = guard.finish()
+                self.assertEqual(result["failures"], [])
+                self.assertEqual(result["restored"], [])
+                self.assertEqual(shared.read_bytes(), final)
+                self.assertEqual((shared.stat().st_ino, shared.stat().st_mode & 0o777), (inode, 0o400))
+                self.assertEqual(result["shared_changes"], [{"path": str(shared), "result": "다른 세션의 변경"}])
+                self.assertCountEqual(result["shared_leftovers"], [
+                    {"path": str(shared), "key": owned, "change": "changed"},
+                    {"path": str(shared), "key": added, "change": "added"}])
+                self.assertNotIn("never-report-this", json.dumps(result))
+                self.assertNotIn("concurrent", json.dumps(result))
+
+    def test_shared_absence_creation_and_unchanged_leftovers_never_request_recovery(self):
+        shared = self.home / "shared.json"
+        guard = ConfigGuard(self.run / "backup-absent", [shared], [self.home], shared={shared: "json"})
+        key = str(self.run)
+        content = json.dumps({"projects": {key: {"trust": "fixture"}}}).encode()
+        shared.write_bytes(content)
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["shared_leftovers"], [{"path": str(shared), "key": key, "change": "added"}])
+        guard = ConfigGuard(self.run / "backup-unchanged", [shared], [self.home], shared={shared: "json"})
+        result = guard.finish()
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["shared_changes"], [])
+        self.assertEqual(result["shared_leftovers"], [{"path": str(shared), "key": key, "change": "unchanged"}])
+        self.assertEqual(shared.read_bytes(), content)
+
+    def test_unreadable_shared_table_names_file_before_launch(self):
+        for format, content in (("json", b'{"projects": []}'), ("toml", b'[projects.')):
+            with self.subTest(format=format):
+                shared = self.home / ("broken." + format)
+                shared.write_bytes(content)
+                with self.assertRaises(ProtectionError) as caught:
+                    ConfigGuard(self.run / ("backup-broken-" + format), [shared], [self.home], shared={shared: format})
+                self.assertEqual(caught.exception.path, str(shared))
+                self.assertEqual(shared.read_bytes(), content)
+
     def test_unknown_configuration_is_metadata_only_and_preserved(self):
         # Lead letter 2686: only adapter-listed files have a byte guard.
         unknown = self.home / "unknown-settings.json"
@@ -648,25 +711,35 @@ class NativeWriteProtection(unittest.TestCase):
             previous = [history / name for name in ("previous.json", "another.json", "third.json")]
             for path in previous:
                 path.write_bytes(b"operator-session")
-            sandbox = WriteSandbox(run, sockets, home, [history])
+            protected = history / "declared-config.json"
+            protected.write_bytes(b"original-config")
+            guard = ConfigGuard(run / "backup", [protected], [history])
+            sandbox = WriteSandbox(run, sockets, home, [history], protected=[protected])
             with OwnedProcesses() as owner:
                 sandbox.verify(owner, dict(os.environ), outside)
-                # A broad session allowance must never make older sessions
-                # writable. This is the /resume picker protection boundary.
+                # Lead2702 explicitly allows existing history writes. A
+                # declared nonshared config remains denied even inside it.
                 program = ("from pathlib import Path\n"
                            f"for name in {[str(path) for path in previous]!r}:\n"
-                           " try: Path(name).write_bytes(b'changed')\n"
-                           " except PermissionError: pass\n"
-                           " else: raise SystemExit(31)\n")
+                           " Path(name).write_bytes(b'changed')\n"
+                           f"try: Path({str(protected)!r}).write_bytes(b'forbidden')\n"
+                           "except PermissionError: pass\n"
+                           "else: raise SystemExit(31)\n")
                 code, _, _ = owner.run(sandbox.command([sys.executable, "-c", program]), env=dict(os.environ), check=False)
                 self.assertEqual(code, 0)
                 for path in previous:
-                    self.assertEqual(path.read_bytes(), b"operator-session")
+                    self.assertEqual(path.read_bytes(), b"changed")
+                self.assertEqual(protected.read_bytes(), b"original-config")
                 fresh = history / "new-session.json"
                 program = "from pathlib import Path; Path(%r).write_bytes(b'new-run-session')" % str(fresh)
                 code, _, _ = owner.run(sandbox.command([sys.executable, "-c", program]), env=dict(os.environ), check=False)
                 self.assertEqual(code, 0)
                 self.assertEqual(fresh.read_bytes(), b"new-run-session")
+            result = guard.finish()
+            self.assertEqual(result["failures"], [])
+            for path in previous:
+                self.assertIn({"path": str(path), "kind": "changed"}, result["directory_changes"])
+            self.assertIn({"path": str(fresh), "kind": "added"}, result["directory_changes"])
 
 
 if __name__ == "__main__":

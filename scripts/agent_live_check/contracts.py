@@ -61,6 +61,11 @@ def recipes(directory: Path, declared: dict) -> dict:
                 expected.add("controls")
             if set(scene) != expected:
                 raise ProtectionError("invalid_scene_recipe")
+        shared = value.get("shared", {})
+        if (not isinstance(shared, dict)
+                or any(path not in value["known"] or format not in {"json", "toml"}
+                       for path, format in shared.items())):
+            raise ProtectionError("invalid_shared_configuration_declaration")
         result[value["id"]] = value
     if set(result) != set(declared):
         raise ProtectionError("recipe_adapter_coverage_mismatch")

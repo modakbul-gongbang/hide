@@ -19,6 +19,9 @@
     ".codex/config.toml",
     ".codex/hooks.json"
   ],
+  "shared": {
+    ".codex/config.toml": "toml"
+  },
   "roots": [
     ".codex"
   ],

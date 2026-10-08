@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import tomllib
 
 MAX_CONFIG_FILES = 50_000
 MAX_CONFIG_BYTES = 256 * 1024 * 1024
@@ -234,22 +235,46 @@ def fingerprint(roots: list[Path]) -> ConfigInventory:
                            len(pending) + omitted)
 
 
+def shared_project_entries(data: bytes, format: str, run: Path) -> dict:
+    """Inspect declared shared files; retain only this run's project keys."""
+    try:
+        document = json.loads(data) if format == "json" else tomllib.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise ProtectionError("shared_configuration_unreadable") from error
+    if not isinstance(document, dict) or not isinstance(document.get("projects", {}), dict):
+        raise ProtectionError("shared_projects_not_a_table")
+    projects = document.get("projects", {})
+    if len(projects) > MAX_CONFIG_FILES:
+        raise ProtectionError("shared_projects_over_budget")
+    return {key: value for key, value in projects.items()
+            if Path(key).is_absolute() and Path(os.path.normpath(key)).is_relative_to(run)}
+
+
 class ConfigGuard:
     """Backups plus explicit mutation ownership; observing a diff is not ownership.
 
     The live write sandbox prevents config writes. A caller that deliberately
     performs a reversible, owned write must register its exact before/after
-    stamps with record_write. Unknown changes fail recovery without overwriting
-    the operator. Backups never contain a public report or log field.
+    stamps with record_write. Shared project files are observed only, and their
+    private-path entries are named without recovery or failure. Other unknown
+    changes fail recovery without overwriting the operator. Backups never
+    contain a public report or log field.
     """
 
     def __init__(self, backup: Path, known: list[Path], roots: list[Path], *,
-                 exclusive_root: Path | None = None):
+                 exclusive_root: Path | None = None,
+                 shared: dict[Path, str] | None = None):
         private_directory(backup)
         self.backup = backup
         self.known = list(dict.fromkeys(known))
         self.roots = roots
         self.exclusive_root = exclusive_root
+        self.shared = shared or {}
+        if (any(path not in self.known or format not in {"json", "toml"}
+                for path, format in self.shared.items())
+                or (exclusive_root is not None and self.shared)):
+            raise ProtectionError("invalid_shared_configuration_declaration")
+        self.shared_before = {}
         if exclusive_root is not None and (not beneath(exclusive_root, backup.parent)
                                            or exclusive_root == backup.parent):
             raise ProtectionError("exclusive_recovery_root_must_be_owned_by_run")
@@ -262,6 +287,9 @@ class ConfigGuard:
                 value = configuration_bytes(path)
                 before = value[0] if value is not None else None
                 self.before[path] = before
+                if path in self.shared:
+                    self.shared_before[path] = (shared_project_entries(value[1], self.shared[path], backup.parent.resolve())
+                                                if value is not None else {})
                 if value is not None:
                     total += value[0].size
                     if total > MAX_CONFIG_BYTES:
@@ -293,6 +321,19 @@ class ConfigGuard:
     def finish(self) -> dict:
         changes = []
         failures = []
+        shared_changes, shared_leftovers = [], []
+
+        def observe_shared(path):
+            value = configuration_bytes(path)
+            current = value[0] if value is not None else None
+            entries = (shared_project_entries(value[1], self.shared[path], self.backup.parent.resolve())
+                       if value is not None else {})
+            if current != self.before[path]:
+                shared_changes.append({"path": str(path), "result": "다른 세션의 변경"})
+            before_entries = self.shared_before[path]
+            for key, value in sorted(entries.items()):
+                change = "added" if key not in before_entries else "unchanged" if before_entries[key] == value else "changed"
+                shared_leftovers.append({"path": str(path), "key": key, "change": change})
 
         def recover(index, path):
             original = self.before[path]
@@ -333,7 +374,10 @@ class ConfigGuard:
                 changes.append({"path": str(path), "result": "restored"})
         for index, path in enumerate(self.known):
             try:
-                recover(index, path)
+                if path in self.shared:
+                    observe_shared(path)
+                else:
+                    recover(index, path)
             except (OSError, ProtectionError) as error:
                 # An alias, unreadable file or failed restore names its
                 # subject and cannot skip the other safe comparisons.
@@ -343,6 +387,7 @@ class ConfigGuard:
         except (OSError, ProtectionError) as error:
             failures.append({"reason": "configuration_inventory_unavailable", "detail": str(error)})
             return {"restored": changes, "failures": failures,
+                    "shared_changes": shared_changes, "shared_leftovers": shared_leftovers,
                     "directory_changes": None, "inventory_checked": False}
         directory_changes, uncompared = [], 0
         before_entries, after_entries = self.inventory.entries, after.entries
@@ -359,6 +404,7 @@ class ConfigGuard:
             kind = "added" if before_value is None or before_value["kind"] == "absent" else "removed" if after_value is None or after_value["kind"] == "absent" else "changed"
             directory_changes.append({"path": key, "kind": kind})
         return {"restored": changes, "failures": failures,
+                "shared_changes": shared_changes, "shared_leftovers": shared_leftovers,
                 "directory_changes": directory_changes, "inventory_checked": True,
                 "inventory": {"before": self.inventory.summary(), "after": after.summary(),
                               "uncompared_entries": uncompared}}

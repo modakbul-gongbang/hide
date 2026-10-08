@@ -111,9 +111,14 @@ def main(argv=None):
         known = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["known"]))
         roots = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["roots"]))
         histories = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["histories"]))
+        # A disposable fixture HOME has one writer and still proves exact
+        # recovery. Live shared project files are strictly read-only observers.
+        shared = {} if args.fixture_bin else {agent_home / relative: format
+                  for recipe in all_recipes for relative, format in recipe.get("shared", {}).items()}
         guard = ConfigGuard(run / "configuration-backup", known, roots,
-                            exclusive_root=agent_home if args.fixture_bin else None)
-        sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, histories, runtime.state)
+                            exclusive_root=agent_home if args.fixture_bin else None, shared=shared)
+        sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, histories, runtime.state,
+                                                            protected=[path for path in known if path not in shared])
         runtime.sandbox = sandbox
         if sandbox:
             with tempfile.TemporaryDirectory(prefix="acl-guard-", dir="/tmp") as outside:

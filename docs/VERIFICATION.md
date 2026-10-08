@@ -198,16 +198,21 @@ The verified pinned binary generates its own integration assets in a disposable 
 The loaded-version claim requires an isolated configuration route, unchanged prepared artifact hashes, one common version across its possible native emitters and a native session report, sampled again after the first turn.
 Prepared files are inventoried separately; the claim does not say every prepared frontend asset loaded.
 A prepared file alone never proves load; Cursor's project hooks and copied OpenCode configuration cannot exclude external-hook or plugin ambiguity, so their loaded versions remain unproven.
-Only adapter-listed configuration/trust files are backed up and compared byte for byte with private permissions, with a 16 MiB per-file and 256 MiB total backup limit.
+Only adapter-listed configuration/trust files are read and backed up with private permissions, with a 16 MiB per-file and 256 MiB total backup limit.
+Nonshared declared files retain exact byte guards.
+The declared shared Claude JSON and Codex TOML files are compared read-only and are never restored or rewritten, preserving other live sessions' updates.
+Shared-file changes are reported as other-session changes without failure, and entries in their `projects` tables keyed by this run or its probe descendants are reported by file and key as B6 leftovers without failure.
+Shared parsing uses Python 3.11 or later's standard TOML reader, rejects unreadable tables and caps each project table at 50,000 entries.
 The remaining configuration trees use path, kind, size and mtime metadata only; file contents and link targets are never read or hashed.
 Installation subtrees named `node_modules`, `extensions`, `marketplace`, `marketplaces`, `bundled`, names containing `cache`, and code directories directly beneath `plugins` are excluded; plugin registry files remain observable.
 The inventory stops at 50,000 scanned entries and reports partial coverage, a lower bound on omitted entries and the number of uninspected subtrees, without walking the remainder just to count it.
 The excluded-boundary count includes explicitly listed roots inside an excluded tree and is not a deduplicated count of physical installation trees.
 An addition or removal is reported only where the opposite inventory observed absence, so partial coverage cannot manufacture a change.
 Metadata changes outside the known file list are named and preserved without failing the run or attempting restoration.
-The native sandbox denies operator configuration writes and modification of preexisting histories.
-Existing history paths share one denial operation with exact literal alternatives, preserving new-history writes without compiling an operation per existing entry.
-Unexpected or concurrent changes to known configuration/trust files are preserved and fail the run; observing a diff never authorizes overwriting the operator.
+The native sandbox restricts writes to the disposable probe/temp/socket trees and declared history roots, with exact denials for nonshared declared configuration/trust files.
+Existing and new history files use the same history allowance and their metadata changes remain named in the bounded inventory; the profile never enumerates session files.
+The command cap remains 15 seconds regardless of history count.
+Unexpected or concurrent changes to nonshared known configuration/trust files are preserved and fail the run; observing a diff never authorizes overwriting the operator.
 Only the test lane's exclusively owned disposable HOME permits attributed restoration.
 
 Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.

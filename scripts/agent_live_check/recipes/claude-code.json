@@ -12,6 +12,9 @@
     ".claude/settings.json",
     ".claude/settings.local.json"
   ],
+  "shared": {
+    ".claude.json": "json"
+  },
   "roots": [
     ".claude.json",
     ".claude"
