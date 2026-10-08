@@ -74,15 +74,20 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: |
-          # TEMP EVIDENCE: repeat the test, no retries, to catch the flake.
-          pass=0; fail=0
-          for i in $(seq 1 20); do
-            if bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only --retries 0 2>&1 | tee "run-$i.log" | tail -n 40; then :; fi
-            if grep -q "1 passed" "run-$i.log"; then pass=$((pass+1)); else fail=$((fail+1)); fi
-            echo "ITER $i pass=$pass fail=$fail"
-          done
-          echo "EVIDENCE pass=$pass fail=$fail"
-          [ "$fail" -eq 0 ]
+          # TEMP EVIDENCE: repeat the test in parallel loops, no retries.
+          worker() {
+            w=$1; p=0; f=0
+            for i in $(seq 1 6); do
+              if bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only --retries 0 >"run-$w-$i.log" 2>&1; then p=$((p+1)); else f=$((f+1)); cp "run-$w-$i.log" "agents/runs/fail-$w-$i.log" 2>/dev/null || true; fi
+            done
+            echo "WORKER $w pass=$p fail=$f"
+          }
+          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only --retries 0 --no-run >/dev/null 2>&1 || true
+          for w in 1 2 3 4 5 6; do worker $w & done
+          wait
+          grep -h "Error: timed out" run-*.log | sort | uniq -c
+          for f in run-*.log; do grep -q "1 passed" "$f" || { echo "== $f"; tail -n 30 "$f"; }; done
+          ! ls run-*.log >/dev/null 2>&1 || ! grep -L "1 passed" run-*.log | grep -q .
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
