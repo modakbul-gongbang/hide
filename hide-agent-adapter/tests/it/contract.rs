@@ -157,9 +157,10 @@ fn the_factory_question_guard_names_each_agent_with_a_refusable_question_tool_by
     assert_eq!(direct_ask_kind("claude-code"), Some("claude"));
     assert_eq!(direct_ask_kind("codex"), Some("codex"));
     assert_eq!(direct_ask_kind("opencode"), Some("opencode"));
+    assert_eq!(direct_ask_kind("omp"), Some("omp"));
     // The hook passes its canonical id; an alias or an agent with no refusable
     // tool is not a runtime the guard answers for.
-    for runtime in ["claude", "grok", "cursor", "pi", "omp", ""] {
+    for runtime in ["claude", "grok", "cursor", "pi", ""] {
         assert_eq!(direct_ask_kind(runtime), None, "{runtime}");
     }
 }

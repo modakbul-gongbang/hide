@@ -100,9 +100,10 @@ pub fn device_hook_status(
 }
 
 /// The hook `dialect` speaks through, as a machine's kit reported it: Claude
-/// Code's and Codex's kit parts, or OpenCode's plugin piece on its agent row.
-/// This Mac's Claude Code and Codex hooks are read from their files instead
-/// (`hide_agent_hooks::Diagnosis`); OpenCode's plugin has no other reading.
+/// Code's and Codex's kit parts, or the plugin or extension piece on the
+/// agent's row (OpenCode, Pi, omp). This Mac's Claude Code and Codex hooks are
+/// read from their files instead (`hide_agent_hooks::Diagnosis`); a script
+/// file of Hide's has no other reading.
 pub fn kit_hook_status(
     kit: &crate::model::KitSnapshot,
     dialect: HookDialect,
@@ -118,7 +119,7 @@ pub fn kit_hook_status(
     let state = match dialect {
         HookDialect::ClaudeCode => part(ComponentId::ClaudeCodeHook)?,
         HookDialect::Codex => part(ComponentId::CodexHook)?,
-        HookDialect::OpenCode => {
+        HookDialect::OpenCode | HookDialect::Pi | HookDialect::Omp => {
             kit.agents
                 .iter()
                 .find(|agent| agent.id == dialect.adapter().id)?

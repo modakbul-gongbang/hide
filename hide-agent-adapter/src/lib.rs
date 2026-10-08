@@ -43,22 +43,44 @@ pub enum TitlePriority {
 }
 
 /// Whose hook speaks for the agent: the settings-file runtimes' six-event
-/// hook, or OpenCode's plugin, which calls the same helper.
+/// hook, or a script file of Hide's in the agent's own folder (OpenCode's
+/// plugin, Pi's and omp's extension), which calls the same helper.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HookDialect {
     ClaudeCode,
     Codex,
     OpenCode,
+    Pi,
+    Omp,
 }
 
 impl HookDialect {
-    pub const ALL: [Self; 3] = [Self::ClaudeCode, Self::Codex, Self::OpenCode];
+    pub const ALL: [Self; 5] = [
+        Self::ClaudeCode,
+        Self::Codex,
+        Self::OpenCode,
+        Self::Pi,
+        Self::Omp,
+    ];
 
     pub const fn adapter(self) -> &'static AgentAdapter {
         match self {
             Self::ClaudeCode => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
+            Self::Pi => AgentId::Pi.adapter(),
+            Self::Omp => AgentId::Omp.adapter(),
+        }
+    }
+
+    /// The script file of Hide's that speaks this dialect, when it is not a
+    /// settings-file hook.
+    pub const fn plugin(self) -> Option<PluginDialect> {
+        match self {
+            Self::ClaudeCode | Self::Codex => None,
+            Self::OpenCode => Some(PluginDialect::OpenCode),
+            Self::Pi => Some(PluginDialect::Pi),
+            Self::Omp => Some(PluginDialect::Omp),
         }
     }
 }
@@ -68,10 +90,13 @@ pub enum GuidanceDialect {
     Cursor,
 }
 
-/// A plugin file Hide owns in the agent's own plugin folder.
+/// A script file Hide owns in the agent's own plugin or extension folder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PluginDialect {
     OpenCode,
+    /// Pi's and omp's extension: one source, two files.
+    Pi,
+    Omp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

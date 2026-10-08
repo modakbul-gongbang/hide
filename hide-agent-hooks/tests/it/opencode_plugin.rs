@@ -8,7 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use hide_agent_hooks::opencode::plugin_text;
+use hide_agent_hooks::opencode::PLUGIN;
+
+fn plugin_text(helper: &Path) -> String {
+    PLUGIN.text(helper)
+}
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

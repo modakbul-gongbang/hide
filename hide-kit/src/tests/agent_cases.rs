@@ -760,13 +760,33 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
         HerdrIntegration,
         Start,
     ];
+    // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
+    // launch through Hide's extension; only omp runs subagents, and no bell
+    // rings for either.
+    let pi = [
+        Skill,
+        Guidance,
+        Letters,
+        SpawnGuard,
+        HerdrIntegration,
+        Start,
+    ];
+    let omp = [
+        Skill,
+        Guidance,
+        Letters,
+        Subagents,
+        SpawnGuard,
+        HerdrIntegration,
+        Start,
+    ];
     let expected: [(&str, &[Feature], bool); 7] = [
         ("claude-code", &Feature::ALL, false),
         ("codex", &Feature::ALL, false),
         ("grok", &[Skill, HerdrIntegration, Start], true),
         ("opencode", &opencode, false),
-        ("pi", &[Skill, HerdrIntegration, Start], true),
-        ("omp", &[Skill, HerdrIntegration, Start], true),
+        ("pi", &pi, false),
+        ("omp", &omp, false),
         ("cursor", &[Skill, Guidance, HerdrIntegration, Start], true),
     ];
     assert_eq!(
@@ -802,30 +822,30 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
         hide_agent_adapter::HookDialect::ALL.len()
     );
     for row in ADAPTERS {
-        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin);
+        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin(_));
         assert_eq!(
             row.supports(crate::agents::Feature::Letters),
             instrumented,
             "{}",
             row.id
         );
-        assert_eq!(
-            row.supports(crate::agents::Feature::Memory),
-            instrumented,
-            "{}",
-            row.id
-        );
-        assert_eq!(
-            row.supports(crate::agents::Feature::Subagents),
-            instrumented,
-            "{}",
-            row.id
-        );
+        // Memory and the subagent count need the hook too, and each also needs
+        // what the agent has (Pi runs no subagents).
+        for feature in [
+            crate::agents::Feature::Memory,
+            crate::agents::Feature::Subagents,
+        ] {
+            assert!(
+                !row.supports(feature) || instrumented,
+                "{}: {feature:?}",
+                row.id
+            );
+        }
     }
 }
 
 fn opencode_plugin(fixture: &Fixture) -> PathBuf {
-    hide_agent_hooks::opencode::plugin_path(fixture.home())
+    hide_agent_hooks::opencode::PLUGIN.path(fixture.home())
 }
 
 #[cfg(unix)]
@@ -847,7 +867,7 @@ fn opencode_switched_on_gets_hides_plugin_beside_herdrs_and_reads_installed() {
     assert_eq!(hook.location.as_deref(), opencode_plugin(&fixture).to_str());
     assert_eq!(
         std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
-        hide_agent_hooks::opencode::plugin_text(&fixture.target.kit_dir.join("hide-agent-hooks"))
+        hide_agent_hooks::opencode::PLUGIN.text(&fixture.target.kit_dir.join("hide-agent-hooks"))
     );
     assert_eq!(std::fs::read(&herdr).unwrap(), b"herdr's plugin");
     assert!(

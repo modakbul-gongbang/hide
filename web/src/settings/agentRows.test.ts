@@ -109,8 +109,10 @@ describe("what a row says (B13, B14, B16, B19, B20)", () => {
     expect(agentProblems(agent("codex", { enabled: false, skill: piece("removed") }))).toEqual([]);
     // A row from a helper whose build predates the Herdr piece has nothing there to fail.
     expect(agentProblems(agent("grok", { herdr: null }))).toEqual([]);
-    // OpenCode's hook piece is Hide's plugin, and its row says so.
+    // OpenCode's hook piece is Hide's plugin, Pi's and omp's Hide's extension, and each row says so.
     expect(agentProblems(agent("opencode", { hook: piece("outdated", "edited") })).map(({ part }) => part)).toEqual(["plugin"]);
+    expect(agentProblems(agent("pi", { hook: piece("outdated", "edited") })).map(({ part }) => part)).toEqual(["extension"]);
+    expect(agentProblems(agent("omp", { hook: piece("removed") })).map(({ part }) => part)).toEqual(["extension"]);
   });
 
   it("says why an agent's hook is not in while the agent is on and found, without a repair (opencode-plugin B14)", () => {
@@ -119,6 +121,7 @@ describe("what a row says (B13, B14, B16, B19, B20)", () => {
     expect(agentProblems(agent("opencode", { hook: piece("absent", "OpenCode has not created ~/.config/opencode yet") }))).toEqual([]);
     expect(agentHookWait(agent("opencode", { enabled: false, hook: piece("absent", "no folder") }))).toBeNull();
     expect(agentHookWait(agent("opencode", { availability: "not_installed", hook: piece("absent", "not found") }))).toBeNull();
+    expect(agentHookWait(agent("pi", { hook: piece("absent", "Pi has not created ~/.pi/agent yet") }))?.part).toBe("extension");
     expect(agentHookWait(agent("cursor", { hook: piece("absent") }))).toBeNull();
     expect(agentHookWait(agent("cursor", { hook: piece("installed") }))).toBeNull();
   });

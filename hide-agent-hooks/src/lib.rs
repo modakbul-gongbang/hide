@@ -28,6 +28,8 @@ pub mod install;
 mod lossless_json;
 pub mod memory;
 pub mod opencode;
+pub mod pi_extension;
+pub mod plugin;
 pub mod report;
 pub mod runtime;
 pub mod spawn_guard;

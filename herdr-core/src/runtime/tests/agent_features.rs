@@ -19,11 +19,15 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
     for adapter in hide_kit::agents::ADAPTERS {
         let kind = herdr_kind(adapter);
         // What instruments a session: a settings-file hook the core reads a
-        // runtime for, or Hide's OpenCode plugin, which the kit installs.
+        // runtime for, or a script file of Hide's the kit installs (OpenCode's
+        // plugin, Pi's and omp's extension).
         let hook = crate::agent_hooks::runtime_of(kind).is_some()
-            || adapter.hook == hide_kit::HookSupport::Plugin;
-        for feature in [Feature::Letters, Feature::Memory, Feature::Subagents] {
-            assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
+            || matches!(adapter.hook, hide_kit::HookSupport::Plugin(_));
+        assert_eq!(adapter.supports(Feature::Letters), hook, "{kind}: letters");
+        // Memory and the subagent count need that hook, and what the agent has
+        // besides (Pi runs no subagents).
+        for feature in [Feature::Memory, Feature::Subagents] {
+            assert!(!adapter.supports(feature) || hook, "{kind}: {feature:?}");
         }
         // Letters reach exactly the kinds the mailbox hands them to.
         assert_eq!(
@@ -95,7 +99,7 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
         doc_url: String::new(),
     };
     let report = hide_kit::KitReport {
-        agents: vec![row("claude-code"), row("omp")],
+        agents: vec![row("claude-code"), row("grok")],
         ..Default::default()
     };
     let kit = crate::model::KitSnapshot::from_report(&report);
@@ -103,19 +107,22 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
     let claude = &kit.agents[0];
     assert!(!claude.partial);
     assert!(claude.features.iter().all(|feature| feature.supported));
-    let omp = &kit.agents[1];
-    assert!(omp.partial, "the chip shows whether or not the agent is on");
+    let grok = &kit.agents[1];
+    assert!(
+        grok.partial,
+        "the chip shows whether or not the agent is on"
+    );
     assert_eq!(
-        omp.features
+        grok.features
             .iter()
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
         [Feature::Skill, Feature::HerdrIntegration, Feature::Start],
-        "omp can start, independently of its reader and lifecycle features"
+        "grok can start, independently of its reader and lifecycle features"
     );
     assert_eq!(
-        omp.features
+        grok.features
             .iter()
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
