@@ -1069,9 +1069,10 @@ mod tests {
             hook.matcher = matcher.map(str::to_owned);
             select(&[hook])
         };
-        assert_eq!(with(Some("Bash")), ["guard"]);
+        assert_eq!(with(Some("Bash|request_user_input")), ["guard"]);
         // Codex hashes the matcher into the key, so an entry that runs Hide's
-        // command on every tool, or on another one, is not the entry Hide wrote.
+        // command on fewer tools, every tool, or another one is not what Hide wrote.
+        assert!(with(Some("Bash")).is_empty());
         assert!(with(None).is_empty());
         assert!(with(Some("*")).is_empty());
         assert!(with(Some("apply_patch")).is_empty());
