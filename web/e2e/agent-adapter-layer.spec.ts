@@ -27,8 +27,9 @@ test("Basic chips expose three accessible groups in all four languages and retur
     await page.locator('[data-settings-tab="agents"]').click();
     const list = page.locator(`[data-agents-machine-list="${daemon.node}"]`);
     await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
-    await expect(list.locator("[data-agent-partial]")).toHaveCount(5);
-    for (const id of ["claude-code", "codex"]) await expect(list.locator(`[data-agent-partial="${id}"]`)).toHaveCount(0);
+    // OpenCode takes letters through Hide's plugin and is refused a launch, so it is not Basic (PRD opencode-plugin D-11).
+    await expect(list.locator("[data-agent-partial]")).toHaveCount(4);
+    for (const id of ["claude-code", "codex", "opencode"]) await expect(list.locator(`[data-agent-partial="${id}"]`)).toHaveCount(0);
     for (const [language, word, headings] of [
       ["en", "Basic", ["Herdr basics", "Session reading", "Multi-agent collaboration"]],
       ["ko", "기본", ["Herdr로 되는 기본 기능", "세션 읽기", "여러 에이전트 협업"]],
@@ -43,7 +44,7 @@ test("Basic chips expose three accessible groups in all four languages and retur
         await page.locator(`[data-theme-option="${theme}"]`).click();
         await expect(page.locator("[data-theme-choice]")).toHaveAttribute("data-theme-choice", theme);
         await page.locator('[data-settings-tab="agents"]').click();
-        for (const id of ["grok", "opencode", "pi", "omp", "cursor"]) await expect(list.locator(`[data-agent-partial="${id}"]`)).toHaveText(word);
+        for (const id of ["grok", "pi", "omp", "cursor"]) await expect(list.locator(`[data-agent-partial="${id}"]`)).toHaveText(word);
         const chip = list.locator('[data-agent-partial="cursor"]');
         await chip.focus();
         await page.keyboard.press("Enter");
