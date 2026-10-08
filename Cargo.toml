@@ -15,6 +15,7 @@ members = [
     "hide-project",
     "hide-session",
     "hided",
+    "workspace-hack",
 ]
 resolver = "3"
 

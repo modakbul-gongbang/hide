@@ -47,6 +47,7 @@ ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 # builds both.
 hyper = { version = "=1.11.1", features = ["http1", "server"] }
 hyper-util = { version = "=0.1.20", features = ["service", "tokio"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

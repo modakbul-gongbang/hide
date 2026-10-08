@@ -1,0 +1,27 @@
+# cargo-hakari keeps `workspace-hack`, a crate every member depends on that
+# turns on, for each third-party crate, the union of the features any member
+# asks of it. Without it a dependency's features depend on which members a
+# cargo command selects (`-p`, `--workspace`, `--bins`), and each set built
+# the dependency and everything above it once more: about half of a debug
+# target. docs/BUILD.md, "One feature set per dependency", owns the reasons
+# and the commands; CI fails when the crate is out of date.
+hakari-package = "workspace-hack"
+dep-format-version = "4"
+# The v2 and v3 resolvers are the same to hakari; the workspace uses v3.
+resolver = "2"
+# The systems this workspace is built and packaged for.
+platforms = [
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+# Versions are written as semver ranges, not the exact pins the members use:
+# Cargo.lock decides the version either way, and a range leaves this crate
+# unchanged by the patch and minor bumps Dependabot proposes each week.
+
+# The operating-system layer and the Herdr client stay off the shared feature
+# set: the OS contract lanes build and test exactly these two crates, which
+# would otherwise compile tokio, hyper and schemars for nothing. Their own
+# dependencies still count toward everyone else's features.
+[final-excludes]
+workspace-members = ["hide-platform", "hide-herdr-client"]
