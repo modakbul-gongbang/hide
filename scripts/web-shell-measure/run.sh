@@ -27,14 +27,16 @@
 # `device` (B3, B4) is the same key echo and key count on a device's pane:
 # the shell registers the device with consent (device-front.mjs), brings
 # its fixture workspace to the front, and types into the device's one
-# pane. The device is an isolated account the caller set up: its SSH alias
-# in MEASURE_DEVICE_SSH_CONFIG and its recorded host key in
-# MEASURE_DEVICE_KNOWN_HOSTS (both copied into the private HOME), the
-# private sshd's port in MEASURE_DEVICE_PORT, the account's private HOME in
-# MEASURE_DEVICE_HOME (its pinned Herdr in ~/.local/bin there), its Herdr
-# socket in MEASURE_DEVICE_SOCKET, and MEASURE_DEVICE_HELPER_ROOT and
-# MEASURE_DEVICE_CLI_DIR the consent folders inside that HOME;
-# device-guard.sh refuses any other target before anything dials. With
+# pane. The device is an isolated account the caller set up: the SSH
+# alias MEASURE_DEVICE_ALIAS for MEASURE_DEVICE_USER at MEASURE_DEVICE_HOST
+# on the private sshd's MEASURE_DEVICE_PORT with the key file
+# MEASURE_DEVICE_IDENTITY (device-guard.sh writes the alias into the private
+# HOME), its recorded host key in MEASURE_DEVICE_KNOWN_HOSTS (copied there),
+# the account's private HOME in MEASURE_DEVICE_HOME (its pinned Herdr in
+# ~/.local/bin there), its Herdr socket in MEASURE_DEVICE_SOCKET, and
+# MEASURE_DEVICE_HELPER_ROOT and MEASURE_DEVICE_CLI_DIR the consent folders
+# inside that HOME; device-guard.sh refuses any other target before
+# anything dials. With
 # MEASURE_DEVICE_DRIVEN_SECONDS set, four more device panes print a line per
 # 8 ms while the key echo runs again (key-echo-device-driven.json).
 # MEASURE_HIDED_BIN measures another hided build, such as a baseline, with
@@ -255,10 +257,10 @@ hided_env=()
 if [[ "$scenario" == device ]]; then
   [[ -n "${MEASURE_DEVICE_ID:-}" ]] || { echo "the device scenario needs MEASURE_DEVICE_ID" >&2; exit 2; }
   mkdir -p "$MEASURE_PRIVATE/home/.ssh"
-  cp "$MEASURE_DEVICE_SSH_CONFIG" "$MEASURE_PRIVATE/home/.ssh/config"
+  device_guard_config > "$MEASURE_PRIVATE/home/.ssh/config"
   chmod 600 "$MEASURE_PRIVATE/home/.ssh/config"
   # Hide checks the device's host key against ~/.ssh/known_hosts only.
-  [[ -z "${MEASURE_DEVICE_KNOWN_HOSTS:-}" ]] || cp "$MEASURE_DEVICE_KNOWN_HOSTS" "$MEASURE_PRIVATE/home/.ssh/known_hosts"
+  cp "$MEASURE_DEVICE_KNOWN_HOSTS" "$MEASURE_PRIVATE/home/.ssh/known_hosts"
   hided_env=(HIDE_HOST_HELPER_ROOT="$MEASURE_DEVICE_HELPER_ROOT" HIDE_HOST_CLI_DIR="$MEASURE_DEVICE_CLI_DIR")
   device_herdr() { bash "$measure_dir/device-herdr.sh" "$@"; }
   device_pane="$(device_herdr api snapshot | python3 "$measure_dir/pane-id.py")"

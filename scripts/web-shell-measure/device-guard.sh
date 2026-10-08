@@ -5,12 +5,21 @@
 # hided installs its node with folders it spells `~/` from the SFTP home,
 # which is the account's own home even where a private sshd gives its
 # commands another HOME: on 2026-10-09 a probe with the `~/` defaults
-# uploaded its node into a real account's ~/.hide/host-helper. So the alias
-# in MEASURE_DEVICE_SSH_CONFIG must resolve to the private sshd's port, named
-# in MEASURE_DEVICE_PORT and never 22; the private HOME (MEASURE_DEVICE_HOME)
-# lives under /tmp, where no account's own home does; the consent folders
-# are absolute and inside it; and the device's Herdr socket is named under
-# /tmp, so nothing asks for the account's default Herdr.
+# uploaded its node into a real account's ~/.hide/host-helper. So the private
+# sshd's port (MEASURE_DEVICE_PORT) is never 22; the private HOME
+# (MEASURE_DEVICE_HOME) lives under /tmp, where no account's own home does;
+# the consent folders are absolute and inside it; and the device's Herdr
+# socket is named under /tmp, so nothing asks for the account's default
+# Herdr.
+#
+# The SSH alias is never read from a caller's configuration: hided's parser
+# and OpenSSH read some spellings (`Port=22841`, a tab, `Include`, `Match`)
+# differently, so a file this guard accepted could send hided to port 22.
+# The guard takes the alias's parts (MEASURE_DEVICE_ALIAS, _HOST, _PORT,
+# _USER, _IDENTITY) and writes the one configuration hided reads
+# (device_guard_config); this harness's own ssh calls pass the same parts
+# with no configuration file. The recorded host key (MEASURE_DEVICE_KNOWN_HOSTS)
+# names that host and port only, so no other sshd's key is trusted.
 
 device_guard_refuse() { echo "device guard: $*" >&2; exit 2; }
 
@@ -30,16 +39,52 @@ device_guard_under_tmp() {
   device_guard_inside "$1" /tmp || device_guard_inside "$1" /private/tmp
 }
 
-for name in MEASURE_DEVICE_ALIAS MEASURE_DEVICE_SSH_CONFIG MEASURE_DEVICE_PORT MEASURE_DEVICE_HOME MEASURE_DEVICE_SOCKET MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
+[[ -z "${MEASURE_DEVICE_SSH_CONFIG:-}" ]] || device_guard_refuse "MEASURE_DEVICE_SSH_CONFIG is not read; name the alias's parts in MEASURE_DEVICE_HOST, MEASURE_DEVICE_USER and MEASURE_DEVICE_IDENTITY"
+for name in MEASURE_DEVICE_ALIAS MEASURE_DEVICE_HOST MEASURE_DEVICE_PORT MEASURE_DEVICE_USER MEASURE_DEVICE_IDENTITY MEASURE_DEVICE_KNOWN_HOSTS MEASURE_DEVICE_HOME MEASURE_DEVICE_SOCKET MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
   [[ -n "${!name:-}" ]] || device_guard_refuse "the device scenario needs $name"
 done
-[[ "$MEASURE_DEVICE_PORT" =~ ^[0-9]+$ ]] || device_guard_refuse "MEASURE_DEVICE_PORT $MEASURE_DEVICE_PORT is not a port"
+# Names that cannot read as an option or split a configuration line.
+for name in MEASURE_DEVICE_ALIAS MEASURE_DEVICE_USER; do
+  [[ "${!name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || device_guard_refuse "$name ${!name} is not a plain name"
+done
+[[ "$MEASURE_DEVICE_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || device_guard_refuse "MEASURE_DEVICE_HOST $MEASURE_DEVICE_HOST is not a plain host name or address"
+[[ "$MEASURE_DEVICE_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$MEASURE_DEVICE_PORT >= 1 && 10#$MEASURE_DEVICE_PORT <= 65535 )) || device_guard_refuse "MEASURE_DEVICE_PORT $MEASURE_DEVICE_PORT is not a port"
 (( 10#$MEASURE_DEVICE_PORT != 22 )) || device_guard_refuse "MEASURE_DEVICE_PORT is 22, an account's own sshd"
+device_guard_port=$((10#$MEASURE_DEVICE_PORT))
+[[ "$MEASURE_DEVICE_IDENTITY" == /* && "$MEASURE_DEVICE_IDENTITY" != *[[:space:]]* && -f "$MEASURE_DEVICE_IDENTITY" ]] || device_guard_refuse "MEASURE_DEVICE_IDENTITY $MEASURE_DEVICE_IDENTITY is not an absolute key file path without spaces"
 device_guard_under_tmp "$MEASURE_DEVICE_HOME" || device_guard_refuse "MEASURE_DEVICE_HOME $MEASURE_DEVICE_HOME is not a private path under /tmp"
 for name in MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
   device_guard_inside "${!name}" "$MEASURE_DEVICE_HOME" || device_guard_refuse "$name ${!name} is not an absolute folder inside MEASURE_DEVICE_HOME"
 done
 device_guard_under_tmp "$MEASURE_DEVICE_SOCKET" || device_guard_refuse "MEASURE_DEVICE_SOCKET $MEASURE_DEVICE_SOCKET is not a private path under /tmp"
-# `ssh -G` prints the resolved configuration without connecting.
-device_guard_port="$(ssh -G -F "$MEASURE_DEVICE_SSH_CONFIG" "$MEASURE_DEVICE_ALIAS" 2>/dev/null | awk '$1 == "port" { print $2; exit }')" || true
-[[ "$device_guard_port" == "$((10#$MEASURE_DEVICE_PORT))" ]] || device_guard_refuse "SSH alias $MEASURE_DEVICE_ALIAS resolves to port ${device_guard_port:-none}, not the private sshd's $MEASURE_DEVICE_PORT"
+# Every recorded key is for the private sshd's host and port, written out
+# (a hashed name cannot be read, a marker line widens trust).
+[[ -f "$MEASURE_DEVICE_KNOWN_HOSTS" && -r "$MEASURE_DEVICE_KNOWN_HOSTS" ]] || device_guard_refuse "MEASURE_DEVICE_KNOWN_HOSTS $MEASURE_DEVICE_KNOWN_HOSTS is not a readable file"
+device_guard_keys=0
+while IFS= read -r device_guard_line || [[ -n "$device_guard_line" ]]; do
+  [[ -n "${device_guard_line//[[:space:]]/}" && "$device_guard_line" != \#* ]] || continue
+  [[ "$device_guard_line" == "[$MEASURE_DEVICE_HOST]:$device_guard_port "* ]] || device_guard_refuse "MEASURE_DEVICE_KNOWN_HOSTS holds a key for another host or port than [$MEASURE_DEVICE_HOST]:$device_guard_port"
+  device_guard_keys=$((device_guard_keys + 1))
+done < "$MEASURE_DEVICE_KNOWN_HOSTS"
+(( device_guard_keys > 0 )) || device_guard_refuse "MEASURE_DEVICE_KNOWN_HOSTS records no key for [$MEASURE_DEVICE_HOST]:$device_guard_port"
+
+# The alias as hided reads it: one setting per line, one space after its
+# name, nothing its parser and OpenSSH could read apart.
+device_guard_config() {
+  printf 'Host %s\n  HostName %s\n  Port %s\n  User %s\n  IdentityFile %s\n  IdentityAgent none\n' \
+    "$MEASURE_DEVICE_ALIAS" "$MEASURE_DEVICE_HOST" "$device_guard_port" "$MEASURE_DEVICE_USER" "$MEASURE_DEVICE_IDENTITY"
+}
+
+# The same alias for this harness's own ssh, with no configuration file.
+device_guard_ssh=(
+  -F /dev/null
+  -o "HostName=$MEASURE_DEVICE_HOST"
+  -o "Port=$device_guard_port"
+  -o "User=$MEASURE_DEVICE_USER"
+  -o "IdentityFile=$MEASURE_DEVICE_IDENTITY"
+  -o IdentitiesOnly=yes
+  -o IdentityAgent=none
+  -o "UserKnownHostsFile=$MEASURE_DEVICE_KNOWN_HOSTS"
+  -o StrictHostKeyChecking=yes
+  -o BatchMode=yes
+)

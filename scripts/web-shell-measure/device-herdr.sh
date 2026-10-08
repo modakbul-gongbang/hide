@@ -6,4 +6,4 @@ set -euo pipefail
 source "$(dirname "$0")/device-guard.sh"
 remote="HERDR_SOCKET_PATH=$(printf %q "$MEASURE_DEVICE_SOCKET") $(printf %q "$MEASURE_DEVICE_HOME/.local/bin/herdr")"
 (( $# == 0 )) || remote+=" $(printf '%q ' "$@")"
-exec ssh -F "$MEASURE_DEVICE_SSH_CONFIG" -o BatchMode=yes "$MEASURE_DEVICE_ALIAS" "$remote"
+exec ssh "${device_guard_ssh[@]}" -- "$MEASURE_DEVICE_ALIAS" "$remote"
