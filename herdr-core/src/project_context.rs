@@ -705,7 +705,11 @@ mod tests {
 
         refresh_inactive_groups(&mut navigator, &UiStateSnapshot::default(), now_ms);
 
-        assert_eq!(navigator.workspaces[0].session_folds.empty, ["control"]);
+        assert!(navigator.workspaces[0].session_folds.empty.is_empty());
+        assert_eq!(
+            navigator.workspaces[0].inactive_checkouts.checkout_ids,
+            ["control"]
+        );
     }
 
     /// B11, B12, B16. A primary can make its whole project inactive even
@@ -827,7 +831,11 @@ mod tests {
 
         assert_eq!(navigator.inactive_projects.len(), 1);
         assert_eq!(navigator.inactive_projects[0].project_ids, ["folded"]);
-        assert_eq!(navigator.workspaces[0].session_folds.empty, ["old-topic"]);
+        assert!(navigator.workspaces[0].session_folds.empty.is_empty());
+        assert_eq!(
+            navigator.workspaces[0].inactive_checkouts.checkout_ids,
+            ["old-topic"]
+        );
     }
 
     /// B2. A pane's agent moving is enough to raise its project, and the move
