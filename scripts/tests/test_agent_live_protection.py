@@ -5,6 +5,7 @@ real-pinned-server lane owns the measurement tool's protocol acceptance.
 """
 
 import json
+from contextlib import contextmanager
 import ctypes
 import errno
 import io
@@ -290,11 +291,26 @@ class ConfigurationProtection(unittest.TestCase):
         self.assertEqual(result["inventory"]["after"]["excluded_boundaries"], 5)
 
     def test_inventory_entry_cap_reports_partial_counts_without_failing_byte_guard(self):
-        # A real bounded directory covers the unchanged 50,000-entry boundary.
-        for index in range(50_000):
-            (self.home / f"entry-{index}").touch()
-        guard = self.guard()
-        result = guard.finish()
+        # The OS directory stream supplies the unchanged 50,000-entry edge.
+        # Known-file reads, backup and recovery still use the real fixture.
+        # Avoid thousands of writes for a directory-enumeration boundary.
+        metadata = self.config.stat()
+
+        @contextmanager
+        def large_directory(descriptor):
+            actual = os.fstat(descriptor)
+            expected = self.home.stat()
+            self.assertEqual((actual.st_dev, actual.st_ino),
+                             (expected.st_dev, expected.st_ino))
+            def entries():
+                yield SimpleNamespace(name=self.config.name, stat=lambda **unused: metadata)
+                for index in range(50_000):
+                    yield SimpleNamespace(name=f"entry-{index}", stat=lambda **unused: metadata)
+            yield entries()
+
+        with patch.object(os, "scandir", large_directory):
+            guard = self.guard()
+            result = guard.finish()
         self.assertEqual(result["failures"], [])
         self.assertTrue(result["inventory_checked"])
         for phase in ("before", "after"):
