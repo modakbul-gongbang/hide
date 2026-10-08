@@ -26,13 +26,17 @@
 //! line again once it is free; a link that ends takes every flow with it
 //! and refuses later keys rather than keep them for another link.
 //!
-//! Everything waiting for the link, controls, views, redraws and keys of
-//! every pane, is capped at [`MAX_WAITING_LINES`] lines and
-//! [`MAX_WAITING_BYTES`] bytes. A link that falls that far behind is
-//! treated as stalled: what waited is dropped (its keys named in the log as
-//! unwritten), later keys are refused, and the writer ends the link, so the
-//! device's panes read unavailable and attach again when 2b's reconnect
-//! brings a new link (D-19).
+//! Keys are bounded per pane, so a pane's keys never end another pane's
+//! flow (B18): besides its unsent key bytes, a pane may have at most
+//! [`MAX_PANE_KEY_LINES`] runs waiting (an Enter or an escape is a run of
+//! its own), and at most [`MAX_KEY_PANES`] panes may have keys waiting;
+//! past either, that pane reads ended as above. The controls, views and
+//! redraws waiting for the link are capped on their own at
+//! [`MAX_WAITING_LINES`] lines and [`MAX_WAITING_BYTES`] bytes. A link that
+//! falls that far behind is treated as stalled: what waited is dropped (its
+//! keys named in the log as unwritten), later keys are refused, and the
+//! writer ends the link, so the device's panes read unavailable and attach
+//! again when 2b's reconnect brings a new link (D-19).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
@@ -466,12 +470,17 @@ pub trait LineLink: Send + Sync + 'static {
 /// The most key bytes one waiting line gathers; a longer run of keys goes
 /// down as several lines, in order.
 const MAX_KEY_LINE_BYTES: usize = 16 * 1024;
-/// What may wait to go down one link, in lines and in bytes (keys counted
-/// as their own bytes, other lines whole); past either the link is treated
-/// as stalled. Far above what a link that keeps up holds, and under 9 MiB
-/// with each line's own cost.
+/// The controls, views and redraws that may wait to go down one link, in
+/// lines and in bytes; past either the link is treated as stalled. Far
+/// above what a link that keeps up holds.
 pub(super) const MAX_WAITING_LINES: usize = 8192;
 pub(super) const MAX_WAITING_BYTES: usize = 8 * 1024 * 1024;
+/// The runs of keys one pane may have waiting, and the panes that may have
+/// keys waiting at once (a node attaches at most that many). With the
+/// unsent key bytes per pane these bound every pane's keys together, and
+/// passing one ends only that pane.
+pub(super) const MAX_PANE_KEY_LINES: usize = 2048;
+pub(super) const MAX_KEY_PANES: usize = hide_node_link::terminal::MAX_ATTACHED_PANES;
 const STALLED: &str =
     "terminal lines waited past what one device link may hold, so the link is treated as stalled";
 
@@ -495,12 +504,13 @@ enum Waiting {
 #[derive(Default)]
 struct ProxyState {
     lines: VecDeque<Waiting>,
-    /// The bytes `lines` holds, counted as [`MAX_WAITING_BYTES`] counts them.
+    /// The controls, views and redraws waiting in `lines`, and their bytes.
+    waiting_lines: usize,
     waiting_bytes: usize,
     /// The link fell behind past what may wait: the writer ends it.
     end_link: bool,
-    /// Key bytes each pane has waiting in `lines`.
-    key_bytes: HashMap<String, usize>,
+    /// The keys each pane has waiting in `lines`.
+    keys: HashMap<String, PaneKeys>,
     /// Panes whose keys passed the cap: they refuse keys until attached.
     overflowed: HashSet<String>,
     /// Why the link took no more; every key after it is refused.
@@ -513,6 +523,14 @@ struct ProxyState {
     stopping: bool,
 }
 
+/// One pane's keys waiting for the link: their bytes and the runs they
+/// travel in.
+#[derive(Default)]
+struct PaneKeys {
+    bytes: usize,
+    lines: usize,
+}
+
 /// What a stall dropped, for the log.
 struct Stalled {
     lines: usize,
@@ -520,31 +538,54 @@ struct Stalled {
     unwritten: HashMap<String, usize>,
 }
 
-impl Waiting {
-    fn bytes(&self) -> usize {
-        match self {
-            Self::Line(line) => line.len(),
-            Self::Keys { bytes, .. } => bytes.len(),
-        }
-    }
-}
-
 impl ProxyState {
-    /// Whether `bytes` more, possibly in a line of their own, pass what may
+    /// Whether a control, view or redraw line of `bytes` passes what may
     /// wait for the link.
     fn would_overflow(&self, bytes: usize) -> bool {
-        self.lines.len() >= MAX_WAITING_LINES || self.waiting_bytes + bytes > MAX_WAITING_BYTES
+        self.waiting_lines >= MAX_WAITING_LINES || self.waiting_bytes + bytes > MAX_WAITING_BYTES
+    }
+
+    /// Whether `bytes` of keys for `pane` join the plain run of its keys
+    /// waiting last in line.
+    fn joins_run(&self, pane: &str, bytes: &[u8]) -> bool {
+        plain_keys(bytes)
+            && matches!(
+                self.lines.back(),
+                Some(Waiting::Keys { pane: waiting_pane, bytes: waiting, plain: true, .. })
+                    if waiting_pane == pane && waiting.len() + bytes.len() <= MAX_KEY_LINE_BYTES
+            )
+    }
+
+    /// Which of a pane's caps `bytes` more of its keys would pass, if any.
+    fn pane_cap_passed(&self, pane: &str, bytes: &[u8]) -> Option<&'static str> {
+        let Some(waiting) = self.keys.get(pane) else {
+            return if self.keys.len() >= MAX_KEY_PANES {
+                Some("panes")
+            } else if bytes.len() > MAX_UNSENT_KEY_BYTES {
+                Some("bytes")
+            } else {
+                None
+            };
+        };
+        if waiting.bytes + bytes.len() > MAX_UNSENT_KEY_BYTES {
+            Some("bytes")
+        } else if waiting.lines >= MAX_PANE_KEY_LINES && !self.joins_run(pane, bytes) {
+            Some("lines")
+        } else {
+            None
+        }
     }
 
     /// The link fell behind past what may wait: what waited is dropped,
     /// every later key is refused, and the writer ends the link.
     fn stall(&mut self) -> Stalled {
         let stalled = Stalled {
-            lines: self.lines.len(),
+            lines: self.waiting_lines,
             bytes: self.waiting_bytes,
             unwritten: unwritten_keys(self.lines.drain(..)),
         };
-        self.key_bytes.clear();
+        self.keys.clear();
+        self.waiting_lines = 0;
         self.waiting_bytes = 0;
         self.failed = Some(STALLED.to_owned());
         self.end_link = true;
@@ -554,30 +595,52 @@ impl ProxyState {
     /// Queues `bytes` for `pane`, onto the plain run of its keys waiting
     /// last in line when both are plain.
     fn queue_keys(&mut self, pane: String, bytes: Vec<u8>, typed_at_unix_ms: u64) {
-        *self.key_bytes.entry(pane.clone()).or_default() += bytes.len();
-        self.waiting_bytes += bytes.len();
-        let plain = !bytes.iter().any(|byte| matches!(byte, b'\r' | 0x1b));
-        if plain
+        let joins = self.joins_run(&pane, &bytes);
+        let waiting = self.keys.entry(pane.clone()).or_default();
+        waiting.bytes += bytes.len();
+        if joins
             && let Some(Waiting::Keys {
-                pane: waiting_pane,
-                bytes: waiting,
-                typed_at_unix_ms: waiting_at,
-                plain: true,
+                bytes: run,
+                typed_at_unix_ms: run_at,
+                ..
             }) = self.lines.back_mut()
-            && *waiting_pane == pane
-            && waiting.len() + bytes.len() <= MAX_KEY_LINE_BYTES
         {
-            waiting.extend_from_slice(&bytes);
-            *waiting_at = typed_at_unix_ms;
+            run.extend_from_slice(&bytes);
+            *run_at = typed_at_unix_ms;
             return;
         }
+        waiting.lines += 1;
         self.lines.push_back(Waiting::Keys {
             pane,
+            plain: plain_keys(&bytes),
             bytes,
             typed_at_unix_ms,
-            plain,
         });
     }
+
+    /// A line the link took or will never take leaves what waits.
+    fn sent(&mut self, waiting: &Waiting) {
+        match waiting {
+            Waiting::Line(line) => {
+                self.waiting_lines = self.waiting_lines.saturating_sub(1);
+                self.waiting_bytes = self.waiting_bytes.saturating_sub(line.len());
+            }
+            Waiting::Keys { pane, bytes, .. } => {
+                if let Some(keys) = self.keys.get_mut(pane) {
+                    keys.bytes = keys.bytes.saturating_sub(bytes.len());
+                    keys.lines = keys.lines.saturating_sub(1);
+                    if keys.lines == 0 {
+                        self.keys.remove(pane);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Keys with no carriage return and no escape, which a run may gather.
+fn plain_keys(bytes: &[u8]) -> bool {
+    !bytes.iter().any(|byte| matches!(byte, b'\r' | 0x1b))
 }
 
 /// Each pane's key bytes among `waiting`, for the log.
@@ -653,6 +716,7 @@ impl DeviceTerminals {
             self.shared.log_stalled(stalled);
             return;
         }
+        state.waiting_lines += 1;
         state.waiting_bytes += line.len();
         state.lines.push_back(Waiting::Line(line));
         drop(state);
@@ -695,29 +759,20 @@ impl TerminalNode for DeviceTerminals {
             }));
             return;
         };
-        let mut stalled = None;
         let refusal = {
             let mut state = lock(&self.shared.state);
-            if !state.stopping
-                && state.failed.is_none()
-                && !state.overflowed.contains(&pane)
-                && state.would_overflow(bytes.len())
-            {
-                stalled = Some(state.stall());
-            }
             if let Some(reason) = state.failed.clone() {
                 if !state.told_failed.insert(pane.clone()) {
                     return;
                 }
-                Some(("terminal.device_disconnected", reason, None))
+                Some(("terminal.device_disconnected", reason, None, "link"))
             } else if state.overflowed.contains(&pane) {
                 // Reported once, when the cap was passed.
                 return;
             } else if state.stopping {
                 return;
             } else {
-                let unsent = state.key_bytes.get(&pane).copied().unwrap_or(0);
-                if unsent + bytes.len() > MAX_UNSENT_KEY_BYTES {
+                if let Some(cap) = state.pane_cap_passed(&pane, &bytes) {
                     state.overflowed.insert(pane.clone());
                     let ended = state.states.get(&pane).cloned().flatten().map(|mut ended| {
                         ended.state = "ended".to_owned();
@@ -725,24 +780,29 @@ impl TerminalNode for DeviceTerminals {
                         ended.message = Some(overflow_message());
                         ended
                     });
-                    Some(("terminal.device_input_overflow", overflow_message(), ended))
+                    Some((
+                        "terminal.device_input_overflow",
+                        overflow_message(),
+                        ended,
+                        cap,
+                    ))
                 } else {
                     state.queue_keys(pane.clone(), bytes, typed_at_unix_ms);
                     None
                 }
             }
         };
-        if let Some(stalled) = stalled {
-            self.shared.ready.notify_one();
-            self.shared.log_stalled(stalled);
-        }
-        if let Some((kind, message, ended)) = refusal {
+        if let Some((kind, message, ended, cap)) = refusal {
             crate::diagnostic!(json!({
                 "component": "device_terminal",
                 "kind": kind,
                 "device": self.shared.device,
+                "link": self.shared.link,
                 "pane_id": pane,
-                "cap": MAX_UNSENT_KEY_BYTES,
+                "cap": cap,
+                "cap_bytes": MAX_UNSENT_KEY_BYTES,
+                "cap_lines": MAX_PANE_KEY_LINES,
+                "cap_panes": MAX_KEY_PANES,
             }));
             if let Some(ended) = ended {
                 self.shared.sink.report(
@@ -782,10 +842,7 @@ impl TerminalNode for DeviceTerminals {
 }
 
 fn overflow_message() -> String {
-    format!(
-        "Keys for this pane did not reach the device fast enough ({} KiB waiting); new keys are refused until the pane is reconnected",
-        MAX_UNSENT_KEY_BYTES / 1024
-    )
+    "Keys for this pane did not reach the device fast enough; new keys are refused until the pane is reconnected".to_owned()
 }
 
 impl ProxyShared {
@@ -960,15 +1017,7 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
         let mut state = lock(&shared.state);
         let reason = match sent {
             Ok(()) => {
-                state.waiting_bytes = state.waiting_bytes.saturating_sub(next.bytes());
-                if let Waiting::Keys { pane, bytes, .. } = &next
-                    && let Some(unsent) = state.key_bytes.get_mut(pane)
-                {
-                    *unsent = unsent.saturating_sub(bytes.len());
-                    if *unsent == 0 {
-                        state.key_bytes.remove(pane);
-                    }
-                }
+                state.sent(&next);
                 continue;
             }
             Err(LineRefused::Busy) if state.end_link => {
@@ -996,7 +1045,8 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
         // pane's count goes to the log, never to another link. The link has
         // ended already, so a stall noted meanwhile need not end it.
         let unwritten = unwritten_keys(std::iter::once(next).chain(state.lines.drain(..)));
-        state.key_bytes.clear();
+        state.keys.clear();
+        state.waiting_lines = 0;
         state.waiting_bytes = 0;
         state.end_link = false;
         state.failed = Some(reason.clone());

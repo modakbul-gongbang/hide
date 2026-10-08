@@ -539,11 +539,10 @@ fn a_waiting_run_of_keys_stops_at_a_pane_a_control_an_enter_and_an_escape() {
     assert_eq!(control, d + 1);
 }
 
-/// What waits for a device's link is capped (D-18, principle 15): with the
-/// link stalled, lines past the count and keys of many panes past the bytes
-/// stop the queue growing, drop what waited, refuse later keys with a
-/// reason, and end the link once its writer is free, as a link that ends
-/// does (D-19).
+/// The controls, views and redraws waiting for a device's link are capped
+/// (principle 15): with the link stalled, views past the count stop the
+/// queue growing, drop what waited, refuse later keys with a reason, and
+/// end the link once its writer is free, as a link that ends does (D-19).
 #[test]
 fn a_stalled_link_past_what_may_wait_is_ended_rather_than_grown() {
     let (views, link, heard) = proxy();
@@ -551,7 +550,8 @@ fn a_stalled_link_past_what_may_wait_is_ended_rather_than_grown() {
     let mut most = 0;
     for _ in 0..MAX_WAITING_LINES + 100 {
         views.view("w1:p1", SIZE, false);
-        most = most.max(lock(&views.shared.state).lines.len());
+        // The line already on its way counts until the link takes it.
+        most = most.max(lock(&views.shared.state).waiting_lines);
     }
     assert_eq!(most, MAX_WAITING_LINES);
     assert!(
@@ -578,24 +578,68 @@ fn a_stalled_link_past_what_may_wait_is_ended_rather_than_grown() {
         1,
         "only the line already on its way was written"
     );
+}
 
+/// Keys bind to their pane's caps first (B18): with the link stalled, 64
+/// panes each just under their unsent bytes never end the link, a 65th
+/// pane and a pane past its waiting runs are refused alone, and every key
+/// taken arrives once the link drains.
+#[test]
+fn every_panes_keys_at_their_caps_end_no_link_and_refuse_only_their_pane() {
     let (proxy, link, heard) = proxy();
     stall(&proxy);
-    let keys = vec![b'k'; MAX_UNSENT_KEY_BYTES];
-    let mut most = 0;
-    for pane in 0..64 {
+    let keys = vec![b'k'; MAX_UNSENT_KEY_BYTES - MAX_PANE_KEY_LINES];
+    for pane in 0..MAX_KEY_PANES {
         proxy.key(KeyTarget::Pane(format!("w1:p{pane}")), keys.clone(), 1);
-        most = most.max(lock(&proxy.shared.state).waiting_bytes);
     }
-    assert!(most <= MAX_WAITING_BYTES, "{most} bytes waited");
-    assert!(lock(&proxy.shared.state).failed.is_some());
-    assert!(refused(&heard) > 0);
-    link.release();
-    wait_for(|| link.ended.lock().unwrap().is_some());
+    let runs = lock(&proxy.shared.state).keys["w1:p0"].lines;
+    let enters = MAX_PANE_KEY_LINES - runs;
+    for _ in 0..enters {
+        proxy.key(KeyTarget::Pane("w1:p0".into()), b"\r".to_vec(), 1);
+    }
     assert!(
-        key_lines(&link).is_empty(),
-        "no key of a dropped queue went down"
+        heard.reports.lock().unwrap().is_empty(),
+        "no key was refused"
     );
+    proxy.key(KeyTarget::Pane("w1:p0".into()), b"\r".to_vec(), 1);
+    proxy.key(KeyTarget::Pane("w9:p9".into()), b"x".to_vec(), 1);
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"\r".to_vec(), 1);
+    let refused: Vec<String> = heard
+        .reports
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|(_, report)| match report {
+            TerminalReport::Error { pane, kind, .. } => Some(format!("{pane} {kind}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            "w1:p0 terminal.device_input_overflow",
+            "w9:p9 terminal.device_input_overflow"
+        ]
+    );
+    {
+        let state = lock(&proxy.shared.state);
+        assert!(
+            state.failed.is_none() && !state.end_link,
+            "the link goes on"
+        );
+    }
+    link.release();
+    let arrived = |pane: &str| -> usize {
+        key_lines(&link)
+            .into_iter()
+            .filter(|(owner, _, _)| owner == pane)
+            .map(|(_, bytes, _)| bytes.len())
+            .sum()
+    };
+    wait_for(|| arrived("w1:p63") == keys.len());
+    assert_eq!(arrived("w1:p0"), keys.len() + enters);
+    assert_eq!(arrived("w1:p1"), keys.len() + 1);
+    assert!(link.ended.lock().unwrap().is_none());
 }
 
 #[test]
