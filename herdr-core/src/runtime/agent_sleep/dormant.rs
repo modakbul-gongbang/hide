@@ -104,6 +104,10 @@ impl Runtime {
             old_state_change_seq: agent.state_change_seq,
             kind: agent.agent_kind,
             native_session_id,
+            source_reference: agent
+                .row_facts
+                .as_ref()
+                .and_then(|facts| facts.native_reference.clone()),
             label_owner,
             identity_label: agent.identity_label,
             cwd,
@@ -143,6 +147,12 @@ impl Runtime {
                     && agent.session_id.as_deref() == Some(record.native_session_id.as_str())
                     && agent.state_change_seq == record.old_state_change_seq
                     && agent.row_facts.is_some()
+                    && (hide_agent_adapter::canonical_kind(&record.kind) != "pi"
+                        || agent
+                            .row_facts
+                            .as_ref()
+                            .and_then(|facts| facts.native_reference.as_ref())
+                            == record.source_reference.as_ref())
                     && crate::agent_state::rest_refusal(agent).is_none()
             })
     }
@@ -798,8 +808,8 @@ impl Runtime {
                 }
                 self.persist_ui_state();
             }
-            agent_sleep_herdr::DormantTabOutcome::NotCreated => {
-                self.fail_dormant(&work.id, "The saved working folder is unavailable. Restore it before retrying; no tab was created.");
+            agent_sleep_herdr::DormantTabOutcome::NotCreated(reason) => {
+                self.fail_dormant(&work.id, reason);
             }
             agent_sleep_herdr::DormantTabOutcome::Unknown => {
                 let current = self

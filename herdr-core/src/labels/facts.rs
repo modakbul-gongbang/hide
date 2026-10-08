@@ -184,8 +184,8 @@ impl SessionFacts {
         if let Some(title) = read.title.filter(|title| !title.trim().is_empty()) {
             self.title = Some(title.trim().to_owned());
         }
-        if let Some(title) = read.custom_title.filter(|title| !title.trim().is_empty()) {
-            self.custom_title = Some(title.trim().to_owned());
+        if let Some(title) = read.custom_title {
+            self.custom_title = (!title.trim().is_empty()).then(|| title.trim().to_owned());
         }
         for (name, checkpoint) in read.subagents {
             self.subagents.insert(name.clone(), checkpoint.clone());
@@ -478,6 +478,35 @@ mod tests {
         assert!(operator.first);
         let other = facts.other_request.as_ref().unwrap();
         assert_eq!(other.requester, Requester::Agent, "one submit, one message");
+    }
+
+    #[test]
+    fn a_native_title_clear_removes_the_old_name_but_absence_preserves_it() {
+        let mut facts = SessionFacts::default();
+        let mut claimed = None;
+        for (title, expected) in [
+            (Some("Pi name"), Some("Pi name")),
+            (None, Some("Pi name")),
+            (Some(""), None),
+        ] {
+            facts.fold(
+                ReadFacts {
+                    events: &[],
+                    title: None,
+                    custom_title: title,
+                    sightings: &[],
+                    subagents: &BTreeMap::new(),
+                    from_beginning: false,
+                },
+                InputView {
+                    submits: &[],
+                    observed_since_unix_ms: 1_000,
+                    claimed: &mut claimed,
+                },
+                &LOG,
+            );
+            assert_eq!(facts.custom_title.as_deref(), expected);
+        }
     }
 
     #[test]

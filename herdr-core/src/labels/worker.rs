@@ -868,6 +868,8 @@ impl LabelWorker {
         }
         changed |= record.native_session_id != transcript.confirmed.native_session_id;
         record.native_session_id = transcript.confirmed.native_session_id.clone();
+        changed |= record.native_source_path != transcript.confirmed.source_path;
+        record.native_source_path = transcript.confirmed.source_path.clone();
         record.read_reference = Some(reference.to_owned());
         record.checkpoint = Some(transcript.checkpoint.clone());
         if from_start || transcript.anchor.is_some() {
@@ -961,6 +963,29 @@ impl LabelWorker {
     /// A failed reread cannot certify the previous native wait for this state.
     /// Keep its bounded tracker/checkpoint for a later successful continuation.
     fn invalidate_turn_read(&mut self, pane_id: &str) -> bool {
+        if self
+            .panes
+            .get(pane_id)
+            .is_some_and(|pane| pane.agent == hide_session::Agent::Pi)
+        {
+            let changed = self.records.get(pane_id).is_some_and(|record| {
+                record.owner.is_some()
+                    || record.proven_reference.is_some()
+                    || record.native_session_id.is_some()
+            });
+            if let Some(record) = self.records.get_mut(pane_id) {
+                record.reset_session(None);
+                record.forget_position();
+            }
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                pane.events.clear();
+                pane.events_loaded = false;
+                pane.claimed_submit = None;
+            }
+            self.waiting.retain(|id| id != pane_id);
+            self.dirty |= changed;
+            return changed;
+        }
         let changed = self
             .records
             .get_mut(pane_id)
