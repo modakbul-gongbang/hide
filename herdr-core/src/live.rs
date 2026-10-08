@@ -4555,6 +4555,11 @@ mod tests {
                 || case == "source-missing-after"
             {
                 expected.pop();
+                if case == "execution-after" {
+                    // Retired execution is now refused before even the
+                    // shell-read connection; the owned child still closes.
+                    expected.pop();
+                }
                 expected.push("pane.close");
             } else if refused {
                 expected.push("pane.close");
