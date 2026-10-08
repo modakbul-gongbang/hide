@@ -1,7 +1,8 @@
 //! Programs a test runs against a product deadline, ready before the
-//! deadline starts (issue 813). Built only into tests: this crate's unit
-//! tests, its integration tests (`tests/it/main.rs`) and hide-kit's unit
-//! tests (`hide-kit/src/tests.rs`), whose stand-ins meet the kit's deadlines.
+//! deadline starts (issue 813). Built only into tests: hide-platform's
+//! integration tests, and by `#[path]` hide-agent-hooks' unit and integration
+//! tests and hide-kit's unit tests, so a change here plans every crate that
+//! runs it.
 //!
 //! macOS checks a file the first time it is started, once per file, and the
 //! checks of every process on the machine wait in one line: on 2026-10-09 at

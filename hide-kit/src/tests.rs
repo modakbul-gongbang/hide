@@ -16,7 +16,7 @@ mod agent_cases;
 mod codex_trust_cases;
 mod herdr_cases;
 mod retired_cases;
-#[path = "../../hide-agent-hooks/src/stand_ins.rs"]
+#[path = "../../hide-platform/tests/it/stand_ins.rs"]
 mod stand_ins;
 
 type IndexReadHook = Box<dyn FnOnce(&Path)>;
