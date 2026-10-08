@@ -1500,6 +1500,91 @@ fn a_codex_plan_wait_is_known_only_for_the_state_it_was_read_under() {
     );
 }
 
+/// P9 B6/B7: native content reaches the actual row without summaries, is
+/// scoped to the current session/state, and disappears after its answer.
+#[test]
+fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
+    use std::io::Write;
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path = harness.session(
+        "question",
+        "native-question",
+        &[("user", "배포를 준비해줘")],
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"assistant","sessionId":"native-question",
+        "timestamp":"2026-10-01T00:00:01Z","message":{"role":"assistant","content":[{
+        "type":"tool_use","id":"question-call","name":"AskUserQuestion",
+        "input":{"questions":[{"question":"어디에 배포할까요?","options":[
+        {"label":"미리보기"},{"label":"운영"}]}]}}]}})
+    )
+    .unwrap();
+    let asked = agent(&path, "idle", 5);
+    observe(&mut worker, &asked);
+    settle(&mut worker, &woken);
+    let row = |worker: &LabelWorker, current: &ObservedAgent| {
+        let (kind, value) = current.reference.as_ref().unwrap();
+        let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+            "pane_id":current.pane_id,"agent":current.agent,"agent_status":current.status,
+            "state_change_seq":current.state_change_seq,"agent_session":{"kind":kind,"value":value}
+        }]}))
+        .unwrap();
+        worker.overlay().apply(&mut payload);
+        serde_json::to_value(crate::sidebar::project_agents(payload).agents.remove(0)).unwrap()
+    };
+    let shown = row(&worker, &asked);
+    assert_eq!(
+        shown["user_turn"],
+        json!({"kind":"question","content":{
+        "text":"어디에 배포할까요?","choices":["미리보기","운영"],"truncated":false}})
+    );
+    assert_eq!(
+        (shown["group"].as_str(), shown["demand"].as_str()),
+        (Some("needs_you"), Some("question"))
+    );
+    assert_eq!(harness.backend.calls(), 0);
+    let next = ObservedAgent {
+        state_change_seq: 6,
+        ..asked.clone()
+    };
+    assert!(
+        row(&worker, &next).get("user_turn").is_none(),
+        "new state has not been read"
+    );
+    let replacement = ObservedAgent {
+        reference: Some((
+            "path".into(),
+            path.with_file_name("other.jsonl").display().to_string(),
+        )),
+        ..asked.clone()
+    };
+    assert!(
+        row(&worker, &replacement).get("user_turn").is_none(),
+        "different native session"
+    );
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"user","sessionId":"native-question",
+        "timestamp":"2026-10-01T00:00:02Z","message":{"role":"user","content":[{
+        "type":"tool_result","tool_use_id":"question-call","content":"미리보기"}]}})
+    )
+    .unwrap();
+    observe(&mut worker, &next);
+    settle(&mut worker, &woken);
+    let answered = row(&worker, &next);
+    assert!(answered.get("user_turn").is_none());
+    assert_eq!(answered["demand"], "none");
+}
+
 /// B5: a default-mode turn whose end Codex has not written yet, when Herdr
 /// already reads done, waits for nothing; only a plan-mode turn could wait.
 #[test]

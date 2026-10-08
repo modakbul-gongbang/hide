@@ -802,10 +802,10 @@ impl LabelWorker {
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
         // The wait is bound to the state the read was asked under, and known
         // only once the backlog is read (D-06).
-        let waited = record.turn_read();
+        let waited = (record.turn_read(), record.user_turn());
         record.turns = transcript.turns.clone();
         record.turns_seq = asked_seq.filter(|_| !transcript.has_more);
-        changed |= record.turn_read() != waited;
+        changed |= (record.turn_read(), record.user_turn()) != waited;
         self.dirty = true;
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         if verdicts_forgotten {

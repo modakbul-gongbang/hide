@@ -70,7 +70,7 @@ impl SessionFormat {
     }
 
     pub const fn reports_turns(self) -> bool {
-        matches!(self, Self::Codex)
+        matches!(self, Self::Claude | Self::Codex)
     }
     pub const fn has_session_file(self) -> bool {
         matches!(self, Self::Claude | Self::Codex)

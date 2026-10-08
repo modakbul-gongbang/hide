@@ -39,9 +39,12 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         install_url: "https://code.claude.com/docs/en/setup",
         logo_id: "claude-code",
         factory: FactoryCapabilities {
-            direct_ask: Unconfirmed,
-            user_turn: Unconfirmed,
-            turn_end_and_answer: Unconfirmed,
+            direct_ask: Available(DirectAsk {
+                tools: &["AskUserQuestion", "ExitPlanMode"],
+                denial: HookDialect::ClaudeCode,
+            }),
+            user_turn: Available(SessionFormat::Claude),
+            turn_end_and_answer: Available(SessionFormat::Claude),
             startup_guidance: Available(HookInstall::Runtime(HookDialect::ClaudeCode)),
             resume: Available(LaunchDialect::Claude),
             next_prompt_letters: Available(HookDialect::ClaudeCode),
@@ -83,7 +86,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         install_url: "https://learn.chatgpt.com/docs/codex/cli",
         logo_id: "codex",
         factory: FactoryCapabilities {
-            direct_ask: Unconfirmed,
+            direct_ask: Available(DirectAsk {
+                tools: &["request_user_input"],
+                denial: HookDialect::Codex,
+            }),
             user_turn: Available(SessionFormat::Codex),
             turn_end_and_answer: Available(SessionFormat::Codex),
             startup_guidance: Available(HookInstall::Runtime(HookDialect::Codex)),

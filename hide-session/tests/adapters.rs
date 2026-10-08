@@ -883,7 +883,10 @@ fn a_plan_turn_still_running_is_not_known_and_a_default_turn_is_not_waiting() {
         Some(Waiting::Nothing)
     );
     let claude = home(Agent::Claude);
-    assert_eq!(read_whole(claude.path(), Agent::Claude).turns, None);
+    assert_eq!(
+        waiting(&read_whole(claude.path(), Agent::Claude)),
+        Some(Waiting::Nothing)
+    );
 }
 
 /// D-07: records this reader does not recognise never read as "nothing
