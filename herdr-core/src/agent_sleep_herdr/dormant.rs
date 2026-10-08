@@ -5,6 +5,7 @@ use crate::checkout_owner::OwnerOpen;
 use crate::sidebar::SessionSnapshotPayload;
 use hide_herdr_client::{ApiStream, ConnectionShutdown};
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) struct DormantWork {
@@ -100,7 +101,7 @@ pub(crate) fn spawn_dormant_tab(
                     match crate::live::create_sleep_tab(
                         &CurrentWorkConnector {
                             context: context.clone(),
-                            intent: CurrentIntent::Wake(work.clone()),
+                            intent: CurrentIntent::Wake(Arc::new(work.clone())),
                         },
                         context.node.as_ref(),
                         work.id.as_str(),
@@ -149,7 +150,7 @@ pub(crate) fn spawn_dormant_start(
             let outcome = start_dormant(
                 &CurrentWorkConnector {
                     context: context.clone(),
-                    intent: CurrentIntent::Wake(work.clone()),
+                    intent: CurrentIntent::Wake(Arc::new(work.clone())),
                 },
                 context.node.as_ref(),
                 &work,
@@ -189,8 +190,8 @@ struct CurrentWorkConnector {
 
 #[derive(Clone)]
 enum CurrentIntent {
-    Wake(DormantWork),
-    Close(crate::live::CloseEffectRequest),
+    Wake(Arc<DormantWork>),
+    Close(Arc<crate::live::CloseEffectRequest>),
 }
 
 pub(crate) fn fenced_dormant_close_connector(
@@ -199,7 +200,7 @@ pub(crate) fn fenced_dormant_close_connector(
 ) -> Box<dyn ApiConnector> {
     Box::new(CurrentWorkConnector {
         context: context.clone(),
-        intent: CurrentIntent::Close(effect.clone()),
+        intent: CurrentIntent::Close(Arc::new(effect.clone())),
     })
 }
 

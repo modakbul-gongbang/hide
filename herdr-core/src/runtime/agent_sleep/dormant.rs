@@ -922,8 +922,8 @@ impl Runtime {
             .agent_sleep
             .dormant
             .iter()
-            .filter_map(|(id, record)| {
-                (waiting(record)
+            .filter(|(_, record)| {
+                waiting(record)
                     && record
                         .wake_pane_id
                         .as_deref()
@@ -934,9 +934,9 @@ impl Runtime {
                                 && agent.row_facts.is_some()
                                 && agent.session_id.as_deref()
                                     == Some(record.native_session_id.as_str())
-                        }))
-                .then(|| (id.clone(), record.context.checkout_path.clone()))
+                        })
             })
+            .map(|(id, record)| (id.clone(), record.context.checkout_path.clone()))
             .collect::<Vec<_>>();
         if confirmed.is_empty() {
             return;
