@@ -104,7 +104,10 @@ fn an_agent_that_is_not_on_gets_nothing_until_the_operator_switches_it_on() {
     assert!(
         std::fs::read_to_string(cursor_hooks(&fixture))
             .unwrap()
-            .contains("hide-guidance@1")
+            .contains(&format!(
+                "hide-guidance@{}",
+                hide_agent_hooks::guidance::GUIDANCE_VERSION
+            ))
     );
     assert_eq!(record(&fixture)["agents"]["cursor"], true);
 }
@@ -728,7 +731,10 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
     let hook = agent(&report, "cursor").hook.as_ref().unwrap();
     assert_eq!(hook.state, ComponentState::Installed, "{hook:?}");
     let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
-    assert!(written.contains("hide-guidance@1"));
+    assert!(written.contains(&format!(
+        "hide-guidance@{}",
+        hide_agent_hooks::guidance::GUIDANCE_VERSION
+    )));
 
     let report = apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
@@ -746,12 +752,14 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     // The expected rows come from the PRDs and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18;
     // opencode-plugin D-11: OpenCode takes letters and is refused a launch,
-    // so it is no longer Basic, while no bell rings for it). The
-    // session-reader common contract B1/B6 enables starts for the five
-    // agents besides Claude Code and Codex without enabling their future
-    // reader/sleep/fork features. The complete Pi slice adds native title
-    // and exact sleep/fork beside the letters and spawn guard of Hide's
-    // extension.
+    // so it is no longer Basic, while no bell rings for it; grok-cursor-hooks:
+    // Grok and Cursor get the spawn guard and the subagent count from their
+    // official hooks, take no letters and stay Basic, and Grok discards a
+    // session-start hook's output). The session-reader common contract B1/B6
+    // enables starts for the five agents besides Claude Code and Codex
+    // without enabling their future reader/sleep/fork features. The complete
+    // Pi slice adds native title and exact sleep/fork beside the letters and
+    // spawn guard of Hide's extension.
     let opencode = [
         Skill,
         Guidance,
@@ -788,11 +796,26 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     let expected: [(&str, &[Feature], bool); 7] = [
         ("claude-code", &Feature::ALL, false),
         ("codex", &Feature::ALL, false),
-        ("grok", &[Skill, HerdrIntegration, Start], true),
+        (
+            "grok",
+            &[Skill, Subagents, SpawnGuard, HerdrIntegration, Start],
+            true,
+        ),
         ("opencode", &opencode, false),
         ("pi", &pi, false),
         ("omp", &omp, false),
-        ("cursor", &[Skill, Guidance, HerdrIntegration, Start], true),
+        (
+            "cursor",
+            &[
+                Skill,
+                Guidance,
+                Subagents,
+                SpawnGuard,
+                HerdrIntegration,
+                Start,
+            ],
+            true,
+        ),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -813,10 +836,11 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters, Memory and subagent counts come from the six-event hook or
-    // OpenCode's plugin, which the hook crate speaks a dialect for; an agent
-    // claiming them without one would be a popover that says more than the
-    // kit installs.
+    // Letters and Memory come from the six-event hook or OpenCode's plugin,
+    // which the hook crate speaks a dialect for; the subagent count and the
+    // spawn guard also come from Grok's and Cursor's own hook files. An agent
+    // claiming them without a hook would be a popover that says more than
+    // the kit installs.
     let with_runtime: Vec<&str> = ADAPTERS
         .iter()
         .filter(|row| row.supports(crate::agents::Feature::Letters))
@@ -824,7 +848,13 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
         .collect();
     assert_eq!(
         with_runtime.len(),
-        hide_agent_adapter::HookDialect::ALL.len()
+        hide_agent_adapter::HookDialect::ALL
+            .iter()
+            .filter(|dialect| ADAPTERS.iter().any(|row| {
+                hide_agent_adapter::adapter(row.id)
+                    .is_some_and(|adapter| adapter.prompt_hook == Some(**dialect))
+            }))
+            .count()
     );
     for row in ADAPTERS {
         let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin(_));
@@ -834,8 +864,8 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}",
             row.id
         );
-        // Memory and the subagent count need the hook too, and each its own
-        // declaration (Pi runs no subagents; Pi's and omp's Memory waits).
+        // Memory needs the hook too, and its own declaration (Pi's and omp's
+        // Memory waits).
         let declared = hide_agent_adapter::adapter(row.id).unwrap();
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),
@@ -843,13 +873,116 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}: memory",
             row.id
         );
+        // The subagent count and the spawn guard need any hook of Hide's,
+        // including Grok's and Cursor's own hook files, and each its own
+        // declaration (Pi runs no subagents).
+        let hook = !matches!(row.hook, HookSupport::None);
         assert_eq!(
             row.supports(crate::agents::Feature::Subagents),
-            instrumented && declared.subagent_counts.is_some(),
+            hook && declared.subagent_counts.is_some(),
             "{}: subagents",
             row.id
         );
+        assert_eq!(
+            row.supports(crate::agents::Feature::SpawnGuard),
+            hook && declared.spawn_guard.is_some(),
+            "{}: spawn guard",
+            row.id
+        );
     }
+}
+
+fn grok_hooks(fixture: &Fixture) -> PathBuf {
+    fixture.home().join(".grok/hooks/hide.json")
+}
+
+#[test]
+fn grok_gets_its_own_hook_file_beside_the_others_and_only_inside_its_own_folder() {
+    let fixture = Fixture::new();
+    install(&fixture, "grok", ".grok");
+    // Herdr's and Orca's files are already there and stay byte for byte.
+    let herdr = br#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/herdr.sh"}]}]}}"#;
+    set_up(&fixture, ".grok/hooks");
+    std::fs::write(fixture.home().join(".grok/hooks/herdr.json"), herdr).unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    let grok = agent(&report, "grok");
+    assert_eq!(
+        grok.hook.as_ref().unwrap().state,
+        ComponentState::Installed,
+        "{grok:?}"
+    );
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(grok_hooks(&fixture)).unwrap()).unwrap();
+    for event in [
+        "SessionStart",
+        "PreToolUse",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+    ] {
+        let command = written["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{event}: {written}"));
+        assert!(command.contains("--runtime grok"), "{command}");
+        assert!(command.contains(&format!("--event {event}")), "{command}");
+    }
+    assert_eq!(
+        written["hooks"]["PreToolUse"][0]["matcher"],
+        "Bash|ask_user_question|exit_plan_mode"
+    );
+    assert_eq!(
+        std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
+        herdr
+    );
+
+    // An entry the operator edited reads Outdated and is theirs until
+    // Reinstall, which puts Hide's back (B8).
+    let edited = std::fs::read_to_string(grok_hooks(&fixture))
+        .unwrap()
+        .replace("--event Stop", "--event Stop --verbose");
+    std::fs::write(grok_hooks(&fixture), &edited).unwrap();
+    let report = apply(&fixture.target, &Scope::automatic());
+    let hook = agent(&report, "grok").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Outdated, "{hook:?}");
+    assert!(hook.reason.unwrap().contains("edited"));
+    assert_eq!(
+        std::fs::read_to_string(grok_hooks(&fixture)).unwrap(),
+        edited
+    );
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    assert_eq!(
+        agent(&report, "grok").hook.as_ref().unwrap().state,
+        ComponentState::Installed
+    );
+    assert!(
+        !std::fs::read_to_string(grok_hooks(&fixture))
+            .unwrap()
+            .contains("--verbose")
+    );
+
+    // Switched off, Hide's own file goes and Herdr's stays.
+    let report = apply(&fixture.target, &Scope::agents([], ["grok"]));
+    assert_eq!(
+        agent(&report, "grok").hook.as_ref().unwrap().state,
+        ComponentState::Off
+    );
+    assert!(!grok_hooks(&fixture).exists());
+    assert_eq!(
+        std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
+        herdr
+    );
+}
+
+#[test]
+fn grok_without_its_own_folder_gets_no_folder_and_its_row_says_why() {
+    let fixture = Fixture::new();
+    executable(&fixture.home().join(".local/bin/grok"), "#!/bin/sh\n");
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    let hook = agent(&report, "grok").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent, "{hook:?}");
+    assert!(hook.reason.unwrap().contains(".grok"));
+    assert!(!fixture.home().join(".grok").exists());
 }
 
 fn opencode_plugin(fixture: &Fixture) -> PathBuf {

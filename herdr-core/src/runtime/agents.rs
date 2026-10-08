@@ -1169,18 +1169,17 @@ impl Runtime {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
         let local_kit = self.kit_states.get(self.node.as_str());
-        // Claude Code's and Codex's hooks are read from their files; a script
-        // file of Hide's (OpenCode's plugin, Pi's and omp's extension) from
-        // this Mac's kit, the one place that judges it, read here once rather
-        // than holding the kit across the pass.
-        let scripts: Vec<_> = hide_agent_adapter::HookDialect::ALL
+        // Claude Code's and Codex's hooks are read from their files; OpenCode's
+        // plugin and Grok's and Cursor's hooks from this Mac's kit, the one
+        // place that judges them, read here once rather than holding the kit
+        // across the pass.
+        let from_kit: Vec<_> = hide_agent_adapter::HookDialect::ALL
             .into_iter()
-            .filter(|dialect| dialect.plugin().is_some())
+            .filter(|dialect| hide_agent_hooks::AgentRuntime::from_dialect(*dialect).is_none())
             .map(|dialect| {
-                (
-                    dialect,
-                    local_kit.and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect)),
-                )
+                let status =
+                    local_kit.and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect));
+                (dialect, status)
             })
             .collect();
         let codex_daemon_on = local_kit.is_some_and(crate::model::KitSnapshot::shares_codex_server);
@@ -1190,9 +1189,9 @@ impl Runtime {
                     .as_ref()
                     .and_then(|diagnosis| diagnosis.status_of(runtime))
                     .cloned(),
-                None => scripts
+                None => from_kit
                     .iter()
-                    .find(|(script, _)| *script == dialect)
+                    .find(|(known, _)| *known == dialect)
                     .and_then(|(_, status)| status.clone()),
             }
         };

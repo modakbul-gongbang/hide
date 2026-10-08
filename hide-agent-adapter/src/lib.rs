@@ -42,23 +42,29 @@ pub enum TitlePriority {
     GoalOnly,
 }
 
-/// Whose hook speaks for the agent: the settings-file runtimes' six-event
-/// hook, or a script file of Hide's in the agent's own folder (OpenCode's
-/// plugin, Pi's and omp's extension), which calls the same helper.
+/// The input and output protocol of an agent's own hook: how its payload
+/// names the shell call and session, and how a refusal is written. Claude
+/// Code's and Codex's six-event hook, a script file of Hide's in the agent's
+/// own folder (OpenCode's plugin, Pi's and omp's extension), which calls the
+/// same helper, and Grok's and Cursor's own hook files.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HookDialect {
     ClaudeCode,
     Codex,
     OpenCode,
+    Grok,
+    Cursor,
     Pi,
     Omp,
 }
 
 impl HookDialect {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::ClaudeCode,
         Self::Codex,
         Self::OpenCode,
+        Self::Grok,
+        Self::Cursor,
         Self::Pi,
         Self::Omp,
     ];
@@ -68,16 +74,18 @@ impl HookDialect {
             Self::ClaudeCode => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
+            Self::Grok => AgentId::Grok.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
         }
     }
 
     /// The script file of Hide's that speaks this dialect, when it is not a
-    /// settings-file hook.
+    /// settings-file hook or an agent's own hook file.
     pub const fn plugin(self) -> Option<PluginDialect> {
         match self {
-            Self::ClaudeCode | Self::Codex => None,
+            Self::ClaudeCode | Self::Codex | Self::Grok | Self::Cursor => None,
             Self::OpenCode => Some(PluginDialect::OpenCode),
             Self::Pi => Some(PluginDialect::Pi),
             Self::Omp => Some(PluginDialect::Omp),
@@ -85,9 +93,21 @@ impl HookDialect {
     }
 }
 
+/// Hide's own hook file for an agent of the basic tier
+/// (`hide_agent_hooks::guidance`): the events that agent documents, under
+/// one marker, beside every other tool's hooks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuidanceDialect {
     Cursor,
+    Grok,
+}
+
+impl GuidanceDialect {
+    /// Whether the file's session-start entry adds Hide's guidance to the
+    /// agent's context. Grok discards what a session-start hook prints.
+    pub const fn prints_guidance(self) -> bool {
+        matches!(self, Self::Cursor)
+    }
 }
 
 /// A script file Hide owns in the agent's own plugin or extension folder.
@@ -471,7 +491,11 @@ impl AgentAdapter {
     pub const fn supports(&self, feature: Feature) -> bool {
         match feature {
             Feature::Skill | Feature::HerdrIntegration => true,
-            Feature::Guidance => !matches!(self.hook, HookInstall::None),
+            Feature::Guidance => match self.hook {
+                HookInstall::Runtime(_) | HookInstall::Plugin(_) => true,
+                HookInstall::Guidance(dialect) => dialect.prints_guidance(),
+                HookInstall::None => false,
+            },
             Feature::Letters => self.prompt_hook.is_some(),
             Feature::Bell => self.bell,
             Feature::Memory => self.memory.is_some(),

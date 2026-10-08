@@ -136,6 +136,12 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
-        [Feature::Skill, Feature::HerdrIntegration, Feature::Start]
+        [
+            Feature::Skill,
+            Feature::Subagents,
+            Feature::SpawnGuard,
+            Feature::HerdrIntegration,
+            Feature::Start
+        ]
     );
 }

@@ -100,10 +100,10 @@ pub fn device_hook_status(
 }
 
 /// The hook `dialect` speaks through, as a machine's kit reported it: Claude
-/// Code's and Codex's kit parts, or the plugin or extension piece on the
-/// agent's row (OpenCode, Pi, omp). This Mac's Claude Code and Codex hooks are
-/// read from their files instead (`hide_agent_hooks::Diagnosis`); a script
-/// file of Hide's has no other reading.
+/// Code's and Codex's kit parts, or the hook piece on the agent's own row
+/// (OpenCode's plugin, Pi's and omp's extension, Grok's and Cursor's hook
+/// entries). This Mac's Claude Code and Codex hooks are read from their files
+/// instead (`hide_agent_hooks::Diagnosis`); the others have no other reading.
 pub fn kit_hook_status(
     kit: &crate::model::KitSnapshot,
     dialect: HookDialect,
@@ -119,7 +119,11 @@ pub fn kit_hook_status(
     let state = match dialect {
         HookDialect::ClaudeCode => part(ComponentId::ClaudeCodeHook)?,
         HookDialect::Codex => part(ComponentId::CodexHook)?,
-        HookDialect::OpenCode | HookDialect::Pi | HookDialect::Omp => {
+        HookDialect::OpenCode
+        | HookDialect::Pi
+        | HookDialect::Omp
+        | HookDialect::Grok
+        | HookDialect::Cursor => {
             kit.agents
                 .iter()
                 .find(|agent| agent.id == dialect.adapter().id)?
@@ -221,16 +225,16 @@ mod tests {
     }
 
     #[test]
-    fn opencodes_pane_is_judged_by_its_plugin_piece_on_the_kit_row() {
+    fn opencode_grok_and_cursor_panes_are_judged_by_the_hook_piece_on_their_own_kit_row() {
         let piece = |state| crate::model::KitPieceSnapshot {
             state,
             reason: None,
             location: None,
         };
-        let kit = |hook| crate::model::KitSnapshot {
+        let kit = |id: &str, hook| crate::model::KitSnapshot {
             agents: vec![crate::model::KitAgentSnapshot {
-                id: "opencode".to_owned(),
-                label: "OpenCode".to_owned(),
+                id: id.to_owned(),
+                label: id.to_owned(),
                 availability: hide_kit::Availability::Available,
                 enabled: true,
                 chosen: true,
@@ -246,38 +250,53 @@ mod tests {
         };
         use hide_agent_hooks::HookStatus;
         use hide_kit::ComponentState;
-        for (state, status) in [
-            (
-                ComponentState::Installed,
-                HookStatus::Installed {
-                    version: hide_agent_hooks::HOOK_VERSION,
-                },
-            ),
-            // Edited or another build's plugin still speaks.
-            (
-                ComponentState::Outdated,
-                HookStatus::Outdated { version: 0 },
-            ),
-            (ComponentState::Off, HookStatus::Off),
-            (ComponentState::Absent, HookStatus::RuntimeAbsent),
-            (ComponentState::Removed, HookStatus::NotInstalled),
+        for (dialect, id) in [
+            (HookDialect::OpenCode, "opencode"),
+            (HookDialect::Grok, "grok"),
+            (HookDialect::Cursor, "cursor"),
         ] {
+            for (state, status) in [
+                (
+                    ComponentState::Installed,
+                    HookStatus::Installed {
+                        version: hide_agent_hooks::HOOK_VERSION,
+                    },
+                ),
+                // An edited entry, or another build's, still speaks.
+                (
+                    ComponentState::Outdated,
+                    HookStatus::Outdated { version: 0 },
+                ),
+                (ComponentState::Off, HookStatus::Off),
+                (ComponentState::Absent, HookStatus::RuntimeAbsent),
+                (ComponentState::Removed, HookStatus::NotInstalled),
+            ] {
+                assert_eq!(
+                    kit_hook_status(&kit(id, Some(piece(state))), dialect),
+                    Some(status),
+                    "{id}: {state:?}"
+                );
+            }
+            // A kit not read yet, a row without the piece, or another
+            // agent's row leaves it unknown.
+            assert_eq!(kit_hook_status(&kit(id, None), dialect), None, "{id}");
             assert_eq!(
-                kit_hook_status(&kit(Some(piece(state))), HookDialect::OpenCode),
-                Some(status),
-                "{state:?}"
+                kit_hook_status(&crate::model::KitSnapshot::default(), dialect),
+                None,
+                "{id}"
+            );
+            let other = if id == "grok" { "cursor" } else { "grok" };
+            assert_eq!(
+                kit_hook_status(&kit(other, Some(piece(ComponentState::Installed))), dialect),
+                None,
+                "{id}"
+            );
+            assert_eq!(
+                device_hook_status(true, &kit(id, None), dialect),
+                Some(HookStatus::NotInstalled),
+                "{id}"
             );
         }
-        // A kit not read yet, or a row without the piece, leaves it unknown.
-        assert_eq!(kit_hook_status(&kit(None), HookDialect::OpenCode), None);
-        assert_eq!(
-            kit_hook_status(&crate::model::KitSnapshot::default(), HookDialect::OpenCode),
-            None
-        );
-        assert_eq!(
-            device_hook_status(true, &kit(None), HookDialect::OpenCode),
-            Some(HookStatus::NotInstalled)
-        );
     }
 
     #[test]

@@ -60,7 +60,7 @@
     "efforts": [],
     "can_pick_model": false,
     "sidebar_mark": null,
-    "hook_kind": null
+    "hook_kind": "hook"
   },
   {
     "id": "opencode",

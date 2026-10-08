@@ -211,3 +211,26 @@ fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_u
         ["-m", "gpt-5.5", "-c", "model_reasoning_effort=high"]
     );
 }
+
+#[test]
+fn the_question_guard_wire_admits_exactly_the_agents_whose_direct_ask_is_declared() {
+    // hided admits a `factory_question_guard` runtime by `direct_ask_kind`,
+    // so the wire contract's enum is that table, not a copy that can drift.
+    let schema: Value = serde_json::from_slice(
+        &std::fs::read(root().join("contracts/hided-ws.schema.json")).unwrap(),
+    )
+    .unwrap();
+    let wire: BTreeSet<&str> =
+        schema["$defs"]["factoryQuestionGuard"]["properties"]["runtime"]["enum"]
+            .as_array()
+            .expect("factory_question_guard runtime enum")
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect();
+    let declared: BTreeSet<&str> = ADAPTERS
+        .iter()
+        .map(|row| row.id)
+        .filter(|id| hide_agent_adapter::direct_ask_kind(id).is_some())
+        .collect();
+    assert_eq!(wire, declared);
+}
