@@ -15,7 +15,8 @@
 //!   the stub stays while any of them is on;
 //! - a hook: Claude Code and Codex keep their kit parts
 //!   ([`HookSupport::Part`]), the other agents with documented command hooks
-//!   get the SessionStart guidance hook ([`HookSupport::Guidance`]);
+//!   get the SessionStart guidance hook ([`HookSupport::Guidance`]), and
+//!   OpenCode gets Hide's plugin ([`HookSupport::Plugin`]);
 //! - nothing else. What Hide never writes is listed in `docs/agent-hooks.md`.
 
 use std::ffi::OsString;
@@ -93,6 +94,9 @@ pub enum HookSupport {
     /// The SessionStart guidance hook for an agent with documented command
     /// hooks (`hide_agent_hooks::guidance`).
     Guidance(GuidanceAgent),
+    /// OpenCode: Hide's own plugin file in its plugin folder
+    /// (`hide_agent_hooks::opencode`), judged like the skill stub.
+    Plugin,
     /// No hook: the agent gets the skill only. `docs/agent-hooks.md` carries
     /// the reason and the page that supports it.
     None,
@@ -130,7 +134,9 @@ pub struct AgentAdapter {
 
 // The kit keeps its policy types and derives every row from the leaf.
 const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> AgentAdapter {
-    use hide_agent_adapter::{GuidanceDialect, HookDialect, HookInstall, SkillLocation};
+    use hide_agent_adapter::{
+        GuidanceDialect, HookDialect, HookInstall, PluginDialect, SkillLocation,
+    };
     AgentAdapter {
         id: declaration.id,
         label: declaration.label,
@@ -145,9 +151,15 @@ const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> Agen
                 HookSupport::Part(ComponentId::ClaudeCodeHook)
             }
             HookInstall::Runtime(HookDialect::Codex) => HookSupport::Part(ComponentId::CodexHook),
+            // OpenCode's dialect is spoken by its plugin, never by a settings
+            // file; the table is a constant, so this fails the build.
+            HookInstall::Runtime(HookDialect::OpenCode) => {
+                panic!("OpenCode's hook is its plugin, not a settings file")
+            }
             HookInstall::Guidance(GuidanceDialect::Cursor) => {
                 HookSupport::Guidance(GuidanceAgent::Cursor)
             }
+            HookInstall::Plugin(PluginDialect::OpenCode) => HookSupport::Plugin,
             HookInstall::None => HookSupport::None,
         },
         herdr: declaration.herdr,
@@ -226,6 +238,7 @@ impl AgentAdapter {
         match self.hook {
             HookSupport::Part(_) => true,
             HookSupport::Guidance(agent) => agent.supported_here().is_ok(),
+            HookSupport::Plugin => hide_agent_hooks::opencode::supported_here().is_ok(),
             HookSupport::None => false,
         }
     }

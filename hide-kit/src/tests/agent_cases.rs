@@ -764,24 +764,35 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
 }
 
 #[test]
-fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
+fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_partial() {
     use crate::agents::Feature::{self, *};
-    // The expected rows come from the PRD and the hook research, not from
-    // the table: what Hide does for each agent in this build (D-10, B18).
-    let expected: [(&str, &[Feature]); 7] = [
-        ("claude-code", &Feature::ALL),
-        ("codex", &Feature::ALL),
-        ("grok", &[Skill, HerdrIntegration]),
-        ("opencode", &[Skill, HerdrIntegration]),
-        ("pi", &[Skill, HerdrIntegration]),
-        ("omp", &[Skill, HerdrIntegration]),
-        ("cursor", &[Skill, Guidance, HerdrIntegration]),
+    // The expected rows come from the PRDs and the hook research, not from
+    // the table: what Hide does for each agent in this build (D-10, B18;
+    // opencode-plugin D-11: OpenCode takes letters and is refused a launch,
+    // so it is no longer Basic, while no bell rings for it).
+    let opencode = [
+        Skill,
+        Guidance,
+        Letters,
+        Memory,
+        Subagents,
+        SpawnGuard,
+        HerdrIntegration,
+    ];
+    let expected: [(&str, &[Feature], bool); 7] = [
+        ("claude-code", &Feature::ALL, false),
+        ("codex", &Feature::ALL, false),
+        ("grok", &[Skill, HerdrIntegration], true),
+        ("opencode", &opencode, false),
+        ("pi", &[Skill, HerdrIntegration], true),
+        ("omp", &[Skill, HerdrIntegration], true),
+        ("cursor", &[Skill, Guidance, HerdrIntegration], true),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
-        expected.map(|(id, _)| id)
+        expected.map(|(id, _, _)| id)
     );
-    for (id, supported) in expected {
+    for (id, supported, partial) in expected {
         let row = crate::agents::adapter(id).unwrap();
         for feature in Feature::ALL {
             assert_eq!(
@@ -790,15 +801,16 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
                 "{id}: {feature:?}"
             );
         }
-        assert_eq!(row.partial(), supported.len() != Feature::ALL.len(), "{id}");
+        assert_eq!(row.partial(), partial, "{id}");
     }
 }
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters, Memory and subagent counts are the six-event hook, which the
-    // hook crate has a runtime for; an agent claiming them without one would
-    // be a popover that says more than the kit installs.
+    // Letters, Memory and subagent counts come from the six-event hook or
+    // OpenCode's plugin, which the hook crate speaks a dialect for; an agent
+    // claiming them without one would be a popover that says more than the
+    // kit installs.
     let with_runtime: Vec<&str> = ADAPTERS
         .iter()
         .filter(|row| row.supports(crate::agents::Feature::Letters))
@@ -806,27 +818,163 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
         .collect();
     assert_eq!(
         with_runtime.len(),
-        hide_agent_hooks::AgentRuntime::ALL.len()
+        hide_agent_adapter::HookDialect::ALL.len()
     );
     for row in ADAPTERS {
-        let part = matches!(row.hook, HookSupport::Part(_));
+        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin);
         assert_eq!(
             row.supports(crate::agents::Feature::Letters),
-            part,
+            instrumented,
             "{}",
             row.id
         );
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),
-            part,
+            instrumented,
             "{}",
             row.id
         );
         assert_eq!(
             row.supports(crate::agents::Feature::Subagents),
-            part,
+            instrumented,
             "{}",
             row.id
         );
     }
+}
+
+fn opencode_plugin(fixture: &Fixture) -> PathBuf {
+    hide_agent_hooks::opencode::plugin_path(fixture.home())
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_switched_on_gets_hides_plugin_beside_herdrs_and_reads_installed() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    let herdr = fixture
+        .home()
+        .join(".config/opencode/plugins/herdr-agent-state.js");
+    std::fs::create_dir_all(herdr.parent().unwrap()).unwrap();
+    std::fs::write(&herdr, b"herdr's plugin").unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let opencode = agent(&report, "opencode");
+    let hook = opencode.hook.as_ref().unwrap();
+    assert_eq!(hook.state, ComponentState::Installed, "{opencode:?}");
+    assert_eq!(hook.location.as_deref(), opencode_plugin(&fixture).to_str());
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        hide_agent_hooks::opencode::plugin_text(&fixture.target.kit_dir.join("hide-agent-hooks"))
+    );
+    assert_eq!(std::fs::read(&herdr).unwrap(), b"herdr's plugin");
+    assert!(
+        record(&fixture)["installed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("hook:opencode"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_edited_opencode_plugin_reads_outdated_and_stays_until_reinstall() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    apply(&fixture.target, &Scope::agents(["opencode"], []));
+    let edited = std::fs::read_to_string(opencode_plugin(&fixture))
+        .unwrap()
+        .replace("RUNNING_LIMIT = 8", "RUNNING_LIMIT = 3");
+    std::fs::write(opencode_plugin(&fixture), &edited).unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let hook = agent(&report, "opencode").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Outdated);
+    assert!(hook.reason.unwrap().contains("edited"));
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        edited
+    );
+
+    // Reinstall is the agent's switch made again.
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+    assert_eq!(
+        agent(&report, "opencode").hook.as_ref().unwrap().state,
+        ComponentState::Installed
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn switching_opencode_off_removes_only_an_unedited_plugin() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let report = apply(&fixture.target, &Scope::agents([], ["opencode"]));
+
+    assert_eq!(
+        agent(&report, "opencode").hook.as_ref().unwrap().state,
+        ComponentState::Off
+    );
+    assert!(!opencode_plugin(&fixture).exists());
+    assert!(
+        !record(&fixture)["installed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("hook:opencode"))
+    );
+
+    // An edited plugin is the operator's: switching off leaves it.
+    apply(&fixture.target, &Scope::agents(["opencode"], []));
+    let edited = std::fs::read_to_string(opencode_plugin(&fixture))
+        .unwrap()
+        .replace("RUNNING_LIMIT = 8", "RUNNING_LIMIT = 3");
+    std::fs::write(opencode_plugin(&fixture), &edited).unwrap();
+    apply(&fixture.target, &Scope::agents([], ["opencode"]));
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        edited
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_without_its_config_folder_gets_no_folder_made_and_says_why() {
+    let fixture = Fixture::new();
+    executable(&fixture.home().join(".local/bin/opencode"), "#!/bin/sh\n");
+
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let hook = agent(&report, "opencode").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent);
+    assert!(hook.reason.unwrap().contains("has not created"));
+    assert!(!fixture.home().join(".config/opencode").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_plugin_named_like_hides_that_hide_did_not_write_is_left_alone() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    std::fs::create_dir_all(opencode_plugin(&fixture).parent().unwrap()).unwrap();
+    std::fs::write(
+        opencode_plugin(&fixture),
+        "export const Mine = async () => ({})\n",
+    )
+    .unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let hook = agent(&report, "opencode").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent);
+    assert!(hook.reason.unwrap().contains("did not write"));
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        "export const Mine = async () => ({})\n"
+    );
+    apply(&fixture.target, &Scope::agents([], ["opencode"]));
+    assert!(opencode_plugin(&fixture).exists());
 }
