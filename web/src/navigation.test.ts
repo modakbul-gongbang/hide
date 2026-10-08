@@ -196,8 +196,9 @@ describe("an open from Main or an Overview", () => {
   it("waits for focus and disclosure together when returning from Overview", () => {
     const opening = { target: { workspaceId: "w", checkoutId: "c2", deviceId: "local", path: "/w2", expanded: true }, errorBefore: null, failure: null };
     // Focus can already match while Overview is visible; the old folded snapshot cannot land.
-    expect(openingProgress(rest("c2"), opening)).toBeNull();
-    const accepted = { ...rest("c2"), ui_state: { expanded_checkout_ids: ["c2"] } } as unknown as SnapshotRest;
+    const folded = { ...rest("c2"), ui_state: { session_collapsed_checkout_ids: ["c2"] } } as unknown as SnapshotRest;
+    expect(openingProgress(folded, opening)).toBeNull();
+    const accepted = { ...rest("c2"), ui_state: { session_collapsed_checkout_ids: [] } } as unknown as SnapshotRest;
     expect(openingProgress(accepted, opening)).toBe("landed");
     expect(openingProgress({ ...accepted, navigator: rest("c1").navigator }, opening)).toBeNull();
   });

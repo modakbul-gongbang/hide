@@ -64,7 +64,7 @@ export type AgentRow = {
   unknown?: boolean;
   demand?: string;
   activity?: string;
-  /** Work another agent delegated; it is only ever Working or Seen (docs/status-model.md). */
+  /** Work another agent delegated; ordinary children are Working or Seen, with core escalation as the exception (docs/status-model.md). */
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
   lineage_child_pane_ids?: string[];

@@ -1002,6 +1002,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
+  const visibleRows = open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you);
   const marks = checkout.agent_summary?.marks;
   return (
     <li
@@ -1066,7 +1067,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {agentRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you)} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1101,6 +1102,7 @@ const FolderRowView = memo(function FolderRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
+  const visibleRows = open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
@@ -1151,7 +1153,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {agentRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you)} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={visibleRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1350,7 +1352,6 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
   );
 }
 
-/** A tree drawn with nothing folded lists no folded children. */
 
 
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */

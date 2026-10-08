@@ -187,7 +187,7 @@ describe("the tiles and ages in English", () => {
     const issues = issuesTile(buildTasks(one(workspace([], { tasks: [task(1)] }), []), "project", NOW), NOW, null, "en", english);
     expect(issues).toMatchObject({ label: "Issues", unit: "open" });
     expect(issues.bar?.map((segment) => segment.label)).toEqual(["Backlog", "In progress", "Review"]);
-    expect(sessionsTile(null, "project", NOW, english)).toMatchObject({ label: "Sessions", unit: "today" });
+    expect(sessionsTile(null, "project", NOW, english)).toMatchObject({ label: "Conversation history", unit: "today" });
   });
 
   it("says how old a value is in the language's own relative form", () => {

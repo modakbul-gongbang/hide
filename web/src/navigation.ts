@@ -368,7 +368,7 @@ export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): bo
   const front = frontCheckout(rest);
   if (!front) return false;
   if ("paneId" in target) return front.tabs.some((tab) => tab.panes.some((pane) => pane.id === target.paneId));
-  if (target.expanded !== undefined && (rest?.ui_state?.expanded_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
+  if (target.expanded !== undefined && !(rest?.ui_state?.session_collapsed_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
   if (front.id === target.checkoutId) return true;
   // A device project with no Herdr workspace yet gets one at its folder, under a new id.
   return target.path !== null && front.path === target.path && (rest?.navigator?.focused_device_id ?? localDeviceId(rest)) === target.deviceId;

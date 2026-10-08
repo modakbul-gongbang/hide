@@ -27,7 +27,7 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const relation = useUiStore((state) => state.relation);
   const outcome = useShellStore((state) => state.rest?.status?.pane_focus_request);
   const band = header?.band;
-  if (!band) return header?.working ? <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[2px] bg-agent-working" data-pane-working-line={paneId} /> : null;
+  if (!band) return header?.working ? <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(2*var(--size-hairline))] bg-agent-working" data-pane-working-line={paneId} /> : null;
   const labelKey = LABELS[band.kind];
   if (!labelKey) throw new Error(`Unknown core pane band: ${band.kind}`);
   const label = band.kind === "raised_child" ? (band.child_tag ? t(LABELS[band.child_tag]!) : "↳") : band.kind === "exit" ? t("agentSessions.exitCode", { exitCode: band.exit_code! }) : t(labelKey as Exclude<MessageKey, "agentSessions.exitCode">);
@@ -36,7 +36,7 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const tracked = action?.kind === "child" && relation?.sourcePaneId === paneId && relation.targetPaneId === action.pane_id ? relation : null;
   const progress = relationState(tracked, outcome, t);
   const reason = progress?.phase === "failed" ? progress.message : progress?.phase === "pending" ? t("panes.relation.opening", { name: tracked!.label }) : band.reason;
-  return <div className={cn("absolute inset-x-0 top-0 z-10 flex h-7 min-w-0 items-center gap-xs px-sm text-caption", TONES[band.tone])} data-pane-header-band={band.kind}>
+  return <div className={cn("absolute inset-x-0 top-0 z-10 flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", TONES[band.tone])} data-pane-header-band={band.kind}>
     <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
     <Hint label={reason ?? label}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
     {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}

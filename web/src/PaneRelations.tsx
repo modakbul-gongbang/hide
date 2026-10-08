@@ -46,7 +46,7 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
         onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
       >
         {pending ? <span aria-hidden="true">…</span> : <CornerUpLeftIcon />}
-        <span className="hidden max-w-32 truncate @min-[640px]/pane:inline">{progress?.phase === "failed" && progress.retryable ? t("common.retry") : parent.label}</span>
+        <span className="hidden max-w-[var(--size-pane-child-chip-max)] truncate @min-[var(--size-pane-parent-breakpoint)]/pane:inline">{progress?.phase === "failed" && progress.retryable ? t("common.retry") : parent.label}</span>
       </Button>
     </Hint>
   );

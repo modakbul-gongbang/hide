@@ -1,4 +1,5 @@
 import { badgeLabel, badgeParts } from "../agentRow";
+import { useRef } from "react";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
@@ -6,10 +7,9 @@ import { BadgeMarks } from "./status-badge";
 import { Badge } from "./ui/badge";
 
 /**
- * A folded parent's badge (docs/status-model.md, The descendant badge): one
- * mark and count per state over every live descendant, worst first, or `↳N`
- * when all of them are merely ready. It is a button whose popover lists the
- * direct children; every list of agents that folds draws this one.
+ * A parent's badge: one mark and count per state over its direct children,
+ * worst first, or `↳N` when all are merely ready. The sidebar, Sessions and
+ * pane header share this button and the direct-child popover it opens.
  */
 export function DescendantBadge({
   agent,
@@ -27,6 +27,7 @@ export function DescendantBadge({
   returnFocus: () => void;
 }) {
   const { t } = useInterfaceTranslation();
+  const trigger = useRef<HTMLButtonElement>(null);
   const parts = badgeParts(agent.direct_child_counts ?? agent.descendant_counts);
   return (
     <AgentChildrenPopover
@@ -34,10 +35,11 @@ export function DescendantBadge({
       childRows={childRows}
       onOpenChild={onOpenChild}
       onUnfold={onUnfold}
-      returnFocus={returnFocus}
+      returnFocus={() => trigger.current ? trigger.current.focus() : returnFocus()}
       triggerLabel={badgeLabel(agent.direct_child_counts ?? agent.descendant_counts, descendants, t)}
       trigger={
         <button
+          ref={trigger}
           type="button"
           aria-label={badgeLabel(agent.direct_child_counts ?? agent.descendant_counts, descendants, t)}
           aria-haspopup="dialog"

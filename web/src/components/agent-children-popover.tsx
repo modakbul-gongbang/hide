@@ -15,19 +15,21 @@ import { useUiStore } from "../ui";
 import { useShellStore } from "../store";
 import { relationState } from "../lineage";
 import { Hint } from "./ui/tooltip";
+import { remoteTargetOfPane } from "../remote";
+import { deviceConnected, localDeviceId } from "../devices";
 
 /**
  * The list a descendant badge opens (PRD sidebar-agent-status D-03, D-04, B5,
  * B6): the row's direct children with their mark, name, status word, branch
  * when it differs, and elapsed time. Arrow keys move the highlight, Enter or
- * a row's arrow opens that child's pane, and the last item unfolds the
- * children in the list. It offers no Stop: stopping is irreversible and
- * needs its own confirmed flow. Grandchildren are counted on the badge and
- * appear under their own parent.
+ * a row's arrow opens that child's pane, and the last item opens the whole
+ * relationship graph. It offers no Stop: stopping is irreversible and
+ * needs its own confirmed flow. Each badge counts its direct children;
+ * grandchildren appear under their own parent.
  *
  * `children` is read from the live rows on every render, so a child that
  * leaves the projection leaves the list, and the list closes when none is
- * left. Esc closes it and hands focus back to the row it belongs to.
+ * left. Esc closes it and hands focus back to its badge.
  */
 export function AgentChildrenPopover({
   parent,
@@ -55,6 +57,7 @@ export function AgentChildrenPopover({
   const tracked = relation?.sourcePaneId === parent.pane_id && relation.targetPaneId === opening ? relation : null;
   const progress = relationState(tracked, outcome, t);
   const list = useRef<HTMLDivElement>(null);
+  const afterClose = useRef<(() => void) | null>(null);
   const empty = childRows.length === 0;
   useEffect(() => {
     if (open && empty) setOpen(false);
@@ -66,8 +69,10 @@ export function AgentChildrenPopover({
     }
   }, [opening, tracked, progress]);
   const choose = (action: () => void) => {
+    // Hand the next surface ownership after this popover releases its Escape
+    // layer; Overview correctly refuses to open over an existing layer.
+    afterClose.current = action;
     setOpen(false);
-    action();
   };
   return (
     <Popover open={open && !empty} onOpenChange={setOpen}>
@@ -82,7 +87,10 @@ export function AgentChildrenPopover({
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          returnFocus();
+          const action = afterClose.current;
+          afterClose.current = null;
+          if (action) action();
+          else returnFocus();
         }}
       >
         <Command ref={list} tabIndex={-1} label={t("agents.children.label", { name: parent.identity_label })} className="outline-none">
@@ -126,10 +134,17 @@ export function AgentChildrenPopover({
 
 function ChildItem({ parent, child, pending, onOpen }: { parent: AgentRow; child: AgentRow; pending: boolean; onOpen: () => void }) {
   const { t } = useInterfaceTranslation();
+  const rest = useShellStore((state) => state.rest);
+  const target = remoteTargetOfPane(rest, child.pane_id);
+  const parentDevice = parent.device_id ?? remoteTargetOfPane(rest, parent.pane_id) ?? localDeviceId(rest);
+  const device = child.device_id ?? target ?? localDeviceId(rest);
+  const label = child.device_label ?? rest?.navigator?.devices?.find((row) => row.id === device)?.label;
+  const unavailable = !deviceConnected(rest, device);
+  const reason = unavailable ? rest?.status?.remote?.find((row) => row.target_id === device)?.message ?? t("devices.rail.notConnected") : null;
   const branch = branchChip(child);
   const tone = markTone(child);
   return (
-    <CommandItem value={child.pane_id} onSelect={onOpen} disabled={pending} data-agent-child={child.pane_id} className="group/child items-start">
+    <CommandItem value={child.pane_id} onSelect={onOpen} disabled={pending || unavailable} data-agent-child={child.pane_id} className="group/child items-start">
       <StatusMark symbol={child.symbol} className={`mt-xxs ${tone}`} />
       <AgentMark kind={child.agent_kind} />
       <span className="flex min-w-0 flex-1 flex-col">
@@ -144,15 +159,16 @@ function ChildItem({ parent, child, pending, onOpen }: { parent: AgentRow; child
               {branch}
             </span>
           ) : null}
-          {child.device_id !== parent.device_id && child.device_label ? <DeviceChip label={child.device_label} className="max-w-2/5" /> : null}
+          {device !== parentDevice && label ? <DeviceChip label={label} className="max-w-2/5" /> : null}
           {child.request?.pull_requests.filter((pull) => pull.live).slice(0, 1).map((pull) => <span key={pull.url} className="shrink-0 text-muted-foreground" title={pull.title}>#{pull.number}</span>)}
         </span>
         {child.request?.line ? <span className="truncate text-caption text-muted-foreground" title={child.request.line}>{child.request.line}</span> : null}
+        {reason ? <span className="truncate text-caption text-muted-foreground" title={reason}>{reason}</span> : null}
       </span>
       <button
         type="button"
         tabIndex={-1}
-        disabled={pending}
+        disabled={pending || unavailable}
         aria-label={t("agents.children.openChild", { name: child.identity_label })}
         data-agent-child-open={child.pane_id}
         className="invisible shrink-0 self-center rounded-xs p-xxs text-subtle-foreground hover:bg-secondary hover:text-foreground group-data-[selected=true]/child:visible"
