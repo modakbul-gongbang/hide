@@ -96,6 +96,14 @@ impl Routes {
             .is_some_and(|panes| panes.contains(pane))
     }
 
+    /// Whether `device` may speak for `pane`: the pane is that device's, by
+    /// the router's own reading of the id, and the core attached it there
+    /// or shows it.
+    fn speaks_for(&self, device: &str, pane: &str) -> bool {
+        Router::device_of(self, pane).is_some_and(|(owner, _)| owner == device)
+            && (self.attached(device, pane) || self.shown.iter().any(|shown| shown == pane))
+    }
+
     /// Whether the screen's last key went to `pane` recently enough for a
     /// device's word that it moved the keyboard.
     fn keyed_recently(&self, pane: &str, now: Instant) -> bool {
@@ -233,11 +241,18 @@ impl Router {
     fn device_of<'a>(routes: &Routes, pane: &'a str) -> Option<(String, &'a str)> {
         let rest = pane.strip_prefix("remote:")?;
         // A device id is matched against the devices the router knows
-        // first, so one whose id holds `:pane:` still routes.
-        if let Some((device, source)) = routes.devices.keys().find_map(|device| {
-            pane.strip_prefix(&device_pane_prefix(device))
-                .map(|source| (device.clone(), source))
-        }) {
+        // first, so one whose id holds `:pane:` still routes; the longest
+        // that matches owns the pane, so of devices `a` and `a:pane:b`,
+        // `remote:a:pane:b:pane:w1` is only ever the second's.
+        if let Some((device, source)) = routes
+            .devices
+            .keys()
+            .filter_map(|device| {
+                pane.strip_prefix(&device_pane_prefix(device))
+                    .map(|source| (device.clone(), source))
+            })
+            .max_by_key(|(device, _)| device.len())
+        {
             return Some((device, source));
         }
         let (device, source) = rest.split_once(":pane:")?;
@@ -283,12 +298,12 @@ impl Router {
 
     /// Sends each device the panes of its own on screen.
     fn shown_to(routes: &Routes, device: &str, node: &dyn TerminalNode) {
-        let prefix = device_pane_prefix(device);
         let panes = routes
             .shown
             .iter()
-            .filter_map(|pane| pane.strip_prefix(&prefix))
-            .map(str::to_owned)
+            .filter_map(|pane| Self::device_of(routes, pane))
+            .filter(|(owner, _)| owner == device)
+            .map(|(_, source)| source.to_owned())
             .collect();
         node.control(TerminalControl::Shown { panes });
     }
@@ -454,8 +469,10 @@ impl TerminalNode for Router {
 impl TerminalRoutes for Router {
     fn install_device(&self, device: &str, node: Arc<dyn TerminalNode>) {
         let mut routes = lock(&self.routes);
+        // Known first, so the shown panes are read as this device's by the
+        // same rule its lines are.
+        let replaced = routes.devices.insert(device.to_owned(), Arc::clone(&node));
         Self::shown_to(&routes, device, node.as_ref());
-        let replaced = routes.devices.insert(device.to_owned(), node);
         drop(routes);
         // The replaced link's writer ends once it is dropped, outside the
         // routing lock.
@@ -496,7 +513,9 @@ impl DeviceSink for Router {
         {
             let mut routes = lock(&self.routes);
             let due = routes.due();
-            let attached = routes.attached(device, &scoped);
+            let attached = Router::device_of(&routes, &scoped)
+                .is_some_and(|(owner, _)| owner == device)
+                && routes.attached(device, &scoped);
             let logged = !attached && routes.refused_line(device, LINE_UNADMITTED);
             drop(routes);
             log_due(due);
@@ -533,11 +552,11 @@ impl DeviceSink for Router {
                 .is_some_and(|holder| holder.as_deref() == Some(device)),
             TerminalReport::Input { pane, focus, .. } => {
                 *focus &= routes.keyed_recently(pane, now);
-                routes.attached(device, pane) || routes.shown.contains(pane)
+                routes.speaks_for(device, pane)
             }
             other => other
                 .pane_mut()
-                .is_some_and(|pane| routes.attached(device, pane) || routes.shown.contains(pane)),
+                .is_some_and(|pane| routes.speaks_for(device, pane)),
         };
         let refused = if !admitted {
             Some(LINE_UNADMITTED)
@@ -751,6 +770,52 @@ mod tests {
     /// core never attached there, a report about a pane the core neither
     /// attached nor shows, a creation's discarded keys and a paste's outcome
     /// for a paste held elsewhere are not taken.
+    /// Of two devices `a` and `a:pane:b`, the pane `remote:a:pane:b:pane:w1`
+    /// is only the second's: keys go there, and the first cannot speak for
+    /// it by naming `b:pane:w1`.
+    #[test]
+    fn a_device_cannot_speak_for_another_devices_pane_through_its_id() {
+        let (router, _local, hub, reports) = router();
+        let a = Arc::new(Recorder::default());
+        let ab = Arc::new(Recorder::default());
+        router.install_device("a", Arc::clone(&a) as Arc<dyn TerminalNode>);
+        router.install_device("a:pane:b", Arc::clone(&ab) as Arc<dyn TerminalNode>);
+        let pane = "remote:a:pane:b:pane:w1";
+        router.control(TerminalControl::Shown {
+            panes: vec![pane.into()],
+        });
+        router.control(attach(pane));
+        router.key(KeyTarget::Pane(pane.into()), b"k".to_vec(), 1);
+        assert_eq!(
+            ab.keys.lock().unwrap().as_slice(),
+            [(KeyTarget::Pane("w1".into()), b"k".to_vec())]
+        );
+        assert!(a.keys.lock().unwrap().is_empty());
+        assert!(
+            a.controls.lock().unwrap().iter().all(
+                |control| matches!(control, TerminalControl::Shown { panes } if panes.is_empty())
+            ),
+            "the first device is told nothing of the pane"
+        );
+
+        let state = |pane: &str| TerminalReport::Note {
+            pane: pane.into(),
+            kind: "terminal.x".into(),
+            message: "m".into(),
+        };
+        DeviceSink::report(&router, "a", state("b:pane:w1"));
+        router.output("a", "b:pane:w1", b"forged", true);
+        assert!(reports.0.lock().unwrap().is_empty());
+        assert!(hub.output.lock().unwrap().is_empty());
+        DeviceSink::report(&router, "a:pane:b", state("w1"));
+        router.output("a:pane:b", "w1", b"frame", true);
+        assert_eq!(reports.0.lock().unwrap().len(), 1);
+        assert_eq!(
+            hub.output.lock().unwrap().as_slice(),
+            [(pane.to_owned(), b"frame".to_vec())]
+        );
+    }
+
     #[test]
     fn a_devices_lines_the_core_never_asked_for_are_not_taken() {
         let (router, _local, hub, reports) = router();
