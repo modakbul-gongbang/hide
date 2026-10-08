@@ -147,7 +147,7 @@ POLICY_ONLY = (
     "scripts/check-core-touches-no-machine.py",
     "scripts/check-no-workstation-identity.*", "scripts/check-worktree-removal-boundary.sh",
     "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
-    "scripts/check-release-assets.mjs", "scripts/release-draft.mjs",
+    "scripts/check-release-assets.mjs", "scripts/release-draft.mjs", "scripts/premerge-check.py",
     "scripts/pen-*.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/*",
 )
 
