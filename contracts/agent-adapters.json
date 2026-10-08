@@ -13,7 +13,8 @@
     "logo_id": "claude-code",
     "can_start": true,
     "can_resume": true,
-    "sidebar_mark": "claude"
+    "sidebar_mark": "claude",
+    "hook_kind": "hook"
   },
   {
     "id": "codex",
@@ -26,7 +27,8 @@
     "logo_id": "codex",
     "can_start": true,
     "can_resume": true,
-    "sidebar_mark": "codex"
+    "sidebar_mark": "codex",
+    "hook_kind": "hook"
   },
   {
     "id": "grok",
@@ -39,7 +41,8 @@
     "logo_id": "grok",
     "can_start": false,
     "can_resume": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": null
   },
   {
     "id": "opencode",
@@ -52,7 +55,8 @@
     "logo_id": "opencode",
     "can_start": false,
     "can_resume": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": "plugin"
   },
   {
     "id": "pi",
@@ -65,7 +69,8 @@
     "logo_id": "pi",
     "can_start": false,
     "can_resume": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": null
   },
   {
     "id": "omp",
@@ -78,7 +83,8 @@
     "logo_id": "omp",
     "can_start": false,
     "can_resume": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": null
   },
   {
     "id": "cursor",
@@ -91,6 +97,7 @@
     "logo_id": "cursor",
     "can_start": false,
     "can_resume": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": "hook"
   }
 ]

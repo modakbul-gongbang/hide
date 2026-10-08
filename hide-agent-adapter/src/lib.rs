@@ -7,7 +7,7 @@
 mod declarations;
 pub use declarations::ADAPTERS;
 mod web;
-pub use web::{WebAdapter, web_contract};
+pub use web::{HookKind, WebAdapter, web_contract};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentId {
@@ -26,17 +26,23 @@ impl AgentId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Whose hook speaks for the agent: the settings-file runtimes' six-event
+/// hook, or OpenCode's plugin, which calls the same helper.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HookDialect {
     ClaudeCode,
     Codex,
+    OpenCode,
 }
 
 impl HookDialect {
+    pub const ALL: [Self; 3] = [Self::ClaudeCode, Self::Codex, Self::OpenCode];
+
     pub const fn adapter(self) -> &'static AgentAdapter {
         match self {
             Self::ClaudeCode => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::OpenCode => AgentId::OpenCode.adapter(),
         }
     }
 }
@@ -46,10 +52,17 @@ pub enum GuidanceDialect {
     Cursor,
 }
 
+/// A plugin file Hide owns in the agent's own plugin folder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PluginDialect {
+    OpenCode,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookInstall {
     Runtime(HookDialect),
     Guidance(GuidanceDialect),
+    Plugin(PluginDialect),
     None,
 }
 
@@ -234,6 +247,14 @@ pub fn canonical_kind(value: &str) -> &str {
 pub fn start_kind(value: &str) -> Option<&'static str> {
     let row = adapter(value)?;
     row.start.map(|_| row.herdr.name)
+}
+
+/// The Herdr kind of the agent whose hook asks, under its canonical id
+/// `runtime`, whether to refuse a direct question tool in a Factory worker
+/// pane; `None` for an agent with no such tool Hide can refuse.
+pub fn direct_ask_kind(runtime: &str) -> Option<&'static str> {
+    let row = ADAPTERS.iter().find(|row| row.id == runtime)?;
+    matches!(row.factory.direct_ask, Capability::Available(_)).then_some(row.herdr.name)
 }
 
 const fn start_count() -> usize {

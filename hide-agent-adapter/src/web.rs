@@ -13,6 +13,16 @@ pub struct WebAdapter {
     pub can_start: bool,
     pub can_resume: bool,
     pub sidebar_mark: Option<super::SidebarMark>,
+    /// What Settings calls the agent's hook piece: a hook entry or a plugin
+    /// file; absent for an agent Hide writes no hook for.
+    pub hook_kind: Option<HookKind>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookKind {
+    Hook,
+    Plugin,
 }
 
 pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
@@ -28,5 +38,12 @@ pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
         can_start: row.start.is_some(),
         can_resume: row.resume.is_some(),
         sidebar_mark: row.sidebar_mark,
+        hook_kind: match row.hook {
+            super::HookInstall::Runtime(_) | super::HookInstall::Guidance(_) => {
+                Some(HookKind::Hook)
+            }
+            super::HookInstall::Plugin(_) => Some(HookKind::Plugin),
+            super::HookInstall::None => None,
+        },
     })
 }
