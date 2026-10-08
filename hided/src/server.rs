@@ -649,6 +649,7 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
                 connection,
                 handshake.token,
                 capability.one_shot,
+                Some((node, link)),
             )
             .await;
         }
@@ -741,6 +742,7 @@ async fn client_loop(
                 connection,
                 handshake.token,
                 capability.one_shot,
+                None,
             )
             .await;
         } else {
@@ -971,10 +973,48 @@ const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
 
 /// What a refused delivery or agent command asks of its caller.
 fn delivery_next_action(code: &str) -> &'static str {
-    if code == "agent_pane_required" {
-        "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
-    } else {
-        "Check the current agent pane and retry the same intent"
+    match herdr_core::coordination::split_refusal(code).0 {
+        "agent_pane_required" => {
+            "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
+        }
+        "machine_unknown" => {
+            "Use the device id from hide workspace info or hide agent list with --machine, then retry"
+        }
+        "machine_unavailable" => {
+            "Check that the device is connected in Settings > Devices and its helper is allowed, then run the same command again"
+        }
+        "repository_unavailable" => {
+            "Pass --repo as the repository's path on that device, then run the command again"
+        }
+        "agent_not_installed" => {
+            "Install the agent CLI on the device so it is on the device's PATH, then run the command again"
+        }
+        "spawn_busy" => "The first request is still running; wait, then run the same command again",
+        "machine_not_permitted" => {
+            "Run the command from an agent on the machine that runs Hide, or leave out --machine"
+        }
+        "intent_conflict" => {
+            "Use a new intent, or repeat the request this intent was first used for"
+        }
+        _ => "Check the current agent pane and retry the same intent",
+    }
+}
+
+/// The reason and next action of a refused command. A refusal that names the
+/// devices the caller could have used says so in its next action, and its
+/// reason stays the code.
+fn refusal_answer(reason: String, next_action: &'static str) -> (String, String) {
+    match herdr_core::coordination::split_refusal(&reason) {
+        (code, Some("")) => (
+            code.to_owned(),
+            "No other device is connected; connect one in Settings > Devices, then retry"
+                .to_owned(),
+        ),
+        (code, Some(connected)) => (
+            code.to_owned(),
+            format!("Use one of the connected device ids with --machine: {connected}"),
+        ),
+        (_, None) => (reason, next_action.to_owned()),
     }
 }
 
@@ -997,6 +1037,11 @@ enum ScopedRequest {
     Delivery(herdr_core::delivery::Command, Option<String>),
     /// `hide factory`: the Factory engine answers; it needs no shell.
     Factory(hide_factory::Command, Option<String>),
+    /// A readonly pane execution check, with no renderer or Factory startup.
+    FactoryQuestionGuard {
+        session: String,
+        runtime: String,
+    },
     /// `hide links`: a read of the link record, which needs no shell.
     Links(herdr_core::links::query::LinksQuery),
 }
@@ -1007,7 +1052,10 @@ impl ScopedRequest {
     fn needs_renderer(&self) -> bool {
         !matches!(
             self,
-            Self::Delivery(..) | Self::Factory(..) | Self::Links(..)
+            Self::Delivery(..)
+                | Self::Factory(..)
+                | Self::FactoryQuestionGuard { .. }
+                | Self::Links(..)
         )
     }
 }
@@ -1020,6 +1068,7 @@ async fn scoped_client_loop(
     connection: u64,
     token: String,
     one_shot: bool,
+    source: Option<(String, hide_node::ssh::RemoteHost)>,
 ) {
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
@@ -1100,6 +1149,25 @@ async fn scoped_client_loop(
                                 value["caller_pane"].as_str().map(str::to_owned),
                             )
                         }),
+                        Some("factory_question_guard") => {
+                            let session = value["session"].as_str().filter(|session| {
+                                !session.is_empty()
+                                    && session.len() <= 256
+                                    && !session.chars().any(char::is_control)
+                            });
+                            let runtime = value["runtime"]
+                                .as_str()
+                                .filter(|runtime| matches!(*runtime, "claude-code" | "codex"));
+                            match (session, runtime) {
+                                (Some(session), Some(runtime)) => {
+                                    Some(ScopedRequest::FactoryQuestionGuard {
+                                        session: session.to_owned(),
+                                        runtime: runtime.to_owned(),
+                                    })
+                                }
+                                _ => None,
+                            }
+                        }
                         _ => None,
                     };
                     if command.is_none()
@@ -1135,12 +1203,23 @@ async fn scoped_client_loop(
                         let herdr_socket = state.herdr_socket.clone();
                         let query_token = token.clone();
                         let command_request_id = request_id.clone();
+                        // Includes executor queueing, pane proof, core admission,
+                        // fresh native read and engine reply. No stage renews it.
+                        let guard_deadline = std::time::Instant::now() + Duration::from_secs(2);
+                        let command_source = source.clone();
                         let outcome = if let Some(Err((reason, next_action))) = &relay_slot {
                             Ok(Err(((*reason).to_owned(), *next_action)))
                         } else {
                             tokio::task::spawn_blocking(move || {
-                            let cap = registry
-                                .validate(&query_token, herdr_socket.as_deref(), &core)
+                            let cap = if matches!(&command, ScopedRequest::FactoryQuestionGuard { .. }) {
+                                let binding = registry.get(&query_token).ok_or(("credential_expired".to_owned(), "Continue the tool call"))?;
+                                if !binding.question_guard_source_matches(command_source.as_ref().map(|(node, link)| (node.as_str(), link))) {
+                                    return Err(("factory_guard_connection_mismatch".to_owned(), "Continue the tool call"));
+                                }
+                                registry.validate_question_guard(&query_token, herdr_socket.as_deref(), &core, guard_deadline)
+                            } else {
+                                registry.validate(&query_token, herdr_socket.as_deref(), &core)
+                            }
                                 .map_err(|reason| (reason.to_owned(), crate::pane_auth::refusal_next_action(reason)))?;
                             if command.needs_renderer() && renderers.load(Ordering::SeqCst) == 0 {
                                 return Err((
@@ -1149,6 +1228,21 @@ async fn scoped_client_loop(
                                 ));
                             }
                             let result = match command {
+                                ScopedRequest::FactoryQuestionGuard { session, runtime } => {
+                                    let deny = core.prepare_factory_question_guard(
+                                        &cap.context.device_id, &cap.pane_id, &cap.context,
+                                        session, runtime,
+                                        cap.question_guard_terminal().ok_or(("agent_pane_required".to_owned(), "Continue the tool call"))?.to_owned(),
+                                        guard_deadline,
+                                    ).and_then(|prepared| prepared.run()).map_err(|code| {
+                                        herdr_core::diagnostic!(json!({"component":"factory","kind":"question_guard.unavailable","pane":cap.pane_id,"reason":code}));
+                                        (code, "Continue the tool call")
+                                    })?;
+                                    if registry.get(&query_token).is_none() || std::time::Instant::now() >= guard_deadline {
+                                        return Err(("factory_guard_expired".to_owned(), "Continue the tool call"));
+                                    }
+                                    json!({"deny":deny})
+                                }
                                 ScopedRequest::BrowserConnect(display_id) => {
                                     if desktop_renderers.load(Ordering::SeqCst) == 0 {
                                         return Err(("browser_unsupported".to_owned(), "Open the Hide desktop app and retry"));
@@ -1321,6 +1415,7 @@ async fn scoped_client_loop(
                                 json!({"type":"workspace_result","request_id":request_id,"ok":true,"result":result})
                             }
                             Ok(Err((reason, next_action))) => {
+                                let (reason, next_action) = refusal_answer(reason, next_action);
                                 json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":reason,"next_action":next_action})
                             }
                             Err(_) => {
@@ -3325,6 +3420,33 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refusal that lists the devices the caller could have named answers
+    /// with that list; one without a list keeps the static advice.
+    #[test]
+    fn a_device_refusal_names_what_the_caller_can_do() {
+        let reason = "machine_unknown\u{1f}mini, studio".to_owned();
+        let (code, next) = refusal_answer(reason, delivery_next_action("machine_unknown"));
+        assert_eq!(code, "machine_unknown");
+        assert!(next.ends_with("--machine: mini, studio"), "{next}");
+        let (_, none) = refusal_answer(
+            "machine_unknown\u{1f}".to_owned(),
+            delivery_next_action("machine_unknown"),
+        );
+        assert!(none.contains("No other device is connected"), "{none}");
+        for code in [
+            "spawn_busy",
+            "machine_not_permitted",
+            "machine_unavailable",
+            "repository_unavailable",
+            "agent_not_installed",
+            "intent_conflict",
+        ] {
+            let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
+            assert_eq!(reason, code);
+            assert_ne!(next, delivery_next_action("other"), "{code}");
+        }
+    }
 
     /// A caller refused for lacking an agent pane is told where to run the
     /// command; every other delivery refusal keeps the retry advice.

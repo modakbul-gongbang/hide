@@ -493,6 +493,42 @@ impl Core {
         Ok(factory.prepare(caller, command))
     }
 
+    /// Prepare one read against an already-open Factory, with pane-only
+    /// authority and a deadline supplied by the authenticated server route.
+    #[allow(clippy::too_many_arguments)] // each identity fact is supplied by the authenticated pane boundary
+    pub fn prepare_factory_question_guard(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        session: &str,
+        agent_runtime: &str,
+        terminal_id: &str,
+        deadline: std::time::Instant,
+    ) -> Result<crate::factory::PreparedQuestionGuard, String> {
+        if !check_owner_thread(self, "factory.question_guard")
+            || std::time::Instant::now() >= deadline
+        {
+            return Err("factory_guard_expired".into());
+        }
+        let factory = self.factory.as_ref().ok_or("factory_guard_unavailable")?;
+        let runtime = self.runtime.try_lock().map_err(|_| "factory_guard_busy")?;
+        let caller = runtime.factory_question_caller(
+            device,
+            caller,
+            expected,
+            session,
+            agent_runtime,
+            terminal_id,
+        )?;
+        drop(runtime);
+        Ok(factory.prepare_question_guard(
+            caller,
+            std::sync::Arc::downgrade(&self.runtime),
+            deadline,
+        ))
+    }
+
     pub fn prepare_delivery_human(&self) -> Result<crate::delivery::worker::PreparedHuman, String> {
         if !check_owner_thread(self, "delivery.human.prepare") {
             return Err("delivery_unavailable".into());

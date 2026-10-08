@@ -22,9 +22,9 @@
       "titles"
     ],
     "factory": {
-      "direct_ask": "unconfirmed",
-      "user_turn": "unconfirmed",
-      "turn_end_and_answer": "unconfirmed",
+      "direct_ask": "available",
+      "user_turn": "available",
+      "turn_end_and_answer": "available",
       "startup_guidance": "available",
       "resume": "available",
       "next_prompt_letters": "available"
@@ -53,7 +53,7 @@
       "titles"
     ],
     "factory": {
-      "direct_ask": "unconfirmed",
+      "direct_ask": "available",
       "user_turn": "available",
       "turn_end_and_answer": "available",
       "startup_guidance": "available",

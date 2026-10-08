@@ -1,10 +1,13 @@
-# The remote mailbox crate-boundary lane (hided/tests/remote_delivery.rs,
+# The remote mailbox crate-boundary lane (hided/tests/it/remote_delivery.rs,
 # docs/TESTING.md), with the terminal attach children's real-process test
 # beside it on the same pinned Herdr, as one reusable job: the candidate CLI binaries, two private
 # pinned Herdr servers and a loopback SSH server. `pr.yml` runs it on Linux for
 # a change to the crates it builds, and `nightly.yml` on macOS, the system of
 # the usual remote device: the fixture signs its staged binaries there and
-# serves SFTP from the system's own server.
+# serves SFTP from the system's own server. It also runs the one other hided
+# test that needs the pinned Herdr beside a real daemon and no SSH
+# (hided/tests/it/held_letter_notice.rs), because this is the lane that already
+# fetches the pinned binary for a change to `hided` or `herdr-core`.
 name: remote mailbox lane
 
 on:
@@ -74,16 +77,16 @@ jobs:
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^(remote_delivery|held_letter_notice)::/)' --run-ignored only
       - name: Terminal attach children end with what started them
-        # hided/tests/terminal_children.rs (PRD core-host-node-terminal B20):
+        # hided/tests/it/terminal_children.rs (PRD core-host-node-terminal B20):
         # a SIGKILLed hided and a dropped device link each leave no
         # `herdr terminal session` running, on the pinned Herdr this lane
         # already fetched.
         timeout-minutes: 5
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test terminal_children --run-ignored only
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^terminal_children::/)' --run-ignored only
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true

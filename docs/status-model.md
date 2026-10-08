@@ -101,10 +101,16 @@ Regression owners: `a_quiet_root_waits_on_busy_descendants_in_working_until_ever
 
 Activity and completion come only from Herdr's `agent_status`: `working` is Working, `idle` and `done` are stopped, `done` alone reports a completion, and any other value reads as unknown rather than idle.
 No pane token is read for either.
-Demand has two sources:
+Demand has these sources:
 
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
+- A native unanswered Claude `AskUserQuestion` or Codex `request_user_input` is a question even with summaries off.
+  The current-session/current-state read carries the optional `user_turn` row fact, with `kind: question|plan_approval` and optional `content: {text, choices, truncated}`.
+  Text is capped at 8 KiB, choices at eight and each choice at 256 UTF-8 bytes; cuts preserve character boundaries and set `truncated`.
+  A correlated native result, a later human turn or an abort clears the pending question.
+  Missing content remains absent, and a failed, incomplete or older-state read publishes no structured fact; the independent letter hold stays unknown rather than assuming an answer.
+  Native calls are bounded to eight per turn with 256-byte identities; exceeding the bound fails the read instead of dropping a pending question.
 - Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
 - Approval is also a plan waiting for the operator's approval that Herdr reads as an ordinary stop, Codex's "Implement this plan?" (PRD codex-plan-approval-hold).
   The core reads it from the session file, not the screen: the label worker's session read folds the agent's turn records into a turn tracker (`hide-session/src/turns.rs`), and a plan-mode turn that proposed a plan and finished, with no later turn or person's message, waits.
@@ -121,13 +127,13 @@ Whether the operator has read a demand is Hide's own record, never Herdr's tab-s
 
 | Group | Membership |
 | --- | --- |
-| Needs You | An unread demand - question, approval or error - or a pane Herdr reports as blocked, or whose plan waits for approval, right now |
+| Needs You | An unread demand - question, approval or error - or a pane Herdr reports as blocked, or whose native question or plan waits for the operator, right now |
 | Done | No demand, stopped, completion reported, and unread |
 | Working | Running, or a quiet root waiting on a busy descendant |
 | Seen | Everything else: ready idle, read demands, read completions, unknown |
 
-A blocked pane, or one whose plan waits for approval, stays in Needs You whether or not it has been read.
-The approval prompt is still on screen waiting, so it leaves the group when the prompt is answered, not when it is looked at.
+A blocked pane, or one whose native question or plan waits for the operator, stays in Needs You whether or not it has been read.
+The prompt is still waiting, so it leaves the group when answered rather than when looked at.
 
 Done is deliberately separate from Needs You: finished-unseen is "look when you have a moment", an unread demand is "act now".
 
@@ -172,6 +178,7 @@ A changed parent session cannot adopt the previous session's children, and an ab
 A missing or unknown remote machine identity leaves the child a root until its matching device connects.
 The operating-system identity is the platform UUID on macOS and the machine-id on Linux; cloned machines need distinct identities before they can safely resolve different parents.
 `hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship in the core's coordination ledger.
+A delegated `hide agent spawn --machine <device id>` child is a remote child of a local parent: its tokens are written on the device's pane and `parent_machine` names the spawner's machine, the same resolution as any cross-machine relationship above.
 The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
 `wire.rs` and `agent_state/axes.rs` remain the readers of this contract.
 A connected device's immutable machine identity comes from its consented helper's connection greeting, outside the runtime mutex; an unavailable identity leaves the parent unresolved and records a diagnostic.

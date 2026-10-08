@@ -140,6 +140,7 @@ pub(crate) fn send(
         bell_attempts: Some(0),
         human_notified: false,
         watch_warning: None,
+        answer_wait_ended: None,
     };
     ledger.letters.push(letter.clone());
     Ok(letter)
@@ -425,6 +426,7 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ledger::AnswerWaitEnd;
     use super::*;
     fn actor(id: &str) -> Actor {
         Actor {
@@ -1594,5 +1596,252 @@ mod tests {
         assert!(!ledger.cleanup(RETENTION_MS));
         assert!(ledger.cleanup(RETENTION_MS + 1));
         assert!(ledger.letters.is_empty());
+    }
+    /// A request the recipient took in and has not answered.
+    fn awaiting_reply(
+        ledger: &mut Ledger,
+        from: &Actor,
+        to: &Actor,
+        intent: &str,
+        at: u64,
+    ) -> Letter {
+        let letter = send(ledger, from, to, intent, "body", "request", None, at).unwrap();
+        apply(
+            ledger,
+            to,
+            None,
+            &Command::Confirm {
+                ids: vec![letter.id.clone()],
+            },
+            at,
+        )
+        .unwrap();
+        ledger
+            .letters
+            .iter()
+            .find(|l| l.id == letter.id)
+            .unwrap()
+            .clone()
+    }
+
+    fn letter_of<'a>(ledger: &'a Ledger, id: &str) -> &'a Letter {
+        ledger.letters.iter().find(|l| l.id == id).unwrap()
+    }
+
+    #[test]
+    fn an_unanswered_request_stops_waiting_exactly_at_the_deadline_and_says_why() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let sent = 1_000;
+        let letter = awaiting_reply(&mut ledger, &a, &b, "ask", sent);
+        let deadline = sent + super::super::ANSWER_WAIT_MS;
+        assert!(!ledger.end_overdue_answer_waits(deadline - 1));
+        let open = letter_of(&ledger, &letter.id);
+        assert!(open.waiting_answer && open.open() && open.answer_wait_ended.is_none());
+        assert!(ledger.end_overdue_answer_waits(deadline));
+        let shown = apply(
+            &mut ledger,
+            &a,
+            None,
+            &Command::Show {
+                id: letter.id.clone(),
+            },
+            deadline,
+        )
+        .unwrap();
+        assert_eq!(shown["waiting_answer"], false);
+        assert_eq!(shown["answer_wait_ended"], "deadline");
+        assert_eq!(shown["finished_at_unix_ms"], deadline);
+        assert_eq!(shown["state"], "delivered");
+        assert!(!letter_of(&ledger, &letter.id).open());
+        ledger.validate().unwrap();
+        // A second pass neither reports a close nor moves the finish time.
+        assert!(!ledger.end_overdue_answer_waits(deadline + 1));
+        assert_eq!(
+            letter_of(&ledger, &letter.id).finished_at_unix_ms,
+            Some(deadline)
+        );
+    }
+
+    #[test]
+    fn the_deadline_leaves_answered_cancelled_and_undelivered_letters_alone() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let answered = awaiting_reply(&mut ledger, &a, &b, "answered", 1);
+        apply(
+            &mut ledger,
+            &b,
+            None,
+            &Command::Reply {
+                id: answered.id.clone(),
+                intent: "answer".into(),
+                body: "done".into(),
+            },
+            2,
+        )
+        .unwrap();
+        let cancelled = awaiting_reply(&mut ledger, &a, &b, "cancelled", 1);
+        apply(
+            &mut ledger,
+            &a,
+            None,
+            &Command::Cancel {
+                id: cancelled.id.clone(),
+            },
+            2,
+        )
+        .unwrap();
+        let unreceived = send(
+            &mut ledger,
+            &a,
+            &b,
+            "unreceived",
+            "body",
+            "request",
+            None,
+            1,
+        )
+        .unwrap();
+        let late = 1 + 2 * super::super::ANSWER_WAIT_MS;
+        assert!(ledger.expire(late));
+        assert!(!ledger.end_overdue_answer_waits(late));
+        for (id, state) in [
+            (&answered.id, State::Delivered),
+            (&cancelled.id, State::Cancelled),
+            (&unreceived.id, State::Undelivered),
+        ] {
+            let letter = letter_of(&ledger, id);
+            assert_eq!(letter.state, state);
+            assert!(letter.answer_wait_ended.is_none());
+        }
+    }
+
+    #[test]
+    fn ending_a_registration_ends_the_waits_it_sent_or_received_and_no_others() {
+        let (a, b, c) = (actor("a"), actor("b"), actor("c"));
+        let mut ledger = Ledger::default();
+        let to_b = awaiting_reply(&mut ledger, &a, &b, "to-b", 1);
+        let from_b = awaiting_reply(&mut ledger, &b, &c, "from-b", 1);
+        let elsewhere = awaiting_reply(&mut ledger, &a, &c, "elsewhere", 1);
+        let report = send(&mut ledger, &a, &b, "report", "body", "report", None, 1).unwrap();
+        assert!(ledger.end_answer_waits_of(&b, 9));
+        for id in [&to_b.id, &from_b.id] {
+            let letter = letter_of(&ledger, id);
+            assert!(!letter.waiting_answer && !letter.open());
+            assert_eq!(letter.answer_wait_ended, Some(AnswerWaitEnd::PartyEnded));
+            assert_eq!(letter.finished_at_unix_ms, Some(9));
+        }
+        assert!(letter_of(&ledger, &elsewhere.id).waiting_answer);
+        assert!(letter_of(&ledger, &report.id).answer_wait_ended.is_none());
+        assert!(!ledger.end_answer_waits_of(&b, 10));
+        ledger.validate().unwrap();
+    }
+
+    #[test]
+    fn only_the_exact_pane_device_and_session_that_ended_closes_a_wait() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        awaiting_reply(&mut ledger, &a, &b, "ask", 1);
+        let restarted_session = Actor {
+            session: Some("another-session".into()),
+            ..b.clone()
+        };
+        let other_device = Actor {
+            device_id: "another-device".into(),
+            ..b.clone()
+        };
+        let other_pane = Actor {
+            pane_id: "another-pane".into(),
+            ..b.clone()
+        };
+        let renamed_only = Actor {
+            name: "b".into(),
+            pane_id: "elsewhere".into(),
+            ..b.clone()
+        };
+        for stranger in [
+            &restarted_session,
+            &other_device,
+            &other_pane,
+            &renamed_only,
+        ] {
+            assert!(!ledger.end_answer_waits_of(stranger, 5), "{stranger:?}");
+        }
+        assert!(ledger.letters[0].waiting_answer);
+        assert!(ledger.end_answer_waits_of(&b, 5));
+    }
+
+    #[test]
+    fn a_request_not_yet_taken_in_is_left_to_the_delivery_deadline_when_its_party_ends() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let letter = send(&mut ledger, &a, &b, "ask", "body", "request", None, 1).unwrap();
+        assert!(!ledger.end_answer_waits_of(&a, 5));
+        assert!(!ledger.end_answer_waits_of(&b, 5));
+        let pending = letter_of(&ledger, &letter.id);
+        assert!(pending.waiting_answer && pending.answer_wait_ended.is_none());
+        // Never collected, it ends as undelivered, as before this rule.
+        assert!(ledger.expire(1 + super::super::DELIVERY_EXPIRY_MS));
+        let undelivered = letter_of(&ledger, &letter.id);
+        assert_eq!(undelivered.state, State::Undelivered);
+        assert!(!undelivered.open() && undelivered.answer_wait_ended.is_none());
+        ledger.validate().unwrap();
+    }
+
+    #[test]
+    fn a_full_mailbox_accepts_a_letter_again_once_the_waits_end() {
+        let (a, b, c) = (actor("a"), actor("b"), actor("c"));
+        let mut ledger = Ledger::default();
+        for index in 0..OPEN_LIMIT {
+            awaiting_reply(&mut ledger, &a, &b, &format!("open-{index}"), 1);
+        }
+        let refused = |ledger: &mut Ledger, intent: &str| {
+            send(ledger, &a, &c, intent, "body", "request", None, 2)
+        };
+        assert_eq!(refused(&mut ledger, "first").unwrap_err(), "capacity");
+        ledger.end_answer_waits_of(&b, 2);
+        assert!(refused(&mut ledger, "second").is_ok());
+        // The cap itself is unchanged: filling it again is refused again.
+        for index in 1..OPEN_LIMIT {
+            refused(&mut ledger, &format!("again-{index}")).unwrap();
+        }
+        assert_eq!(refused(&mut ledger, "last").unwrap_err(), "capacity");
+    }
+
+    #[test]
+    fn a_ledger_written_before_the_field_loads_and_only_old_waits_close() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let now = 100 * super::super::ANSWER_WAIT_MS;
+        let old = awaiting_reply(&mut ledger, &a, &b, "old", now - 50 * 60 * 60_000);
+        let fresh = awaiting_reply(&mut ledger, &a, &b, "fresh", now - 12 * 60 * 60_000);
+        let mut written = serde_json::to_value(&ledger).unwrap();
+        for letter in written["letters"].as_array_mut().unwrap() {
+            letter.as_object_mut().unwrap().remove("answer_wait_ended");
+        }
+        let mut loaded: Ledger = serde_json::from_value(written).unwrap();
+        loaded.validate().unwrap();
+        loaded.expire(now);
+        assert!(loaded.end_overdue_answer_waits(now));
+        assert_eq!(
+            letter_of(&loaded, &old.id).answer_wait_ended,
+            Some(AnswerWaitEnd::Deadline)
+        );
+        assert!(letter_of(&loaded, &fresh.id).waiting_answer);
+        loaded.validate().unwrap();
+    }
+
+    #[test]
+    fn a_waiting_letter_cannot_carry_a_reason_for_having_stopped() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        let letter = awaiting_reply(&mut ledger, &a, &b, "ask", 1);
+        ledger
+            .letters
+            .iter_mut()
+            .find(|l| l.id == letter.id)
+            .unwrap()
+            .answer_wait_ended = Some(AnswerWaitEnd::Deadline);
+        assert_eq!(ledger.validate().unwrap_err(), "ledger_unavailable");
     }
 }

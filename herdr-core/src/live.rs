@@ -1134,7 +1134,7 @@ fn prepare_close_replacement(
             wire::created_tab(value)?.0
         }
     };
-    let snapshot =
+    let mut snapshot =
         fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
     if !snapshot
         .tabs
@@ -1143,7 +1143,34 @@ fn prepare_close_replacement(
     {
         return Err("replacement shell is not confirmed in the primary workspace".into());
     }
+    place_replacement_at_its_checkout(&mut snapshot, &tab_id, &context.checkout_path);
     Ok((tab_id, snapshot))
+}
+
+/// Herdr reads a new pane's cwd off its process, which still has the
+/// server's own until the shell has started in the folder it was asked for,
+/// so a snapshot read right after `tab.create` can name the wrong folder
+/// (`SessionReplica::await_cwd` waits it out for the event stream). This
+/// snapshot is ingested at once to place the shell beside the tab it
+/// replaces, and a pane at the server's folder lands outside the checkout,
+/// where nothing can place it; the folder the shell was created at is the
+/// one it is placed by.
+fn place_replacement_at_its_checkout(
+    snapshot: &mut SessionSnapshotPayload,
+    tab_id: &str,
+    checkout_path: &str,
+) {
+    let replacement_panes = snapshot
+        .layouts
+        .iter()
+        .filter(|layout| layout.tab_id == tab_id)
+        .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.as_str()))
+        .collect::<Vec<_>>();
+    for pane in &mut snapshot.panes {
+        if replacement_panes.contains(&pane.pane_id.as_str()) {
+            pane.cwd = Some(checkout_path.to_owned());
+        }
+    }
 }
 
 fn run_close_effect(

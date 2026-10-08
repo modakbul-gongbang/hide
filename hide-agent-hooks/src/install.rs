@@ -10,8 +10,9 @@
 //! - installing twice converges instead of duplicating (PRD B25).
 
 use std::fs;
-use std::io::ErrorKind;
-use std::path::Path;
+use std::io::{ErrorKind, Read};
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -162,8 +163,9 @@ pub fn install(
     helper: &Path,
 ) -> Result<InstallOutcome, InstallFailure> {
     let path = runtime.config_path(home);
-    let mut document = read_document(&path)?.unwrap_or_else(|| Value::Object(Map::new()));
-    let before = serde_json::to_string(&document).unwrap_or_default();
+    let mut document =
+        read_document(&path)?.unwrap_or_else(|| HookDocument::new(Value::Object(Map::new())));
+    let before = document.value.clone();
     let hooks = hooks_object_mut(&mut document, &path)?;
     let mut preserved = 0usize;
     for event in HookEvent::ALL {
@@ -171,12 +173,11 @@ pub fn install(
         // Remove Hide's own entries first so a second install converges on
         // one entry per event rather than appending another
         // (engineering rule 11, PRD B25).
-        groups.retain(|group| group_marker_version(group).is_none());
+        strip_owned(groups);
         preserved += groups.len();
         groups.push(hook_group(helper, runtime, event));
     }
-    let after = serde_json::to_string(&document).unwrap_or_default();
-    if before == after {
+    if before == document.value {
         return Ok(InstallOutcome {
             changed: false,
             preserved_entries: preserved,
@@ -207,11 +208,10 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
         let Some(groups) = value.as_array_mut() else {
             continue;
         };
-        let before = groups.len();
-        groups.retain(|group| group_marker_version(group).is_none());
-        removed += before - groups.len();
+        let taken = strip_owned(groups);
+        removed += taken;
         preserved += groups.len();
-        if groups.is_empty() {
+        if taken != 0 && groups.is_empty() {
             emptied.push(event.clone());
         }
     }
@@ -219,7 +219,7 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
         // Only an event Hide emptied is dropped; an event another tool left
         // empty was already empty before this ran.
         if HookEvent::parse(&event).is_some() {
-            hooks.remove(&event);
+            hooks.shift_remove(&event);
         }
     }
     if removed == 0 {
@@ -266,12 +266,14 @@ fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
 /// trust step read it here, so an event that has a matcher is written and
 /// recognised as Hide's by the same line.
 ///
-/// `PreToolUse` selects the shell tool, which both runtimes name `Bash`
-/// (observed on Claude Code 2.1.292 and codex-cli 0.160.0, 2026-10-07), so
-/// the helper does not start for a file edit or a search.
-pub(crate) fn hook_matcher(_runtime: AgentRuntime, event: HookEvent) -> Option<&'static str> {
-    match event {
-        HookEvent::PreToolUse => Some("Bash"),
+/// Select only shell spawning and native questions. Pinned Codex 0.160.1
+/// sends real plan-mode request_user_input through PreToolUse as well.
+pub(crate) fn hook_matcher(runtime: AgentRuntime, event: HookEvent) -> Option<&'static str> {
+    match (runtime, event) {
+        (AgentRuntime::ClaudeCode, HookEvent::PreToolUse) => {
+            Some("Bash|AskUserQuestion|ExitPlanMode")
+        }
+        (AgentRuntime::Codex, HookEvent::PreToolUse) => Some("Bash|request_user_input"),
         _ => None,
     }
 }
@@ -451,6 +453,26 @@ fn group_marker_version(group: &Value) -> Option<u32> {
         .min()
 }
 
+fn hook_marker_version(hook: &Value) -> Option<u32> {
+    hook_texts(hook).filter_map(marker_version_in).min()
+}
+
+/// A group can belong to several writers. Only a marked command is Hide's.
+fn strip_owned(groups: &mut Vec<Value>) -> usize {
+    let mut removed = 0;
+    groups.retain_mut(|group| {
+        let Some(hooks) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+            return true;
+        };
+        let before = hooks.len();
+        hooks.retain(|hook| hook_marker_version(hook).is_none());
+        let taken = before - hooks.len();
+        removed += taken;
+        taken == 0 || !hooks.is_empty()
+    });
+    removed
+}
+
 fn owned_versions(groups: &[Value]) -> Vec<u32> {
     groups.iter().filter_map(group_marker_version).collect()
 }
@@ -462,7 +484,9 @@ fn installed_helper(hooks: &Map<String, Value>) -> Option<String> {
         .filter_map(Value::as_array)
         .flatten()
         .filter(|group| group_marker_version(group).is_some())
-        .filter_map(|group| group.get("hooks")?.as_array()?.first())
+        .filter_map(|group| group.get("hooks")?.as_array())
+        .flatten()
+        .filter(|hook| hook_marker_version(hook).is_some())
         .find_map(|hook| {
             hook_texts(hook)
                 .filter(|text| text.contains('\''))
@@ -479,22 +503,92 @@ pub fn installed_helper_path(runtime: AgentRuntime, home: &Path) -> Option<Strin
     installed_helper(hooks)
 }
 
-pub(crate) fn read_document(path: &Path) -> Result<Option<Value>, InstallFailure> {
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(InstallFailure::Unreadable {
-                path: path.display().to_string(),
-                detail: error.to_string(),
-            });
+/// The common read/modify/write boundary for instrumented and guidance hooks.
+/// Keep the source alongside the semantic value until replacement; rereading
+/// only after mutation cannot distinguish an intervening writer's changes.
+pub(crate) struct HookDocument {
+    value: Value,
+    source: Option<String>,
+    target: Option<PathBuf>,
+}
+
+impl HookDocument {
+    pub(crate) fn new(value: Value) -> Self {
+        Self {
+            value,
+            source: None,
+            target: None,
         }
+    }
+}
+
+impl Deref for HookDocument {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        &self.value
+    }
+}
+
+impl DerefMut for HookDocument {
+    fn deref_mut(&mut self) -> &mut Value {
+        &mut self.value
+    }
+}
+
+impl Serialize for HookDocument {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.value.serialize(serializer)
+    }
+}
+
+// Configuration reads and all source/tree allocations have a finite input
+// bound, in addition to serde_json's nesting limit. Oversized files are left
+// untouched and reported through the existing installation failure surface.
+const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
+
+fn read_source(path: &Path) -> std::io::Result<Option<String>> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut raw = String::new();
+    file.take(MAX_DOCUMENT_BYTES + 1).read_to_string(&mut raw)?;
+    if raw.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(std::io::Error::other(
+            "the hook file exceeds the 16 MiB configuration limit",
+        ));
+    }
+    Ok(Some(raw))
+}
+
+pub(crate) fn read_document(path: &Path) -> Result<Option<HookDocument>, InstallFailure> {
+    let unreadable = |error: std::io::Error| InstallFailure::Unreadable {
+        path: path.display().to_string(),
+        detail: error.to_string(),
+    };
+    let target = match hide_platform::fs::identity::canonical(path) {
+        Ok(target) => target,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unreadable(error)),
+    };
+    let Some(raw) = read_source(&target).map_err(unreadable)? else {
+        return Err(unreadable(std::io::Error::other(
+            "the hook file disappeared while Hide was reading it; retry",
+        )));
     };
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    serde_json::from_str(&raw)
-        .map(Some)
+    crate::lossless_json::parse(&raw)
+        .map(|value| {
+            Some(HookDocument {
+                value,
+                source: Some(raw),
+                target: Some(target),
+            })
+        })
         .map_err(|error| InstallFailure::Unparsable {
             path: path.display().to_string(),
             detail: error.to_string(),
@@ -562,23 +656,67 @@ fn event_array_mut<'a>(
 /// tokens, and a new one is 0600. A settings file that is a link, as a
 /// dotfile manager makes it, is written where the link leads, so the link
 /// stays the operator's.
-pub(crate) fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
+pub(crate) fn write_document(path: &Path, document: &HookDocument) -> Result<(), InstallFailure> {
     let failure = |detail: String| InstallFailure::NotWritable {
         path: path.display().to_string(),
         detail,
     };
     let target = match hide_platform::fs::identity::canonical(path) {
         Ok(real) => real,
-        Err(error) if error.kind() == ErrorKind::NotFound => path.to_path_buf(),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+                return Err(failure(
+                    "the settings symlink has no existing target; repair it and retry".to_owned(),
+                ));
+            }
+            path.to_path_buf()
+        }
         Err(error) => return Err(failure(error.to_string())),
     };
+    if document
+        .target
+        .as_ref()
+        .is_some_and(|original| original != &target)
+    {
+        return Err(failure(
+            "the settings symlink changed while Hide was editing it; retry".to_owned(),
+        ));
+    }
+    let serialized = if let Some(source) = &document.source {
+        crate::lossless_json::rewrite(source, &document.value)
+            .map_err(|error| failure(error.to_string()))?
+    } else {
+        let mut serialized = serde_json::to_string_pretty(&document.value)
+            .map_err(|error| failure(error.to_string()))?;
+        serialized.push('\n');
+        serialized
+    };
+    if serialized.len() as u64 > MAX_DOCUMENT_BYTES {
+        return Err(failure(
+            "the edited hook file exceeds the 16 MiB configuration limit".to_owned(),
+        ));
+    }
+    // The kit already holds its account lock across this whole operation.
+    // This comparison also refuses an observed edit by a noncooperating
+    // writer, but is not an OS compare-and-swap against an external writer
+    // racing the atomic replacement after this check.
+    let current = read_source(&target).map_err(|error| failure(error.to_string()))?;
+    let unchanged = match (&document.source, &current) {
+        (Some(before), Some(current)) => before == current,
+        (None, current) => current
+            .as_ref()
+            .is_none_or(|source| source.trim().is_empty()),
+        _ => false,
+    };
+    if !unchanged {
+        return Err(failure(
+            "the hook file changed while Hide was editing it; retry".to_owned(),
+        ));
+    }
     let parent = target
         .parent()
         .ok_or_else(|| failure("the path has no parent directory".to_owned()))?;
     fs::create_dir_all(parent).map_err(|error| failure(error.to_string()))?;
-    let mut serialized =
-        serde_json::to_string_pretty(document).map_err(|error| failure(error.to_string()))?;
-    serialized.push('\n');
     hide_platform::fs::atomic::write_file(
         &target,
         serialized.as_bytes(),
@@ -591,6 +729,10 @@ pub(crate) fn write_document(path: &Path, document: &Value) -> Result<(), Instal
 #[cfg(test)]
 #[path = "install/byte_contract_tests.rs"]
 mod byte_contract_tests;
+
+#[cfg(test)]
+#[path = "install/source_conflict_tests.rs"]
+mod source_conflict_tests;
 
 #[cfg(test)]
 mod tests {
@@ -735,7 +877,7 @@ mod tests {
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
         assert!(session_start_command.contains("--memory-injection"));
-        assert!(session_start_command.contains("--source hide-subagents@6"));
+        assert!(session_start_command.contains("--source hide-subagents@7"));
         let guard = if cfg!(windows) {
             "if (Test-Path -LiteralPath '"
         } else {
@@ -747,9 +889,9 @@ mod tests {
         );
     }
 
-    /// The bytes a Mac or Linux machine's files carry. Changing them makes
+    /// The bytes version seven writes on Mac and Linux. Changing them makes
     /// every installed entry read as another build's, so they are pinned as
-    /// `origin/main` at 91877ba9 wrote them, quote escaping included.
+    /// independent literals, quote escaping included.
     #[test]
     fn the_posix_entry_is_exactly_what_macos_and_linux_have_installed() {
         let helper =
@@ -758,12 +900,12 @@ mod tests {
             (
                 AgentRuntime::ClaudeCode,
                 HookEvent::SessionStart,
-                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
+                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime claude-code --event SessionStart --memory-injection --source hide-subagents@7; fi","timeout":8}"#,
             ),
             (
                 AgentRuntime::Codex,
                 HookEvent::Stop,
-                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@6; fi","timeout":8}"#,
+                r#"{"type":"command","command":"if [ -x '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' ]; then exec '/Users/example/o'\\''brien/hide.app/Contents/Resources/hide-agent-hooks' hook --runtime codex --event Stop --memory-injection --source hide-subagents@7; fi","timeout":8}"#,
             ),
         ];
         for (runtime, event, bytes) in pinned {
@@ -794,7 +936,7 @@ mod tests {
         let quoted = "'C:\\Users\\example\\a b''c\\it\u{2019}\u{2019}s\\hide-agent-hooks.exe'";
         let guard = |runtime: &str| {
             format!(
-                "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} hook --runtime {runtime} --event Stop --memory-injection --source hide-subagents@6 }}"
+                "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} hook --runtime {runtime} --event Stop --memory-injection --source hide-subagents@7 }}"
             )
         };
         let codex = windows_hook(helper, AgentRuntime::Codex, HookEvent::Stop);
@@ -896,13 +1038,17 @@ mod tests {
     }"#;
 
     #[test]
-    fn the_guard_entry_selects_the_shell_tool_and_asks_for_no_memory() {
+    fn the_guard_entry_selects_shell_and_native_questions_and_asks_for_no_memory() {
         for runtime in AgentRuntime::ALL {
             let fixture = Fixture::new("guard-entry");
             install(runtime, fixture.home(), &helper(&fixture)).unwrap();
             let written = fixture.read(runtime);
             let group = &written["hooks"]["PreToolUse"][0];
-            assert_eq!(group["matcher"], "Bash", "{runtime:?}");
+            let expected = match runtime {
+                AgentRuntime::ClaudeCode => "Bash|AskUserQuestion|ExitPlanMode",
+                AgentRuntime::Codex => "Bash|request_user_input",
+            };
+            assert_eq!(group["matcher"], expected, "{runtime:?}");
             let hook = &group["hooks"][0];
             let text = hook_texts(hook).collect::<Vec<_>>().join(" ");
             assert!(text.contains("--event PreToolUse"), "{text}");

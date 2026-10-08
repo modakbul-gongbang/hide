@@ -292,7 +292,7 @@ pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
     let path = AgentRuntime::Codex.config_path(home);
     let document = crate::install::read_document(&path)
         .map_err(|failure| failure.message())?
-        .unwrap_or(Value::Null);
+        .unwrap_or_else(|| crate::install::HookDocument::new(Value::Null));
     let mut found = BTreeSet::new();
     let Some(events) = document.get("hooks").and_then(Value::as_object) else {
         return Ok(found);
@@ -422,7 +422,7 @@ struct Target {
 ///   a managed file can name the same command and are not Hide's write);
 /// - its event, handler type, command and matcher are, byte for byte, one
 ///   Hide writes for that event with this kit's helper (a command hook; the
-///   matcher `Bash` for `PreToolUse`, none for the rest), or one the kit
+///   matcher `Bash|request_user_input` for `PreToolUse`, none for the rest), or one the kit
 ///   recorded Herdr's own integration install writing (the one other tool
 ///   whose entries are here, and only through that record);
 /// - Codex does not trust it yet (`untrusted`, or `modified` after a change).
@@ -1069,9 +1069,10 @@ mod tests {
             hook.matcher = matcher.map(str::to_owned);
             select(&[hook])
         };
-        assert_eq!(with(Some("Bash")), ["guard"]);
+        assert_eq!(with(Some("Bash|request_user_input")), ["guard"]);
         // Codex hashes the matcher into the key, so an entry that runs Hide's
-        // command on every tool, or on another one, is not the entry Hide wrote.
+        // command on fewer tools, every tool, or another one is not what Hide wrote.
+        assert!(with(Some("Bash")).is_empty());
         assert!(with(None).is_empty());
         assert!(with(Some("*")).is_empty());
         assert!(with(Some("apply_patch")).is_empty());

@@ -66,6 +66,8 @@ mod pull_requests;
 mod recent_checkouts;
 #[path = "tests/recent_panes.rs"]
 mod recent_panes;
+#[path = "tests/remote_spawn.rs"]
+mod remote_spawn;
 #[path = "tests/repository_clone.rs"]
 mod repository_clone;
 #[path = "tests/session_navigation.rs"]

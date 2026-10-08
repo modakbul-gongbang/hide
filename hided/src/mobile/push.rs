@@ -303,6 +303,36 @@ pub fn mode_allows(mode: PushMode, renderers: usize) -> bool {
     }
 }
 
+/// Whether an operator notice can reach a phone at all, judged before any
+/// send is tried. `Ok` carries the signing key; `Err` is the first reason it
+/// cannot, as the code the log records: `no_vapid`, `mode_off`, `app_open`
+/// (app-closed mode with a desktop or web shell connected), `mobile_off` or
+/// `no_subscription`. The mode is checked before the Mobile switch because it
+/// is the setting an operator changes to receive these notices.
+pub fn notice_route(
+    vapid: Option<&Vapid>,
+    mode: PushMode,
+    mobile_on: bool,
+    renderers: usize,
+    subscriptions: usize,
+) -> Result<&Vapid, &'static str> {
+    let vapid = vapid.ok_or("no_vapid")?;
+    if !mode_allows(mode, renderers) {
+        return Err(if mode == PushMode::Off {
+            "mode_off"
+        } else {
+            "app_open"
+        });
+    }
+    if !mobile_on {
+        return Err("mobile_off");
+    }
+    if subscriptions == 0 {
+        return Err("no_subscription");
+    }
+    Ok(vapid)
+}
+
 /// The JSON a phone's service worker receives.
 pub fn payload(notice: &Notice, clear: &BTreeSet<AgentKey>) -> Value {
     json!({
@@ -649,5 +679,41 @@ mod tests {
         assert!(mode_allows(PushMode::AppClosed, 0));
         assert!(!mode_allows(PushMode::AppClosed, 1));
         assert!(mode_allows(PushMode::Always, 3));
+    }
+
+    #[test]
+    fn a_notice_goes_to_a_phone_only_when_every_condition_holds() {
+        let (vapid, _) = Vapid::generate().unwrap();
+        let route = |vapid, mode, mobile_on, renderers, subscriptions| {
+            notice_route(vapid, mode, mobile_on, renderers, subscriptions).map(|_| ())
+        };
+        assert_eq!(route(Some(&vapid), PushMode::Always, true, 3, 1), Ok(()));
+        assert_eq!(route(Some(&vapid), PushMode::AppClosed, true, 0, 1), Ok(()));
+        assert_eq!(route(None, PushMode::Always, true, 0, 1), Err("no_vapid"));
+        assert_eq!(
+            route(Some(&vapid), PushMode::Off, true, 0, 1),
+            Err("mode_off")
+        );
+        assert_eq!(
+            route(Some(&vapid), PushMode::AppClosed, true, 1, 1),
+            Err("app_open")
+        );
+        assert_eq!(
+            route(Some(&vapid), PushMode::Always, false, 0, 1),
+            Err("mobile_off")
+        );
+        assert_eq!(
+            route(Some(&vapid), PushMode::Always, true, 0, 0),
+            Err("no_subscription")
+        );
+        // Several causes at once report the first in the documented order.
+        assert_eq!(
+            route(Some(&vapid), PushMode::Off, false, 0, 0),
+            Err("mode_off")
+        );
+        assert_eq!(
+            route(Some(&vapid), PushMode::Always, false, 0, 0),
+            Err("mobile_off")
+        );
     }
 }

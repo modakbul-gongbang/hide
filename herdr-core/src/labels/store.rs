@@ -182,6 +182,10 @@ impl PaneRecord {
     pub(crate) fn turn_read(&self) -> Option<(u64, Option<Waiting>)> {
         Some((self.turns_seq?, self.turns.as_ref()?.waiting()))
     }
+
+    pub(crate) fn user_turn(&self) -> Option<(u64, hide_session::turns::UserTurnFact)> {
+        Some((self.turns_seq?, self.turns.as_ref()?.user_turn()?))
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

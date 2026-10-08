@@ -1,7 +1,7 @@
 # Build output and worktrees
 
-This document owns where build output goes and why: every build inside the worktree that asked for it, the release binaries at their fixed path, one Rust version named by the repository, and the machine's toolchain reused rather than reinstalled.
-The scripts named here are the executable authority; `scripts/tests/test_toolchain_reuse.py`, `test_rust_toolchain_pin.py`, `test_ci_gate_portability.py` and `test_verification_builds.py` assert the parts a workflow depends on.
+This document owns where build output goes and why: every build inside the worktree that asked for it, the release binaries at their fixed path, a debug build kept small, one Rust version named by the repository, and the machine's toolchain reused rather than reinstalled.
+The scripts named here are the executable authority; `scripts/tests/test_toolchain_reuse.py`, `test_rust_toolchain_pin.py`, `test_ci_gate_portability.py`, `test_verification_builds.py` and `test_debug_build_size.py` assert the parts a workflow depends on.
 
 ## One rule: build output lives in the worktree
 
@@ -29,10 +29,65 @@ Hide's own merged-worktree cleanup had grown a step that forked `bash` to comput
 
 `[profile.dev] incremental = false` in the workspace manifest is deliberate, not a leftover.
 An agent worktree is built a few times and discarded, which never repays an incremental cache; what it does instead is grow one per worktree, and those had reached 1.5 GB.
-Debug output is what makes a stale worktree expensive, because nothing strips it: a debug `hided` measures around 115 MB against 24 MB for the release binary.
-The workspace's own crates build with `debug = "line-tables-only"` (one `[profile.dev.package.<crate>]` entry per member): a panic's backtrace keeps its files and lines, and the rest of their debug info, which is most of what their build writes and links, is left out.
-Dependencies keep the default, so changing it would not invalidate the dependency builds CI restores from its cache.
-The one exception is the SSH transport's crates (`russh`, `russh-sftp` and the ciphers and hashes it runs), built at `opt-level = 3` in dev builds too: a development daemon installs its own debug `hided` on a device over SSH, and unoptimized those crates moved about 4 MiB a second, so the remote mailbox lane's device was not ready within its bound; optimized, its install takes about 6 seconds.
+Debug output is what makes a stale worktree expensive, because nothing strips it: a debug `hided` measures about 165 MB, with no debug info, against 24 MB for the release binary.
+The SSH transport's crates (`russh`, `russh-sftp` and the ciphers and hashes it runs) are built at `opt-level = 3` in dev builds too: a development daemon installs its own debug `hided` on a device over SSH, and unoptimized those crates moved about 4 MiB a second, so the remote mailbox lane's device was not ready within its bound; optimized, its install takes about 6 seconds.
+
+## A debug build is kept small
+
+A worktree's `target/` is paid once per worktree, so its size multiplies by the number of parallel worktrees; on 2026-10-08 five of them held 2 to 10 GB each, and the disk ran out under the builds of the others.
+Three causes made most of a debug build, and each has a rule below.
+`scripts/verify-cargo.sh hakari` in the rust lane and `scripts/tests/test_debug_build_size.py` in the policy lane fail a change that brings one back.
+
+The measurement started each time from an empty `target/` in a clone of `main` at `6472cb38`, on an Apple silicon Mac with the toolchain `rust-toolchain.toml` pins.
+It ran the commands one worktree's work runs, in order: `cargo test --locked --workspace --no-run`, `cargo build --locked -p hided --bins -p hide-agent-hooks --bin hide-agent-hooks` (`verify-cargo.sh cli`), `cargo test --locked -p herdr-core --no-run`, `cargo test --locked -p hide-platform -p hide-herdr-client --no-run` and `cargo clippy --locked --workspace --all-targets`, and read `du -sm target` after each.
+Each row adds its change to the row above it.
+
+| Build | After the workspace tests | After all five | Compile time, all five |
+| --- | --- | --- | --- |
+| Before | 4,968 MB | 8,086 MB | 173 s |
+| One feature set per dependency | 4,946 MB | 7,023 MB | 148 s |
+| No debug info | 3,095 MB | 4,192 MB | 136 s |
+| No member feature only tests turn on | 3,095 MB | 3,419 MB | 93 s |
+| One test binary per crate | 2,400 MB | 2,710 MB | 83 s |
+
+Before, the four commands after the first added 3.1 GB, nearly all of it crates built again for a different selection of members; now they add 310 MB, which is Clippy's own metadata for every crate and the small subtree of the two crates the OS contract lanes build alone.
+The workspace lists the same 3,326 tests (17 ignored) before and after.
+
+### Debug builds carry no debug info
+
+`[profile.dev] debug = false` covers the workspace's crates and every dependency.
+Debug info was most of what a debug build wrote: 214 of the 331 MB of object code in the 20 largest dependency libraries was DWARF, herdr-core's library was half DWARF even at `line-tables-only`, and on macOS any debug info keeps every object file a binary linked beside it in `target/debug/deps`, because the debugger reads the DWARF from there (2.2 GB of the build above).
+A panic still prints its file, line and column, which are compiled into the binary as data rather than read from debug info; a backtrace names its functions without lines.
+For a debugger or a backtrace with lines, turn debug info on for one build, `CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p <crate>` (`true` for variables too); every crate builds again under another hash beside the default build, so that worktree pays for both until it is removed.
+The change invalidates CI's cached dependency builds once; the first run on `main` after it rebuilds and saves them.
+
+### One feature set per dependency
+
+Cargo resolves a dependency's features from the members a command selects, so `-p herdr-core`, `--workspace` and `--bins` each built tokio, hyper and serde_json with a different set, under a different hash, and every crate above them again beside the first copy.
+`workspace-hack` is a member with no code whose manifest turns on, for each third-party crate, the union of the features any member asks of it; every other member depends on it, so every command resolves one set.
+[cargo-hakari](https://docs.rs/cargo-hakari) writes it from `.config/hakari.toml` for the systems the workspace is built and packaged for.
+Cargo's own `resolver.feature-unification = "workspace"` does the same without a crate, but it is unstable in the pinned toolchain ([rust-lang/cargo#14774](https://github.com/rust-lang/cargo/issues/14774)); once it is stable it replaces `workspace-hack`.
+
+After adding or changing a dependency or its features, run `cargo hakari generate` and `cargo hakari manage-deps --yes` and commit what they write; `bash scripts/install-hakari.sh` installs the pinned release.
+It writes each version as a semver range rather than the members' exact pins, since `Cargo.lock` decides the version either way, so a patch or minor bump such as Dependabot's weekly group leaves it unchanged; a major bump or a changed feature set needs the two commands.
+The rust lane runs `scripts/verify-cargo.sh hakari`, which fails when either command would change a file.
+`hide-platform` and `hide-herdr-client` stay off the shared set (`final-excludes`): the OS contract lanes build and test exactly those two, which would otherwise compile tokio, hyper and schemars for nothing.
+Their own dependencies still count toward the set, and a command that selects them alone builds their small subtree once more.
+
+hakari cannot unify a member's own features, so no member has a feature only a test build turns on.
+`hide-host`'s `call-log` and `hide-node`'s `test-support` were enabled by other members' dev-dependencies, which built those crates and every crate above them twice, once for a test build and once for a `--bins` build.
+The git call log is now a recorder the core's tests turn on at run time (`hide_host::worktrees::record_git_calls`), which records nothing in a running daemon, and `RemoteHost::detached` is always compiled.
+`test_debug_build_size.py` refuses a dev-dependency that sets a member's features.
+
+### One integration test binary per crate
+
+Cargo builds every `tests/*.rs` file as a binary of its own, and each one links the crate and all its dependencies: there were 56, and each of hided's thirteen took up to 177 MB.
+A crate's integration tests are modules of one binary, `tests/it/main.rs`, which declares each module and the fixtures they share (`hided/tests/it/support/`), so a new test file is a new `mod` line there.
+A module's tests are selected by name: `bash scripts/verify-cargo.sh test-scoped -p hided --test it handshake::` locally, and `-E 'binary_id(hided::it) & test(/^handshake::/)'` under nextest.
+A test that runs its own binary again to play a role names that test with its module, as in `--exact process::child_role`.
+`cargo test` runs a binary's tests as threads of one process, so the modules now share process-wide state they did not share before: every hide-ai test that sets a `FAKE_*` variable, or starts a fake that reads one, holds `FAKE_ENV` from `hide-ai/tests/it/main.rs`.
+nextest still runs each test in a process of its own.
+`test_debug_build_size.py` refuses a `tests/*.rs` file.
 
 ## The toolchain is never copied
 
@@ -66,6 +121,7 @@ A check script calls these scripts rather than cargo or pnpm directly, so the ta
 | --- | --- | --- |
 | test | `bash scripts/verify-cargo.sh test` | `target/debug`; locked workspace tests |
 | lint | `bash scripts/verify-cargo.sh lint` | `cargo fmt --check` then `cargo clippy -D warnings` over every target |
+| hakari | `bash scripts/verify-cargo.sh hakari` | nothing written; fails when `workspace-hack` is out of date ([One feature set per dependency](#one-feature-set-per-dependency)) |
 | release | `bash scripts/verify-cargo.sh release` | `target/release/{hided,hide,hide-agent-hooks}`, the binaries the desktop packager ships |
 | cli | `bash scripts/verify-cargo.sh cli` | `target/debug/{hide,hided,hide-agent-hooks}` for isolated CLI, daemon, SessionStart and install kit checks |
 | web | `bash scripts/verify-web.sh` | `pnpm install --frozen-lockfile`, then typecheck, lint, test and build for both `web` and `desktop`: `web/dist` and `desktop/dist` |

@@ -41,7 +41,7 @@ Record the actual head, attempt, job URLs, failures and skips; a package smoke w
 The macOS package job (nightly, and a pull request's `package` lane) extracts and checks the actual archive, then runs the existing isolated install-kit and packaged-app session-search tests.
 The Windows/Linux package lanes check the real archive's headless daemon/kit behavior; their actual GUI and physical input still need device evidence.
 
-`hide-platform/tests/process.rs` exercises `run_to_end` with a real parent that starts a same-group helper inheriting both outputs and exits 0.
+`hide-platform/tests/it/process.rs` exercises `run_to_end` with a real parent that starts a same-group helper inheriting both outputs and exits 0.
 The call must return the parent's code and both markers within the original five-second deadline, with the helper gone; test recovery is armed with that helper's identity before its parent exits.
 This regression checks process and pipe ownership, not a native app window or Unix crash containment.
 
@@ -141,7 +141,7 @@ Compare any temporary weak-blur proposal against the readable treatment in the a
 `desktop/e2e/remote-workspace.spec.ts` covers remote routes and `desktop/e2e/device-kit.spec.ts` the install kit against an isolated SSH server; a check against a real device is for what those specs cannot reach.
 That server logs in as the account running the suite and connecting with consent installs Hide's kit there, so its sessions must get a private `HOME` (`SetEnv` in its config); `desktop/e2e/device-home.ts` describes the setup and refuses to register a device until it has proved both.
 `SetEnv` reaches the commands a session runs but not its SFTP, which spells `~/` from the account's own home, so the consent folders (`HIDE_HOST_HELPER_ROOT`, `HIDE_HOST_CLI_DIR`) must be absolute paths inside the private `HOME`: on 2026-10-09 a probe that kept the `~/` defaults uploaded its helper into the real account's `~/.hide/host-helper` while its commands ran in the private one.
-The remote terminal probe (`hide-node/tests/remote_terminal_probe.rs`) and the device measurement (`scripts/web-shell-measure/device-guard.sh`) now refuse, before connecting, any alias that does not resolve to the private sshd's named port, a private HOME outside `/tmp`, and consent folders outside it.
+The remote terminal probe (`hide-node/tests/it/remote_terminal_probe.rs`) and the device measurement (`scripts/web-shell-measure/device-guard.sh`) now refuse, before connecting, any alias that does not resolve to the private sshd's named port, a private HOME outside `/tmp`, and consent folders outside it.
 
 - Start a private `herdr server` on the device with the same isolation variables, sent as a script over `ssh <alias> 'bash -s' < script.sh`, and keep the device's real `HOME` so its agent CLIs stay logged in.
 - Drive it from a private hided: the web e2e fixtures `startHerdr` and `startHided` with the fixture home's `.ssh` linked to the operator's, because hided resolves the alias from `$HOME/.ssh/config`.

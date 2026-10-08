@@ -27,6 +27,9 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// arrives rather than a local timeout.
 const FACTORY_TIMEOUT: Duration = Duration::from_secs(110);
 const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
+/// A spawn on another device: its checks, worktree, tab and agent start are
+/// each a round trip over SSH.
+const REMOTE_SPAWN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
 struct OneShotReference(PathBuf);
@@ -342,10 +345,22 @@ pub fn request_delivery(
     command: herdr_core::delivery::Command,
     hint: Option<&str>,
 ) -> Result<Value, String> {
+    // A spawn on another device makes several calls over SSH, so its answer
+    // has longer than a local command's; running it again after a timeout
+    // returns the same agent either way.
+    let timeout = match &command {
+        herdr_core::delivery::Command::Agents {
+            command:
+                herdr_core::coordination::Command::Spawn {
+                    machine: Some(_), ..
+                },
+        } => REMOTE_SPAWN_TIMEOUT,
+        _ => TIMEOUT,
+    };
     credential.run(|path| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
-        run_exchange(
+        run_exchange_within(
             path,
             &reference,
             json!({
@@ -353,6 +368,7 @@ pub fn request_delivery(
             }),
             &request_id,
             true,
+            timeout,
         )
     })
 }
@@ -377,6 +393,40 @@ pub fn request_factory(
             true,
             FACTORY_TIMEOUT,
         )
+    })
+}
+
+/// One question check, with no automatic replay on an expired credential.
+pub fn request_factory_question_guard(
+    credential: &Credential,
+    session: &str,
+    agent_runtime: &str,
+) -> Result<Value, String> {
+    let path = &credential.path;
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| "request_unavailable".to_owned())?;
+    runtime.block_on(async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let (value, mut socket) = tokio::time::timeout_at(
+            deadline,
+            exchange_response_with_limit(
+                &reference,
+                json!({"type":"factory_question_guard", "request_id":request_id,
+                "session":session, "runtime":agent_runtime}),
+                &request_id,
+                Some(16 * 1024),
+            ),
+        )
+        .await
+        .map_err(|_| "factory_guard_expired".to_owned())??;
+        tokio::time::timeout_at(deadline, claim(&mut socket, path))
+            .await
+            .map_err(|_| "factory_guard_expired".to_owned())??;
+        Ok(value)
     })
 }
 
@@ -524,6 +574,13 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Transport for T {}
 pub(crate) type WorkspaceSocket = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;
 
 async fn connect(reference: &Reference) -> Result<WorkspaceSocket, String> {
+    connect_with_limit(reference, None).await
+}
+
+async fn connect_with_limit(
+    reference: &Reference,
+    response_limit: Option<usize>,
+) -> Result<WorkspaceSocket, String> {
     let (request, transport): (_, Pin<Box<dyn Transport>>) = match &reference.route {
         Route::Daemon { port, origin_port } => {
             let mut request = format!("ws://127.0.0.1:{port}/ws")
@@ -550,7 +607,12 @@ async fn connect(reference: &Reference) -> Result<WorkspaceSocket, String> {
             (request, Box::pin(node_stream(&socket)?))
         }
     };
-    let (socket, _) = tokio_tungstenite::client_async(request, transport)
+    let config = response_limit.map(|limit| {
+        tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+            .max_message_size(Some(limit))
+            .max_frame_size(Some(limit))
+    });
+    let (socket, _) = tokio_tungstenite::client_async_with_config(request, transport, config)
         .await
         .map_err(|_| UNREACHABLE.to_owned())?;
     Ok(socket)
@@ -629,7 +691,19 @@ async fn exchange_response(
     payload: Value,
     request_id: &str,
 ) -> Result<(Value, WorkspaceSocket), String> {
-    let mut socket = connect(reference).await?;
+    exchange_response_with_limit(reference, payload, request_id, None).await
+}
+
+async fn exchange_response_with_limit(
+    reference: &Reference,
+    payload: Value,
+    request_id: &str,
+    response_limit: Option<usize>,
+) -> Result<(Value, WorkspaceSocket), String> {
+    let mut socket = match response_limit {
+        Some(limit) => connect_with_limit(reference, Some(limit)).await?,
+        None => connect(reference).await?,
+    };
     socket
         .send(Message::Text(
             json!({"token":reference.token,"schema_version":SCHEMA_VERSION})

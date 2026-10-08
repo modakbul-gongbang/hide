@@ -875,41 +875,39 @@ impl Mobile {
             if *self.stopping.borrow() {
                 return;
             }
-            if self.push_delivery(&notice) {
-                continue;
-            }
+            let push = match self.push_delivery(&notice) {
+                Ok(()) => continue,
+                Err(reason) => reason,
+            };
             if *self.stopping.borrow() {
                 return;
             }
-            let shown = self
-                .herdr_api(self.node().as_str())
-                .ok()
-                .and_then(|connector| notice.notify_herdr(connector.as_ref()).ok())
-                .unwrap_or(false);
-            if !shown {
-                // Its ledger claim remains consumed even when both channels
-                // fail. A restart never becomes an external resend.
-                herdr_core::diagnostic!(
-                    json!({"component":"delivery","kind":"human.channels_failed","letter_id":notice.id})
-                );
-            }
+            // Herdr is skipped only when this Mac has no socket for it; its
+            // toast setting is not readable, so every other case is tried.
+            let herdr = match self.herdr_api(self.node().as_str()) {
+                Ok(connector) => match notice.notify_herdr(connector.as_ref()) {
+                    Ok(()) => continue,
+                    Err(reason) => reason,
+                },
+                Err(_) => "no_socket",
+            };
+            // Its ledger claim remains consumed even when both channels
+            // fail. A restart never becomes an external resend. The record
+            // names the notice and the reason per channel, never its text.
+            herdr_core::diagnostic!(json!({
+                "component": "delivery", "kind": "human.channels_failed",
+                "notice": notice.kind.code(), "letter_id": notice.id,
+                "push": push, "herdr": herdr,
+            }));
         }
     }
 
-    fn push_delivery(&self, notice: &HumanNotice) -> bool {
-        let Some(vapid) = self.vapid.as_ref() else {
-            return false;
-        };
-        let (targets, subject) = {
+    /// `Ok` when a phone got the notice. `Err` is why none did: a reason
+    /// `push::notice_route` found before sending, `send_failed` or
+    /// `subscription_gone` after trying, or `stopping`.
+    fn push_delivery(&self, notice: &HumanNotice) -> Result<(), &'static str> {
+        let (vapid, targets, subject) = {
             let inner = self.lock();
-            if !inner.settings.enabled
-                || !push::mode_allows(
-                    inner.settings.push_mode,
-                    self.config.renderers.load(Ordering::SeqCst),
-                )
-            {
-                return false;
-            }
             let targets = inner
                 .phones
                 .list()
@@ -922,13 +920,20 @@ impl Mobile {
                 })
                 .take(4)
                 .collect::<Vec<_>>();
+            let vapid = push::notice_route(
+                self.vapid.as_ref(),
+                inner.settings.push_mode,
+                inner.settings.enabled,
+                self.config.renderers.load(Ordering::SeqCst),
+                targets.len(),
+            )?;
             let subject = inner
                 .settings
                 .serve
                 .as_ref()
                 .map(|serve| format!("https://{}", serve.dns_name))
                 .unwrap_or_else(|| "mailto:hide@localhost".into());
-            (targets, subject)
+            (vapid, targets, subject)
         };
         let payload = push::payload(
             &push::Notice {
@@ -950,10 +955,10 @@ impl Mobile {
             },
             &BTreeSet::new(),
         );
-        let mut delivered = false;
+        let (mut delivered, mut failed) = (false, false);
         for (phone_id, subscription) in targets {
             if *self.stopping.borrow() {
-                return delivered;
+                return Err("stopping");
             }
             match push::send(vapid, &subject, &subscription, &payload, now_ms() / 1000) {
                 push::SendOutcome::Delivered => delivered = true,
@@ -963,10 +968,14 @@ impl Mobile {
                         .drop_subscription(&phone_id, &subscription.endpoint);
                     self.publish();
                 }
-                push::SendOutcome::Failed(_) => {}
+                push::SendOutcome::Failed(_) => failed = true,
             }
         }
-        delivered
+        match (delivered, failed) {
+            (true, _) => Ok(()),
+            (false, true) => Err("send_failed"),
+            (false, false) => Err("subscription_gone"),
+        }
     }
 
     async fn sweep_loop(self: Arc<Self>) {
