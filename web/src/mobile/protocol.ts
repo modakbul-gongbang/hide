@@ -8,7 +8,7 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "../i18n/catalogs";
-import type { AgentStatusCode } from "../snapshot";
+import type { AgentStatusCode, SleepingSession } from "../snapshot";
 
 export type Tone = "error" | "warning" | "working" | "success" | "subtle";
 
@@ -34,7 +34,21 @@ export type PhoneAgent = {
 
 export type GroupId = "needs_you" | "done" | "working" | "seen";
 
-export type AgentGroup = { group: GroupId; count: number; agents: PhoneAgent[] };
+/** A conversation intent has no pane address, lineage or filesystem path. */
+export type PhoneSleepingSession = {
+  sleep_id: string;
+  device_id: string;
+  agent_kind: string;
+  title: string;
+  group: GroupId;
+  phase: SleepingSession["phase"];
+  since_unix_ms: number;
+  wake_available: boolean;
+  checking: boolean;
+  attention: boolean;
+};
+
+export type AgentGroup = { group: GroupId; count: number; agents: PhoneAgent[]; sleeping_sessions?: PhoneSleepingSession[] };
 
 export type Notifications = "on" | "off" | "unasked";
 
@@ -99,6 +113,8 @@ export type ServerFrame =
       before?: number | null;
     }
   | { type: "input_result"; request_id?: string; ok: boolean; reason: string | null }
+  /** Accepted for dispatch; progress and refusal remain on the core-owned row. */
+  | { type: "sleep_result"; request_id?: string; sleep_id: string; ok: boolean; reason: string | null }
   | ({ type: "start_catalog" } & StartCatalog)
   | { type: "start_result"; request_id?: string; ok: boolean; reason: string | null; device_id?: string; pane_id?: string }
   | { type: "push_state"; notifications: "on" | "refused" }
@@ -112,6 +128,7 @@ export type PhoneMessage =
   | { type: "older"; before: number }
   | { type: "more" }
   | { type: "close" }
+  | { type: "wake_sleeping_session" | "check_sleeping_session"; request_id: string; sleep_id: string }
   | ({ type: "input"; request_id: string; device_id: string; pane_id: string } & ({ text: string } | { key: QuickKey }))
   | { type: "start_sheet"; open: boolean }
   | { type: "start_agent"; request_id: string; text: string; target: string; kind: StartKind; model?: string }

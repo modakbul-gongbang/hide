@@ -547,7 +547,7 @@ No reopen notice uses the shell's modal interaction alert.
 
 ### Agent sleep
 
-Agent sleep (PRD agent-sleep) ends an agent that has sat seen and untouched past the operator's chosen hours and resumes its conversation in the same pane when the operator comes back; it exists because Herdr has no hibernate of its own.
+Claude Code and Codex agent sleep (PRD agent-sleep) ends an agent that has sat seen and untouched past the operator's chosen hours and resumes its conversation in the same pane when the operator comes back; it exists because Herdr has no hibernate of its own.
 Three owners keep it replaceable when Herdr gains one (D-20): `herdr-core/src/agent_sleep.rs` decides and remembers and makes no call, `herdr-core/src/agent_sleep_herdr.rs` is the one module that touches Herdr and processes, and `herdr-core/src/runtime/agent_sleep.rs` connects them to the runtime.
 The local coordinator's tick runs the decision at most once a minute; a tick inside the minute is one integer comparison, and the minute pass reads the agent rows and makes no call under the lock.
 Each decided end runs on its own worker, at most four at once: it reads the agent again with `agent.get`, refuses unless it is still idle or done and the same kind, has the pane's node send SIGTERM to the pane's foreground process group (`terminate_group`, which the node refuses for a group of 1 or less) only when `pane.process_info` names a group that is not the shell's, and waits up to ten seconds for the shell to hold the terminal again.
@@ -558,6 +558,20 @@ A committed visit that changes the tab on screen, Wake agent and Retry resume; a
 A failed wake shows a plain reason (`The working folder … no longer exists.`, `The conversation couldn’t be resumed.`, `The agent did not become ready in time.`) and keeps Herdr's code and message in the `agent_sleep.wake_failed` diagnostic.
 The last look is stamped when a visit commits and once a minute while a pane is in the tab on screen, and the stamps are saved through the coalesced state save, never published.
 A relaunch forgets an end that was in flight, because it cannot know whether it landed, and reads a wake that was in flight as still asleep until an agent appears in the pane.
+
+A provider whose implemented sleep dialect declares `closes_pane_when_sleeping` uses a separate dormant conversation record under the same persisted `agent_sleep` store.
+The common mechanism does not grant a provider sleep support; its adapter must declare an implemented reader and resume dialect first.
+The record's `SleepId` names the durable intent, while the captured native session, node, connection generation and execution sequence fence the old execution.
+The existing coalesced state writer acknowledges the exact record only after private atomic replacement and persistence barriers; a failed or stale write cannot authorize a close or start.
+Close admission reuses the existing geometry reservation and capture owner, saves the bound close key before sending its effect, and waits for authoritative disappearance before publishing a sleeping row.
+The archive holds at most 256 conversations and four pending or uncertain transitions; a full archive or transition budget refuses admission without closing a pane.
+An uncertain result retains its admission and offers explicit status inspection, with at most one inspection worker and a bounded intent-marker scan.
+A recovered intent with no saved close key sent no close and is released by that status action without a pane effect.
+A wake saves the intent before creating its separate tab, saves the owned tab before starting the provider with the saved native session and cwd, and clears the archive only after current reader facts confirm that conversation in that tab.
+Its stable intent marker permits reuse of only its own tab; no previous registration, lineage, pane address, input or terminal capability is copied into the new execution.
+Restart converts pending work to Unknown and never resends creation, close or start automatically.
+These transitions live in the `dormant` child modules of the same three sleep owners, and all persistence, Herdr and folder I/O stays off `Mutex<Runtime>`.
+The current directory-chain barrier is supported on Unix; an unsupported platform refuses dormant persistence rather than returning a durability receipt.
 
 ## The link record
 
@@ -1118,13 +1132,17 @@ At most four phones pair; the limit is checked before the code is spent.
 A phone keeps at most two connections, the oldest closed first, a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`, and one whose frame cannot leave within ten seconds is closed and recorded as `phone.stalled`.
 A phone away for seven days is revoked at start, by an hourly sweep and when it next connects, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
 
-A phone's whole vocabulary is `open`, `view`, `older`, `more`, `close`, `input`, `start_sheet`, `start_agent`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot; the one setting that reaches it is the interface language, which rides every `agents` frame as the core's stored value or null (the phone resolves it, and follows its own system language on null, before the first frame and when unpaired).
+A phone's whole vocabulary is `open`, `view`, `older`, `more`, `close`, `input`, `start_sheet`, `start_agent`, `wake_sleeping_session`, `check_sleeping_session`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot; the one setting that reaches it is the interface language, which rides every `agents` frame as the core's stored value or null (the phone resolves it, and follows its own system language on null, before the first frame and when unpaired).
 A phone starts an agent through the same `agent_start_in_checkout` event as the desktop (`mobile/start.rs`, PRD home-device-rail D-24, D-25).
 While its start sheet is open (`start_sheet`), hided sends it a `start_catalog`: every device's Home and checkouts as targets named by id, `claude` and `codex` with the models the provider catalog lists, and the choice the last start remembered; the sheet counts as a start surface for the catalog demand, and the folder a target id leads to stays in hided.
 `start_agent` carries a request id, the text, a target id, a kind and an optional model; it is refused before anything is dispatched when the phone is no longer admitted or the target, kind, model or text is not one the sheet could have sent, and otherwise answered with `start_result` once the core's task slot or last error carries that request id, or `timeout` after 90 seconds (`start::ANSWER_LIMIT`, the core's own limit for a start).
 A request id the phone repeats is started once: the repeat gets the first answer, joins it while the first still waits, or, after a `timeout`, follows the same start again without sending it; one connection waits for one start at a time, and a second is answered `in_flight`.
 The list is `agent_state::phone::project` over the snapshot's `rest` section (`agent_state/tally.rs`, called by `mobile/projection.rs`): the local navigator's agents and every connected device's, in the desktop's four groups, each keyed by device id and pane id with its lineage root.
 The core supplies each phone group’s order and count; the phone renders both without recounting.
+Sleeping conversations are separate safe rows in that projection, carrying only their `SleepId`, provider, title, canonical group, phase, age and action availability.
+They carry no native session, cwd, former pane, close key or lineage, and can never open a pane detail or receive input.
+A phone may wake or inspect only a currently projected local sleep intent, with an exact-key payload and renewed phone admission before dispatch.
+Its correlated `sleep_result` acknowledges dispatch only; the core-owned row supplies progress or refusal, and a lost answer never triggers an automatic resend.
 hided follows the core only while Mobile is on with a phone paired, reads the snapshot off the core lock with its own cursors once per notification burst, and republishes the list only when it changed.
 A detail shows the agent's conversation (`mobile/conversation.rs`) or its terminal, as the phone chooses with `open` and `view`, and hided reads only the one shown, once a second and only while it is open.
 Claude Code and Codex draw in the alternate screen, so Herdr keeps no scrollback for their panes and `pane.read` holds only the screen; the conversation comes from the agent's own transcript instead, found through `hide-session` from the session `pane.get` reports for the pane.

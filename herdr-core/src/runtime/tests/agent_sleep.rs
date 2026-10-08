@@ -81,6 +81,218 @@ fn asleep() -> (Runtime, String) {
     (runtime, checkout_id)
 }
 
+/// The generic dormant owner is exercised with a proven fixture session;
+/// production Claude still reaches only the unchanged keep-pane branch.
+fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
+    use crate::agent_sleep::{DormantPhase, DormantRecord};
+    runtime
+        .snapshot
+        .navigator
+        .agents
+        .iter_mut()
+        .find(|agent| agent.pane_id == SLEEPER)
+        .unwrap()
+        .row_facts = Some(Default::default());
+    let agent = runtime
+        .snapshot
+        .navigator
+        .agents
+        .iter()
+        .find(|agent| agent.pane_id == SLEEPER)
+        .unwrap()
+        .clone();
+    let tab = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|project| &project.checkouts)
+        .flat_map(|checkout| &checkout.tabs)
+        .find(|tab| tab.panes.iter().any(|pane| pane.id == SLEEPER))
+        .unwrap();
+    let context = runtime.close_context(tab).unwrap();
+    let native_session_id = agent.session_id.unwrap();
+    runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .admit_dormant(DormantRecord {
+            phase: DormantPhase::SavingClose,
+            revision: 1,
+            node_id: runtime.node.as_str().into(),
+            connection_generation: runtime.live_generation,
+            old_pane_id: SLEEPER.into(),
+            old_state_change_seq: agent.state_change_seq,
+            label_owner: hide_session::label_reference_token("claude", "id", &native_session_id)
+                .unwrap(),
+            kind: "claude".into(),
+            native_session_id,
+            identity_label: agent.identity_label,
+            cwd: CHECKOUT.into(),
+            context,
+            close_key: None,
+            closed: false,
+            wake_pane_id: None,
+            wake_tab_id: None,
+            since_unix_ms: 1,
+            transition_started_unix_ms: 1,
+            reason: None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_failed_actual_state_write_never_sends_a_dormant_close() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let server = FakeHerdr::start("sleep-save-failure", |method, _| {
+        panic!("unexpected external effect: {method}")
+    });
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(server.connector());
+    let id = dormant_intent(&mut runtime);
+    // A directory cannot be atomically replaced by the private state file.
+    let blocked = tempfile::tempdir().unwrap();
+    runtime.state_path = blocked.path().to_path_buf();
+    assert!(runtime.write_ui_state().is_err());
+    assert!(server.methods().is_empty());
+    assert!(runtime.close_operations.is_empty());
+    assert!(
+        !runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .contains_key(&id)
+    );
+    assert_eq!(row(&runtime)["pane_id"], SLEEPER);
+    assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());
+}
+
+#[test]
+fn an_old_successful_save_cannot_close_a_replaced_execution() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let server = FakeHerdr::start("sleep-stale-save", |method, _| {
+        panic!("unexpected stale effect: {method}")
+    });
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(server.connector());
+    let id = dormant_intent(&mut runtime);
+    let saved = runtime.snapshot.ui_state.agent_sleep.clone();
+    runtime.ingest_session(Ok(session(Some(5))));
+    runtime
+        .snapshot
+        .navigator
+        .agents
+        .iter_mut()
+        .find(|agent| agent.pane_id == SLEEPER)
+        .unwrap()
+        .row_facts = Some(Default::default());
+    assert!(runtime.ingest_dormant_saved(&saved, true));
+    assert!(server.methods().is_empty());
+    assert!(runtime.close_operations.is_empty());
+    assert!(
+        !runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .contains_key(&id)
+    );
+    assert_eq!(row(&runtime)["pane_id"], SLEEPER);
+}
+
+/// An interrupted save before close admission sent no close. Checking that
+/// recovered intent must release it without touching the original execution.
+#[test]
+fn checking_an_unsent_recovered_sleep_leaves_the_pane_awake() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let server = FakeHerdr::start("sleep-unsent-check", |method, _| {
+        panic!("an unsent sleep needs no external effect: {method}")
+    });
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(server.connector());
+    let id = dormant_intent(&mut runtime);
+    runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .dormant
+        .get_mut(&id)
+        .unwrap()
+        .after_load();
+    runtime.refresh_dormant_rows();
+    assert_eq!(runtime.snapshot.navigator.sleeping_sessions.len(), 1);
+    assert!(runtime.dispatch_json(&event(
+        "check_sleeping_session",
+        serde_json::json!({"sleep_id": id})
+    )));
+    assert!(server.methods().is_empty());
+    assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
+    assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());
+    assert_eq!(row(&runtime)["pane_id"], SLEEPER);
+    assert!(row(&runtime).get("sleep").is_none());
+}
+
+/// A status answer captured for an intent cannot recreate it after a fresh
+/// native session confirmation has already removed its archived row.
+#[test]
+fn a_late_sleep_status_answer_never_resurrects_a_cleared_intent() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let id = dormant_intent(&mut runtime);
+    let record = runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .dormant
+        .get_mut(&id)
+        .unwrap();
+    record.closed = true;
+    record.phase = crate::agent_sleep::DormantPhase::WakeUnknown;
+    let work = crate::agent_sleep_herdr::DormantWork {
+        id: id.clone(),
+        record: record.clone(),
+    };
+    let generation = runtime.live_generation;
+    runtime.dormant_status_check = Some((id.clone(), generation));
+    runtime.snapshot.ui_state.agent_sleep.dormant.remove(&id);
+    runtime.refresh_dormant_rows();
+    runtime.ingest_dormant_status(&work, generation, Err("late answer".into()));
+    assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());
+    assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
+    assert!(runtime.dormant_status_check.is_none());
+    assert!(runtime.close_operations.is_empty());
+}
+
+/// The minute pass must publish the transition to Unknown even with Never
+/// selected and no automatic sleep due. The outcome never resends a start.
+#[test]
+fn an_expired_dormant_operation_publishes_its_status_action_once() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let id = dormant_intent(&mut runtime);
+    let record = runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .dormant
+        .get_mut(&id)
+        .unwrap();
+    record.closed = true;
+    record.phase = crate::agent_sleep::DormantPhase::Starting;
+    record.transition_started_unix_ms = 1;
+    runtime.refresh_dormant_rows();
+    assert!(runtime.tick_agent_sleep(180_002));
+    let sleeping = &runtime.snapshot.navigator.sleeping_sessions[0];
+    assert_eq!(
+        sleeping.phase,
+        crate::agent_sleep::DormantPhase::WakeUnknown
+    );
+    assert!(!sleeping.wake_available);
+    assert!(!runtime.tick_agent_sleep(180_003));
+    assert!(runtime.close_operations.is_empty());
+}
+
 /// B2: the setting is one event, survives a restart, and a shared UI-state
 /// save does not reset it; a value outside the choices is refused.
 #[test]

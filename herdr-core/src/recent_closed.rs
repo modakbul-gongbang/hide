@@ -11,7 +11,7 @@ pub fn push_bounded(stack: &mut VecDeque<ClosedItem>, item: ClosedItem) {
     stack.push_back(item);
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ClosedContext {
     pub workspace_id: String,
     pub workspace_label: String,

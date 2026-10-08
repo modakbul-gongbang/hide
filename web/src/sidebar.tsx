@@ -24,6 +24,7 @@ import { cn } from "./lib/utils";
 import { agentNumber, listedAgentOrder, numberOf, numberedAgents, projectListNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
+import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentTree as sectionTree, agentGroupTitle, agentPlaces, allAgents, deviceListedAgents, type ListedAgent } from "./navigation";
@@ -50,7 +51,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
-import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
+import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
@@ -524,6 +525,13 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
  * them and opens their list (PRD sidebar-agent-status D-02, D-03). Showing
  * the list changes nothing: no focus moves and nothing is marked read.
  */
+const NO_SLEEPERS: SleepingSession[] = [];
+
+function useSleepingCheckout(path: string, deviceId: string) {
+  const all = useShellStore((s) => s.rest?.navigator?.sleeping_sessions ?? NO_SLEEPERS);
+  return useMemo(() => all.filter((session) => session.node_id === deviceId && session.checkout_path === path), [all, path, deviceId]);
+}
+
 function AgentList({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   // Only what the list reads, so a terminal frame or an editor change does
@@ -534,6 +542,8 @@ function AgentList({ actions }: { actions: Actions }) {
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const localAgents = useShellStore((s) => s.agents);
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
+  const allSleeping = useShellStore((s) => s.rest?.navigator?.sleeping_sessions ?? NO_SLEEPERS);
+  const sleeping = useMemo(() => allSleeping.filter((session) => session.node_id === frontId), [allSleeping, frontId]);
   const listed = useMemo(() => deviceListedAgents(remote, devices, localAgents, frontId), [remote, devices, localAgents, frontId]);
   const agentScope = useShellStore((s) => deviceScope(s.rest, frontId));
   const tree = useMemo(() => agentTree(listed, agentScope), [listed, agentScope]);
@@ -547,7 +557,7 @@ function AgentList({ actions }: { actions: Actions }) {
   const menu = useAgentRowMenu(actions);
   // Before the first snapshot nothing is known, so an empty list would be a claim.
   if (!loaded) return <ListLoading />;
-  if (tree.sections.length === 0) {
+  if (tree.sections.length === 0 && sleeping.length === 0) {
     return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">{t("sidebar.noAgents")}</div>;
   }
   return (
@@ -557,7 +567,7 @@ function AgentList({ actions }: { actions: Actions }) {
         {tree.sections.map((section) => (
           <li key={section.group} data-agent-group={section.group}>
             <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
-              {agentGroupTitle(section.group, t)} · {section.count}
+              {agentGroupTitle(section.group, t)} · {section.count + sleeping.filter((session) => session.group === section.group).length}
             </div>
             <ul aria-labelledby={`agent-group-${section.group}`}>
               {section.rows.map((row) => (
@@ -578,6 +588,15 @@ function AgentList({ actions }: { actions: Actions }) {
                   menu={menu}
                 />
               ))}
+              {sleeping.filter((session) => session.group === section.group).map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={actions} />)}
+            </ul>
+          </li>
+        ))}
+        {[...new Set(sleeping.map((session) => session.group))].filter((group) => !tree.sections.some((section) => section.group === group)).map((group) => (
+          <li key={group} data-agent-group={group}>
+            <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${group}`}>{agentGroupTitle(group, t)} · {sleeping.filter((session) => session.group === group).length}</div>
+            <ul aria-labelledby={`agent-group-${group}`}>
+              {sleeping.filter((session) => session.group === group).map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={actions} />)}
             </ul>
           </li>
         ))}
@@ -1053,9 +1072,10 @@ const NO_BOARD_ROWS: BoardRow[] = [];
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
-function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">) {
-  const foldable = context.disclosure && agentRows.length > 0;
-  const open = agentRows.length > 0 && (!context.disclosure || context.openCheckouts.includes(checkout.id));
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, sleepingCount: number) {
+  const hasRows = agentRows.length + sleepingCount > 0;
+  const foldable = context.disclosure && hasRows;
+  const open = hasRows && (!context.disclosure || context.openCheckouts.includes(checkout.id));
   const purpose = checkout.purpose?.text ?? null;
   const parents = [...new Set(agentRows
     .filter((row) => row.depth === 0)
@@ -1096,7 +1116,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path, localDeviceId(s.rest)));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
+  const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
   const marks = checkout.agent_summary?.marks;
   return (
     <li
@@ -1161,7 +1182,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} sleeping={sleeping} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1195,7 +1216,8 @@ const FolderRowView = memo(function FolderRowView({
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
+  const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
@@ -1246,7 +1268,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} sleeping={sleeping} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1414,7 +1436,7 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  * sidebar-readability D-6, B12). A selected SSH device's tree is drawn with
  * nothing folded, as its checkouts are.
  */
-function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; context: ListContext }) {
+function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: ListContext }) {
   const rows = agentRows;
   return (
     <ul data-checkout-agents-open={checkoutId}>
@@ -1441,6 +1463,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
           />
         );
       })}
+      {sleeping.map((session) => <SleepingSessionRow key={session.sleep_id} session={session} actions={context.actions} inset={inset} />)}
     </ul>
   );
 }

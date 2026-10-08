@@ -1424,6 +1424,21 @@ export type LinkSummaries = {
   filling: boolean;
 };
 
+/** A durable conversation intent, never a current pane or delivery target. */
+export type SleepingSession = {
+  sleep_id: string;
+  node_id: string;
+  checkout_path: string;
+  kind: string;
+  identity_label: string;
+  group: string;
+  phase: "saving_close" | "saving_close_ready" | "closing" | "close_unknown" | "sleeping" | "saving_wake" | "creating" | "saving_start" | "starting" | "wake_unknown" | "failed";
+  since_unix_ms: number;
+  reason: string | null;
+  wake_available: boolean;
+  checking: boolean;
+};
+
 export type SnapshotRest = {
   git_worktrees_loading?: boolean;
   navigator?: {
@@ -1437,6 +1452,7 @@ export type SnapshotRest = {
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
+    sleeping_sessions?: SleepingSession[];
     devices?: Device[];
     focused_device_id?: string | null;
     /** Each provider's weekly window, typed by the contract (`providerUsage`). */

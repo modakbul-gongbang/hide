@@ -934,6 +934,15 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_wake", payload: { pane_id: paneId, fresh } });
     },
 
+    /** A closed pane has no input/focus address. Wake the saved conversation explicitly. */
+    wakeSleepingSession(sleepId: string) {
+      dispatch({ schema_version: 2, kind: "wake_sleeping_session", payload: { sleep_id: sleepId } });
+    },
+
+    checkSleepingSession(sleepId: string) {
+      dispatch({ schema_version: 2, kind: "check_sleeping_session", payload: { sleep_id: sleepId } });
+    },
+
     /** Reopen a pane Hide cannot hear, in place and on the same conversation (the Not connected popover, B29). */
     reopenPane(paneId: string) {
       dispatch({ schema_version: 2, kind: "pane_reopen", payload: { pane_id: paneId } });

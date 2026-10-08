@@ -246,9 +246,16 @@ A read, non-blocked demand belongs to Seen unless the core places its running ac
 Disconnected presentation overrides the retained mark and text on every affected surface without modifying demand, activity, read records, or the last known group.
 Unavailable-server tooltips describe the connection problem rather than presenting retained counts as current work.
 
-A sleeping agent keeps its row, name, place, lineage and badge while Herdr no longer lists it: the core draws the row from its own sleep record (`herdr-core/src/agent_sleep.rs`), because the pinned Herdr forgets an agent and its session reference once its process ends.
+A sleeping Claude Code or Codex agent keeps its row, name, place, lineage and badge while Herdr no longer lists it: the core draws the row from its own sleep record (`herdr-core/src/agent_sleep.rs`), because the pinned Herdr forgets an agent and its session reference once its process ends.
 Only a seen, stopped, local Claude or Codex agent with no demand and a reported conversation can sleep, so a sleeping row is always in Seen; a delegated child sleeps by the same rule as its parent and keeps its place under it.
 A new agent in the pane, whether a wake, the operator or a restore started it, is awake: its `state_change_seq` differs from the one the record kept, and the record is dropped.
+
+A provider with an implemented close-pane sleep dialect instead retains a dormant conversation keyed by `SleepId`, separate from the live agent projection.
+Its core-owned group is Seen, and it contributes no active pane, lineage, unread state, doorbell target or executable input address.
+Saving and closing do not duplicate the existing live row; confirmed closure publishes the separate sleeping row, and an uncertain operation publishes its explicit status action.
+Wake resumes the saved native conversation in its own intent-marked tab, and current reader identity must confirm that conversation before the archived row is removed.
+Unknown work survives restart without replaying external effects; an intent saved before close admission can be released without touching a pane.
+`agent_sleep/dormant.rs` owns the bounded archive and row values, while `runtime/agent_sleep/dormant.rs` owns its transitions and exact save/connection/execution fences.
 
 ### Workspace aggregation
 

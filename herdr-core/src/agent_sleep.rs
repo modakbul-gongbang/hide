@@ -22,6 +22,9 @@ use crate::sidebar::{
     AgentLabel, SessionAgentPayload, SessionAgentSessionPayload, SessionSnapshotPayload,
 };
 
+mod dormant;
+pub use dormant::{DormantPhase, DormantRecord, SleepId, SleepingSessionSnapshot};
+
 /// The Settings choices besides Never, in hours (PRD D-10).
 pub const SLEEP_AFTER_CHOICES_HOURS: [u32; 3] = [12, 24, 72];
 /// The decision runs at most this often; the coordinator tick is 250 ms.
@@ -47,6 +50,9 @@ pub struct AgentSleepStore {
     /// The agents Hide ended and holds to resume, by pane.
     #[serde(default)]
     pub records: BTreeMap<String, SleepRecord>,
+    /// Sessions whose pane is intentionally closed, addressed by sleep id.
+    #[serde(default, deserialize_with = "dormant::deserialize_records")]
+    pub dormant: BTreeMap<SleepId, DormantRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -263,6 +269,9 @@ impl AgentSleepStore {
     /// and the pane is read as Herdr reports it; a wake in flight is asleep
     /// until an agent shows up in the pane.
     pub fn after_load(&mut self) {
+        for record in self.dormant.values_mut() {
+            record.after_load();
+        }
         self.records
             .retain(|_, record| record.phase != SleepPhase::Ending);
         for record in self.records.values_mut() {
@@ -478,7 +487,7 @@ pub fn sleep_refusal(agent: &SidebarAgentSnapshot) -> Option<&'static str> {
         return Some("Agents on another device cannot sleep");
     }
     if !sleeps_kind(&agent.agent_kind) {
-        return Some("Only Claude and Codex agents can sleep");
+        return Some("This agent's reader does not support sleep");
     }
     if agent.sleep.is_some() {
         return Some("This agent is already asleep");

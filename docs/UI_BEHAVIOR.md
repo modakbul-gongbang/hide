@@ -324,6 +324,13 @@ Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation
 The pane menu offers Sleep agent on a local agent pane that is awake, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported.
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
+An implemented provider whose sleep policy closes its pane retains a separate sleeping conversation row in Seen in the Agents list and in its checkout's expanded rows.
+The row keeps its confirmed title and provider mark, uses the existing moon and row tokens, and offers Wake explicitly; it has no pane-opening action, lineage badge, input target or numbered pane shortcut.
+Saving and closing retain the original live row until authoritative close confirmation, while a sleeping or waking row follows the core's published phase.
+An unknown close or wake offers Check status, disables that action while a check is pending, and never retries an external effect automatically.
+The current Claude Code and Codex keep-pane behavior above is unchanged.
+Web owners: `web/src/components/sleeping-session-row.tsx`, `web/src/sleeping-session.ts` and `web/src/sidebar.tsx`.
+
 The sidebar's Agents tab groups the device in front's current agents under Needs You, Done, Working, and Seen, and leaves an empty group out; no row names its device, since the whole list is that device's, and a device that is not connected lists nothing it only last reported (the Palette still names a remote row's device).
 A Codex agent whose plan waits for approval ("Implement this plan?"), which Herdr reads as an ordinary stop, is drawn as an approval: in Needs You with the `!` mark and the request view's `answer` verb, as a prompt Herdr reports `blocked` is, and it stays there after it is read until Codex's next turn starts, also after "No, stay in Plan mode", which writes nothing to the session (docs/status-model.md, Where each axis comes from).
 It is drawn from the session file only for the agent's current Herdr state; a wait not read for that state is not drawn, and a letter the doorbell holds for it is never named on screen (docs/delivery.md).
@@ -1573,6 +1580,8 @@ The QR opens a page with the hide icon, "<Mac>에 연결", a line on what the ph
 연결 opens the list and a one-time hint to keep hide on the Home Screen; an expired or spent code says so, a fifth phone is told the limit and to revoke one on the Mac, and a page opened with no code or credential says to scan the QR in Settings > Mobile.
 The list's header shows hide, the Mac's name, how many other phones are connected, and a connection dot.
 Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, provider mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.
+Local sleeping conversations appear as separate rows in the core-selected group, with Wake or Check status and no conversation detail or reply bar.
+Those controls are disabled while disconnected or while one sleep request is waiting; a refused request keeps the row and asks the operator to check connection and session status before trying again.
 With no agents the list is one line, 실행 중인 에이전트가 없어요.
 The header's `+`, 에이전트 시작, opens the start sheet: a text box for what to do, the target (This Mac's Home first, then This Mac's checkouts, then each device's Home and checkouts, a device that is not connected disabled with 연결 안 됨), the shared kind and model menus, both preselected from the desktop's remembered choice, and 시작.
 시작 starts the agent there; once it appears in the list the phone opens its detail.

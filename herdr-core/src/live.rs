@@ -1050,45 +1050,65 @@ pub fn spawn_close_capture(
             if changed {
                 context.notifier.notify();
             }
-            for effect in effects {
-                let prepared = if let Some(replacement) = &effect.replacement {
-                    prepare_close_replacement(
-                        context.api_connector.as_ref(),
-                        &effect.key,
-                        replacement,
-                        effect.allow_replacement_create,
-                    )
-                    .and_then(|(tab_id, payload)| {
-                        let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
-                        let mut guard = runtime.lock().map_err(|_| "runtime unavailable")?;
-                        guard.ingest_close_replacement(&effect, &tab_id, payload)?;
-                        context.notifier.notify();
-                        Ok(())
-                    })
-                    .map_err(|message| ApiError::Remote {
-                        code: "replacement_failed".into(),
-                        message,
-                    })
-                } else {
-                    Ok(())
-                };
-                let result = prepared
-                    .and_then(|()| run_close_effect(context.api_connector.as_ref(), &effect));
-                let Some(runtime) = context.runtime.upgrade() else {
-                    return;
-                };
-                let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_close_effect_result(&effect, result),
-                    Err(_) => return,
-                };
-                drop(runtime);
-                if changed {
-                    context.notifier.notify();
-                }
-            }
+            run_close_effects(&context, effects);
         })
         .map(|_| ())
         .map_err(|error| format!("close capture worker could not be started: {error}"))
+}
+
+/// Continues the same close operation after a durable sleeping-session
+/// receipt. It neither captures another item nor sends an extra close.
+pub(crate) fn spawn_saved_close_effect(
+    mut context: LiveContext,
+    effect: CloseEffectRequest,
+) -> Result<(), String> {
+    context.api_connector = Arc::from(crate::agent_sleep_herdr::fenced_dormant_close_connector(
+        &context, &effect,
+    ));
+    thread::Builder::new()
+        .name("herdr-core-saved-close".into())
+        .spawn(move || run_close_effects(&context, vec![effect]))
+        .map(|_| ())
+        .map_err(|_| "The saved close worker could not start".into())
+}
+
+fn run_close_effects(context: &LiveContext, effects: Vec<CloseEffectRequest>) {
+    for effect in effects {
+        let prepared = if let Some(replacement) = &effect.replacement {
+            prepare_close_replacement(
+                context.api_connector.as_ref(),
+                &effect.key,
+                replacement,
+                effect.allow_replacement_create,
+            )
+            .and_then(|(tab_id, payload)| {
+                let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
+                let mut guard = runtime.lock().map_err(|_| "runtime unavailable")?;
+                guard.ingest_close_replacement(&effect, &tab_id, payload)?;
+                context.notifier.notify();
+                Ok(())
+            })
+            .map_err(|message| ApiError::Remote {
+                code: "replacement_failed".into(),
+                message,
+            })
+        } else {
+            Ok(())
+        };
+        let result =
+            prepared.and_then(|()| run_close_effect(context.api_connector.as_ref(), &effect));
+        let Some(runtime) = context.runtime.upgrade() else {
+            return;
+        };
+        let changed = match runtime.lock() {
+            Ok(mut guard) => guard.ingest_close_effect_result(&effect, result),
+            Err(_) => return,
+        };
+        drop(runtime);
+        if changed {
+            context.notifier.notify();
+        }
+    }
 }
 
 fn capture_close_item(
@@ -1573,20 +1593,56 @@ fn run_herdr_reopen(
     }
 }
 
-fn ensure_workspace_and_tab(
+/// Creates or adopts exactly one intent-marked wake tab in the current
+/// checkout owner. No folder substitution or fresh-agent fallback is allowed.
+pub(crate) fn create_sleep_tab(
+    connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    key: &str,
+    context: &ClosedContext,
+    owner: &OwnerOpen,
+    cwd: &str,
+) -> Result<(String, String, SessionSnapshotPayload), String> {
+    if !crate::node_access::is_directory(node, cwd) {
+        return Err("The sleeping session's working folder is unavailable".into());
+    }
+    let root = ClosedLayoutNode::Pane {
+        pane_id: None,
+        label: None,
+        cwd: Some(cwd.into()),
+        command: None,
+        env: Default::default(),
+    };
+    let mut notices = Vec::new();
+    let layout =
+        ensure_workspace_and_tab(connector, key, context, owner, false, &root, &mut notices)?;
+    // Position notices do not change the owned tab/pane identity or cwd.
+    for _ in notices {
+        crate::diagnostic!(
+            serde_json::json!({"component":"agent_sleep", "kind":"agent_sleep.wake_tab_position_unconfirmed", "sleep_id":key})
+        );
+    }
+    let snapshot = fetch_session_with_connector(connector)
+        .map_err(|_| "The wake tab exists but its current topology could not be read".to_owned())?;
+    Ok((layout.tab_id, layout.focused_pane_id, snapshot))
+}
+
+struct ReopenIntentMatch {
+    open_owner: Option<String>,
+    layout: Option<crate::recent_closed::ClosedLayout>,
+    workspace_seed: Option<(String, String)>,
+}
+
+/// Searches only current-owner tabs carrying the exact intent marker.
+/// This part of reopen is read-only and is also used to inspect uncertain wakes.
+fn find_reopen_intent(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
     owner: &OwnerOpen,
-    tab_exists: bool,
-    root: &ClosedLayoutNode,
-    notices: &mut Vec<String>,
-) -> Result<crate::recent_closed::ClosedLayout, String> {
-    if tab_exists {
-        return Err("the requested tab already exists".into());
-    }
-    let snapshot = fetch_session_with_connector(connector)
-        .map_err(|error| format!("session.snapshot before reopen failed: {}", error.message()))?;
+    snapshot: &SessionSnapshotPayload,
+) -> Result<ReopenIntentMatch, String> {
+    let started = Instant::now();
     // The tab goes to the checkout's owner. A retry adopts only a layout or a
     // workspace seed carrying this intent's marker: in the owner when it is
     // open, else in a workspace that appeared since the close.
@@ -1615,10 +1671,21 @@ fn ensure_workspace_and_tab(
     };
     let mut recovered_layouts = Vec::new();
     let mut recovered_workspace_seeds = Vec::new();
-    for tab in snapshot.tabs.iter().filter(|tab| {
-        candidate_workspace_ids.contains(&tab.workspace_id)
-            && !context.tab_ids_before_close.contains(&tab.tab_id)
-    }) {
+    let candidates = snapshot
+        .tabs
+        .iter()
+        .filter(|tab| {
+            candidate_workspace_ids.contains(&tab.workspace_id)
+                && !context.tab_ids_before_close.contains(&tab.tab_id)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() > 64 {
+        return Err("Too many tabs to inspect for the saved intent".into());
+    }
+    for tab in candidates {
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err("Saved-intent inspection timed out".into());
+        }
         let layout = export_reopen_layout(connector, key, &tab.tab_id)?;
         if layout_has_reopen_marker(&layout, &layout_marker) {
             recovered_layouts.push(layout);
@@ -1632,21 +1699,60 @@ fn ensure_workspace_and_tab(
             recovered_layouts.len()
         ));
     }
-    if let Some(layout) = recovered_layouts.pop() {
-        let layout = repair_incomplete_tab_layout(connector, key, context, root, layout, notices)?;
-        return Ok(restore_tab_position(
-            connector, key, context, layout, notices,
-        ));
-    }
     if recovered_workspace_seeds.len() > 1 {
         return Err(format!(
             "reopen retry found {} workspace seeds owned by {key}; refusing to choose one",
             recovered_workspace_seeds.len()
         ));
     }
-    let (workspace_id, seed_tab_id) = if let Some(seed) = recovered_workspace_seeds.pop() {
+    Ok(ReopenIntentMatch {
+        open_owner,
+        layout: recovered_layouts.pop(),
+        workspace_seed: recovered_workspace_seeds.pop(),
+    })
+}
+
+pub(crate) fn inspect_sleep_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    owner: &OwnerOpen,
+    snapshot: &SessionSnapshotPayload,
+) -> Result<Option<(String, String)>, String> {
+    let found = find_reopen_intent(connector, key, context, owner, snapshot)?;
+    match found.layout {
+        Some(layout) if layout.root.pane_count() == 1 => {
+            Ok(Some((layout.tab_id, layout.focused_pane_id)))
+        }
+        Some(_) => Err("The wake tab's layout changed; it was not adopted".into()),
+        None => Ok(None),
+    }
+}
+
+fn ensure_workspace_and_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    owner: &OwnerOpen,
+    tab_exists: bool,
+    root: &ClosedLayoutNode,
+    notices: &mut Vec<String>,
+) -> Result<crate::recent_closed::ClosedLayout, String> {
+    if tab_exists {
+        return Err("the requested tab already exists".into());
+    }
+    let snapshot = fetch_session_with_connector(connector)
+        .map_err(|error| format!("session.snapshot before reopen failed: {}", error.message()))?;
+    let found = find_reopen_intent(connector, key, context, owner, &snapshot)?;
+    if let Some(layout) = found.layout {
+        let layout = repair_incomplete_tab_layout(connector, key, context, root, layout, notices)?;
+        return Ok(restore_tab_position(
+            connector, key, context, layout, notices,
+        ));
+    }
+    let (workspace_id, seed_tab_id) = if let Some(seed) = found.workspace_seed {
         (seed.0, Some(seed.1))
-    } else if let Some(owner) = open_owner {
+    } else if let Some(owner) = found.open_owner {
         (owner, None)
     } else {
         // The owner's first tab is the seed the layout replaces.
@@ -3030,7 +3136,7 @@ pub(crate) fn install(
     }
 }
 
-fn fetch_session_with_connector(
+pub(crate) fn fetch_session_with_connector(
     connector: &dyn ApiConnector,
 ) -> Result<SessionSnapshotPayload, SessionFetchError> {
     let result = request_with_connector(

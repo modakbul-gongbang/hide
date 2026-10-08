@@ -950,6 +950,9 @@ impl Runtime {
     /// target again, so an approval for one pane range never silently covers a
     /// later pane or a newly started agent.
     pub(super) fn close_precondition_failure(&self, operation: &PendingClose) -> Option<String> {
+        if let Some(reason) = self.dormant_close_precondition(operation) {
+            return Some(reason);
+        }
         let current_pane_ids = self
             .snapshot
             .navigator
@@ -1073,6 +1076,7 @@ impl Runtime {
                 operation.request.key
             ),
         );
+        self.settle_dormant_close_result(key);
         self.promote_close_reservations();
         self.sync_recent_closed_snapshot();
     }
@@ -1302,6 +1306,7 @@ impl Runtime {
             },
         );
         self.close_capture_order.push_back(request.key.clone());
+        self.bind_dormant_close(&target_id, &request.key);
         // A pane closing beside others is drawn gone at once (D-07).
         self.request_republish();
         if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
@@ -1500,6 +1505,7 @@ impl Runtime {
             "recent_closed.capture_failed",
             format!("{}: {}", operation.request.key, message),
         );
+        self.settle_dormant_close_result(key);
         self.promote_close_reservations();
         self.sync_recent_closed_snapshot();
     }
@@ -1594,42 +1600,60 @@ impl Runtime {
                 let Some(operation) = self.close_operations.get_mut(&request.key) else {
                     return (false, Vec::new());
                 };
-                operation.replacement_effect_started |= request.context.replacement_shell;
                 operation.item = outcome.item;
-                operation.phase = "transmitting".to_owned();
-                operation.stage = "close_request".to_owned();
-                operation.message = None;
-                operation.retryable = false;
-                operation.deadline_at_unix_ms = Some(unix_milliseconds().saturating_add(
-                    if request.context.replacement_shell {
-                        3 * CLOSE_STAGE_TIMEOUT_MS
-                    } else {
-                        CLOSE_STAGE_TIMEOUT_MS
-                    },
-                ));
-                let allow_replacement_create = operation.allow_replacement_create;
-                self.push_diagnostic(
-                    "recent_closed.reserved",
-                    format!(
-                        "Reserved user close {} before its external effect",
-                        request.key
-                    ),
-                );
-                effects.push(live::CloseEffectRequest {
-                    allow_replacement_create,
-                    key: request.key.clone(),
-                    connection_generation: request.connection_generation,
-                    target: request.target.clone(),
-                    replacement: (request.context.replacement_shell
-                        && (matches!(request.target, live::CloseCaptureTarget::Tab { .. })
-                            || request.panes.len() == 1))
-                        .then(|| request.context.clone()),
-                });
+                if self.defer_dormant_close(&request.key) {
+                    if let Some(operation) = self.close_operations.get_mut(&request.key) {
+                        // Keep the existing preparing reservation while the
+                        // one state writer establishes the durable sleep intent.
+                        operation.phase = "preparing".into();
+                        operation.stage = "durable_sleep".into();
+                    }
+                    self.persist_ui_state();
+                } else if let Some(effect) = self.prepare_captured_close_effect(&request.key) {
+                    effects.push(effect);
+                }
             }
             Err(message) => self.fail_close_operation(&request.key, message),
         }
         self.sync_recent_closed_snapshot();
         (true, effects)
+    }
+
+    /// Both ordinary capture and a sleep save receipt enter the existing
+    /// close-effect worker through this one reservation transition.
+    pub(super) fn prepare_captured_close_effect(
+        &mut self,
+        key: &str,
+    ) -> Option<live::CloseEffectRequest> {
+        let operation = self.close_operations.get_mut(key)?;
+        let request = &operation.request;
+        operation.replacement_effect_started |= request.context.replacement_shell;
+        operation.phase = "transmitting".into();
+        operation.stage = "close_request".into();
+        operation.message = None;
+        operation.retryable = false;
+        operation.deadline_at_unix_ms = Some(unix_milliseconds().saturating_add(
+            if request.context.replacement_shell {
+                3 * CLOSE_STAGE_TIMEOUT_MS
+            } else {
+                CLOSE_STAGE_TIMEOUT_MS
+            },
+        ));
+        let effect = live::CloseEffectRequest {
+            allow_replacement_create: operation.allow_replacement_create,
+            key: request.key.clone(),
+            connection_generation: request.connection_generation,
+            target: request.target.clone(),
+            replacement: (request.context.replacement_shell
+                && (matches!(request.target, live::CloseCaptureTarget::Tab { .. })
+                    || request.panes.len() == 1))
+                .then(|| request.context.clone()),
+        };
+        self.push_diagnostic(
+            "recent_closed.reserved",
+            format!("Reserved user close {key} before its external effect"),
+        );
+        Some(effect)
     }
 
     pub(crate) fn ingest_close_effect_result(
@@ -1799,6 +1823,7 @@ impl Runtime {
                 schedule_status_check = true;
             }
         }
+        self.settle_dormant_close_result(&request.key);
         if schedule_status_check {
             self.start_close_status_check(&request.key);
         }
@@ -1882,6 +1907,7 @@ impl Runtime {
         if matches!(operation.phase.as_str(), "completed" | "failed" | "refused") {
             return false;
         }
+        self.confirm_dormant_close(&operation);
         self.op_timings.stamp(
             &super::op_timing::pane_close_op_id(key),
             super::op_timing::Stage::Applied,

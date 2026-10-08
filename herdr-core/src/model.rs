@@ -514,6 +514,8 @@ pub struct NavigatorSnapshot {
     /// search, focus, and project navigation never lose a folded project.
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
+    /// Durable absent-pane sessions are not live agents or pane addresses.
+    pub sleeping_sessions: Vec<crate::agent_sleep::SleepingSessionSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
 }
 
@@ -4330,6 +4332,7 @@ impl Snapshot {
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
+                sleeping_sessions: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
             },
             overlay: OverlaySnapshot {
