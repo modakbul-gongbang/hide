@@ -92,7 +92,7 @@ The producer writes the card; the review may add questions, dependencies and fla
 | `drafting` | 정리 중 | Open questions remain or the review has not answered. | no | drafting |
 | `waiting` | 대기 | Ready; waits for predecessors, a slot or the environment. | no | waiting |
 | `running` | 실행 중 | A worker holds a slot. | yes | running |
-| `paused` | 일시정지 | A person paused it; the worker sleeps. | no | running |
+| `paused` | 일시정지 | A person paused it, or closed its worker's pane in Hide; the worker sleeps. | no | running |
 | `blocked` | 막힘 | Waits for an answer or a predecessor; the worker sleeps. | no | running |
 | `verifying` | 검증 중 | The worker reported done; checks, verification and the pre-merge steps run. | no | running |
 | `merge_waiting` | 머지 대기 | A person merges, requests changes or cancels. | no | running |
@@ -105,7 +105,7 @@ The producer writes the card; the review may add questions, dependencies and fla
 
 The main line is `drafting`, `waiting`, `running`, `verifying`, `merge_waiting` when a person merges, `landed`, `done`.
 `blocked`, `paused` and `stopped` branch off `running`, and `relanding` returns to `verifying` through the worker.
-A Task stops with one of these reasons: no report, stalled, verification failed three times, new-Task cap, the same environment failure repeated, or a refused worker start.
+A Task stops with one of these reasons: no report, stalled, verification failed three times, new-Task cap, the same environment failure repeated, a refused worker start, a refused publication, or a worker that disappeared again after its automatic restart.
 
 A person's actions depend on the state, and any other action is refused with `action_not_allowed_in_state`, the current state and the allowed list.
 An open question adds `answer` to any state's list.
@@ -126,7 +126,7 @@ An open question adds `answer` to any state's list.
 ### When a Task may start
 
 A `waiting` or `relanding` Task starts when all of these hold.
-Its Factory is open.
+Its Factory is open and not paused (see [Factory AI](#factory-ai-the-observer), Pausing a Factory).
 Every Task in its `depends_on` is `landed` or `done`: a predecessor must be merged, and a missing one counts as unmerged.
 The environment holds no start (see [Environment](#environment)).
 A slot is free.
@@ -160,10 +160,10 @@ A capability file holds only a token, so editing it cannot change a role.
 | Report | `ask`, `block`, `propose`, `done`, `decide` | its own Task | refused |
 | Add a dependency | `dep add` | its own Task | yes |
 | Intake | `init`, `add`, `check` | refused | yes |
-| Answer | `answer` | refused | yes |
-| Loosen | `dep remove`, `priority` | refused | yes |
+| Answer | `answer`, `ack-notices` | refused | yes |
+| Loosen | `dep remove`, `priority`, `worker` | refused | yes |
 | Merge | `merge`, `request-changes` | refused | yes |
-| Control | `pause`, `resume`, `retry`, `cancel`, `revive`, `close` | refused | yes |
+| Control | `pause`, `resume` (a Task or `--factory`), `retry`, `cancel`, `revive`, `close` | refused | yes |
 | Configure | `config --set` | refused | yes |
 
 A refusal answers `role_not_allowed` with the role and the verb.
@@ -193,8 +193,8 @@ The spawn runs on the host's starter thread, one at a time with at most 16 waiti
 The record is registered when needed and converges on the existing one.
 
 - **Name, branch, intent.** The worker is named `factory-<project name>-<task id>` and works on `factory/<issue number>-<slug>` (`factory/l<number>-<slug>` for a local issue, `factory/<task id>` without a slug). The spawn intent is `factory-<factory id>-<task id>`, and each earlier refused start adds `-a<n>`, so a refused start never repeats a spawn that already failed and a retry of the same attempt converges.
-- **Runtime.** The Task's runtime, else the Factory's `default_runtime`. The arguments in `worker_args` for that runtime go to the agent before the prompt.
-- **First prompt.** One argument, at most 6 KiB, cut at a character boundary with a pointer to `hide factory show <task>` for the rest. It holds the Task, goal, criteria, out-of-scope items, the read-only absolute path of each attachment, the harness instruction when one is set, and the reporting rules: commit on the branch, never push or merge to the default branch, finish with `hide factory done`, ask with a default or block, report discoveries, and a turn that ends without a report stops the Task. The prompt text is written in Korean. When a `hide` program sits beside the daemon, the prompt names its absolute path and says every `hide` in the rules means that program, so a worker never reaches an older copy on its `PATH`.
+- **Worker candidate.** The Factory keeps one to five worker candidates, each an agent, an optional model and effort, and a line saying when to use it; the first is the default. The candidate is, in order, the one a person pinned (`hide factory worker <task> <n>`, or `add --worker <n>`), the one the intake review picked, or the default. A new start whose candidate's agent is at its usage limit takes the next candidate in the list that is not, while a pinned candidate and a resuming worker wait for the reset. A retry, an automatic restart and a resume keep the candidate that started. The model and effort go to the agent only where its adapter declares that start argument, and the arguments in `worker_args` for that agent go before the prompt. An old Factory's `default_runtime` reads as one default candidate on the CLI's defaults until a person changes the list, and `add --runtime <agent>` pins that agent's first candidate.
+- **First prompt.** One argument, at most 6 KiB, cut at a character boundary with a pointer to `hide factory show <task>` for the rest. It holds the Task, goal, criteria, out-of-scope items, the read-only absolute path of each attachment, the harness instruction when one is set, and the reporting rules: commit on the branch, never push or merge to the default branch, finish with `hide factory done`, never ask the person on screen but send every question through `ask` (with a default) or `block`, each with up to five choices of at most 120 characters, report discoveries, and a turn that ends without a report stops the Task. The prompt text is written in Korean. When a `hide` program sits beside the daemon, the prompt names its absolute path and says every `hide` in the rules means that program, so a worker never reaches an older copy on its `PATH`.
 - **Lineage and watch.** The spawn writes lineage and starts a watch whose observer is the Factory.
 
 A worker whose pane exists but whose agent has not shown a session yet is still starting.
@@ -211,8 +211,9 @@ Sleep goes through agent sleep and is deferred until the agent's turn ends; a wo
 Stopping a worker, when its Task is cancelled or an outside pull request takes it over, ends its ledger record at once and puts its agent to sleep the same way, so the pane and session stay for `revive`.
 A wake restarts the agent in the same pane and session.
 Letters for a woken worker are held, at most 16, until its agent is back, and are dropped to the diagnostic log after 10 minutes.
-A retried Task, or a worker whose pane is gone, spawns again in the same worktree and session with a fresh intent.
-A worker that is `gone` is detected from its pane, with a three-minute grace after its start.
+A retried Task spawns again in the same worktree and session with a fresh intent.
+A worker that is `gone` is detected from its pane, with a three-minute grace after its start; a pane Hide did not close starts again once in the same worktree, counted as an automatic restart, and a second disappearance stops the Task as "worker gone" for a person, whose start sets the count back to 0.
+A pane the operator closes in Hide pauses its Task (`pause_reason` `pane_closed`) and nothing starts it again until a person resumes it, which continues the session in the same worktree.
 
 A worker reports through `hide factory` and gets its answer in the same call.
 `ask` needs a suggestion, a default action and a deadline of 1 to 720 hours, and the worker continues with the default; `block` has no default, so the Task blocks, releases its slot and sleeps.
@@ -223,7 +224,8 @@ Only a pull request from the repository's own branch is a Task's or a revert's; 
 A push or pull request refused twice in a row with no environment signal in between (a protected branch, a hook; git's transport errors such as a 5xx answer or a timeout count as the network's, while a missing key, a gone repository or a hung-up remote reach a person) stops the Task as "push 거절됨" with the reason; a person fixes the cause and retries. One with an environment signal is asked again every minute.
 A failed push or pull request is tried again a minute later.
 `decide` records a decision.
-A worker whose agent rests for the no-report window (`no_report_minutes`, 2) after a turn that reported nothing stops the Task as "no report"; a worker that goes quiet for the stall window (`stall_minutes`, 30) stops it as "stalled".
+A worker whose agent rests for the no-report window (`no_report_minutes`, 2) after a turn that reported nothing is woken once, then diagnosed once, and only then stops the Task as "no report" (see [Factory AI](#factory-ai-the-observer), A quiet worker); a worker that goes quiet for the stall window (`stall_minutes`, 30) stops it as "stalled".
+The rest is the one rest start the core saw for the worker's agent, and an agent whose state is unknown is neither woken nor caught as quiet.
 
 ## Intake review and judgments
 
@@ -252,11 +254,12 @@ Every judgment is a tool-less, one-shot call whose input the code bundles and cu
 
 | Feature id | Asked | Input | The answer may |
 | --- | --- | --- | --- |
-| `factory_intake_review` | On add and re-add, an edited issue body, a label-path card, a split piece, an approved proposal | The card, its attachment (24 KiB), up to 100 other Tasks, up to 400 file names, the repository guide (8 KiB), and the description of an autonomy scope the Task claims | Add questions, dependencies on listed Tasks, a split, and flags, and say whether the card fits the claimed scope |
+| `factory_intake_review` | On add and re-add, an edited issue body, a label-path card, a split piece, an approved proposal | The card, its attachment (24 KiB), up to 100 other Tasks, up to 400 file names, the repository guide (8 KiB), the description of an autonomy scope the Task claims, and the worker candidates when there is more than one | Add questions, dependencies on listed Tasks, a split, and flags, say whether the card fits the claimed scope, and pick a worker candidate with a reason |
 | `factory_drift` | After `done` | The card, the diff against main (24 KiB), the decisions | Pass, or add questions, and flags |
 | `factory_check` | At intake or after `done` for each natural-language check | The instruction, the card, the diff | The same as drift |
 | `factory_watch` | See [The watch](#the-watch) | The Factory's board summary | Warnings, each with an optional action |
 | `factory_env_diagnosis` | See [Environment](#environment) | The collected facts and the closed action list | One action from the list, or an exact command with its impact |
+| `factory_observer` | See [Factory AI](#factory-ai-the-observer) | The request or the worker's text, the card, its recorded decisions (50) and its PRD | Sort a request into a kind with an answer or a fix, read a quiet worker, or approve a risk-path merge |
 
 Questions that a drift or check judgment adds always carry a default action, taking the suggestion when the answer has none, so a check can only slow a Task down.
 A drift question keeps the Task in `verifying`, does not wake the worker, and holds auto merge until it is answered or its deadline passes; an answer that differs from the default wakes the worker to apply it.
@@ -271,6 +274,75 @@ The Factory has its own judgment queue on its own router (see [AI_PROVIDERS.md](
 A judgment submitted to a full queue fails like a provider failure and is escalated the way above.
 Natural-language checks are added with `hide factory check --at intake|after-done|periodic`.
 A `periodic` check runs over each running Task's card whenever the watch interval comes due; like an after-done check it only adds questions or marks, it never holds a merge, and one that cannot be queued is logged and asked again at the next interval.
+
+## Factory AI (the Observer)
+
+Factory AI is the Factory's one judgment that answers in a person's place.
+It runs as the `factory_observer` judgment on the same queue and Hide AI as the others, and code, never the AI, decides who answers (`hide-factory/src/engine/observer.rs`).
+Every Observer failure sends the request to a person with its reason in the log, and the first recorded answer wins: a person who answers while the Observer is still judging settles the question, and the Observer's later verdict is logged as `observer.late` and changes nothing.
+
+**Decision requests.**
+Every worker `ask` and `block` is a decision request, carrying at most five choices of at most 120 characters (`too_many_choices`, `choice_too_long`).
+The Observer sees the request, the Task's card, its last 50 recorded decisions and its PRD, and sorts it into one of five kinds with an answer, and for a wrong card a fix.
+While it judges, the question is not yet a person's: the inbox does not list it and it counts in no number.
+The Factory's mode (`observer_mode`) then decides where the answer comes from:
+
+| Kind | Meaning | 직접 (`manual`) | 함께 (`assist`) | 맡김 (`autonomous`) |
+| --- | --- | --- | --- | --- |
+| A | The answer is already there | Factory AI, with a notice | Factory AI | Factory AI |
+| B | A technical choice | A person | Factory AI, with a notice | Factory AI |
+| C | A product or taste choice | A person | A person | Factory AI, with a notice |
+| D | A permission: cost, sign-in, deletion, security, an outside effect, out of scope, irreversible | A person | A person | A person |
+| E | The card is wrong | A person | A person, with the fix as the choice `AI 제안 적용` | The fix is applied, with a notice |
+
+A verdict that is unsure, or that sees any permission signal, goes to a person in every mode, and so does an answer the Observer left empty.
+The mode is read when the request arrives, so changing it later does not move a request already sorted.
+An answer from Factory AI takes the path a person's answer takes, is recorded with `observer` as who relayed it, and writes a decision record with the kind and reason.
+An applied fix rewrites the card and records an approved scope change, so the Task waits for a person's merge, or drafts the new Task the fix names, and the worker is told by reply; at the Task's new-Task cap Factory AI applies nothing and the request goes to a person.
+
+**Notices.**
+A notice is a line under the inbox that a person reads and never answers: `ai_answered` (a request Factory AI answered), `ai_card_fixed`, `ai_new_task`, `ai_risk_merge` and `daily_limit`.
+Notices are counted apart from 내 차례 (`FactorySummary.notices`), and `hide factory ack-notices` clears every notice of a Factory at once.
+`hide factory answer <task> --question <id> --change --choose <choice>|--text <answer>` replaces an answer Factory AI gave, which 다른 답 on its notice sends.
+It is refused for an answer a person gave (`already_answered`) and on a finished Task (`task_finished`); it records "뒤집음: <question> -> <answer>", settles the notice, and a Task in `verifying` or `merge_waiting` goes back to `running` with its verification cancelled and its worker woken with the new answer, while any other Task's worker gets it by reply.
+
+**The daily cap.**
+A Factory sends at most `observer_daily_limit` (100, from 1 to 1000) Observer calls a day, counted by the machine's local day.
+A call the provider never received gives its count back: Hide AI off, no agent to run it, a full queue or spent budget, an unsupported request, or a paused Factory.
+At the cap nothing is sent, the request goes to a person, and the first refusal of the day leaves one `daily_limit` notice.
+
+**A quiet worker.**
+A worker whose agent rests for `no_report_minutes` after a turn with no report is woken once, through a next-prompt letter, else a resume of the same session with a note to report, and never by typing into its pane.
+When the same window passes again with no report, the Observer reads one text from the worker, the first its adapter declares and has: the user's turn, the last answer, then the screen.
+The Task page names that text (`diagnosed_from`).
+The diagnosis answers one of three:
+
+- **A question.** The engine raises the blocking question the worker was asking, the worker sleeps, and the question is sorted like any request.
+- **Forgot `done`.** The worker is asked once to report `done`, and if it still does not, the Task stops.
+- **Stopped.** The Task stops as "no report" with the diagnosis as one line under it.
+
+A worker that reports in the meantime ends the sequence, and an agent that declares neither a next-prompt letter nor a resume is diagnosed at once.
+With Hide AI off, at the daily cap or with the Factory paused, there is no diagnosis and the Task stops for a person.
+The wake and the diagnosis stay on the stopped Task for its page, and a retry, a resume or a new start clears them.
+
+**A vanished worker.**
+A worker pane that disappears without Hide closing it starts again once in the same worktree and session (`auto_restarts`), and a second disappearance stops the Task as "worker gone".
+A pane the operator closes in Hide pauses the Task with `pause_reason` `pane_closed`, which lists it in the inbox with `resume` and `cancel`; nothing starts it again until a person resumes it.
+
+**A risk-path merge.**
+In a 맡김 Factory, a verified Task whose only gate is a risk path asks Factory AI once per attempt whether it may merge.
+An approval merges through the path `hide factory merge` takes, with the pre-merge check run again and the head pinned, records "위험 경로 머지 승인" with the reason and leaves an `ai_risk_merge` notice; a refusal or a failure leaves the Task in `merge_waiting` for a person.
+In 직접 and 함께 a risk path always waits for a person.
+
+**Pausing a Factory.**
+`hide factory pause --factory` stops the Factory's starts, judgments and auto merges and puts each running worker to sleep where it is; a request that arrives meanwhile goes to a person.
+`hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile and reviews the cards that arrived.
+
+**The Factory AI and the workers.**
+`factory_ai` chooses the agent, and `factory_ai_model` and `factory_ai_effort` its model and effort, that run every judgment of this Factory; unset, the Factory uses the agent Settings › Hide AI chose.
+A choice is checked when it is set: the agent Hide AI knows, a well-formed model, an effort that agent declares, and the agent ready to answer (`factory_ai_unavailable` with the reason otherwise).
+`workers` is the list of worker candidates described under [The worker lifecycle](#the-worker-lifecycle); the intake review picks one with a reason when there is more than one, and `hide factory worker <task> <n>` pins one, or `auto` returns the choice to the review.
+A worker that already runs keeps its candidate, and the pin applies from its next new start.
 
 ## Verification
 
@@ -391,6 +463,7 @@ Its kind decides what an answer does.
 | `proposal` | An environment diagnosis | Records the answer; a person runs the command. |
 | `notice` | Anything a person should only see | `ok` removes it; answering it on a finished Task also clears its unread mark. |
 
+A worker's `default` and `blocking` question goes to Factory AI first, which answers it in a person's place where the Factory's mode allows and otherwise hands it to a person (see [Factory AI](#factory-ai-the-observer)).
 A question with a default lets the worker continue, and the Task waits only at the end of verification for the answer or the deadline.
 A blocking question releases the slot and stays open however long it waits; the inbox shows how many days.
 A worker may report five classes of discovery with `hide factory propose --class`:
@@ -476,30 +549,37 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 | `autonomy_diff_limit` | Changed lines an autonomous Task may merge alone | 200 |
 | `verify_timeout_minutes` | Minutes per bundle run, at least 1 | 60 |
 | `disk_floor_gb` | Gigabytes | 20 |
-| `default_runtime` | `claude` or `codex` | Claude Code when `init` finds it on the path, else Codex when it finds that, else `claude` |
+| `default_runtime` | An agent Factory can start and this machine has; replaces the first worker candidate with that agent on its defaults | Claude Code when `init` finds it on the path, else Codex when it finds that, else `claude` |
+| `workers` | A JSON list of 1 to 5 `{agent, model, effort, description}`, the first the default; `default_runtime` follows it | The default runtime on its CLI's defaults |
+| `observer_mode` | `manual`, `assist` or `autonomous` (직접, 함께, 맡김) | `assist` |
+| `observer_daily_limit` | 1 to 1000 Factory AI calls a local day | 100 |
+| `factory_ai` | An agent id, or `default` for the Hide AI choice | `default` |
+| `factory_ai_model`, `factory_ai_effort` | A model, or an effort the agent declares; `default` clears; refused with `factory_ai_required` before `factory_ai` | none |
 | `harness` | `<name>:<instructions>`; empty clears | none |
 | `autonomy` | `<scope>=on` or `off` | all off |
 | `recovery` | `<action>=on` or `off` | all off |
-| `worker_args` | `<runtime>=<arguments>`, split on spaces; empty clears | none |
+| `worker_args` | `<agent>=<arguments>`, split on spaces; empty clears | none |
 | `risk_paths` | Comma-separated: `dir/**`, `*.ext`, or an exact path or folder | none |
 | `prd_in_issue` | `on` or `off` | off |
 | `macos_notifications` | `on` or `off` | off |
 
 `max_workers` is the machine's, not the Factory's, and any Factory's `config` sets the same value.
-`worker_args` holds the whole argument list for one runtime, such as a permission mode the operator chose, and an empty list removes it.
+`worker_args` holds the whole argument list for one agent, such as a permission mode the operator chose, and an empty list removes it.
+A worker candidate names an agent whose adapter declares a start (`agent_not_startable`) and that this machine has (`agent_not_installed`), and a model or effort its start can take; a number outside its range answers `out_of_range`.
+A Factory stored before candidates reads its `default_runtime` as the one default candidate, and nothing is migrated.
 `harness` places the named instruction in each worker's first prompt; gates never trust a harness's own claims, and a harness's own checks belong in `verify`.
 
 ## The `hide factory` command
 
 ```
 hide factory init <project> [--ci [<check>...]] [--verify <command>]... [--no-verification] [--merge auto|manual] [--confirm]
-hide factory add [--task <id>|<issue>] --title <t> --goal <g> --criterion <c>... [--out-of-scope <s>]... [--open <decision>]... [--after <task>]... [--external <ref>]... [--prd <path>] [--review-directly] [--priority <n>] [--merge auto|manual] [--runtime claude|codex] [--project <path>]
+hide factory add [--task <id>|<issue>] --title <t> --goal <g> --criterion <c>... [--out-of-scope <s>]... [--open <decision>]... [--after <task>]... [--external <ref>]... [--prd <path>] [--review-directly] [--priority <n>] [--merge auto|manual] [--runtime <agent>] [--worker <n>] [--project <path>]
 hide factory status [--project <path>]
 hide factory show <task>
 hide factory inbox
-hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>]
-hide factory ask --question <text> --suggestion <text> --default <action> [--deadline-hours <n>]
-hide factory block --question <text> --suggestion <text> [--deadline-hours <n>]
+hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>] [--change]
+hide factory ask --question <text> --suggestion <text> --default <action> [--choice <text>]... [--deadline-hours <n>]
+hide factory block --question <text> --suggestion <text> [--choice <text>]... [--deadline-hours <n>]
 hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...] [--autonomy <scope>] [--reclassify <discovery>]
 hide factory done [--summary <text>] [--breaking]
 hide factory decide --text <decision>
@@ -507,6 +587,9 @@ hide factory config [--project <path>] [--set <key>=<value>]...
 hide factory priority <task> <n>
 hide factory dep add|remove <task> --on <task>
 hide factory pause|resume|retry|merge|cancel|revive <task>
+hide factory pause|resume --factory [--project <path>]
+hide factory worker <task> <n>|auto
+hide factory ack-notices [--project <path>]
 hide factory request-changes <task> --comment <text>
 hide factory check --at intake|after-done|periodic --instruction <text> [--project <path>]
 hide factory close [--project <path>]
@@ -518,19 +601,21 @@ Add --json to print the answer as JSON.
 | `init` | Without `--confirm`, shows the source, the verification candidates the code detected (the branch's required checks and verify commands read from `Cargo.toml`, `package.json`, `Makefile` or `pyproject.toml`), the merge mode and, on GitHub, the login `gh api user` names, the repository, and everything the Factory reads and writes there, and writes nothing. With `--confirm` and a verification choice, creates the Factory, records that approval (account, repository, time) in its history as `github.approved`, and, on GitHub, creates the `factory` label. A closed Factory is reopened with `--confirm`. A project that already has an open Factory answers with it. |
 | `add` | Creates a Task or updates the named one. A positional issue reads its title and body for missing fields. `--prd` copies the file into the store. |
 | `status`, `show`, `inbox` | Read the board, one Task page, and the inbox. |
-| `answer` | Answers a question and records who relayed it. |
-| `ask`, `block`, `propose`, `done`, `decide` | A worker's reports on its own Task. |
+| `answer` | Answers a question and records who relayed it. `--change` replaces an answer Factory AI gave (see [Factory AI](#factory-ai-the-observer)). |
+| `ask`, `block`, `propose`, `done`, `decide` | A worker's reports on its own Task. `ask` and `block` take up to five `--choice`. |
 | `config`, `check` | Reads and sets settings, and adds a natural-language check. A check cannot be removed once added. |
-| `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in an active lifecycle state (anything except drafting, waiting, done or cancelled). |
+| `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in an active lifecycle state (anything except drafting, waiting, done or cancelled). `pause --factory` and `resume --factory` pause and resume a whole Factory. |
+| `worker` | Pins the Task's worker candidate by its number from 1, or `auto` for the review's pick (`worker_out_of_range`). `add --worker <n>` pins at add. |
+| `ack-notices` | Clears every notice of the Factory and answers how many. |
 
-Without `--project`, `add`, `config`, `check` and `close` use the only open Factory, and answer `factory_ambiguous` when there are several.
+Without `--project`, `add`, `config`, `check`, `close`, `ack-notices` and a Factory's `pause` and `resume` use the only open Factory, and answer `factory_ambiguous` when there are several.
 A project path is made absolute by the CLI.
 `--json` prints the engine's answer as one JSON object, and without it the answer is printed for a person.
 Every answer carries `ok`.
 A refusal prints `refused: <reason>`, the current state and allowed actions or the invalid fields when it has them, and `next: <action>`, and exits non-zero; its JSON is `{"ok": false, "reason", "next_action", "detail"}`.
 `add` answers `{result, task, questions}`, `init` a preview (its `github` is `{account, repo, reads, writes}` or `null` for a local project), `created` or `existing` object, `show` `{task: <TaskDetail>}`, `inbox` `{count, items}`, `status` a `FactorySummary`, and `config` `{config, machine}`.
 Other actions answer `{message, task}` with the Task's id, display id and new state.
-Common refusal reasons are `role_not_allowed`, `task_not_found`, `task_ambiguous`, `factory_not_found`, `factory_ambiguous`, `factory_closed`, `card_invalid`, `action_not_allowed_in_state`, `config_invalid`, `auto_needs_verification`, `github_login_required`, `github_permission_missing`, `main_dirty` and `revive_expired`.
+Common refusal reasons are `role_not_allowed`, `task_not_found`, `task_ambiguous`, `factory_not_found`, `factory_ambiguous`, `factory_closed`, `card_invalid`, `action_not_allowed_in_state`, `config_invalid`, `auto_needs_verification`, `github_login_required`, `github_permission_missing`, `main_dirty`, `revive_expired`, `already_answered`, `task_finished`, `too_many_choices`, `choice_too_long`, `worker_out_of_range`, `factory_ai_required` and `factory_ai_unavailable`.
 
 ## The read model
 
@@ -545,7 +630,8 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 
 | Field | Meaning |
 | --- | --- |
-| `my_turn` | The one person-facing number: the open inbox items across all Factories. |
+| `my_turn` | The one person-facing number: the answers, merge waits and stops across all Factories; notices are not counted. |
+| `notices` | The open notices across all Factories, shown below the line. |
 | `factories` | One `FactoryView` per Factory. |
 | `inbox` | Every `InboxItem`, in the inbox order below. |
 
@@ -558,7 +644,13 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `verification` | `ci`, `verify` or `none`. |
 | `closed` | Whether the Factory is closed. |
 | `flow` | `before`, `moving`, `stuck` and `done_today` counts; `done_today` counts by the machine's local day, read through the clock port's UTC offset. |
-| `my_turn` | This Factory's inbox items. |
+| `my_turn`, `notices` | This Factory's inbox items apart from notices, and its notices. |
+| `paused` | A person paused the whole Factory. |
+| `observer_mode` | `manual`, `assist` or `autonomous` (직접, 함께, 맡김). |
+| `observer_today`, `observer_limit` | Factory AI calls counted today and the daily cap. |
+| `factory_ai` | The Factory AI's agent, model and effort, or none for the Hide AI choice. |
+| `workers` | The worker candidates, the first the default. |
+| `macos_notifications` | Whether the desktop app shows this Factory's macOS notifications. |
 | `columns` | The four board columns, each with its Task cards in order. |
 | `cancelled` | Cancelled Tasks, off the board. |
 | `graph` | Nodes, reduced edges and unrelated Tasks. |
@@ -580,6 +672,8 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `issue`, `issue_url` | The real issue reference and its GitHub URL, absent before an issue exists; local references have no URL. |
 | `pr` | The current PR, including an outside PR closing the issue. |
 | `worker_runtime` | The worker's actual runtime, absent before a worker exists. |
+| `worker_label` | The worker's agent as a person reads it, its accessible name. |
+| `pause_reason` | For a paused Task, `person` or `pane_closed`. |
 | `resume_at` | For a waiting Task, its worker runtime's engine usage-hold deadline, only while it is in the future. |
 | `waiting_group` | `person` for a stuck Task needing a person or paused; `other` for another stuck Task; otherwise absent. |
 | `stage` | 0 waiting, 1 work, 2 verification, 3 merge, 4 complete. |
@@ -605,7 +699,7 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | Field | Meaning |
 | --- | --- |
 | `group` | `answer`, `merge`, `stopped` or `notice`. |
-| `kind` | The question kind, `merge` or `stopped`. |
+| `kind` | The question kind, `merge`, `stopped`, or `paused` for a Task whose worker pane the operator closed. |
 | `rank` | The order key: 0 blocking question, 1 other answers, 2 merge, 3 stopped and action or proposal questions, 4 notices. |
 | `factory`, `task`, `display_id`, `title`, `project` | Where it belongs. |
 | `question` | The question id, when the item is a question. |
@@ -621,8 +715,12 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `deadline`, `remaining` | The deadline, and a short phrase for it or for how many days a blocking question has waited. |
 | `remaining_hours` | Whole hours left before the deadline, rounded up, 0 once it passed; none for a blocking question. |
 | `waiting_since`, `waiting_days` | When it started waiting, and whole days for a blocking question. |
+| `notice` | For a notice, its `NoticeCode`. |
+| `refers_to` | For a notice about a decision, the question Factory AI answered. |
+| `decision_kind`, `observer_reason` | The kind and reason Factory AI gave a request it sorted, or a notice's decision; for a stopped item, the diagnosis line. |
+| `overridable` | Whether 다른 답 can still replace that decision: Factory AI gave it and the Task is not finished. |
 
-The inbox lists each open question, each `merge_waiting` Task, and each stopped Task that has no action question, in order of rank and, within a rank, the item waiting longest first.
+The inbox lists each open question a person may answer (not one Factory AI is still sorting), each `merge_waiting` Task, each stopped Task that has no action question, and each Task paused by a closed worker pane, in order of rank and, within a rank, the item waiting longest first.
 That puts blocking questions first, then other answers, merge waits, stops and notices, so what has waited the longest to be unblocked is at the top.
 Cancelling a Task answers its open questions as `cancel`, so a cancelled Task lists none and no deadline applies a default to it.
 
@@ -668,6 +766,22 @@ Old Tasks use the fallback when read and are never rewritten just to add the fie
 | `stop_code` | The same as a `StopReason` code. |
 | `merge_sha` | The merge commit. |
 | `worker_name`, `worktree`, `branch` | The worker's name, folder and branch. |
+| `worker` | The `WorkerLine` of the worker that actually started. |
+| `pinned_worker` | The candidate a person pinned, 1 first. |
+| `ai_picked_worker`, `ai_pick_reason` | The candidate the intake review picked, 1 first, and why. |
+| `auto_restarts` | Automatic restarts used since a person last started it. |
+| `diagnosis` | Factory AI's one line under a no-report stop. |
+| `resting_since` | When the worker's current rest began, as the core saw it. |
+| `woke_at`, `diagnosed_at` | When the engine woke the resting worker, and when it asked for a diagnosis. |
+| `diagnosed_from` | The `DiagnosisSource` that diagnosis read. |
+
+**`WorkerLine`**
+
+| Field | Meaning |
+| --- | --- |
+| `agent`, `label` | The agent id and the name a person reads. |
+| `model`, `effort` | The model and effort it started with, none for the CLI's defaults. |
+| `picked`, `pick_reason` | The candidate's description and the review's reason, when the review picked it. |
 
 **`AttemptView`**
 
@@ -687,9 +801,14 @@ Old Tasks use the fallback when read and are never rewritten just to add the fie
 | --- | --- |
 | `WaitingFor` | `predecessors`, `slot`, `environment`, `answer` |
 | `EnvHold` | `disk_floor` (free disk below the floor), `disk_full` (a command found no space), `memory_critical` |
-| `StopReason` | `no_report`, `stalled`, `verify_failed`, `new_task_cap`, `environment_repeated`, `worker_start`, `publish_refused` |
+| `StopReason` | `no_report`, `stalled`, `verify_failed`, `new_task_cap`, `environment_repeated`, `worker_start`, `publish_refused`, `worker_gone` |
 | `Gate` | `review_directly`, `approved_scope_change`, `breaking_change`, `no_verification`, `risk_path`, `manual_mode`, `open_question`, `check_failed`, `autonomy_diff`, `dirty_main`, `merge_refused` |
-| `ResultCode` | `wake_worker`, `apply_or_merge`, `ready`, `split`, `drafting`, `new_task_cap_choice`, `run_action`, `acknowledge`, `merge`, `restart_worker` |
+| `ResultCode` | `wake_worker`, `apply_or_merge`, `ready`, `split`, `drafting`, `new_task_cap_choice`, `run_action`, `acknowledge`, `merge`, `restart_worker`, `resume_worker` |
+| `NoticeCode` | `ai_answered`, `ai_card_fixed`, `ai_new_task`, `ai_risk_merge`, `daily_limit` |
+| `DecisionKind` | `A`, `B`, `C`, `D`, `E` (see [Factory AI](#factory-ai-the-observer)) |
+| `PauseReason` | `person`, `pane_closed` |
+| `ObserverMode` | `manual`, `assist`, `autonomous` |
+| `DiagnosisSource` | `user_turn`, `last_answer`, `screen` |
 
 ## Performance boundaries
 
