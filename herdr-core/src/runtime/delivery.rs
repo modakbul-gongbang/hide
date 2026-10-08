@@ -831,6 +831,7 @@ pub(crate) mod tests {
     use crate::handle::ChangeNotifier;
     use crate::model::{CoreOptions, SCHEMA_VERSION};
     use crate::sidebar::SessionSnapshotPayload;
+    use hide_node_link::terminal::TerminalReport;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
@@ -1163,6 +1164,105 @@ pub(crate) mod tests {
             .unwrap(),
         );
         assert_eq!(written(&mut guard), (true, true, false));
+    }
+
+    /// A key's report as the pane's node sends it.
+    fn key_report(pane: &str, at_unix_ms: u64, submitted: bool) -> TerminalReport {
+        TerminalReport::Input {
+            pane: pane.to_owned(),
+            at_unix_ms,
+            submitted,
+            focus: false,
+        }
+    }
+
+    /// PRD core-host-node-terminal B5: a node reports a key without waiting
+    /// for the runtime lock, however long it is held, and a key into the
+    /// pane the keyboard is already in publishes nothing.
+    #[test]
+    fn keys_are_reported_while_the_runtime_lock_is_held_and_publish_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let (channel, reports) = crate::terminal_reports::terminal_reports();
+        let pump = crate::terminal_reports::ReportPump::spawn(
+            reports,
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+        )
+        .unwrap();
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        clocks(&mut guard, "recipient", true);
+        let (sent, done) = std::sync::mpsc::channel();
+        let node = std::thread::spawn(move || {
+            for at in 1..=10_000 {
+                hide_node_link::terminal::ReportSink::report(
+                    &channel,
+                    key_report("recipient", at, false),
+                );
+            }
+            sent.send(()).unwrap();
+        });
+        // Every report went out while this test still holds the lock.
+        done.recv_timeout(Duration::from_secs(30))
+            .expect("a report waited for the runtime lock");
+        node.join().unwrap();
+        assert_eq!(clocks(&mut guard, "recipient", false), (0, 0, 0));
+        drop(guard);
+        drop(pump);
+        let mut guard = runtime.lock().unwrap();
+        assert_eq!(clocks(&mut guard, "recipient", false).0, 10_000);
+        // A screen's key names the pane it was typed into: the first one
+        // moves the keyboard there, and the rest, Enter included, change
+        // nothing a screen draws.
+        let typed = |at, submitted| TerminalReport::Input {
+            pane: "recipient".to_owned(),
+            at_unix_ms: at,
+            submitted,
+            focus: true,
+        };
+        assert!(guard.ingest_terminal_reports(vec![typed(10_001, false)]));
+        assert!(!guard.ingest_terminal_reports(vec![typed(10_002, false)]));
+        assert!(!guard.ingest_terminal_reports(vec![typed(10_003, true)]));
+    }
+
+    /// PRD core-host-node-terminal B7: the node reports the first key after
+    /// a quiet pane at once and folds the keys behind it into one report a
+    /// second later, so a letter that arrives inside that second is held
+    /// like one that arrives after it.
+    #[test]
+    fn a_letter_right_after_the_first_key_on_a_quiet_pane_is_held() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+        let long_ago = unix_milliseconds().saturating_sub(120_000);
+        observation.last_input_at_unix_ms = long_ago;
+        observation.last_submit_at_unix_ms = long_ago;
+        observation.status_changed_at_unix_ms = long_ago;
+        observation.entered_working_at_unix_ms = long_ago;
+        let judge = |runtime: &Runtime, now: u64| {
+            crate::delivery::doorbell::judge(&runtime.delivery_observations["recipient"], now)
+        };
+        assert_eq!(judge(&guard, unix_milliseconds()), Ok(()));
+
+        // The first key after the quiet spell is reported as it is typed.
+        let first = unix_milliseconds();
+        guard.ingest_terminal_reports(vec![key_report("recipient", first, false)]);
+        // A second key 200 ms later waits at the node; a letter at 500 ms
+        // finds the pane typed into a moment ago and a draft on it.
+        assert_eq!(
+            judge(&guard, first + 500),
+            Err(crate::delivery::doorbell::Hold::Draft)
+        );
+        // The folded report lands a second after the first key, and the
+        // draft still holds the letter once the pane is quiet again.
+        guard.ingest_terminal_reports(vec![key_report("recipient", first + 200, false)]);
+        assert_eq!(
+            judge(&guard, first + 60_000),
+            Err(crate::delivery::doorbell::Hold::Draft)
+        );
     }
 
     #[test]
