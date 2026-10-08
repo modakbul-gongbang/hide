@@ -145,7 +145,7 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
 #[cfg(unix)]
 fn dormant_wire_session(cwd: &str, tabs: &[&str]) -> serde_json::Value {
     serde_json::json!({"version":"fixture", "protocol":hide_herdr_client::HERDR_PROTOCOL_REVISION,
-        "workspaces":[{"workspace_id":"w-order","label":"order","active_tab_id":"w-order:t1","focused":true}],
+        "workspaces":[{"workspace_id":"w-order","number":1,"label":"order","active_tab_id":"w-order:t1","focused":true,"agent_status":"idle","pane_count":tabs.len(),"tab_count":tabs.len()}],
         "tabs":tabs.iter().enumerate().map(|(index, tab)| serde_json::json!({
             "tab_id":tab,"workspace_id":"w-order","number":index+1,"label":"fixture",
             "focused":index==0,"pane_count":1,"agent_status":"idle"
@@ -206,7 +206,7 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
             assert!(saved["close_key"].is_string());
             assert_eq!(params["pane_id"], SLEEPER);
             effects.send("close").unwrap();
-            serde_json::json!({"type":"pane_closed","pane_id":SLEEPER,"workspace_id":"w-order"})
+            serde_json::json!({"type":"ok"})
         }
         "session.snapshot" => {
             // The layout worker reads once before and once after creating its own tab.
