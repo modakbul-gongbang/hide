@@ -56,8 +56,8 @@ impl Runtime {
             .device_kit_declined(target)
             .is_some_and(|declined| declined.installed_nothing());
         let kit = self.kit_state(target);
-        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
-            crate::agent_hooks::device_hook_status(declined, &kit, runtime)
+        let status_of = |hook: crate::agent_hooks::CountingHook| {
+            crate::agent_hooks::device_hook_status(declined, &kit, hook)
         };
         let agents = &session.agents;
         let tokens = &session.pane_hook_tokens;

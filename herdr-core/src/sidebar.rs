@@ -402,16 +402,17 @@ pub fn project_pane_children(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
     tokens: crate::agent_hooks::PaneHookTokens,
-    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+    status_of: &dyn Fn(crate::agent_hooks::CountingHook) -> Option<hide_agent_hooks::HookStatus>,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let agent = agents.iter().find(|agent| agent.pane_id == pane_id)?;
-    let runtime = hide_agent_adapter::adapter(&agent.agent_kind)
-        .and_then(|row| row.subagent_counts)
-        .map(hide_agent_hooks::AgentRuntime::from_dialect);
-    let status = runtime.and_then(status_of);
+    let hook = crate::agent_hooks::counting_hook(&agent.agent_kind);
+    let status = hook.and_then(status_of);
     let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
         hide_agent_hooks::diagnosis::PaneObservation {
-            runtime,
+            runtime: match hook {
+                Some(crate::agent_hooks::CountingHook::Runtime(runtime)) => Some(runtime),
+                _ => None,
+            },
             token_version: tokens.version,
             working: tokens.working,
             done: tokens.done,
@@ -467,7 +468,7 @@ pub fn project_pane_children_connected(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
     tokens: crate::agent_hooks::PaneHookTokens,
-    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+    status_of: &dyn Fn(crate::agent_hooks::CountingHook) -> Option<hide_agent_hooks::HookStatus>,
     codex_daemon_on: bool,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let mut children = project_pane_children(agents, pane_id, tokens, status_of)?;

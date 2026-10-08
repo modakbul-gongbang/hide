@@ -246,6 +246,7 @@ impl Runtime {
         let kind = match runtime {
             "claude-code" => "claude",
             "codex" => "codex",
+            "grok" => "grok",
             _ => return Err("factory_guard_runtime_invalid".into()),
         };
         let actor = &observation.actor;

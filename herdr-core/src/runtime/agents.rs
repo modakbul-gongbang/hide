@@ -1141,11 +1141,17 @@ impl Runtime {
     pub(super) fn sync_pane_lineage(&mut self) -> bool {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
-        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
-            diagnosis
+        // Grok's and Cursor's hooks are pieces of their agent rows, which the
+        // kit reads on this machine as on a device.
+        let kit = self.kit_states.get(self.node.as_str()).cloned();
+        let status_of = |hook: crate::agent_hooks::CountingHook| match hook {
+            crate::agent_hooks::CountingHook::Runtime(runtime) => diagnosis
                 .as_ref()
                 .and_then(|diagnosis| diagnosis.status_of(runtime))
-                .cloned()
+                .cloned(),
+            crate::agent_hooks::CountingHook::Basic(_) => kit
+                .as_ref()
+                .and_then(|kit| crate::agent_hooks::kit_hook_status(kit, hook)),
         };
         let codex_daemon_on = self
             .kit_states

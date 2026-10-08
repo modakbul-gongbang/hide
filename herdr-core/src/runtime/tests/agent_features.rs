@@ -19,9 +19,17 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
     for adapter in hide_kit::agents::ADAPTERS {
         let kind = herdr_kind(adapter);
         let hook = crate::agent_hooks::runtime_of(kind).is_some();
-        for feature in [Feature::Letters, Feature::Memory, Feature::Subagents] {
+        for feature in [Feature::Letters, Feature::Memory] {
             assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
         }
+        // Grok's and Cursor's own hooks count subagents too (PRD
+        // grok-cursor-hooks), and the pane header reads that count.
+        let counted = crate::agent_hooks::counting_hook(kind).is_some();
+        assert_eq!(
+            adapter.supports(Feature::Subagents),
+            counted,
+            "{kind}: subagents"
+        );
         // The doorbell rings for the core's own target list.
         assert_eq!(
             adapter.supports(Feature::Bell),
@@ -33,8 +41,9 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
         // event.
         assert_eq!(
             adapter.supports(Feature::SpawnGuard),
-            hook && hide_agent_hooks::HookEvent::ALL
-                .contains(&hide_agent_hooks::HookEvent::PreToolUse),
+            counted
+                && hide_agent_hooks::HookEvent::ALL
+                    .contains(&hide_agent_hooks::HookEvent::PreToolUse),
             "{kind}: spawn guard"
         );
         assert_eq!(

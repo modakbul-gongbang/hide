@@ -1306,24 +1306,36 @@ impl Runtime {
         if self.kit_states.get(device_id) == Some(&snapshot) {
             return false;
         }
-        let shared_before = self
-            .kit_states
-            .get(device_id)
-            .is_some_and(KitSnapshot::shares_codex_server);
-        let shared_now = snapshot.shares_codex_server();
+        let judged_before = self.kit_states.get(device_id).map(pane_judgement_inputs);
+        let judged_now = pane_judgement_inputs(&snapshot);
         self.kit_states.insert(device_id.to_owned(), snapshot);
         self.refresh_device_snapshots();
         // A device's agent panes are judged against its kit.
         if device_id != self.node.as_str() {
             self.refresh_device_catalog(device_id);
-        } else if shared_before != shared_now {
+        } else if judged_before.as_ref() != Some(&judged_now) {
             // A Codex pane's reason for not being connected follows the
-            // shared server (its setting, or a daemon that still answers), so
-            // it is judged again at once.
+            // shared server (its setting, or a daemon that still answers), and
+            // a Grok or Cursor pane's count follows its agent's hook piece, so
+            // the panes are judged again at once.
             self.sync_pane_lineage();
         }
         true
     }
+}
+
+/// What of a machine's kit the judgement of its panes reads: the Codex
+/// shared server and the state of each agent's hook piece.
+fn pane_judgement_inputs(
+    kit: &KitSnapshot,
+) -> (bool, Vec<(String, Option<hide_kit::ComponentState>)>) {
+    (
+        kit.shares_codex_server(),
+        kit.agents
+            .iter()
+            .map(|agent| (agent.id.clone(), agent.hook.as_ref().map(|hook| hook.state)))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
