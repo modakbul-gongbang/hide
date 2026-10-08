@@ -29,7 +29,7 @@ Pick the cheapest layer that can observe the result.
 | Layer | Use it for | Where |
 | --- | --- | --- |
 | Unit | A decision that takes values and returns a result: policy, parsing, serialization, layout math, a rejected transition | Beside the owning module: `#[cfg(test)] mod tests` in Rust, `*.test.ts` or `*.test.tsx` in `web/` and `desktop/` |
-| Core runtime and crate boundary | State the core owns, reached through a dispatched event and the snapshot it publishes; a Herdr fixture; the hided wire; an OS contract | `herdr-core/src/runtime/tests/` and the other suites the core's modules include, `hided/tests/`, `hide-platform/tests/` |
+| Core runtime and crate boundary | State the core owns, reached through a dispatched event and the snapshot it publishes; a Herdr fixture; the hided wire; an OS contract | `herdr-core/src/runtime/tests/` and the other suites the core's modules include, `hided/tests/it/`, `hide-platform/tests/it/` |
 | End to end | A flow that crosses a process boundary a user depends on: browser to hided to the core to Herdr to the PTY, or the desktop window and its native integration | `web/e2e/`, `desktop/e2e/` |
 
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
@@ -38,7 +38,7 @@ It verifies real helper attestation and mailbox intake over the device's node li
 Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned for a change to a crate it builds and tests) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
 A pull request runs it on Linux only: SSH, the helper's attestation and the mailbox are the same code on every system, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
 The fixture's macOS branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP server path) and the usual remote device being a Mac are why the nightly runs the lane on macOS too (`remote mailbox (macOS)`).
-The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory.
+The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory, which it removes once the journey passed and every process confirmed its exit and keeps after a failure for the lane to upload.
 Each spec starts its own Herdr, hided and browser, so a rule restated end to end costs runner minutes on every pull request and fails for reasons that have nothing to do with the rule.
 Keep one representative journey per user-visible flow; when a long spec carries an independent contract, split that contract into a small spec that still runs against the real pinned Herdr and hided rather than adding steps to the journey.
 
@@ -256,6 +256,8 @@ A piece that another open change is still building is marked as pending with the
 
 Pick the layer first with [the table above](#choose-what-to-test-and-where), then follow the rules below.
 The crate's own `AGENTS.md` says where the file goes; this section says how the test is built.
+An integration test is a module of its crate's one test binary, `tests/it/main.rs`, never a `tests/*.rs` file of its own: each file was a binary that linked every crate again ([BUILD.md: One integration test binary per crate](BUILD.md#one-integration-test-binary-per-crate)).
+Its tests share a process with the other modules' under `cargo test`, so a test that changes process-wide state, such as an environment variable its fake reads, holds the lock the binary's `main.rs` declares for it.
 
 1. **Unit test the decision, runtime-test the rule that crosses components.**
    A function that takes values and returns a result is tested beside its module (`usage.rs`'s `can_attempt` and `record_failure`).
@@ -299,7 +301,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
    `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
-   The `ci` profile also ends a test still running at 120 s (`slow-timeout`; 240 s for the remote mailbox binary), so a hang fails with the test's name, is retried and is filed like any other flaky failure, instead of holding the lane until a step or job limit cancels it with no test named.
+   The `ci` profile also ends a test still running at 120 s (`slow-timeout`; 240 s for the remote mailbox test), so a hang fails with the test's name, is retried and is filed like any other flaky failure, instead of holding the lane until a step or job limit cancels it with no test named.
    That limit is a hang guard set well above the slowest test each lane measures, and the comment beside it in `.config/nextest.toml` says how it was measured; a test that needs more is the finding, not the limit.
    A flaky OS-contract test is fixed or deleted by its issue's deadline like any other; it is not ignored.
    The rule against raising a deadline to pass is unchanged.
