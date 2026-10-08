@@ -1294,6 +1294,14 @@
                     }
                 },
                 {
+                    "name": "--machine",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
                     "name": "--name",
                     "required": true,
                     "requires": [],
@@ -1353,6 +1361,13 @@
                     "requires": [],
                     "value": null
                 }
+            ],
+            "refusals": [
+                "machine_unknown",
+                "machine_unavailable",
+                "repository_unavailable",
+                "agent_not_installed",
+                "intent_conflict"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1655,7 +1670,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:8b566393194954c506287a04404d97f99ff9730cc9fd8976c091fd6431b5a96a",
+    "digest": "sha256:b853722ee6bb8bf92902d1cabf884521b250cf377ce4386dfcc3e65d4931fbb8",
     "envelopes": {
         "agent": {
             "answer": "value",

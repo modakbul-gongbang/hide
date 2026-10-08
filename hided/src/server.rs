@@ -946,10 +946,41 @@ const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
 
 /// What a refused delivery or agent command asks of its caller.
 fn delivery_next_action(code: &str) -> &'static str {
-    if code == "agent_pane_required" {
-        "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
-    } else {
-        "Check the current agent pane and retry the same intent"
+    match herdr_core::coordination::split_refusal(code).0 {
+        "agent_pane_required" => {
+            "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
+        }
+        "machine_unknown" => {
+            "Use the device id from hide workspace info or hide agent list with --machine, then retry"
+        }
+        "machine_unavailable" => {
+            "Check that the device is connected in Settings > Devices and its helper is allowed, then run the same command again"
+        }
+        "repository_unavailable" => {
+            "Pass --repo as the repository's path on that device, then run the command again"
+        }
+        "agent_not_installed" => {
+            "Install the agent CLI on the device so it is on the device's PATH, then run the command again"
+        }
+        _ => "Check the current agent pane and retry the same intent",
+    }
+}
+
+/// The reason and next action of a refused command. A refusal that names the
+/// devices the caller could have used says so in its next action, and its
+/// reason stays the code.
+fn refusal_answer(reason: String, next_action: &'static str) -> (String, String) {
+    match herdr_core::coordination::split_refusal(&reason) {
+        (code, Some(connected)) if connected.is_empty() => (
+            code.to_owned(),
+            "No other device is connected; connect one in Settings > Devices, then retry"
+                .to_owned(),
+        ),
+        (code, Some(connected)) => (
+            code.to_owned(),
+            format!("Use one of the connected device ids with --machine: {connected}"),
+        ),
+        (_, None) => (reason, next_action.to_owned()),
     }
 }
 
@@ -1296,6 +1327,7 @@ async fn scoped_client_loop(
                                 json!({"type":"workspace_result","request_id":request_id,"ok":true,"result":result})
                             }
                             Ok(Err((reason, next_action))) => {
+                                let (reason, next_action) = refusal_answer(reason, next_action);
                                 json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":reason,"next_action":next_action})
                             }
                             Err(_) => {
