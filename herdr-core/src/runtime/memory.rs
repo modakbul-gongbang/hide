@@ -1684,22 +1684,29 @@ fn project_sessions(
     sessions_node: &dyn NodeLink,
     identity: &hide_project::ProjectIdentity,
 ) -> Result<Vec<ProjectSession>, String> {
-    call_as(
+    let page = hide_node_link::readers::project_sessions(
         sessions_node,
-        Call::ProjectSessions {
-            project: identity.clone(),
-        },
+        identity.clone(),
         SESSION_CALL_TIMEOUT,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    if page.refused > 0 {
+        crate::diagnostic!(serde_json::json!({
+            "component": "memory", "kind": "sessions.reader_refused",
+            "project_id": identity.id, "sessions": page.refused,
+        }));
+    }
+    Ok(page.rows)
 }
 
 fn session_stat(
     sessions_node: &dyn NodeLink,
     session: &ProjectSession,
 ) -> Result<SessionStat, String> {
-    call_as(
+    hide_node_link::link::call_as_reader(
         sessions_node,
+        session.agent,
+        hide_node_link::sessions::ReaderFeature::Memory,
         Call::SessionStat {
             path: session.locator.to_string_lossy().into_owned(),
         },
@@ -1714,13 +1721,21 @@ fn session_chunk(
     session: &ProjectSession,
     saved: Option<&SessionCursorRecord>,
 ) -> Result<SessionChunk, String> {
+    hide_node_link::link::check_reader_support(
+        sessions_node,
+        session.agent,
+        hide_node_link::sessions::ReaderFeature::Memory,
+    )
+    .map_err(|error| error.to_string())?;
     let checkpoint = saved
         .filter(|record| !record.checkpoint.is_empty())
         .map(|record| serde_json::from_slice(&record.checkpoint))
         .transpose()
         .map_err(|error| format!("session_checkpoint:{error}"))?;
-    call_as(
+    hide_node_link::link::call_as_reader(
         sessions_node,
+        session.agent,
+        hide_node_link::sessions::ReaderFeature::Memory,
         Call::SessionChunk {
             path: session.locator.to_string_lossy().into_owned(),
             checkpoint,
@@ -2348,8 +2363,10 @@ pub(super) fn load_session_detail(
     let agent = Agent::from_kind(&row.provider)
         .filter(|agent| agent.has_session_file())
         .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
-    let contents: String = call_as(
+    let contents: String = hide_node_link::link::call_as_reader(
         sessions_node,
+        agent,
+        hide_node_link::sessions::ReaderFeature::Conversation,
         Call::SessionText {
             path: row.locator.clone(),
         },

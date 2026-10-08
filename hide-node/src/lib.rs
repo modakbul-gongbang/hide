@@ -112,10 +112,17 @@ pub fn hold_roots(
 }
 
 impl NodeLink for Local {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        static FEATURES: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+            std::sync::LazyLock::new(hide_node_link::sessions::ReaderFeatures::implemented);
+        (!self.env.stop.load(Ordering::Relaxed)).then_some(&FEATURES)
+    }
+
     /// Waits at most `timeout`, as a call to another machine does: the work
     /// runs on a thread of its own, and a caller that stops waiting reads
     /// the effect as unknown.
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        hide_node_link::link::check_reader_call(self, &call)?;
         let op = op_name(&call);
         if self.in_flight.fetch_add(1, Ordering::AcqRel) >= MAX_IN_FLIGHT {
             self.in_flight.fetch_sub(1, Ordering::AcqRel);
@@ -170,6 +177,7 @@ impl NodeLink for Local {
         timeout: Duration,
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
+        hide_node_link::link::check_reader_call(self, &call)?;
         let deadline = Instant::now().checked_add(timeout);
         let mut within =
             |report| deadline.is_none_or(|end| Instant::now() < end) && progress(report);

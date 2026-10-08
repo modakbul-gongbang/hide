@@ -215,6 +215,14 @@ pub enum Agent {
 }
 
 impl Agent {
+    /// The session formats actually declared by this build, independent of
+    /// whether its launch, hooks or other features are enabled.
+    pub fn supported() -> impl Iterator<Item = Self> {
+        hide_agent_adapter::ADAPTERS
+            .iter()
+            .filter_map(|row| row.session.map(Self::from_format))
+    }
+
     pub const fn format(self) -> hide_agent_adapter::SessionFormat {
         match self {
             Self::Claude => hide_agent_adapter::SessionFormat::Claude,
