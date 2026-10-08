@@ -462,7 +462,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await rest(page);
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     await expect(projectToggle).toHaveCSS("opacity", "1");
-    await expect(lineageToggle).toHaveCSS("opacity", "1");
+    await expect(primaryToggle).toHaveCSS("opacity", "1");
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
 
     // B20: before the first snapshot the list says it is connecting, not that it is empty.
