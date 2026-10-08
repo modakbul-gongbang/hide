@@ -603,11 +603,37 @@ fn main_worktree(path: &Path) -> Option<PathBuf> {
     PathBuf::from(common).parent().map(Path::to_path_buf)
 }
 
-/// Every `git` this module runs, by directory and subcommand, so a test can
-/// assert that a quiet repository is not read again. Compiled only with the
-/// `call-log` feature, which the core enables for its own tests.
-#[cfg(feature = "call-log")]
-pub static GIT_CALLS: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+/// Every `git` this module runs, by directory and subcommand, from the first
+/// [`record_git_calls`] on, so the core's tests can assert that a quiet
+/// repository is not read again. Nothing in the product turns it on, so a
+/// running daemon records nothing. It was a cargo feature the core's tests
+/// enabled, which built this crate and every crate above it twice.
+static GIT_CALLS: std::sync::Mutex<Option<Vec<(PathBuf, String)>>> = std::sync::Mutex::new(None);
+
+/// Records every `git` this module runs, for the rest of the process.
+pub fn record_git_calls() {
+    GIT_CALLS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get_or_insert_with(Vec::new);
+}
+
+/// How many `git <command>` ran in `cwd` since [`record_git_calls`].
+///
+/// # Panics
+///
+/// When nothing called [`record_git_calls`]: a count of zero would then
+/// claim a repository was not read when nothing was looking.
+pub fn git_calls(cwd: &Path, command: &str) -> usize {
+    GIT_CALLS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .expect("record_git_calls() before counting git calls")
+        .iter()
+        .filter(|(path, name)| path == cwd && name == command)
+        .count()
+}
 
 /// Runs `git` in `cwd` within [`GIT_DEADLINE`], answering its stdout or a
 /// one-line reason.
@@ -618,11 +644,13 @@ pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
 /// [`git`] with its own bound, for the one command that may legitimately
 /// outlast a read: a removal that deletes the folder in place.
 fn git_within(cwd: &Path, arguments: &[&str], deadline: Duration) -> Result<String, String> {
-    #[cfg(feature = "call-log")]
-    GIT_CALLS
+    if let Some(calls) = GIT_CALLS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push((cwd.to_owned(), arguments.first().unwrap_or(&"").to_string()));
+        .as_mut()
+    {
+        calls.push((cwd.to_owned(), arguments.first().unwrap_or(&"").to_string()));
+    }
     let output = output_within(
         Command::new("git")
             .arg("--no-optional-locks")

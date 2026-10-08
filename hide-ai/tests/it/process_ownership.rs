@@ -85,9 +85,9 @@ fn request(n: usize) -> AiRequest {
 #[cfg(target_os = "macos")]
 #[test]
 fn descendant_count_stays_bounded_across_many_requests() {
-    // SAFETY: this test process sets FAKE_MODE before spawning the fake and no
-    // other test in this binary shares that variable (the file is its own
-    // integration test target).
+    let _env = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: FAKE_ENV serialises every writer of a FAKE_* variable in this
+    // binary, and this test holds it until the variable is removed.
     unsafe { std::env::set_var("FAKE_MODE", "child_per_thread") };
     let config = RouterConfig {
         priority: vec![ProviderId::CODEX],
@@ -167,6 +167,9 @@ p.stdout.readline()
 print(p.pid, flush=True)
 time.sleep(600)
 "#;
+    // The owner's fake inherits this process's `FAKE_*` variables until it has
+    // started.
+    let env = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let mut owner = Command::new("python3")
         .args(["-c", owner_script])
         .arg(fixture())
@@ -184,6 +187,7 @@ time.sleep(600)
         .trim()
         .parse()
         .expect("app-server pid is a number");
+    drop(env);
 
     // The fake starts its child (the leaked `sleep`) before it answers
     // `thread/start`, and the owner prints only after that answer.
@@ -251,7 +255,7 @@ fn codex_schema_has_no_thread_close() {
 /// ```sh
 /// codex app-server generate-json-schema --out "$TMPDIR/codex-schema"
 /// CODEX_SCHEMA_DIR="$TMPDIR/codex-schema" \
-///   cargo test -p hide-ai --test process_ownership -- --ignored codex_schema
+///   cargo test -p hide-ai --test it -- --ignored process_ownership::codex_schema
 /// ```
 ///
 /// A drift here forces updating the committed snapshot, at which point a new
@@ -282,7 +286,7 @@ fn codex_schema_snapshot_matches_the_installed_cli() {
 /// works without quota, so this runs even while the account is rate-limited:
 ///
 /// ```sh
-/// cargo test -p hide-ai --test process_ownership -- --ignored real_codex
+/// cargo test -p hide-ai --test it -- --ignored process_ownership::real_codex
 /// ```
 #[cfg(target_os = "macos")]
 #[test]

@@ -4,8 +4,7 @@
 //! device's channels share its one connection.
 #![cfg(unix)]
 
-#[path = "support/ssh_server.rs"]
-mod ssh_server;
+use crate::support::ssh_server;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};

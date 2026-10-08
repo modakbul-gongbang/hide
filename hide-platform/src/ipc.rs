@@ -8,7 +8,7 @@
 //! lives, so "does the path exist" means the same as it does for a socket
 //! file.
 //!
-//! What a caller can rely on, on all three systems (`tests/ipc.rs` checks
+//! What a caller can rely on, on all three systems (`tests/it/ipc.rs` checks
 //! each line):
 //!
 //! - Reads and writes are byte streams; a peer that closes ends a read with

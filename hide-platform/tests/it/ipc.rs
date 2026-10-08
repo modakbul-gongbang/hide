@@ -113,7 +113,12 @@ impl Drop for Spawned {
 
 fn spawn_role(role: &str, path: &Path) -> Spawned {
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "ipc::child_role",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(ROLE, role)
         .env(ENDPOINT, path)
         .stdout(Stdio::piped())
@@ -123,7 +128,7 @@ fn spawn_role(role: &str, path: &Path) -> Spawned {
     let (ready, heard) = mpsc::channel();
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            // libtest prints "test child_role ... " before the line.
+            // libtest prints "test ipc::child_role ... " before the line.
             if line.contains("READY") {
                 let _ = ready.send(());
             }

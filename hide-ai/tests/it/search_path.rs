@@ -145,6 +145,8 @@ fn a_text_cli_whose_interpreter_only_the_search_reaches_is_ready_and_answers() {
 
 #[test]
 fn claude_found_by_name_answers_its_probe_its_usage_read_and_its_request() {
+    // The fake reads its behaviour from this process's `FAKE_*` variables.
+    let _env = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let stage = Stage::new("claude");
     stage.cli(
         "claude",
@@ -169,6 +171,8 @@ fn claude_found_by_name_answers_its_probe_its_usage_read_and_its_request() {
 
 #[test]
 fn the_codex_app_server_is_started_with_the_search_it_was_found_on() {
+    // The fake reads its behaviour from this process's `FAKE_*` variables.
+    let _env = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let stage = Stage::new("codex");
     stage.cli(
         "codex",

@@ -58,14 +58,10 @@ fn request(deadline: Duration) -> AiRequest {
     }
 }
 
-/// The fixture reads its behaviour from the environment; tests that need a
-/// mode run serially under this lock so they never see each other's value.
-static MODE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn with_mode<T>(mode: &str, body: impl FnOnce() -> T) -> T {
-    let _guard = MODE.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: the lock above serialises every writer of FAKE_MODE in this
-    // process, and the fixture reads it once at spawn.
+    let _guard = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: FAKE_ENV serialises every writer of a FAKE_* variable in this
+    // binary, and the fixture reads it once at spawn.
     unsafe { std::env::set_var("FAKE_MODE", mode) };
     let out = body();
     unsafe { std::env::remove_var("FAKE_MODE") };
@@ -415,7 +411,7 @@ mod usage {
         let dir = usage_dir("text");
         // A variable the CLI must not see, planted where the child would
         // otherwise inherit it.
-        let _guard = MODE.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::FAKE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("HERDR_ENV", "1");
             std::env::set_var("CLAUDECODE", "1");
@@ -577,7 +573,7 @@ fn a_model_list_the_cli_cannot_give_is_reported_not_replaced_by_a_guess() {
 /// nothing else, so no account or organisation field can reach the record.
 ///
 /// ```sh
-/// HIDE_AI_LIVE_EVIDENCE=<folder> cargo test -p hide-ai --test claude_cli -- --ignored real_claude
+/// HIDE_AI_LIVE_EVIDENCE=<folder> cargo test -p hide-ai --test it -- --ignored claude_cli::real_claude
 /// ```
 #[test]
 #[ignore = "needs a logged-in claude on PATH"]

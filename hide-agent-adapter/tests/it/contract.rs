@@ -21,7 +21,8 @@ fn state<T>(capability: Capability<T>) -> &'static str {
 
 #[test]
 fn declarations_match_independent_support_samples_and_all_six_factory_facts() {
-    let fixtures: Vec<Value> = serde_json::from_str(include_str!("fixtures/support.json")).unwrap();
+    let fixtures: Vec<Value> =
+        serde_json::from_str(include_str!("../fixtures/support.json")).unwrap();
     assert_eq!(
         ADAPTERS.len(),
         fixtures.len(),

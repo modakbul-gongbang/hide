@@ -2,8 +2,7 @@
 //! helper attestation over the node link and the durable mailbox.
 #![cfg(unix)]
 
-#[path = "support/remote_delivery/mod.rs"]
-mod fixture;
+use crate::support::remote_delivery as fixture;
 
 use anyhow::{Context, Result, ensure};
 use fixture::{Fixture, quote, wait_for};
@@ -271,7 +270,8 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
     // Teardown is an assertion, and it never hides the first journey failure.
     let cleanup = fixture.stop();
     journey?;
-    cleanup
+    cleanup?;
+    fixture.remove_run_dir()
 }
 
 /// A request the recipient took in and never answered stops being awaited when

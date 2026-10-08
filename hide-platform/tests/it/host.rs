@@ -1,7 +1,7 @@
 //! The contract of `hide_platform::host`, stated as what a caller observes.
 //! The same file runs on macOS, Linux and Windows. The socket Herdr listens
 //! on by default is checked against the pinned Herdr itself, in
-//! `hide-herdr-client/tests/real_herdr.rs`.
+//! `hide-herdr-client/tests/it/real_herdr.rs`.
 
 use std::fs;
 use std::io::ErrorKind;

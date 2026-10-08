@@ -217,7 +217,7 @@ class Annotating(unittest.TestCase):
         root = ET.fromstring(
             '<testsuites><testsuite name="hided::real_herdr">'
             '<testcase name="echoes" classname="hided::real_herdr"><failure type="test failure"/>'
-            "<system-err>thread panicked at hided/tests/real_herdr.rs:467:5</system-err></testcase>"
+            "<system-err>thread panicked at hided/tests/it/real_herdr.rs:467:5</system-err></testcase>"
             '<testcase name="wobbles" classname="hided::real_herdr"><flakyFailure message="m">x</flakyFailure></testcase>'
             "</testsuite></testsuites>"
         )

@@ -320,7 +320,7 @@ fn helper_exits_when_owner_dies_with_stdin_still_open() {
     command
         .args([
             "--exact",
-            "owner_fixture",
+            "node_session_activity::owner_fixture",
             "--ignored",
             "--nocapture",
             "--test-threads=1",
