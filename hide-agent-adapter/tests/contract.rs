@@ -149,3 +149,29 @@ fn generated_web_contract_and_logo_document_sources_are_current() {
         );
     }
 }
+
+#[test]
+fn every_start_dialect_declares_model_and_effort_arguments_and_refuses_unsafe_values() {
+    use hide_agent_adapter::LaunchDialect;
+    for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {
+        let options = row.start.unwrap().options();
+        assert!(!options.efforts.is_empty(), "{}: no declared effort", row.id);
+        assert_eq!(options.arguments(None, None).unwrap(), Vec::<String>::new());
+        assert!(options.arguments(Some("model; rm -rf /"), None).is_err());
+        assert!(options.arguments(None, Some("ultra")).is_err());
+    }
+    assert_eq!(
+        LaunchDialect::Claude
+            .options()
+            .arguments(Some("claude-opus-5-5"), Some("max"))
+            .unwrap(),
+        ["--model", "claude-opus-5-5", "--effort", "max"]
+    );
+    assert_eq!(
+        LaunchDialect::Codex
+            .options()
+            .arguments(Some("gpt-5.5"), Some("high"))
+            .unwrap(),
+        ["-m", "gpt-5.5", "-c", "model_reasoning_effort=high"]
+    );
+}

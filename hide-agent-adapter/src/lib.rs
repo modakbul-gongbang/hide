@@ -90,6 +90,64 @@ impl LaunchDialect {
             Self::Codex => AgentId::Codex.adapter(),
         }
     }
+
+    /// How the CLI takes a model and a reasoning effort at launch; `{}` is
+    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160.
+    pub const fn options(self) -> LaunchOptions {
+        match self {
+            Self::Claude => LaunchOptions {
+                model: &["--model", "{}"],
+                effort: &["--effort", "{}"],
+                efforts: &["low", "medium", "high", "xhigh", "max"],
+            },
+            Self::Codex => LaunchOptions {
+                model: &["-m", "{}"],
+                effort: &["-c", "model_reasoning_effort={}"],
+                efforts: &["minimal", "low", "medium", "high", "xhigh"],
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LaunchOptions {
+    pub model: &'static [&'static str],
+    pub effort: &'static [&'static str],
+    pub efforts: &'static [&'static str],
+}
+
+/// A model name reaches a command line, so it is held to the characters
+/// model ids use; anything else is refused rather than quoted.
+pub fn valid_model(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 80
+        && model
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._:/[]".contains(&byte))
+}
+
+impl LaunchOptions {
+    /// The launch arguments for a model and an effort, refused with the
+    /// reason when either is not something this CLI declares.
+    pub fn arguments(self, model: Option<&str>, effort: Option<&str>) -> Result<Vec<String>, String> {
+        let mut arguments = Vec::new();
+        if let Some(model) = model {
+            if !valid_model(model) {
+                return Err(format!("model `{model}` is not a model name"));
+            }
+            arguments.extend(self.model.iter().map(|part| part.replace("{}", model)));
+        }
+        if let Some(effort) = effort {
+            if !self.efforts.contains(&effort) {
+                return Err(format!(
+                    "effort `{effort}` is not one of {}",
+                    self.efforts.join(", ")
+                ));
+            }
+            arguments.extend(self.effort.iter().map(|part| part.replace("{}", effort)));
+        }
+        Ok(arguments)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
