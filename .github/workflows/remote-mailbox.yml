@@ -27,7 +27,7 @@ jobs:
   mailbox:
     name: remote mailbox ${{ inputs.runner }}
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         timeout-minutes: 5
@@ -70,10 +70,19 @@ jobs:
           bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Remote mailbox over private SSH
-        timeout-minutes: 10
+        timeout-minutes: 40
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only
+        run: |
+          # TEMP EVIDENCE: repeat the test, no retries, to catch the flake.
+          pass=0; fail=0
+          for i in $(seq 1 20); do
+            if bash scripts/verify-cargo.sh nextest --profile ci -p hided --test remote_delivery --run-ignored only --retries 0 2>&1 | tee "run-$i.log" | tail -n 40; then :; fi
+            if grep -q "1 passed" "run-$i.log"; then pass=$((pass+1)); else fail=$((fail+1)); fi
+            echo "ITER $i pass=$pass fail=$fail"
+          done
+          echo "EVIDENCE pass=$pass fail=$fail"
+          [ "$fail" -eq 0 ]
       - name: Report flaky and failed tests
         if: ${{ !cancelled() }}
         continue-on-error: true
