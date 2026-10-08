@@ -27,7 +27,7 @@ export type SidebarMode = "agents" | "projects";
 /** The sidebar's tabs, left to right, and the order the switch walks; Projects is first and the
  * default (PRD sidebar-shell D-03). The Explorer is not one of them: it lives in the right
  * panel where the core's `right_panel_section` says it does (D-13). */
-export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects", "agents"];
+export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects"];
 
 /**
  * A close the operator is being asked about. The sheet holds only what is
@@ -464,7 +464,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   },
   setRelation: (relation) => set({ relation }),
-  setSidebarMode: (sidebarMode) => set({ sidebarMode }),
+  setSidebarMode: (sidebarMode) => {
+    if (sidebarMode === "agents") console.info("sidebar.mode.retired", { mode: sidebarMode });
+    set({ sidebarMode: "projects" });
+  },
   setHomeStart: (homeStart) => set({ homeStart }),
   setSecretaryStart: (secretaryStart) => set({ secretaryStart }),
   toggleSidebarMode: () => {

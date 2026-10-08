@@ -522,6 +522,10 @@ mod tests {
     fn agent(pane_id: &str) -> SidebarAgentSnapshot {
         SidebarAgentSnapshot {
             state: Default::default(),
+            resolved: None,
+            resolved_today: false,
+            escalation: None,
+            raised_children: Vec::new(),
             id: pane_id.to_owned(),
             herdr_name: None,
             pane_id: pane_id.to_owned(),
@@ -558,6 +562,7 @@ mod tests {
             lineage_session: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
+            direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
             waiting_on_descendants: false,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,

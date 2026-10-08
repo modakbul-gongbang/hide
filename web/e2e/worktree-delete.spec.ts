@@ -32,15 +32,19 @@ async function deletionFixture(herdr: HerdrFixture) {
 }
 
 /**
- * The fixture branch has nothing ahead of main and no dirt or agent, yet no
- * work of its own has landed, so its row stays among the active checkouts:
- * Git reads a branch with no commits of its own as merged, and only landed
- * work folds under Inactive. The row's commit age is drawn once the core has
- * read the worktree's Git facts, which the deletion dialog is built from.
+ * B7 leaves the front checkout and local changes outside the empty-worktree
+ * fold. Reach the branch either there or through its fold, then wait for
+ * the Git facts that the deletion dialog needs, without prescribing focus.
  */
 async function featureRow(page: Page) {
   const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
+  const emptyFold = project.locator("[data-empty-worktrees]");
   const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+  await expect.poll(async () => await feature.locator("[data-checkout-age]").isVisible() || await emptyFold.isVisible(), { timeout: 30_000 }).toBe(true);
+  if (!await feature.isVisible()) {
+    await expect(emptyFold).toHaveAttribute("aria-expanded", "false");
+    await emptyFold.click();
+  }
   await expect(feature.locator("[data-checkout-age]")).toBeVisible({ timeout: 30_000 });
   await expect(project.locator("[data-inactive-checkouts]")).toHaveCount(0);
   return feature;
@@ -49,7 +53,6 @@ async function featureRow(page: Page) {
 async function openDeletion(page: Page, daemon: Daemon) {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-  await page.locator('[data-sidebar-mode="projects"]').click();
   const feature = await featureRow(page);
   await feature.locator("[data-checkout-menu]").click({ button: "right" });
   await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
@@ -171,7 +174,6 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     daemon = await startHided(herdr, "worktree-refreshed-consent");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
     const feature = await featureRow(page);
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
@@ -297,7 +299,6 @@ test("a dirty worktree with an unmerged branch and an agent is deleted once both
     daemon = await startHided(herdr, "worktree-delete");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     await expect(feature).toBeVisible({ timeout: 30_000 });

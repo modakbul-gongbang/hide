@@ -38,11 +38,11 @@ test("one confirmed choice follows every window, persists, and resets to each sy
     await expect(left.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "system");
     // The answers are product copy, independent of the translation catalog.
     const keycaps = await left.locator(".sidebar-command-keycap").allTextContents();
-    for (const [language, heading, general, overview, projects, agents, all, scope, close, change, clear, projectCommand, agentCommand] of [
-      ["en", "Settings", "General", "Overview", "Projects", "Agents", "All projects", "Overview scope", "Close Overview", "Change the shortcut for Overview, now {chord}", "Clear the shortcut for Overview", "Projects sidebar", "Agents sidebar"],
-      ["ko", "설정", "일반", "개요", "프로젝트", "에이전트", "모든 프로젝트", "개요 범위", "개요 닫기", "개요 단축키 변경, 현재 {chord}", "개요 단축키 해제", "프로젝트 사이드바", "에이전트 사이드바"],
-      ["zh-CN", "设置", "常规", "概览", "项目", "智能体", "所有项目", "概览范围", "关闭概览", "更改概览的快捷键，当前为 {chord}", "清除概览的快捷键", "项目侧边栏", "智能体侧边栏"],
-      ["ja", "設定", "一般", "概要", "プロジェクト", "エージェント", "すべてのプロジェクト", "概要の範囲", "概要を閉じる", "概要のショートカットを変更、現在 {chord}", "概要のショートカットを解除", "プロジェクトサイドバー", "エージェントサイドバー"],
+    for (const [language, heading, general, overview, all, scope, close, change, clear, projectCommand, agentCommand] of [
+      ["en", "Settings", "General", "Overview", "All projects", "Overview scope", "Close Overview", "Change the shortcut for Overview, now {chord}", "Clear the shortcut for Overview", "Focus sidebar", "Agents overview"],
+      ["ko", "설정", "일반", "개요", "모든 프로젝트", "개요 범위", "개요 닫기", "개요 단축키 변경, 현재 {chord}", "개요 단축키 해제", "사이드바로 이동", "에이전트 Overview"],
+      ["zh-CN", "设置", "常规", "概览", "所有项目", "概览范围", "关闭概览", "更改概览的快捷键，当前为 {chord}", "清除概览的快捷键", "聚焦侧边栏", "智能体总览"],
+      ["ja", "設定", "一般", "概要", "すべてのプロジェクト", "概要の範囲", "概要を閉じる", "概要のショートカットを変更、現在 {chord}", "概要のショートカットを解除", "サイドバーへ移動", "エージェント概要"],
     ]) {
       await choose(left, language!);
       for (const page of [left, right]) {
@@ -53,8 +53,7 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       // User-owned names and paths remain byte-for-byte unchanged.
       await expect(left.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
-      await expect(left.locator('[data-sidebar-mode="projects"] span').first()).toHaveText(projects!);
-      await expect(left.locator('[data-sidebar-mode="agents"] span').first()).toHaveText(agents!);
+      await expect(left.locator("[data-sidebar-mode]")).toHaveCount(0);
       await expect(left.locator(".sidebar-command-keycap")).toHaveText(keycaps);
       await left.locator('[data-settings-tab="shortcuts"]').click();
       // The chip names the command and the chord it holds; the clear control its command.

@@ -1,16 +1,16 @@
-import type { AgentScope } from "./agentScope";
-// The request view (PRD overview-request-view) as pure functions over the
+import type { AgentScope } from "../src/agentScope";
+// Frozen pre-Sessions request view fixture, retained to pin legacy tests over the
 // snapshot: which rows it draws, in which group and order, the Requests tile,
 // and the words each row's lines say. The verb is the core's (D-07); this
-// file only groups, orders and shortens. `RequestView.tsx` draws it.
+// test fixture only groups, orders and shortens. Production no longer uses it.
 
 import { parser as markdownParser } from "@lezer/markdown";
 import type { TFunction } from "i18next";
-import type { MessageKey } from "./i18n/catalogs";
-import type { DeviceAvailability } from "./navigation";
-import type { LensAgent, Tile } from "./overviewLens";
-import type { AgentPullRequest, AgentRequest, AgentRow, LabelEnd, RequestSender, RequestVerb, Task, Workspace } from "./snapshot";
-import { parseToken, type LinkTarget } from "./terminalLinks";
+import type { MessageKey } from "../src/i18n/catalogs";
+import type { DeviceAvailability } from "../src/navigation";
+import type { LensAgent, Tile } from "../src/overviewLens";
+import type { AgentPullRequest, AgentRequest, AgentRow, LabelEnd, RequestSender, RequestVerb, Task, Workspace } from "../src/snapshot";
+import { parseToken, type LinkTarget } from "../src/terminalLinks";
 
 // --- groups ------------------------------------------------------------------
 
