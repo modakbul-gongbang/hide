@@ -14,16 +14,13 @@ fn login_agent_paths_belong_to_the_supplied_home() {
 #[cfg(unix)]
 #[test]
 fn fixture_inspection_failure_does_not_attempt_a_bootout() {
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicBool;
     let directory = tempfile::tempdir().unwrap();
     let command = directory.path().join("launchctl-fixture");
-    std::fs::write(
+    crate::stand_ins::program(
         &command,
         "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/calls\"\nexit 5\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let boundary = UserAgents::fixture(command, "isolated-domain".into());
     assert!(
         boundary

@@ -10,11 +10,14 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 use super::*;
+use stand_ins::program;
 
 mod agent_cases;
 mod codex_trust_cases;
 mod herdr_cases;
 mod retired_cases;
+#[path = "../../hide-platform/tests/it/stand_ins.rs"]
+mod stand_ins;
 
 type IndexReadHook = Box<dyn FnOnce(&Path)>;
 std::thread_local! {
@@ -264,8 +267,8 @@ impl Fixture {
         executable(&home.join(".local/bin/claude"), "#!/bin/sh\n");
         executable(&kit.join("hide"), "#!/bin/sh\n");
         executable(&kit.join("hide-agent-hooks"), "#!/bin/sh\n");
-        executable(&root.join("launchctl"), "#!/bin/sh\nexit 113\n");
-        executable(&root.join("bin/herdr"), FAKE_HERDR);
+        program(&root.join("launchctl"), "#!/bin/sh\nexit 113\n");
+        program(&root.join("bin/herdr"), FAKE_HERDR);
         let herdr = FakeHerdr::start(&root);
         let target = KitTarget {
             home: home.clone(),
@@ -1087,7 +1090,7 @@ fn a_recorded_command_is_upgraded_after_its_old_package_is_deleted() {
 /// (`daemon-running`).
 fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
     let codex = fixture.root.join("bin/codex");
-    executable(
+    program(
         &codex,
         concat!(
             "#!/bin/sh\n",
@@ -1941,7 +1944,7 @@ fn confirmed_and_legacy_closed_hook_receipts_allow_read_only_retirement_prefligh
 
 fn loaded_agent(fixture: &Fixture) {
     std::fs::write(fixture.home().join("launchctl-loaded"), "loaded").unwrap();
-    executable(
+    program(
         &fixture.root.join("launchctl"),
         concat!(
             "#!/bin/sh\n",
@@ -2125,12 +2128,12 @@ fn intermediate_kit_links_refuse_before_services_status_or_any_mutation() {
         let link = fixture.home().join(linked_component);
         std::fs::create_dir_all(link.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&outside, &link).unwrap();
-        executable(
+        program(
             &fixture.root.join("launchctl"),
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
         );
         let codex = fixture.root.join("bin/codex");
-        executable(
+        program(
             &codex,
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
         );
@@ -2204,12 +2207,12 @@ fn writable_retirement_records_refuse_before_services_status_or_any_mutation() {
                 }
             };
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
-            executable(
+            program(
                 &fixture.root.join("launchctl"),
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
             );
             let codex = fixture.root.join("bin/codex");
-            executable(
+            program(
                 &codex,
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
             );
@@ -2386,7 +2389,7 @@ fn offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_en
         serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
         original
     );
-    executable(
+    program(
         fixture.target.herdr_bin.as_ref().unwrap(),
         &format!(
             "#!/bin/sh\n[ \"$*\" = 'plugin uninstall hide.hcoord' ] || exit 1\nprintf '%s' '{}' > \"$HOME/.config/herdr/plugins.json\"\n",
@@ -2473,12 +2476,12 @@ fn a_long_home_with_no_daemon_socket_finishes_retirement_and_converges() {
 }
 
 fn record_preflight_commands(fixture: &mut Fixture) {
-    executable(
+    program(
         &fixture.root.join("launchctl"),
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
     );
     let codex = fixture.root.join("bin/codex");
-    executable(
+    program(
         &codex,
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
     );

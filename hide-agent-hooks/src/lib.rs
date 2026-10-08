@@ -30,6 +30,9 @@ pub mod memory;
 pub mod report;
 pub mod runtime;
 pub mod spawn_guard;
+#[cfg(all(test, unix))]
+#[path = "../../hide-platform/tests/it/stand_ins.rs"]
+mod stand_ins;
 
 pub use counters::PaneCounters;
 pub use diagnosis::{
