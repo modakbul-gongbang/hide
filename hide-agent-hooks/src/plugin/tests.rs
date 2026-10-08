@@ -113,6 +113,19 @@ fn each_template_names_its_helper_and_its_constants_exactly_once() {
 }
 
 #[test]
+fn a_helper_path_that_spells_a_placeholder_keeps_it_and_the_constants_still_go_in() {
+    for file in FILES {
+        let helper = Path::new("/kit/__HIDE_AGENT__/__HIDE_VERSION__/hide-agent-hooks");
+        let body = file.body(helper);
+        assert_eq!(helper_of(&body).as_deref(), Some(helper.to_str().unwrap()));
+        for (placeholder, value) in file.constants {
+            assert_eq!(body.matches(placeholder).count(), 1, "{placeholder}: the path's own");
+            assert!(body.contains(&format!("= {value};")), "{placeholder}");
+        }
+    }
+}
+
+#[test]
 fn pi_and_omp_get_one_source_that_differs_only_in_the_agents_name() {
     let pi = &crate::pi_extension::PI;
     let omp = &crate::pi_extension::OMP;
