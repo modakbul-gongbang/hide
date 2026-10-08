@@ -519,9 +519,14 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                         linux_children_remain()
                     try:
                         remaining = collect(include_group=False)
-                    except Exception:
-                        signal_proven(dict(observed), signal.SIGKILL, skip_group=False)
-                        raise
+                    except Exception as error:
+                        # Missing metadata remains failure, but cannot skip a
+                        # readable peer's TERM/grace/KILL stage. Retained
+                        # identities still need independent fresh birth checks.
+                        failed = True
+                        sys.stderr.write("guardian_cleanup_failure:" + type(error).__name__ +
+                                         ":" + str(error)[:MAX_FAILURE_REASON] + "\n")
+                        remaining = dict(observed)
                     live_extras = [p for p in remaining.values() if not p.zombie]
                     identities = {(p.pid, p.birth) for p in live_extras}
                     term_deadlines = {key: value for key, value in term_deadlines.items() if key in identities}
