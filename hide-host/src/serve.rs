@@ -288,6 +288,26 @@ fn session_file(env: &Env, agents: &[hide_session::Agent], path: &str) -> HostRe
     })
 }
 
+fn session_read<T: serde::Serialize>(
+    env: &Env,
+    path: &str,
+    read: impl FnOnce(&Path) -> Result<T, String>,
+) -> HostResult<serde_json::Value> {
+    let path = session_file(env, &SESSION_FILE_AGENTS, path)?;
+    let home = env.home("sessions_home_unavailable")?;
+    let home = Path::new(&home);
+    let agent =
+        if hide_session::inside_session_root(home, &[hide_session::Agent::Pi], &path).is_ok() {
+            hide_session::Agent::Pi
+        } else {
+            hide_session::Agent::Claude
+        };
+    to_value(
+        hide_session::read_session_file(home, agent, &path, || read(&path))
+            .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+    )
+}
+
 fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
     let path = Path::new(path);
     if !path.is_absolute() {
@@ -738,8 +758,11 @@ pub fn handle_with_progress(
         }
         Call::SessionIndexRead { agent, path, saved } => {
             let path = session_file(env, &[agent], &path)?;
-            let (step, _) = hide_session::search_read::read_step(saved.as_ref(), agent, &path)
-                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            let home = env.home("sessions_home_unavailable")?;
+            let (step, _) = hide_session::read_session_file(Path::new(&home), agent, &path, || {
+                hide_session::search_read::read_step(saved.as_ref(), agent, &path)
+            })
+            .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
             to_value(step)
         }
         Call::SessionStamps { paths } => {
@@ -767,7 +790,22 @@ pub fn handle_with_progress(
                             path,
                         )
                         .ok()?;
-                        hide_session::search_read::stamp_at(&path)
+                        let agent = if hide_session::inside_session_root(
+                            Path::new(&home),
+                            &[hide_session::Agent::Pi],
+                            &path,
+                        )
+                        .is_ok()
+                        {
+                            hide_session::Agent::Pi
+                        } else {
+                            hide_session::Agent::Claude
+                        };
+                        hide_session::read_session_file(Path::new(&home), agent, &path, || {
+                            Ok(hide_session::search_read::stamp_at(&path))
+                        })
+                        .ok()
+                        .flatten()
                     })
                     .collect::<Vec<_>>(),
             )
@@ -780,14 +818,12 @@ pub fn handle_with_progress(
                     .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
             to_value(sessions)
         }
-        Call::SessionStat { path } => to_value(
-            crate::sessions::stat(&session_file(env, &SESSION_FILE_AGENTS, &path)?)
-                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
-        ),
-        Call::SessionChunk { path, checkpoint } => to_value(
-            crate::sessions::chunk(&session_file(env, &SESSION_FILE_AGENTS, &path)?, checkpoint)
-                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
-        ),
+        Call::SessionStat { path } => session_read(env, &path, |path| {
+            crate::sessions::stat(path).map_err(|e| e.to_string())
+        }),
+        Call::SessionChunk { path, checkpoint } => session_read(env, &path, |path| {
+            crate::sessions::chunk(path, checkpoint).map_err(|e| e.to_string())
+        }),
         Call::PanesStart { .. }
         | Call::PaneProofAnswer { .. }
         | Call::PaneInspect { .. }
@@ -796,13 +832,10 @@ pub fn handle_with_progress(
             ErrorCode::Unsupported,
             "Only a device node's link carries its panes' credentials and commands",
         )),
-        Call::SessionText { path } => to_value(
-            hide_session::read_bounded(
-                &session_file(env, &SESSION_FILE_AGENTS, &path)?,
-                hide_session::SESSION_READ_LIMIT_BYTES,
-            )
-            .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
-        ),
+        Call::SessionText { path } => session_read(env, &path, |path| {
+            hide_session::read_bounded(path, hide_session::SESSION_READ_LIMIT_BYTES)
+                .map_err(|e| e.to_string())
+        }),
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
                 return Err(HostError::new(

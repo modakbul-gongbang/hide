@@ -330,11 +330,22 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         Some(vec!["resume".to_owned(), "019a-session".to_owned()])
     );
 
-    // Common starts do not grant resume support before each complete reader
+    runtime.snapshot.task_operation = None;
+    assert!(runtime.dispatch_json(&event("pi", "native.one")));
+    assert_eq!(
+        runtime
+            .task_agent_launch
+            .as_ref()
+            .map(|launch| launch.args.clone()),
+        Some(vec!["--session".to_owned(), "native.one".to_owned()])
+    );
+
+    // Starts do not grant resume support before each complete reader
     // slice lands; an id that is not one token never reaches a command line.
     for (provider, session, kind) in [
         ("opencode", "ses_1", "agent_start.invalid_resume"),
-        ("pi", "native-one", "agent_start.invalid_resume"),
+        ("pi", "native.jsonl", "agent_start.invalid_resume"),
+        ("pi", "../native", "agent_start.invalid_resume"),
         ("omp", "native-one", "agent_start.invalid_resume"),
         ("grok", "native-one", "agent_start.invalid_resume"),
         ("cursor", "native-one", "agent_start.invalid_resume"),

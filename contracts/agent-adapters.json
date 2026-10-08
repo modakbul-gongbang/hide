@@ -64,7 +64,7 @@
     "install_url": "https://pi.dev/",
     "logo_id": "pi",
     "can_start": true,
-    "can_resume": false,
+    "can_resume": true,
     "sidebar_mark": null
   },
   {

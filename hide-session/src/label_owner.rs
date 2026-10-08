@@ -5,7 +5,6 @@ use crate::{Agent, FileIdentity, SESSION_INCREMENT_READ_LIMIT_BYTES, SESSION_LIN
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
@@ -53,7 +52,8 @@ fn deserialize_native_id<'de, D: serde::Deserializer<'de>>(
     Ok(id)
 }
 
-pub(crate) fn valid_native_id(id: &str) -> bool {
+/// Bounded native ID syntax. This validates spelling, never ownership.
+pub fn valid_native_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= crate::turns::NATIVE_ID_LIMIT_BYTES
         && id != "."
@@ -71,18 +71,50 @@ pub fn confirm_label_session(
     path: &Path,
     reported_id: Option<&str>,
 ) -> Result<ConfirmedLabelSession> {
+    confirm_metadata(agent, path, reported_id, None, None)
+}
+
+/// Shared file proof for consumers, including idle/paged reads. Pi additionally
+/// requires its exact checkout and refuses every linked entry under home.
+pub fn confirm_session_file(
+    home: &Path,
+    agent: Agent,
+    path: &Path,
+    reported_id: Option<&str>,
+    cwd: Option<&str>,
+) -> Result<ConfirmedLabelSession> {
+    crate::inside_session_root(home, &[agent], path)
+        .map_err(|_| anyhow!("label_session_outside_roots"))?;
+    confirm_metadata(agent, path, reported_id, cwd, Some(home))
+}
+
+fn confirm_metadata(
+    agent: Agent,
+    path: &Path,
+    reported_id: Option<&str>,
+    cwd: Option<&str>,
+    home: Option<&Path>,
+) -> Result<ConfirmedLabelSession> {
     if !std::fs::metadata(path)
         .map_err(|_| anyhow!("label_session_file_unavailable"))?
         .is_file()
     {
         return Err(anyhow!("label_session_not_regular"));
     }
-    let file = File::open(path).map_err(|_| anyhow!("label_session_file_unavailable"))?;
+    let file =
+        crate::open_session_file(path).map_err(|_| anyhow!("label_session_file_unavailable"))?;
     let metadata = file
         .metadata()
         .map_err(|_| anyhow!("label_session_stat_failed"))?;
     if !metadata.is_file() {
         return Err(anyhow!("label_session_not_regular"));
+    }
+    if agent == Agent::Pi
+        && hide_platform::fs::identity::link_count(&file)
+            .map_err(|_| anyhow!("label_session_stat_failed"))?
+            != 1
+    {
+        return Err(anyhow!("label_session_linked"));
     }
     let mut reader = BufReader::new(file.take(SESSION_INCREMENT_READ_LIMIT_BYTES));
     let mut native_id = None;
@@ -99,9 +131,46 @@ pub fn confirm_label_session(
             break;
         }
         let Ok(record) = serde_json::from_slice::<serde_json::Value>(&line) else {
+            if agent == Agent::Pi {
+                return Err(anyhow!("label_session_metadata_unconfirmed"));
+            }
             continue;
         };
+        if agent == Agent::Pi {
+            if record["type"] != "session" || record["version"] != 3 {
+                return Err(anyhow!("label_session_metadata_unconfirmed"));
+            }
+            let expected = cwd.ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
+            let native = record["cwd"]
+                .as_str()
+                .ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
+            if !Path::new(native).is_absolute() || native.chars().any(char::is_control) {
+                return Err(anyhow!("label_session_cwd_unconfirmed"));
+            }
+            let expected = hide_platform::fs::identity::canonical(Path::new(expected))
+                .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
+            let native = hide_platform::fs::identity::canonical(Path::new(native))
+                .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
+            if native != expected {
+                return Err(anyhow!("label_session_cwd_mismatch"));
+            }
+            let home = home.ok_or_else(|| anyhow!("label_session_outside_roots"))?;
+            let native_directory = crate::pi::default_directory(home, &native);
+            let actual_directory = path
+                .parent()
+                .and_then(|parent| hide_platform::fs::identity::canonical(parent).ok());
+            if actual_directory.is_none()
+                || hide_platform::fs::identity::canonical(&native_directory).ok()
+                    != actual_directory
+            {
+                return Err(anyhow!("label_session_default_directory_required"));
+            }
+            if record["id"].as_str().is_none() {
+                return Err(anyhow!("label_session_id_invalid"));
+            }
+        }
         let id = match agent {
+            Agent::Pi => record["id"].as_str(),
             Agent::Codex if record["type"] == "session_meta" => record["payload"]["id"].as_str(),
             Agent::Claude if matches!(record["type"].as_str(), Some("user" | "assistant")) => {
                 record["sessionId"].as_str()
@@ -117,6 +186,9 @@ pub fn confirm_label_session(
     if !valid_native_id(&id) {
         return Err(anyhow!("label_session_id_invalid"));
     }
+    if agent == Agent::Pi && id.ends_with(".jsonl") {
+        return Err(anyhow!("label_session_id_unresumable"));
+    }
     if reported_id.is_some_and(|reported| reported != id) {
         return Err(anyhow!("label_session_id_mismatch"));
     }
@@ -129,6 +201,37 @@ pub fn confirm_label_session(
         incarnation: format!("{}:{}", physical.first, physical.second),
         bytes: metadata.len(),
     })
+}
+
+/// Run a bounded archive/search read between the same native proofs. These
+/// consumers discover checkout metadata from the file itself; a live pane
+/// instead supplies its cwd to confirm_session_file. No proof is persisted.
+pub fn read_session_file<T>(
+    home: &Path,
+    agent: Agent,
+    path: &Path,
+    read: impl FnOnce() -> std::result::Result<T, String>,
+) -> std::result::Result<T, String> {
+    if agent != Agent::Pi {
+        return read();
+    }
+    crate::inside_session_root(home, &[agent], path)
+        .map_err(|_| "label_session_outside_roots".to_owned())?;
+    let header = crate::pi::header(path).map_err(|e| e.to_string())?;
+    let before = confirm_session_file(home, agent, path, Some(&header.id), header.cwd.to_str())
+        .map_err(|e| e.to_string())?;
+    let stamp = crate::search_read::stamp_at(path);
+    let result = read()?;
+    let after = confirm_session_file(home, agent, path, Some(&header.id), header.cwd.to_str())
+        .map_err(|e| e.to_string())?;
+    if after.owner != before.owner
+        || after.incarnation != before.incarnation
+        || after.bytes < before.bytes
+        || (after.bytes == before.bytes && crate::search_read::stamp_at(path) != stamp)
+    {
+        return Err("label_session_read_changed".to_owned());
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -149,7 +252,7 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
-                Agent::OpenCode => unreachable!("OpenCode keeps no session file"),
+                Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
             };
             fs::write(&path, format!("{metadata}\n")).unwrap();
             let id = confirm_label_session(agent, &path, Some("native-a")).unwrap();

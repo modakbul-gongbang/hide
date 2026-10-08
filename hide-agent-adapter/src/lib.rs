@@ -73,6 +73,7 @@ pub enum HookInstall {
 pub enum SessionFormat {
     Claude,
     Codex,
+    Pi,
     OpenCode,
 }
 
@@ -81,6 +82,7 @@ impl SessionFormat {
         match self {
             Self::Claude => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::Pi => AgentId::Pi.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
         }
     }
@@ -89,7 +91,7 @@ impl SessionFormat {
         matches!(self, Self::Claude | Self::Codex)
     }
     pub const fn has_session_file(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex)
+        matches!(self, Self::Claude | Self::Codex | Self::Pi)
     }
 }
 

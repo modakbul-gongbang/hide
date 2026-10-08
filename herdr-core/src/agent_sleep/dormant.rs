@@ -501,7 +501,9 @@ mod tests {
         entry.phase = DormantPhase::Sleeping;
         entry.closed = true;
         assert!(store.dormant_snapshots()[0].wake_available);
-        for kind in ["pi", "omp", "grok", "cursor", "opencode", "unknown"] {
+        store.dormant.get_mut(&id).unwrap().kind = "pi".into();
+        assert!(store.dormant_snapshots()[0].wake_available);
+        for kind in ["omp", "grok", "cursor", "opencode", "unknown"] {
             store.dormant.get_mut(&id).unwrap().kind = kind.into();
             assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
         }

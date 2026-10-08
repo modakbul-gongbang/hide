@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Agent, FileIdentity, confirm_label_session, label_transcript};
+use crate::{Agent, FileIdentity, label_transcript};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionActivityRequest {
@@ -47,8 +47,14 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         .try_into()
         .map_err(|_| "session_activity_mtime_invalid".to_owned())?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
-    let after = confirm_label_session(request.agent, &path, reported_id)
-        .map_err(|error| error.to_string())?;
+    let after = crate::confirm_session_file(
+        home,
+        request.agent,
+        &path,
+        reported_id,
+        request.cwd.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
     if !metadata.is_file()
         || before.owner != after.owner
         || before.incarnation != sampled_incarnation
@@ -73,14 +79,14 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
-            Agent::OpenCode => unreachable!("OpenCode has no transcript file"),
+            Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
         };
         fs::create_dir_all(&root).unwrap();
         let path = root.join("native-a.jsonl");
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
-            Agent::OpenCode => unreachable!("OpenCode has no transcript file"),
+            Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
         };
         // Conversation records are deliberately invalid: activity must not
         // parse or project them after establishing the native owner.

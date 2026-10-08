@@ -521,7 +521,7 @@ impl LargeRecord {
             return false;
         }
         match agent {
-            Agent::OpenCode => false,
+            Agent::OpenCode | Agent::Pi => false,
             Agent::Codex => {
                 let native_turn = match (self.root_kind.as_str(), self.payload_kind.as_str()) {
                     ("response_item", "function_call") => self.payload_question,

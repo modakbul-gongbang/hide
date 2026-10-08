@@ -23,6 +23,7 @@ pub enum SessionFilter {
     All,
     Codex,
     Claude,
+    Pi,
 }
 
 impl SessionFilter {
@@ -30,7 +31,7 @@ impl SessionFilter {
         matches!(self, Self::All)
             || matches!(
                 (self, agent),
-                (Self::Codex, Agent::Codex) | (Self::Claude, Agent::Claude)
+                (Self::Codex, Agent::Codex) | (Self::Claude, Agent::Claude) | (Self::Pi, Agent::Pi)
             )
     }
 }
@@ -131,9 +132,22 @@ impl SessionCatalog {
             &mut visited,
             SESSION_DISCOVERY_LIMIT,
         )?;
+        if let Ok(root) = crate::pi::root(&self.home) {
+            collect_jsonl(
+                &root,
+                Agent::Pi,
+                1,
+                &mut files,
+                &mut visited,
+                SESSION_DISCOVERY_LIMIT,
+            )?;
+        }
 
         let mut sessions = Vec::new();
         for (agent, path) in files {
+            if agent == Agent::Pi && crate::pi::inside_root(&self.home, &path).is_err() {
+                continue;
+            }
             let Some(cwd) = session_cwd(agent, &path) else {
                 continue;
             };
@@ -143,7 +157,9 @@ impl SessionCatalog {
             if identity.id != project.id {
                 continue;
             }
-            sessions.push(read_project_session(agent, path, cwd));
+            if let Some(session) = read_project_session(&self.home, agent, path, cwd) {
+                sessions.push(session);
+            }
         }
         sessions.sort_by(|left, right| {
             right
@@ -215,6 +231,11 @@ fn collect_jsonl(
                 source,
             })?
             .path();
+        if agent == Agent::Pi
+            && fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink())
+        {
+            continue;
+        }
         if path.is_dir() && depth > 0 {
             collect_jsonl(&path, agent, depth - 1, output, visited, limit)?;
         } else if path
@@ -229,6 +250,7 @@ fn collect_jsonl(
 
 fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
     match agent {
+        Agent::Pi => crate::pi::header(path).ok().map(|header| header.cwd),
         Agent::Codex => crate::codex_session_cwd(path).map(PathBuf::from),
         Agent::Claude => {
             let file = File::open(path).ok()?;
@@ -252,7 +274,12 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSession {
+fn read_project_session(
+    home: &Path,
+    agent: Agent,
+    path: PathBuf,
+    cwd: PathBuf,
+) -> Option<ProjectSession> {
     let metadata = fs::metadata(&path).ok();
     let updated_at_unix_ms = metadata
         .as_ref()
@@ -260,7 +287,12 @@ fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSes
         .and_then(system_time_ms)
         .unwrap_or_default();
     let id = session_id(agent, &path);
-    let (parsed, unavailable) = match metadata {
+    if agent == Agent::Pi && id.is_empty() {
+        return None;
+    }
+    let pi_before = (agent == Agent::Pi)
+        .then(|| crate::confirm_session_file(home, agent, &path, Some(&id), cwd.to_str()));
+    let (mut parsed, mut unavailable) = match metadata {
         Some(metadata) if metadata.len() > SESSION_READ_LIMIT_BYTES => {
             (None, Some("session_too_large".to_owned()))
         }
@@ -271,15 +303,38 @@ fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSes
                     .then(|| "session_malformed".to_owned());
                 (Some(parsed), unavailable)
             }
-            Err(error) => (None, Some(format!("session_unreadable:{error}"))),
+            Err(error) => (
+                None,
+                Some(if agent == Agent::Pi {
+                    "session_unreadable".to_owned()
+                } else {
+                    format!("session_unreadable:{error}")
+                }),
+            ),
         },
         None => (None, Some("session_missing".to_owned())),
     };
+    if let Some(before) = pi_before {
+        let after = crate::confirm_session_file(home, agent, &path, Some(&id), cwd.to_str());
+        if !before
+            .and_then(|before| {
+                after.map(|after| {
+                    after.owner == before.owner
+                        && after.incarnation == before.incarnation
+                        && after.bytes >= before.bytes
+                })
+            })
+            .unwrap_or(false)
+        {
+            parsed = None;
+            unavailable = Some("label_session_read_changed".to_owned());
+        }
+    }
     let events = parsed
         .as_ref()
         .map(|value| value.events.as_slice())
         .unwrap_or_default();
-    ProjectSession {
+    Some(ProjectSession {
         id,
         agent,
         locator: path,
@@ -290,12 +345,19 @@ fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSes
             .last()
             .map(|event| event.at_unix_ms)
             .unwrap_or(updated_at_unix_ms),
-        title: parsed.as_ref().and_then(|value| value.title.clone()),
+        title: parsed.as_ref().and_then(|value| {
+            value
+                .custom_title
+                .as_ref()
+                .filter(|title| !title.trim().is_empty())
+                .cloned()
+                .or_else(|| value.title.clone())
+        }),
         event_count: events.len(),
         availability: unavailable.map_or(SessionAvailability::Available, |reason| {
             SessionAvailability::Unavailable { reason }
         }),
-    }
+    })
 }
 
 fn first_human(events: &[ConversationEvent]) -> Option<&str> {
@@ -311,6 +373,13 @@ fn compact_snippet(value: &str) -> String {
 }
 
 fn session_id(agent: Agent, path: &Path) -> String {
+    if agent == Agent::Pi {
+        // project_sessions already rejected invalid metadata, never synthesize
+        // an identity from Pi's lossy pathname.
+        return crate::pi::header(path)
+            .map(|header| header.id)
+            .unwrap_or_default();
+    }
     let stem = path
         .file_stem()
         .and_then(|value| value.to_str())

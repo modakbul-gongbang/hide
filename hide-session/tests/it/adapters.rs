@@ -50,6 +50,7 @@ fn home(agent: Agent) -> tempfile::TempDir {
             &fixtures().join("codex-0.160.0"),
             &home.path().join(".codex"),
         ),
+        Agent::Pi => unreachable!("Pi fixtures bind their cwd to an owned checkout"),
         Agent::OpenCode => {
             let folder = home.path().join(".local/share/opencode");
             std::fs::create_dir_all(&folder).unwrap();
@@ -69,6 +70,7 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
     let id = match agent {
         Agent::Claude => "a1b2c3d4-0000-4000-8000-000000000001",
         Agent::Codex => "0199a000-0000-7000-8000-000000000002",
+        Agent::Pi => "pi-native-a",
         Agent::OpenCode => "ses_0a1b2c3d4e5f60718293a4b5c6",
     };
     LabelTranscriptRequest {
@@ -356,6 +358,410 @@ fn every_agent_reads_to_the_same_facts() {
         assert!(
             sighted(&transcript, 99).is_none(),
             "{agent:?}: a reply's mention is not a tool's output"
+        );
+    }
+}
+
+mod pi {
+    use super::*;
+    use hide_session::{SessionCatalog, SessionIdentity, SessionLocator};
+    use serde_json::json;
+    use std::fs;
+    use std::io::Write;
+
+    struct Native {
+        home: tempfile::TempDir,
+        cwd: PathBuf,
+        path: PathBuf,
+        request: LabelTranscriptRequest,
+    }
+
+    impl Native {
+        fn new() -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = home.path().join("checkout");
+            fs::create_dir(&cwd).unwrap();
+            let cwd = fs::canonicalize(cwd).unwrap();
+            // The default folder routes native --session <id>; the header
+            // still proves ownership. The filename never supplies the id.
+            let encoded = cwd
+                .to_string_lossy()
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-");
+            let path = home
+                .path()
+                .join(".pi/agent/sessions")
+                .join(format!("--{encoded}--"))
+                .join("timestamp_not-the-id.jsonl");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let fixture = fs::read_to_string(fixtures().join("pi-1.0.4/session.jsonl")).unwrap();
+            let mut lines = fixture.lines();
+            let mut header: serde_json::Value =
+                serde_json::from_str(lines.next().unwrap()).unwrap();
+            header["cwd"] = json!(cwd);
+            fs::write(
+                &path,
+                format!("{header}\n{}\n", lines.collect::<Vec<_>>().join("\n")),
+            )
+            .unwrap();
+            let mut request = request(Agent::Pi);
+            request.cwd = Some(cwd.display().to_string());
+            Self {
+                home,
+                cwd,
+                path,
+                request,
+            }
+        }
+
+        fn read(&self) -> Result<LabelTranscript, String> {
+            read(self.home.path(), &self.request)
+        }
+
+        fn append(&self, record: serde_json::Value) {
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&self.path)
+                    .unwrap(),
+                "{record}"
+            )
+            .unwrap();
+        }
+
+        fn resume(&mut self, transcript: &LabelTranscript) {
+            self.request.checkpoint = Some(transcript.checkpoint.clone());
+        }
+    }
+
+    #[test]
+    fn native_history_has_the_shared_conversation_facts_and_only_recorded_capabilities() {
+        let native = Native::new();
+        let transcript = native.read().unwrap();
+        assert_eq!(transcript.custom_title.as_deref(), Some("요청 보기 만들기"));
+        let people: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Human)
+            .collect();
+        assert_eq!(people.len(), 3);
+        assert_eq!(people[0].text, "요청 보기를 만들어줘\n긴 요청의 둘째 줄");
+        assert_eq!(people[0].at_unix_ms, START);
+        assert_eq!(people[1].sender.as_deref(), Some("ci-lead"));
+        assert_eq!((people[2].text.as_str(), people[2].images), ("", 1));
+        assert_eq!(
+            transcript.events.len(),
+            4,
+            "tool/thinking/custom/compaction records are no human turn"
+        );
+        assert_eq!(sighted(&transcript, 12).unwrap().at_unix_ms, START + 30_000);
+        assert!(sighted(&transcript, 99).is_none());
+        assert_eq!(
+            transcript.confirmed.native_session_id.as_deref(),
+            Some("pi-native-a")
+        );
+        assert!(transcript.turns.is_none());
+        assert!(transcript.subagents.is_empty());
+        let parsed =
+            hide_session::parse_events(Agent::Pi, &fs::read_to_string(&native.path).unwrap());
+        assert!(parsed.turn_marks.is_empty());
+        assert_eq!(parsed.links.cwd.as_deref(), native.cwd.to_str());
+        assert_eq!(parsed.links.interactive, None);
+        assert_eq!(parsed.links.forked_from, None);
+        assert!(!parsed.links.subagent);
+    }
+
+    #[test]
+    fn exact_native_id_and_path_prove_the_same_owner_but_wrong_cwd_or_id_never_falls_back() {
+        let mut native = Native::new();
+        let by_id = native.read().unwrap();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = native.path.display().to_string();
+        assert_eq!(
+            native.read().unwrap().confirmed.owner,
+            by_id.confirmed.owner
+        );
+        let other = native.home.path().join("other-checkout");
+        fs::create_dir(&other).unwrap();
+        native.request.cwd = Some(other.display().to_string());
+        assert!(native.read().is_err());
+        native.request.cwd = Some(native.cwd.display().to_string());
+        native.request.reference_kind = "id".to_owned();
+        native.request.reference_value = "not-the-id".to_owned();
+        assert_eq!(native.read().unwrap_err(), "session_file_missing");
+        assert!(
+            SessionLocator::new(native.home.path())
+                .locate(
+                    "pane",
+                    Agent::Pi,
+                    Some(&SessionIdentity::id("missing")),
+                    native.cwd.to_str()
+                )
+                .is_err()
+        );
+        assert!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &native.path,
+                None,
+                None
+            )
+            .is_err()
+        );
+        let outside = native.home.path().join("outside.jsonl");
+        fs::copy(&native.path, &outside).unwrap();
+        assert!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &outside,
+                None,
+                native.cwd.to_str()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn incremental_titles_clear_without_replaying_history_and_fork_paths_are_not_followed() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        native.append(json!({"type":"session_info","id":"renamed","parentId":"a000000b","timestamp":"2026-10-03T01:03:00Z","name":"새 이름"}));
+        let renamed = native.read().unwrap();
+        assert_eq!(renamed.custom_title.as_deref(), Some("새 이름"));
+        assert!(renamed.events.is_empty());
+        native.resume(&renamed);
+        native.append(json!({"type":"session_info","id":"cleared","parentId":"renamed","timestamp":"2026-10-03T01:03:01Z","name":""}));
+        let cleared = native.read().unwrap();
+        assert_eq!(cleared.custom_title.as_deref(), Some(""));
+        native.resume(&cleared);
+        assert!(native.read().unwrap().events.is_empty());
+        let body = fs::read_to_string(&native.path).unwrap();
+        let mut lines = body.lines();
+        let mut header: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        header["parentSession"] = json!(native.home.path().join("private-parent.jsonl"));
+        fs::write(
+            native.home.path().join("private-parent.jsonl"),
+            "must never read this",
+        )
+        .unwrap();
+        fs::write(
+            &native.path,
+            format!("{header}\n{}\n", lines.collect::<Vec<_>>().join("\n")),
+        )
+        .unwrap();
+        native.request.checkpoint = None;
+        let fork = native.read().unwrap();
+        assert_eq!(fork.events.len(), 4);
+        assert!(fork.subagents.is_empty());
+    }
+
+    #[test]
+    fn catalog_search_and_link_reads_share_pi_identity_and_tool_provenance() {
+        let native = Native::new();
+        let project = hide_project::resolve(&native.cwd, "local").unwrap();
+        let sessions = SessionCatalog::new(native.home.path(), "local")
+            .project_sessions(&project)
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "pi-native-a");
+        assert_eq!(sessions[0].agent, Agent::Pi);
+        assert_eq!(sessions[0].title.as_deref(), Some("요청 보기 만들기"));
+        let mut index =
+            hide_session::search::SearchIndex::open(&native.home.path().join("index.sqlite3"))
+                .unwrap();
+        hide_session::read_session_file(native.home.path(), Agent::Pi, &native.path, || {
+            hide_session::search_read::update(
+                &mut index,
+                &project.id,
+                "pi-native-a",
+                Agent::Pi,
+                &native.path,
+                0,
+            )
+        })
+        .unwrap();
+        let results = hide_session::search_read::search(&index, &project.id, "긴 요청", 0).unwrap();
+        assert_eq!(results.hits.len(), 1);
+        assert_eq!(results.hits[0].session_id, "pi-native-a");
+        let answer = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Pi,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert!(answer.error.is_none());
+        assert_eq!(answer.facts.session_id.as_deref(), Some("pi-native-a"));
+        assert_eq!(answer.facts.prs.len(), 1);
+        assert_eq!(answer.facts.prs[0].number, 12);
+        assert!(
+            hide_session::links::candidates(native.home.path(), 0, None)
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate.agent == Agent::Pi)
+        );
+    }
+
+    #[test]
+    fn native_resume_routing_rejects_other_folders_and_reserved_path_ids() {
+        let mut native = Native::new();
+        let wrong = native
+            .home
+            .path()
+            .join(".pi/agent/sessions/--other-checkout--/copied.jsonl");
+        fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+        fs::copy(&native.path, &wrong).unwrap();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = wrong.display().to_string();
+        assert!(native.read().is_err());
+        assert_eq!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &wrong,
+                None,
+                native.cwd.to_str()
+            )
+            .unwrap_err()
+            .to_string(),
+            "label_session_default_directory_required"
+        );
+        native.request.reference_value = native.path.display().to_string();
+        let body = fs::read_to_string(&native.path)
+            .unwrap()
+            .replace("pi-native-a", "native.jsonl");
+        fs::write(&native.path, body).unwrap();
+        assert!(native.read().is_err());
+        assert_eq!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &native.path,
+                None,
+                native.cwd.to_str()
+            )
+            .unwrap_err()
+            .to_string(),
+            "label_session_id_unresumable"
+        );
+    }
+
+    #[test]
+    fn native_id_discovery_has_one_shared_metadata_read_budget() {
+        let native = Native::new();
+        fs::remove_file(&native.path).unwrap();
+        for index in 0..6 {
+            let record = json!({"type":"session","version":3,"id":format!("other-{index}"),"cwd":native.cwd,"extra":"x".repeat(200_000)});
+            fs::write(
+                native.path.with_file_name(format!("{index}.jsonl")),
+                format!("{record}\n"),
+            )
+            .unwrap();
+        }
+        let error = native.read().unwrap_err();
+        assert_eq!(error, "session_capacity");
+    }
+
+    #[test]
+    fn torn_lines_and_replacement_or_truncation_are_observable_without_cross_owner_reads() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let line = json!({"type":"message","id":"a000000c","parentId":"a000000b","timestamp":"2026-10-03T01:04:00Z","message":{"role":"user","content":"다음 요청"}}).to_string();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&native.path)
+            .unwrap()
+            .write_all(line.as_bytes())
+            .unwrap();
+        let torn = native.read().unwrap();
+        assert!(torn.events.is_empty());
+        native.resume(&torn);
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&native.path)
+            .unwrap()
+            .write_all(b"\n")
+            .unwrap();
+        let completed = native.read().unwrap();
+        assert_eq!(completed.events.len(), 1);
+        assert_eq!(completed.events[0].text, "다음 요청");
+        native.resume(&completed);
+        let replacement = native.path.with_extension("replacement");
+        fs::copy(&native.path, &replacement).unwrap();
+        fs::rename(replacement, &native.path).unwrap();
+        let replaced = native.read().unwrap();
+        assert_eq!(replaced.rescanned.as_deref(), Some("replaced"));
+        assert_ne!(first.confirmed.incarnation, replaced.confirmed.incarnation);
+        native.resume(&replaced);
+        let header = fs::read_to_string(&native.path)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_owned();
+        fs::write(&native.path, format!("{header}\n")).unwrap();
+        let truncated = native.read().unwrap();
+        assert_eq!(truncated.rescanned.as_deref(), Some("truncated"));
+        assert!(truncated.events.is_empty());
+        fs::write(
+            &native.path,
+            format!("{{\"type\":\"message\"}}\n{header}\n"),
+        )
+        .unwrap();
+        assert!(
+            native.read().is_err(),
+            "only the first native header proves identity"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn internal_file_and_directory_links_cannot_grant_native_read_authority() {
+        let mut native = Native::new();
+        let hard_link = native.path.with_file_name("hard-linked.jsonl");
+        fs::hard_link(&native.path, &hard_link).unwrap();
+        assert!(native.read().is_err());
+        assert_eq!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &native.path,
+                None,
+                native.cwd.to_str()
+            )
+            .unwrap_err()
+            .to_string(),
+            "label_session_linked"
+        );
+        fs::remove_file(hard_link).unwrap();
+        let file_link = native.path.with_file_name("linked.jsonl");
+        std::os::unix::fs::symlink(&native.path, &file_link).unwrap();
+        native.request.reference_kind = "path".to_owned();
+        native.request.reference_value = file_link.display().to_string();
+        assert!(native.read().is_err());
+        let root = native.home.path().join(".pi/agent/sessions");
+        let directory_link = root.join("linked-directory");
+        std::os::unix::fs::symlink(native.path.parent().unwrap(), &directory_link).unwrap();
+        native.request.reference_value = directory_link
+            .join(native.path.file_name().unwrap())
+            .display()
+            .to_string();
+        assert!(native.read().is_err());
+        let real_root = native.home.path().join("moved-root");
+        fs::rename(&root, &real_root).unwrap();
+        std::os::unix::fs::symlink(&real_root, &root).unwrap();
+        native.request.reference_value = native.path.display().to_string();
+        assert!(native.read().is_err());
+        assert!(
+            hide_session::links::candidates(native.home.path(), 0, None)
+                .unwrap()
+                .is_empty()
         );
     }
 }

@@ -2853,20 +2853,51 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
         .map_err(|error| format!("fork worker could not be started: {error}"))
 }
 
-/// Splits beside the parent and starts the agent in the new pane. A pane whose
-/// agent never started is closed again; internal registration happens only
-/// after start succeeded and never turns a working fork into a failure.
+/// Starts the fork without changing the parent's tab for Pi. Legacy providers
+/// retain their sibling split. A pane whose agent never started is closed;
+/// registration never turns a working fork into a failure.
 fn run_agent_fork_with_registration(
     connector: &dyn ApiConnector,
     request: &ForkRequest,
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
-    let child_pane_id = control_request(
-        connector,
-        "pane.split",
-        wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref())?,
-    )
-    .and_then(wire::split_pane)?;
+    let child_pane_id = if request.agent == crate::fork::ForkableAgent::Pi {
+        let cwd = request
+            .cwd
+            .as_deref()
+            .ok_or("Pi fork has no confirmed checkout")?;
+        let snapshot =
+            fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
+        let mut parents = snapshot.layouts.iter().filter(|layout| {
+            layout
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == request.parent_pane_id)
+        });
+        let parent = parents
+            .next()
+            .ok_or("Pi fork parent is no longer in its workspace")?;
+        if parents.next().is_some() {
+            return Err("Pi fork parent has ambiguous workspace ownership".into());
+        }
+        create_tab_in(
+            connector,
+            &parent.workspace_id,
+            cwd,
+            &request.name,
+            false,
+            Default::default(),
+        )
+        .map_err(|error| error.message().to_owned())?
+        .pane_id
+    } else {
+        control_request(
+            connector,
+            "pane.split",
+            wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref())?,
+        )
+        .and_then(wire::split_pane)?
+    };
     let started = start_agent(
         connector,
         &format!("herdr-core:fork:{}:start", request.name),
@@ -2898,7 +2929,7 @@ fn run_agent_fork_with_registration(
             Err(match closed {
                 Ok(_) => error,
                 Err(close_error) => format!(
-                    "{error}; the pane {child_pane_id} it split could not be closed: {close_error}"
+                    "{error}; the created pane {child_pane_id} could not be closed: {close_error}"
                 ),
             })
         }
@@ -4229,6 +4260,75 @@ mod tests {
             "pane",
             "future-agent"
         ));
+    }
+
+    #[test]
+    fn a_pi_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
+        for refused in [false, true] {
+            let herdr = FakeHerdr::start_with_errors("pi-fork-tab", move |method, params| {
+                Ok(match method {
+                    "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                        "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                        "workspaces": [], "tabs": [], "panes": [], "agents": [],
+                        "layouts": [{"workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+                            "area": {"x":0,"y":0,"width":80,"height":24},
+                            "focused_pane_id": "parent-pane",
+                            "panes": [{"pane_id":"parent-pane", "focused":true,
+                                "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
+                    }}),
+                    "tab.create" => {
+                        assert_eq!(params["workspace_id"], "w1");
+                        assert_eq!(params["cwd"], "/checkout");
+                        assert_eq!(params["focus"], false);
+                        json!({"type":"tab_created",
+                            "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
+                            "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
+                    }
+                    "pane.process_info" => json!({"type":"pane_process_info","process_info":{
+                        "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
+                        "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "agent.start" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        assert_eq!(params["kind"], "pi");
+                        assert_eq!(params["args"], json!(["--fork", "native-pi"]));
+                        if refused {
+                            return Err(("start_refused".into(), "fixture refused".into()));
+                        }
+                        json!({"type":"agent_started","argv":[],"agent":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":2}})
+                    }
+                    "pane.close" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"ok"})
+                    }
+                    other => panic!("unexpected {other}"),
+                })
+            });
+            let request = ForkRequest {
+                codex_daemon: Default::default(),
+                parent_pane_id: "parent-pane".into(),
+                agent: crate::fork::ForkableAgent::Pi,
+                session_id: "native-pi".into(),
+                cwd: Some("/checkout".into()),
+                name: "fork-pi-1".into(),
+            };
+            let result =
+                run_agent_fork_with_registration(&herdr.connector(), &request, |_, _| Ok(()));
+            assert_eq!(result.is_err(), refused);
+            if !refused {
+                assert_eq!(result.unwrap(), "child-pane");
+            }
+            let mut expected = vec![
+                "session.snapshot",
+                "tab.create",
+                "pane.process_info",
+                "agent.start",
+            ];
+            if refused {
+                expected.push("pane.close");
+            }
+            assert_eq!(herdr.methods(), expected);
+        }
     }
 
     #[test]

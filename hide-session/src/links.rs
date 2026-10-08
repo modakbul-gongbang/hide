@@ -257,6 +257,18 @@ pub(crate) fn claude_line(item: &Value, offset: u64, links: &mut LinkAccumulator
     }
 }
 
+/// Pi records a native owner and cwd, but no branch, interactive marker or
+/// subagent identity. parentSession is a file pointer, not a native id.
+pub(crate) fn pi_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
+    if item["type"] == "session" {
+        links.facts.session_id = item["id"].as_str().map(str::to_owned);
+        links.facts.cwd = item["cwd"].as_str().map(str::to_owned);
+    }
+    if let Ok(at) = crate::timestamp_ms(item.get("timestamp")) {
+        links.activity(at);
+    }
+}
+
 /// Codex: what one record says about links.
 pub(crate) fn codex_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
     links.sidechain_line = links.facts.subagent;
@@ -392,6 +404,16 @@ pub fn candidates(
         &mut visited,
     )?;
     opencode_candidates(home, window, &mut found)?;
+    if let Ok(pi_root) = crate::pi::root(home) {
+        walk(
+            &pi_root,
+            crate::Agent::Pi,
+            1,
+            window,
+            &mut found,
+            &mut visited,
+        )?;
+    }
     found.sort_by(|left, right| {
         right
             .modified_unix_ms
@@ -572,8 +594,45 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
         crate::ConversationCursor::new,
         crate::ConversationCursor::restore,
     );
+    let pi_before = if request.agent == crate::Agent::Pi {
+        match crate::pi::header(&path).and_then(|header| {
+            crate::confirm_session_file(
+                home,
+                request.agent,
+                &path,
+                Some(&header.id),
+                header.cwd.to_str(),
+            )
+            .map(|proof| (header, proof))
+        }) {
+            Ok(before) => Some(before),
+            Err(error) => {
+                answer.error = Some(error.to_string());
+                return answer;
+            }
+        }
+    } else {
+        None
+    };
     match cursor.read(request.agent, &path) {
         Ok(parsed) => {
+            if let Some((header, before)) = pi_before {
+                let after = crate::confirm_session_file(
+                    home,
+                    request.agent,
+                    &path,
+                    Some(&header.id),
+                    header.cwd.to_str(),
+                );
+                if !after.is_ok_and(|after| {
+                    after.owner == before.owner
+                        && after.incarnation == before.incarnation
+                        && after.bytes >= before.bytes
+                }) {
+                    answer.error = Some("label_session_read_changed".to_owned());
+                    return answer;
+                }
+            }
             answer.rescanned = parsed.rescan_reason.is_some();
             answer.facts = parsed.links;
             answer.checkpoint = Some(cursor.checkpoint());

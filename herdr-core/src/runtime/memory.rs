@@ -1306,7 +1306,7 @@ mod scope_tests {
                         "content": [{"type": "input_text", "text": context}],
                     },
                 }),
-                Agent::OpenCode => unreachable!("OpenCode keeps no session file"),
+                Agent::Pi | Agent::OpenCode => unreachable!("legacy hook-only fixture"),
             };
             fs::write(&locator, format!("{transcript}\n")).unwrap();
             let session = ProjectSession {

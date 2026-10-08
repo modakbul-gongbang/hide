@@ -299,12 +299,28 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             .supports("codex", ReaderFeature::Turns)
     );
     assert!(
-        !device
+        device
             .link
             .reader_features()
             .unwrap()
             .supports("pi", ReaderFeature::Conversation)
     );
+    assert!(
+        !device
+            .link
+            .reader_features()
+            .unwrap()
+            .supports("pi", ReaderFeature::Turns)
+    );
+    for agent in ["omp", "grok", "cursor"] {
+        assert!(
+            !device
+                .link
+                .reader_features()
+                .unwrap()
+                .supports(agent, ReaderFeature::Conversation)
+        );
+    }
 }
 
 // This test-only input names a retained release payload directory. It is

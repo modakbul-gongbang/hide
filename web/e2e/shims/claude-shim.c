@@ -158,6 +158,62 @@ static int factory_question_runner(void) {
   return 1;
 }
 
+/* The Pi format fixture writes its own native session, rather than having
+   the spec plant an already-readable transcript. The private root supplies
+   a bounded seed and destination; resumed launches preserve the same file. */
+static int pi_session(int argc, char **argv) {
+  const char *base = argv[0];
+  for (const char *at = argv[0]; *at; at++) if (*at == '/' || *at == '\\') base = at + 1;
+  if (strcmp(base, "pi") != 0 && strcmp(base, "pi.exe") != 0) return 0;
+  const char *root = getenv("HIDE_E2E_ROOT");
+  if (!root) return 1;
+  char config[4096], destination[4096], seed[4096], launches[4096];
+  if (snprintf(config, sizeof config, "%s/pi-session-path.config", root) >= (int)sizeof config ||
+      snprintf(seed, sizeof seed, "%s/pi-session-seed.jsonl", root) >= (int)sizeof seed ||
+      snprintf(launches, sizeof launches, "%s/pi-launches.jsonl", root) >= (int)sizeof launches) return 1;
+  FILE *file = fopen(config, "rb");
+  if (!file) return 1;
+  size_t size = fread(destination, 1, sizeof destination - 1, file);
+  int complete = !ferror(file) && feof(file);
+  fclose(file);
+  destination[size] = 0;
+  if (!complete || !size || strchr(destination, '\n') || strchr(destination, '\r')) return 1;
+  int resume = argc == 3 && strcmp(argv[1], "--session") == 0;
+  if (resume) {
+    file = fopen(destination, "rb");
+    if (!file) return 1;
+    fclose(file);
+  } else {
+    file = fopen(seed, "rb");
+    if (!file) return 1;
+    static char records[65536];
+    size = fread(records, 1, sizeof records, file);
+    complete = !ferror(file) && feof(file);
+    fclose(file);
+    if (!complete || !size) return 1;
+    file = fopen(destination, "wb");
+    if (!file) return 1;
+    complete = fwrite(records, 1, size, file) == size;
+    if (fclose(file) != 0 || !complete) return 1;
+  }
+  file = fopen(launches, "ab");
+  if (!file) return 1;
+  fputc('[', file);
+  for (int i = 1; i < argc; i++) {
+    if (i > 1) fputc(',', file);
+    fputc('"', file);
+    for (const unsigned char *at = (const unsigned char *)argv[i]; *at; at++) {
+      if (*at == '"' || *at == '\\') fputc('\\', file);
+      if (*at < 32) fprintf(file, "\\u%04x", *at); else fputc(*at, file);
+    }
+    fputc('"', file);
+  }
+  fputs("]\n", file);
+  if (fclose(file) != 0) return 1;
+  puts("pi fixture ready");
+  return 0;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
@@ -167,6 +223,7 @@ int main(int argc, char **argv) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
     if (strcmp(argv[i], "--input-format") == 0) return models();
   }
+  if (pi_session(argc, argv) != 0) return 1;
   if (factory_question_runner() != 0) return 1;
   const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
   int flags = O_WRONLY | O_CREAT | O_APPEND;

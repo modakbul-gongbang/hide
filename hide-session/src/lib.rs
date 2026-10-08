@@ -32,6 +32,7 @@ mod label_owner;
 pub mod label_transcript;
 pub mod links;
 mod opencode;
+mod pi;
 pub mod search;
 pub mod search_read;
 pub mod session_activity;
@@ -41,7 +42,10 @@ pub mod turns;
 pub use envelope::envelope_sender;
 pub use sightings::{MAX_SIGHTINGS_PER_OUTPUT, PrSighting, pull_request_addresses};
 
-pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};
+pub use label_owner::{
+    ConfirmedLabelSession, confirm_label_session, confirm_session_file, label_reference_token,
+    read_session_file, valid_native_id,
+};
 
 pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
 
@@ -118,6 +122,8 @@ pub const SESSION_LINE_LIMIT_BYTES: usize = 256 * 1024;
 pub const CLAUDE_SESSIONS: &str = ".claude/projects";
 /// Codex CLI's transcript folder, under the home folder.
 pub const CODEX_SESSIONS: &str = ".codex/sessions";
+/// Pi's default native session root. Custom session directories grant no trust.
+pub const PI_SESSIONS: &str = ".pi/agent/sessions";
 
 /// The folder in `home` that holds `agent`'s session files, `None` for an
 /// agent that keeps no file per session.
@@ -125,6 +131,7 @@ pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
     match agent {
         Agent::Claude => Some(home.join(CLAUDE_SESSIONS)),
         Agent::Codex => Some(home.join(CODEX_SESSIONS)),
+        Agent::Pi => Some(home.join(PI_SESSIONS)),
         Agent::OpenCode => None,
     }
 }
@@ -150,8 +157,15 @@ pub fn inside_session_root(
     agents: &[Agent],
     path: &Path,
 ) -> std::result::Result<PathBuf, RootRefusal> {
+    if agents.contains(&Agent::Pi) {
+        let pi = pi::inside_root(home, path);
+        if agents.len() == 1 || pi.is_ok() {
+            return pi;
+        }
+    }
     let roots = agents
         .iter()
+        .filter(|agent| **agent != Agent::Pi)
         .filter_map(|agent| session_root(home, *agent))
         .collect::<Vec<_>>();
     if roots.is_empty() {
@@ -210,6 +224,7 @@ pub(crate) fn open_session_file(path: &Path) -> io::Result<File> {
 pub enum Agent {
     Codex,
     Claude,
+    Pi,
     #[serde(rename = "opencode")]
     OpenCode,
 }
@@ -227,6 +242,7 @@ impl Agent {
         match self {
             Self::Claude => hide_agent_adapter::SessionFormat::Claude,
             Self::Codex => hide_agent_adapter::SessionFormat::Codex,
+            Self::Pi => hide_agent_adapter::SessionFormat::Pi,
             Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
         }
     }
@@ -235,6 +251,7 @@ impl Agent {
         match format {
             hide_agent_adapter::SessionFormat::Claude => Self::Claude,
             hide_agent_adapter::SessionFormat::Codex => Self::Codex,
+            hide_agent_adapter::SessionFormat::Pi => Self::Pi,
             hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
         }
     }
@@ -725,6 +742,10 @@ impl SessionLocator {
         identity: Option<&SessionIdentity>,
         cwd: Option<&str>,
     ) -> Result<PathBuf> {
+        // Pi's lossy folder and file names are never native ownership proof.
+        if agent == Agent::Pi {
+            return pi::locate(&self.home, identity, cwd, &mut DiscoveryBudget::default());
+        }
         // A session Herdr reported for this pane is that pane's session, full
         // stop, and a reported session whose file does not exist yet is a
         // session that has not started, not a reason to read another one.
@@ -778,6 +799,7 @@ impl SessionLocator {
             SessionIdentity::Id(id) => match agent {
                 Agent::Claude => self.claude_path_for_id(cwd, id, budget),
                 Agent::Codex => self.codex_path_for_id(id, budget),
+                Agent::Pi => pi::locate(&self.home, Some(identity), cwd, budget),
                 Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
             },
         }
@@ -840,6 +862,7 @@ impl SessionLocator {
                 budget,
             )?)),
             Agent::Codex => self.newest_codex_session(cwd, budget),
+            Agent::Pi => pi::locate(&self.home, None, Some(cwd), budget).map(Some),
             Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
         }
     }
@@ -1200,6 +1223,15 @@ pub(crate) fn parse_events_into(
             false,
             found,
         ),
+        Agent::Pi => parse_lines_at(
+            contents,
+            base_offset,
+            pi::parse_line,
+            links::pi_line,
+            None,
+            false,
+            found,
+        ),
         Agent::OpenCode => ParsedSession::default(),
     }
 }
@@ -1221,6 +1253,10 @@ fn parse_lines_at(
     for raw_line in contents.split_inclusive('\n') {
         let line_offset = base_offset.saturating_add(relative_offset);
         relative_offset = relative_offset.saturating_add(raw_line.len() as u64);
+        if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
+            parsed.skipped(SkipReason::NonConversationCapacity);
+            continue;
+        }
         let line = raw_line.trim_end_matches(['\n', '\r']);
         if line.trim().is_empty() {
             continue;

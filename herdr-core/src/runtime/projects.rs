@@ -3820,14 +3820,19 @@ fn pull_request_times(
 /// that is not one plain token: it reaches the agent's command line, where
 /// one that began with `-` would read as an option.
 fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>> {
-    let plain = session_id
-        .bytes()
-        .next()
-        .is_some_and(|byte| byte.is_ascii_alphanumeric())
-        && session_id.len() <= 128
-        && session_id
+    let pi = hide_agent_adapter::adapter(kind).is_some_and(|adapter| adapter.id == "pi");
+    let plain = if pi {
+        hide_session::valid_native_id(session_id) && !session_id.ends_with(".jsonl")
+    } else {
+        session_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && session_id.len() <= 128
+            && session_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    };
     if !plain {
         return None;
     }

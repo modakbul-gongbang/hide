@@ -111,12 +111,15 @@
       "absent": "No installed hook dialect in this build"
     },
     "session": {
-      "absent": "No session reader in this build"
+      "sample": "hide-session/tests/fixtures/adapters/pi-1.0.4/session.jsonl"
     },
     "features": [
       "skill",
       "herdr_integration",
-      "start"
+      "sleep",
+      "fork",
+      "start",
+      "titles"
     ],
     "factory": {
       "direct_ask": "unconfirmed",

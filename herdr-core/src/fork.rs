@@ -1,19 +1,19 @@
-//! Forking an agent pane into a sibling that carries the parent conversation.
+//! Forking an agent pane into a new execution of the parent conversation.
 //!
-//! A fork asks Herdr to split beside the parent and start the new agent, then
+//! A fork asks Herdr to create a pane and start the new agent, then
 //! registers both exact executions in Hide and publishes lineage. This
 //! module decides which panes can be forked and spells each agent's resume
 //! arguments; running the calls is [`crate::live`]'s job.
 
 /// The agents whose own fork command this shell knows how to spell.
 ///
-/// Both take the session id as a UUID argument, so an agent whose session Herdr
-/// recorded as a path cannot be forked by either and is rejected before a
-/// control is ever offered.
+/// Each takes the confirmed native session id. A reported path must first be
+/// converted by the shared native reader proof before a control is offered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ForkableAgent {
     Claude,
     Codex,
+    Pi,
 }
 
 impl ForkableAgent {
@@ -21,9 +21,9 @@ impl ForkableAgent {
         match hide_agent_adapter::adapter(agent_kind)?.fork? {
             hide_agent_adapter::LaunchDialect::Claude => Some(Self::Claude),
             hide_agent_adapter::LaunchDialect::Codex => Some(Self::Codex),
+            hide_agent_adapter::LaunchDialect::Pi => Some(Self::Pi),
             hide_agent_adapter::LaunchDialect::Grok
             | hide_agent_adapter::LaunchDialect::OpenCode
-            | hide_agent_adapter::LaunchDialect::Pi
             | hide_agent_adapter::LaunchDialect::Omp
             | hide_agent_adapter::LaunchDialect::Cursor => None,
         }
@@ -43,6 +43,7 @@ impl ForkableAgent {
                     .herdr
                     .name
             }
+            Self::Pi => hide_agent_adapter::LaunchDialect::Pi.adapter().herdr.name,
         }
     }
 
@@ -57,6 +58,7 @@ impl ForkableAgent {
                 "--fork-session".to_owned(),
             ],
             Self::Codex => vec!["fork".to_owned(), session_id.to_owned()],
+            Self::Pi => vec!["--fork".to_owned(), session_id.to_owned()],
         }
     }
 }
@@ -205,12 +207,8 @@ fn sanitize(value: &str) -> String {
     }
 }
 
-/// Whether a pane's agent can be forked at all, from the two facts Herdr
-/// reports about it.
-///
-/// A session recorded as a path is not forkable, because neither agent's fork
-/// command takes one. Refusing here is what keeps a control that could only
-/// fail from being drawn.
+/// Whether the provider and confirmed native identity permit a fork.
+/// A native path must pass the shared reader's proof before becoming this id.
 pub fn is_forkable(agent_kind: Option<&str>, session_id: Option<&str>) -> bool {
     let Some(agent_kind) = agent_kind else {
         return false;
@@ -257,7 +255,18 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_agents_with_a_known_fork_command_are_forkable() {
+    fn a_pi_fork_uses_the_confirmed_native_id_and_the_installed_cli_dialect() {
+        let request = request(ForkableAgent::Pi);
+        assert_eq!(request.agent.kind(), "pi");
+        assert_eq!(
+            request.agent.resume_arguments(&request.session_id),
+            ["--fork", "3f2b1c00-0000-4000-8000-000000000001"]
+        );
+        assert!(is_forkable(Some("pi"), Some("native-session")));
+    }
+
+    #[test]
+    fn only_agents_with_a_known_fork_command_are_forkable() {
         assert!(is_forkable(Some("claude"), Some("session")));
         assert!(is_forkable(Some("Codex"), Some("session")));
         assert!(!is_forkable(Some("gemini"), Some("session")));

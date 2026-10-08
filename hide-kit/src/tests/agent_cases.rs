@@ -768,14 +768,14 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRD and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18).
-    // The session-reader common contract B1/B6 enables starts for the five
-    // partial agents without enabling their future reader/sleep/fork features.
+    // Common enables all installed starts; the complete Pi slice adds its
+    // native session title and exact sleep/fork without hook capabilities.
     let expected: [(&str, &[Feature]); 7] = [
         ("claude-code", &Feature::ALL),
         ("codex", &Feature::ALL),
         ("grok", &[Skill, HerdrIntegration, Start]),
         ("opencode", &[Skill, HerdrIntegration, Start]),
-        ("pi", &[Skill, HerdrIntegration, Start]),
+        ("pi", &[Skill, HerdrIntegration, Sleep, Fork, Start, Titles]),
         ("omp", &[Skill, HerdrIntegration, Start]),
         ("cursor", &[Skill, Guidance, HerdrIntegration, Start]),
     ];

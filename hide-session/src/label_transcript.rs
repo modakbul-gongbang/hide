@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::turns::TurnTracker;
 use crate::{
     Agent, ConfirmedLabelSession, ConversationCheckpoint, ConversationCursor, EventKind,
-    SessionError, SessionIdentity, SessionLocator, confirm_label_session,
+    SessionError, SessionIdentity, SessionLocator,
 };
 
 /// What the caller knows about the pane's conversation.
@@ -177,8 +177,14 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             return Err(reason.as_str().to_owned());
         }
     }
-    let after = confirm_label_session(request.agent, &path, reported_id)
-        .map_err(|error| error.to_string())?;
+    let after = crate::confirm_session_file(
+        home,
+        request.agent,
+        &path,
+        reported_id,
+        request.cwd.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
     if after.owner != before.owner
         || after.incarnation != before.incarnation
         || after.bytes < before.bytes
@@ -237,7 +243,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Pi | Agent::OpenCode => parsed.title.clone(),
     };
     let anchor = events
         .iter()
@@ -301,8 +307,8 @@ pub(crate) fn locate_confirmed(
         })?;
     let path = inside_agent_root(home, agent, &located)?;
     let reported_id = (reference_kind == "id").then_some(reference_value);
-    let confirmed =
-        confirm_label_session(agent, &path, reported_id).map_err(|error| error.to_string())?;
+    let confirmed = crate::confirm_session_file(home, agent, &path, reported_id, cwd)
+        .map_err(|error| error.to_string())?;
     Ok((path, confirmed))
 }
 
