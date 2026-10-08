@@ -1,11 +1,11 @@
 // The local measurement CLI uses the existing compiled providers on the real
 // pinned Herdr. This is tool plumbing, never authenticated model acceptance.
 import { test, expect } from "@playwright/test";
-import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { herdrBinary } from "./herdr-fixture";
 import { copyFixtureShim } from "./shims/build";
+import { runPython, startPython } from "./live-check-process";
 
 const originalConfig = '{"fixture":"before-run"}\n';
 // Fault injection stays in the test runner. Production has no hidden route to
@@ -64,10 +64,10 @@ function assertClean(run: string) {
   return report;
 }
 
-test("live check guards preserve bytes, refuse aliases, and end detached children", () => {
+test("live check guards preserve bytes, refuse aliases, and end detached children", async () => {
   test.skip(process.platform === "win32", "The local measurement runs on Unix hosts");
-  const result = spawnSync("python3", ["-m", "unittest", "discover", "-s", "../scripts/tests", "-p", "test_agent_live_*.py"],
-    { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+  const result = await runPython(["-m", "unittest", "discover", "-s", "../scripts/tests", "-p", "test_agent_live_*.py"],
+    { timeout: 30_000 });
   expect(result.error, result.stderr).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
@@ -76,12 +76,13 @@ test("live check retains the full scene matrix and rejects unsafe picker or plan
   test.skip(process.platform === "win32", "Native measurement's process guardian supports Unix hosts");
   test.setTimeout(240_000);
   const { root, run, args } = fixtureRoot();
-  const result = spawnSync("python3", args,
-  { encoding: "utf8", timeout: 220_000, maxBuffer: 1024 * 1024 });
+  let clean = false;
+  const result = await runPython(args, { timeout: 220_000 });
   try {
     expect(result.error, result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(1);
     const report = assertClean(run);
+    clean = true;
     expect(report.fixture).toBe(true);
     expect(report.herdr.manifests.length).toBeGreaterThan(0);
     expect(report.configuration.failures).toEqual([]);
@@ -106,20 +107,21 @@ test("live check retains the full scene matrix and rejects unsafe picker or plan
     if (evidence && fs.existsSync(run)) fs.cpSync(run, path.join(evidence, path.basename(root)), { recursive: true });
     throw error;
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    if (clean) fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("live check refuses operator socket and state before a server starts", () => {
+test("live check refuses operator socket and state before a server starts", async () => {
   test.skip(process.platform === "win32", "Unix local tool");
   const { root, run, args } = fixtureRoot();
+  let clean = false;
   try {
     for (const [flag, value] of [["--socket", path.join(process.env.HOME!, ".config", "herdr", "herdr.sock")],
       ["--state-dir", path.join(process.env.HOME!, ".hide", "state")]]) {
       const destination = run + flag;
       const modified = [...args];
       modified[modified.indexOf("--run-dir") + 1] = destination;
-      const result = spawnSync("python3", [...modified, flag, value], { encoding: "utf8", timeout: 10_000 });
+      const result = await runPython([...modified, flag, value], { timeout: 10_000 });
       expect(result.status, result.stdout + result.stderr).toBe(2);
       const report = JSON.parse(fs.readFileSync(path.join(destination, "report.json"), "utf8"));
       expect(report.herdr).toEqual({});
@@ -128,7 +130,8 @@ test("live check refuses operator socket and state before a server starts", () =
       expect(fs.existsSync(path.join(destination, "state", "hided.json"))).toBe(false);
       expect(fs.existsSync(path.join(destination, "probe"))).toBe(false);
     }
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    clean = true;
+  } finally { if (clean) fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("live check tears down a started runtime on failure and Ctrl-C", async () => {
@@ -136,49 +139,39 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
   test.setTimeout(120_000);
   for (const scenario of ["failure", "hold"]) {
     const { root, run, args } = fixtureRoot();
-    let child: ReturnType<typeof spawn> | undefined;
+    let running: ReturnType<typeof startPython> | undefined;
+    let clean = false;
     try {
       const env = { ...process.env, LIVE_CHECK_FIXTURE_CASE: scenario };
       if (scenario === "failure") {
-        const result = spawnSync("python3", args, { encoding: "utf8", env, timeout: 45_000 });
+        const result = await runPython(args, { env, timeout: 45_000 });
         expect(result.status, result.stdout + result.stderr).toBe(2);
         const report = assertClean(run);
+        clean = true;
         expect(report.herdr.version).toContain("herdr");
         expect(report.failures[0].reason).toBe("injected_after_registered_private_workspace");
       } else {
         args[args.indexOf("--scene-seconds") + 1] = "120";
-        child = spawn("python3", args, { env, stdio: ["ignore", "pipe", "pipe"] });
-        let output = "";
-        child.stdout!.on("data", chunk => { if (output.length < 1024 * 1024) output += chunk; });
-        child.stderr!.on("data", chunk => { if (output.length < 1024 * 1024) output += chunk; });
-        const completed = new Promise<number | null>((resolve, reject) => {
-          child!.once("error", reject);
-          child!.once("exit", resolve);
-        });
+        running = startPython(args, { env, timeout: 110_000 });
         const identity = path.join(run, "daemon-home", ".live-check-child.json");
         await expect.poll(() => fs.existsSync(identity), { timeout: 40_000 }).toBe(true);
         const fixture = JSON.parse(fs.readFileSync(identity, "utf8"));
         const state = path.join(run, "state", "hided.json");
         expect(fs.existsSync(state)).toBe(true);
         const daemon = JSON.parse(fs.readFileSync(state, "utf8"));
-        child.kill("SIGINT");
-        expect(await completed, output).toBe(2);
+        running.child.kill("SIGINT");
+        const result = await running.completed;
+        expect(result.status, result.stdout + result.stderr).toBe(2);
         assertClean(run);
+        clean = true;
         assertEnded(fixture.pid);
         assertEnded(daemon.pid);
         expect(fixture.socket.length).toBeGreaterThan(0);
         expect(fs.existsSync(fixture.socket)).toBe(false);
       }
     } finally {
-      if (child && child.exitCode === null && child.signalCode === null) {
-        const running = child;
-        await new Promise<void>(resolve => {
-          const timer = setTimeout(() => running.kill("SIGKILL"), 10_000);
-          running.once("exit", () => { clearTimeout(timer); resolve(); });
-          running.kill("SIGTERM");
-        });
-      }
-      fs.rmSync(root, { recursive: true, force: true });
+      if (running) await running.stop();
+      if (clean) fs.rmSync(root, { recursive: true, force: true });
     }
   }
 });
