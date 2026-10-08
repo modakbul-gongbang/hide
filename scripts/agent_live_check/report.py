@@ -15,6 +15,8 @@ def verdict(agent: dict) -> str:
         return "unsafe"
     if agent.get("skipped"):
         return "skipped"
+    if agent["integration"].get("integrity") == "unproven":
+        return "unknown"
     if ({row["scene"] for row in rows} != set(SCENES)
             or len(rows) != len(SCENES)
             or any(row["arrival"] != "reached" or row["effect"] not in SAFE for row in rows)):

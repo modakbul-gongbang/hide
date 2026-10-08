@@ -238,7 +238,8 @@ def main(argv=None):
                                 finalization_errors = []
                                 try:
                                     current_integration = observe_integration(runtime, pane, recipe, integration)
-                                    if (current_integration["native_source"] or
+                                    if (current_integration["integrity"] == "unproven" or
+                                            current_integration["native_source"] or
                                             not provider["integration"].get("native_source")):
                                         provider["integration"] = current_integration
                                 except Exception as error:

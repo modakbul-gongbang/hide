@@ -17,8 +17,11 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path('../scripts').resolve()))
 from agent_live_check.cli import main
+from agent_live_check import cli
 from agent_live_check.runtime import Runtime
 from agent_live_check.processes import ProcessSafetyError
+from agent_live_check.integration import prepare,observe
+from agent_live_check.protection import private_directory,write_private
 original=Runtime.__init__
 def initialize(self,*args,**kwargs):
  original(self,*args,**kwargs)
@@ -43,6 +46,40 @@ def fail(self,*args,**kwargs):
  raise RuntimeError('injected_after_registered_private_workspace')
 original_workspace=Runtime.new_workspace
 original_command=Runtime.command
+original_prepare=cli.prepare_integration
+original_close=Runtime.close_workspace
+def integration_preparation(self,recipe,overlay):
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')!='integrity': return original_prepare(self,recipe,overlay)
+ # Real pinned installer bytes, but a deliberately synthetic native emitter.
+ # This tests CLI evidence retention and makes no authenticated-load claim.
+ overlay['env']['CODEX_HOME']=str(self.probe/'fixture-codex-config')
+ private_directory(Path(overlay['env']['CODEX_HOME']))
+ fixture=self.fixture_bin
+ try:
+  self.fixture_bin=None
+  plan=prepare(self,recipe,overlay)
+ finally: self.fixture_bin=fixture
+ plan['synthetic']=True
+ self.integration_fixture=(recipe,plan)
+ self.integration_observations=[]
+ self.integration_closes=0
+ return plan
+def integration_close(self,workspace):
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')!='integrity': return original_close(self,workspace)
+ recipe,plan=self.integration_fixture
+ self.integration_closes+=1
+ if self.integration_closes<=3:
+  self.integration_observations.append(observe(self,self.integration_pane,recipe,plan))
+ original_close(self,workspace)
+ if self.integration_closes==1:
+  self.changed_artifact=next(item for item in plan['artifacts']
+   if item['version'] is None and item['file'].is_relative_to(self.probe/'fixture-codex-config'))
+  self.changed_artifact['file'].write_bytes(b'changed private fixture configuration')
+ elif self.integration_closes==2:
+  self.changed_artifact['file'].write_bytes(self.changed_artifact['content'])
+ elif self.integration_closes==3:
+  import json
+  write_private(self.run/'integration-observations.json',json.dumps(self.integration_observations).encode())
 def guardian_after_workspace(self,args,**kwargs):
  if args[:2]==['agent','start']:
   try:
@@ -51,13 +88,19 @@ def guardian_after_workspace(self,args,**kwargs):
    child=next(child for child,output,label in self.servers if label=='herdr')
    self.owner.end(child)
    raise
- return original_command(self,args,**kwargs)
-with patch.object(Runtime,'__init__',initialize):
+ result=original_command(self,args,**kwargs)
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='integrity' and args[:2]==['agent','start'] and not result[0]:
+  self.integration_pane=args[args.index('--pane')+1]
+  if args[2].endswith('-startup'):
+   original_command(self,['pane','report-agent-session',self.integration_pane,'--source','herdr:codex',
+    '--agent','codex','--agent-session-id','live-check-synthetic-emitter','--seq','1'])
+ return result
+with patch.object(Runtime,'__init__',initialize),patch.object(cli,'prepare_integration',integration_preparation),patch.object(Runtime,'close_workspace',integration_close):
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian':
   with patch.object(Runtime,'command',guardian_after_workspace): raise SystemExit(main(sys.argv[1:]))
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration','server-loss'):
   with patch.object(Runtime,'new_workspace',fail): raise SystemExit(main(sys.argv[1:]))
- raise SystemExit(main(sys.argv[1:]))
+ with patch.object(Runtime,'command',guardian_after_workspace): raise SystemExit(main(sys.argv[1:]))
 `;
 
 function fixtureRoot(agents = "claude-code,codex") {
@@ -121,7 +164,8 @@ for (const provider of ["claude-code", "codex"]) test(`live check retains every 
   test.setTimeout(240_000);
   const { root, run, args } = fixtureRoot(provider);
   let clean = false;
-  const result = await runPython(args, { timeout: 220_000 });
+  const env = provider === "codex" ? { ...process.env, LIVE_CHECK_FIXTURE_CASE: "integrity" } : process.env;
+  const result = await runPython(args, { env, timeout: 220_000 });
   try {
     expect(result.error, result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(1);
@@ -135,6 +179,19 @@ for (const provider of ["claude-code", "codex"]) test(`live check retains every 
     expect(fs.existsSync(path.join(run, "probe"))).toBe(false);
     expect(report.agents).toHaveLength(1);
     expect(report.agents[0].id).toBe(provider);
+    if (provider === "codex") {
+      const observations = JSON.parse(fs.readFileSync(path.join(run, "integration-observations.json"), "utf8"));
+      expect(observations).toHaveLength(3);
+      expect(observations[0].status).toBe("loaded_version_observed");
+      expect(observations[0].loaded_version.length).toBe(1);
+      for (const observation of observations.slice(1)) {
+        expect(observation).toMatchObject({ status: "integrity_unproven", integrity: "unproven",
+          native_source: null, loaded_version: null });
+      }
+      expect(report.agents[0].integration).toMatchObject({ status: "integrity_unproven", loaded_version: null });
+      expect(report.failures).toEqual([]);
+      expect(fs.readFileSync(path.join(run, "report.md"), "utf8")).toContain('"status": "integrity_unproven"');
+    }
     for (const agent of report.agents) {
       expect(agent.scenes.map((row: { scene: string }) => row.scene).sort()).toEqual([
         "rest", "working", "shell_approval", "file_approval", "question", "plan_approval",

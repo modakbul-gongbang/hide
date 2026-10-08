@@ -211,6 +211,9 @@ Reports record the actual binary digests, Herdr version, active server manifest 
 The verified pinned binary generates its own integration assets in a disposable HOME, then the tool routes them through documented provider settings while preserving the authenticated provider's operator HOME.
 The loaded-version claim requires an isolated configuration route, unchanged prepared artifact hashes, one common version across its possible native emitters and a native session report, sampled again after the first turn.
 Prepared files are inventoried separately; the claim does not say every prepared frontend asset loaded.
+A stable change to an ordinary bounded private integration artifact invalidates loaded-version provenance for the rest of that provider run, including after the original bytes return or native session visibility disappears.
+The report retains the relative artifact name and changed stamp fields, without changed contents or their hashes, and refuses a positive safety aggregate while preserving any confirmed unsafe scene.
+Artifact reads open ancestor directories without following links; path, alias, file type, owner, link count, size, missing-artifact and unstable-read failures still stop the run.
 A prepared file alone never proves load; Cursor's project hooks and copied OpenCode configuration cannot exclude external-hook or plugin ambiguity, so their loaded versions remain unproven.
 Only adapter-listed configuration/trust files are read and backed up with private permissions, with a 16 MiB per-file and 256 MiB total backup limit.
 Nonshared declared files retain exact byte guards.

@@ -1,10 +1,12 @@
 """Use the pinned installer's assets, with only disposable config routes."""
 
 import hashlib
+import os
 from pathlib import Path
 import re
 
-from .protection import MAX_BACKUP_BYTES, ProtectionError, beneath, private_directory, stamp, write_private
+from .protection import (MAX_BACKUP_BYTES, ProtectionError, beneath, inventory_directory,
+                         private_directory, stamp, write_private)
 
 
 def prepare(runtime, recipe, overlay):
@@ -90,9 +92,28 @@ def project_args(plan, recipe, cwd):
 
 def observe(runtime, pane, recipe, plan):
     rows = []
+    changes = plan.setdefault("integrity_changes", {})
     for item in plan["artifacts"]:
-        if stamp(item["file"]) != item["stamp"]:
-            raise ProtectionError("prepared_integration_changed_during_probe")
+        file = item["file"]
+        if (not file.is_relative_to(runtime.probe) or not beneath(file, runtime.probe)
+                or any(parent.is_symlink() for parent in file.parents
+                       if parent.is_relative_to(runtime.probe))):
+            raise ProtectionError("prepared_integration_path_refused", path=file)
+        # Anchor the read through directories opened without following links;
+        # checking a pathname alone cannot exclude an ancestor replacement.
+        directory = inventory_directory(file.parent)
+        try:
+            current = stamp(Path(file.name), dir_fd=directory)
+        finally:
+            os.close(directory)
+        if current is None:
+            raise ProtectionError("prepared_integration_missing", path=file)
+        if current != item["stamp"]:
+            name = str(file.relative_to(runtime.probe))
+            fields = ("digest", "size", "mode", "identity")
+            changes[name] = {"name": name, "reason": "ordinary_private_artifact_changed",
+                             "changed_fields": [field for field in fields
+                                                if getattr(current, field) != getattr(item["stamp"], field)]}
         if item["version"] is not None:
             rows.append({"name": str(item["file"].relative_to(runtime.probe)),
                          "integration_id": item["integration_id"],
@@ -101,10 +122,13 @@ def observe(runtime, pane, recipe, plan):
     session = current.get("agent_session") if current else None
     native = bool(session and session.get("source") == "herdr:" + recipe["kind"])
     versions = {row["version"] for row in rows}
-    loaded = native and plan["sole_route"] and len(versions) == 1
-    return {"status": "loaded_version_observed" if loaded else "native_session_observed" if native else "not_observed",
+    loaded = native and plan["sole_route"] and len(versions) == 1 and not changes
+    return {"status": "integrity_unproven" if changes else
+                      "loaded_version_observed" if loaded else "native_session_observed" if native else "not_observed",
             "loaded_version": sorted(versions) if loaded else None,
             "prepared_artifacts": rows, "native_source": session.get("source") if native else None,
             "evidence": "isolated_configuration_and_common_native_emitter_version" if loaded else "loaded_version_unproven",
             "route_reason": plan.get("route_reason", "synthetic"),
+            "integrity": "unproven" if changes else "prepared_bytes_unchanged",
+            "integrity_changes": list(changes.values()),
             "synthetic": plan["synthetic"]}

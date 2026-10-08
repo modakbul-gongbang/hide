@@ -19,7 +19,7 @@ class IntegrationEvidence(unittest.TestCase):
         checkout = Path(__file__).resolve().parents[2]
         data = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])
         with tempfile.TemporaryDirectory() as name:
-            base = Path(name)
+            base = Path(name).resolve()
             operator = base / "operator"
             operator.mkdir()
             for key, recipe in data.items():
@@ -70,14 +70,26 @@ class IntegrationEvidence(unittest.TestCase):
                 else:
                     self.assertEqual(later["loaded_version"], [17])
                 plan["artifacts"][0]["file"].write_bytes(b"changed after preparation")
-                with self.assertRaisesRegex(ProtectionError, "integration_changed"):
+                changed = observe(runtime, "owned", recipe, plan)
+                self.assertEqual(changed["status"], "integrity_unproven")
+                self.assertIsNone(changed["loaded_version"])
+                self.assertEqual(changed["integrity_changes"][0]["changed_fields"], ["digest", "size"])
+                self.assertNotIn("observed_sha256", changed["integrity_changes"][0])
+                plan["artifacts"][0]["file"].write_bytes(plan["artifacts"][0]["content"])
+                native[0] = None
+                restored = observe(runtime, "owned", recipe, plan)
+                self.assertEqual(restored["status"], "integrity_unproven", "a later observation cannot erase the change")
+                self.assertIsNone(restored["loaded_version"])
+                plan["artifacts"][0]["file"].unlink()
+                plan["artifacts"][0]["file"].symlink_to(operator)
+                with self.assertRaises(ProtectionError):
                     observe(runtime, "owned", recipe, plan)
 
     def test_copied_opencode_configuration_cannot_prove_exclusive_emitter(self):
         checkout = Path(__file__).resolve().parents[2]
         recipe = recipes(checkout / "scripts/agent_live_check/recipes", source_contract(checkout)["targets"])["opencode"]
         with tempfile.TemporaryDirectory() as name:
-            root = Path(name)
+            root = Path(name).resolve()
             operator, probe = root / "operator", root / "probe"
             private_directory(probe)
             config = operator / ".config/opencode/opencode.json"

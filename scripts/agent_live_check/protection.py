@@ -98,10 +98,10 @@ class FileStamp:
     identity: tuple[int, int]
 
 
-def configuration_bytes(path: Path) -> tuple[FileStamp, bytes] | None:
+def configuration_bytes(path: Path, *, dir_fd: int | None = None) -> tuple[FileStamp, bytes] | None:
     """Read and stamp one bounded ordinary file through the same descriptor."""
     try:
-        info = path.lstat()
+        info = path.lstat() if dir_fd is None else os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
@@ -110,7 +110,7 @@ def configuration_bytes(path: Path) -> tuple[FileStamp, bytes] | None:
         raise ProtectionError("config_file_over_budget")
     # A regular pathname can become a FIFO between lstat and open. Do not
     # block on that replacement while trying to inspect its descriptor.
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     with os.fdopen(fd, "rb") as stream:
         opened = os.fstat(stream.fileno())
         if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid()
@@ -135,9 +135,9 @@ def configuration_bytes(path: Path) -> tuple[FileStamp, bytes] | None:
                       stat.S_IMODE(opened.st_mode), (opened.st_dev, opened.st_ino)), data)
 
 
-def stamp(path: Path) -> FileStamp | None:
+def stamp(path: Path, *, dir_fd: int | None = None) -> FileStamp | None:
     """Hash ordinary owned files; reject aliases and unbounded reads."""
-    value = configuration_bytes(path)
+    value = configuration_bytes(path, dir_fd=dir_fd)
     return value[0] if value is not None else None
 
 
