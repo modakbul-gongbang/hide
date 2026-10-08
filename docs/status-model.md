@@ -106,7 +106,7 @@ Demand has these sources:
 
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
-- A native unanswered Claude `AskUserQuestion` or Codex `request_user_input` is a question even with summaries off.
+- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input` or omp `ask` is a question even with summaries off.
   The current-session/current-state read carries the optional `user_turn` row fact, with `kind: question|plan_approval` and optional `content: {text, choices, truncated}`.
   Text is capped at 8 KiB, choices at eight and each choice at 256 UTF-8 bytes; cuts preserve character boundaries and set `truncated`.
   A correlated native result, a later human turn or an abort clears the pending question.
@@ -510,12 +510,16 @@ The session adapter gives a manual title priority over the native automatic titl
 Pi 1.0.4's `session_info.name` is a proven native/manual title, and its latest explicit empty name clears the old native name before the generated-goal/provider fallback is applied.
 Its recorded user/assistant messages feed the existing label worker, while tool output supplies PR sightings and injected extension/compaction context supplies no human request.
 Pi records no structured question/plan wait or child identity, so no `UserTurnFact`, structured content or subagent relationship is inferred from text or `parentSession`.
+omp 18.7.0 takes its current automatic/manual title from the physical first title slot or legacy first session header, with explicit empty values clearing stale names and `title_change` remaining audit history.
+Same-length title updates at EOF change no event offset and replay no conversation or native question.
+Unanswered native `ask` calls supply exact bounded text and choices, and only their correlated result, a later human turn or an abort clears them.
+A failed current omp reread revokes native identity and question authority until a fresh proof, and nested child artifacts supply no root conversation or inferred child relationship.
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Pi or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Pi, omp or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise) and `question` (a question end on an agent that is not running), and `sidebar.rs::project_agent` reads those four.
 With Settings › Hide AI › Features › Agent summaries off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
 A label is shown only for the session it was proven for.

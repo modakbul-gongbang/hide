@@ -1988,7 +1988,7 @@ impl Runtime {
         }
     }
 
-    /// A Pi fork is bound to the admitted live execution, not just its pane.
+    /// A native-file fork is bound to the admitted live execution, not just its pane.
     /// The worker checks this without doing file I/O under Runtime.
     pub(crate) fn fork_request_is_current(
         &self,

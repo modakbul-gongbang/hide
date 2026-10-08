@@ -181,6 +181,17 @@ impl LaunchDialect {
     pub const fn closes_pane_when_sleeping(self) -> bool {
         !matches!(self, Self::Claude | Self::Codex)
     }
+
+    /// The native selector prefix, independent of whether this build has
+    /// implemented and declared the reader needed to resume that agent.
+    pub const fn resume_flag(self) -> &'static str {
+        match self {
+            Self::Codex => "resume",
+            Self::Pi => "--session",
+            Self::OpenCode => "-s",
+            Self::Claude | Self::Grok | Self::Omp | Self::Cursor => "--resume",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

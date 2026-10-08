@@ -813,7 +813,7 @@ pub(super) struct AgentStartInCheckoutPayload {
     /// provider's own resume arguments, and no prompt.
     #[serde(default)]
     pub(super) resume_session_id: Option<String>,
-    /// The archived file selected by the caller; Pi proves it again off-lock.
+    /// The archived file selected by the caller, proved again off-lock.
     #[serde(default)]
     pub(super) resume_session_path: Option<String>,
 }

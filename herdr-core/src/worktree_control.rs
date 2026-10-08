@@ -1072,8 +1072,11 @@ fn launch_with_prompt_checked(
         resume_scope,
         resume_reference,
     } = start;
-    if hide_agent_adapter::canonical_kind(&kind) == "pi"
-        && args.first().map(String::as_str) == Some("--session")
+    if hide_session::Agent::from_kind(&kind)
+        .is_some_and(hide_session::Agent::requires_native_file_proof)
+        && hide_agent_adapter::adapter(&kind)
+            .and_then(|adapter| adapter.resume)
+            .is_some_and(|dialect| args.first().map(String::as_str) == Some(dialect.resume_flag()))
         && !resume_scope
             .as_ref()
             .is_some_and(|scope| args.get(1) == Some(&scope.id))
@@ -3518,15 +3521,16 @@ mod tests {
     }
 
     #[test]
-    fn a_pi_archive_resume_never_launches_an_unconfirmed_or_superseded_owner() {
+    fn a_native_archive_resume_never_launches_an_unconfirmed_or_superseded_owner() {
+        for (kind, flag) in [("pi", "--session"), ("omp", "--resume")] {
+            native_archive_resume_journey(kind, flag);
+        }
+    }
+
+    fn native_archive_resume_journey(kind: &str, flag: &str) {
         let home = tempfile::tempdir().unwrap();
         let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
-        let folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.to_string_lossy()
-                .trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-")
-        ));
+        let folder = crate::fixture::native_session_folder(home.path(), kind, &cwd);
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("native.jsonl");
         let header = format!(
@@ -3542,9 +3546,9 @@ mod tests {
                 value: path.display().to_string(),
             }),
             pane_id: "w1:p1".into(),
-            kind: "pi".into(),
+            kind: kind.into(),
             prompt: None,
-            args: vec!["--session".into(), "native-pi".into()],
+            args: vec![flag.into(), "native-pi".into()],
             resume_scope: Some(hide_session::SessionReadScope {
                 id: "native-pi".into(),
                 cwd: cwd.display().to_string(),

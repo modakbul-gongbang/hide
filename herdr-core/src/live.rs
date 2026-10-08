@@ -2337,13 +2337,15 @@ pub(crate) fn confirm_session_launch(
     cwd: Option<&str>,
     source_reference: Option<&crate::sidebar::SessionAgentSessionPayload>,
 ) -> Result<(), String> {
-    if hide_agent_adapter::canonical_kind(kind) != "pi" {
+    let Some(agent) =
+        hide_session::Agent::from_kind(kind).filter(|agent| agent.requires_native_file_proof())
+    else {
         return Ok(());
-    }
+    };
     use hide_node_link::sessions::ReaderFeature;
     let check = || {
         for feature in [ReaderFeature::Identity, ReaderFeature::Activity] {
-            hide_node_link::link::check_reader_support(node, hide_session::Agent::Pi, feature)
+            hide_node_link::link::check_reader_support(node, agent, feature)
                 .map_err(|_| "session_route_reader_unavailable".to_owned())?;
         }
         Ok(())
@@ -2357,7 +2359,7 @@ pub(crate) fn confirm_session_launch(
         node,
         hide_node_link::protocol::Call::SessionActivity {
             request: hide_session::session_activity::SessionActivityRequest {
-                agent: hide_session::Agent::Pi,
+                agent,
                 reference_kind: source_reference.kind.clone(),
                 reference_value: source_reference.value.clone(),
                 cwd: Some(cwd.ok_or("session_route_cwd_unconfirmed")?.into()),
@@ -2952,7 +2954,9 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
 }
 
 fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Result<(), String> {
-    if request.agent != crate::fork::ForkableAgent::Pi {
+    if !hide_session::Agent::from_kind(request.agent.kind())
+        .is_some_and(hide_session::Agent::requires_native_file_proof)
+    {
         return Ok(());
     }
     let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
@@ -2965,7 +2969,7 @@ fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Resul
     Ok(())
 }
 
-/// Starts the fork without changing the parent's tab for Pi. Legacy providers
+/// Starts a native-file fork without changing the parent's tab. Legacy providers
 /// retain their sibling split. A pane whose agent never started is closed;
 /// registration never turns a working fork into a failure.
 fn run_agent_fork_with_registration(
@@ -2976,11 +2980,9 @@ fn run_agent_fork_with_registration(
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
     let checked = CurrentSessionConnector { connector, current };
-    let mutation_connector: &dyn ApiConnector = if request.agent == crate::fork::ForkableAgent::Pi {
-        &checked
-    } else {
-        connector
-    };
+    let native_file = hide_session::Agent::from_kind(request.agent.kind())
+        .is_some_and(hide_session::Agent::requires_native_file_proof);
+    let mutation_connector: &dyn ApiConnector = if native_file { &checked } else { connector };
     let check = || {
         current()?;
         confirm_session_launch(
@@ -2993,11 +2995,11 @@ fn run_agent_fork_with_registration(
         current()
     };
     check()?;
-    let child_pane_id = if request.agent == crate::fork::ForkableAgent::Pi {
+    let child_pane_id = if native_file {
         let cwd = request
             .cwd
             .as_deref()
-            .ok_or("Pi fork has no confirmed checkout")?;
+            .ok_or("Session fork has no confirmed checkout")?;
         let snapshot = fetch_session_with_connector(mutation_connector)
             .map_err(|error| error.message().to_owned())?;
         let mut parents = snapshot.layouts.iter().filter(|layout| {
@@ -3008,9 +3010,9 @@ fn run_agent_fork_with_registration(
         });
         let parent = parents
             .next()
-            .ok_or("Pi fork parent is no longer in its workspace")?;
+            .ok_or("Session fork parent is no longer in its workspace")?;
         if parents.next().is_some() {
-            return Err("Pi fork parent has ambiguous workspace ownership".into());
+            return Err("Session fork parent has ambiguous workspace ownership".into());
         }
         check()?;
         create_tab_in(
@@ -4399,7 +4401,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pi_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
+    fn a_native_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
+        for agent in [
+            crate::fork::ForkableAgent::Pi,
+            crate::fork::ForkableAgent::Omp,
+        ] {
+            native_fork_tab_journey(agent);
+        }
+    }
+
+    fn native_fork_tab_journey(agent: crate::fork::ForkableAgent) {
+        let kind = agent.kind();
         for case in [
             "success",
             "refused",
@@ -4412,12 +4424,7 @@ mod tests {
             let refused = case == "refused";
             let home = tempfile::tempdir().unwrap();
             let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
-            let folder = home.path().join(".pi/agent/sessions").join(format!(
-                "--{}--",
-                cwd.to_string_lossy()
-                    .trim_start_matches('/')
-                    .replace(['/', '\\', ':'], "-")
-            ));
+            let folder = crate::fixture::native_session_folder(home.path(), kind, &cwd);
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(
                 folder.join("native.jsonl"),
@@ -4482,7 +4489,7 @@ mod tests {
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
                     "agent.start" => {
                         assert_eq!(params["pane_id"], "child-pane");
-                        assert_eq!(params["kind"], "pi");
+                        assert_eq!(params["kind"], kind);
                         assert_eq!(params["args"], json!(["--fork", "native-pi"]));
                         if refused {
                             return Err(("start_refused".into(), "fixture refused".into()));
@@ -4506,7 +4513,7 @@ mod tests {
                 connection_generation: 0,
                 codex_daemon: Default::default(),
                 parent_pane_id: "parent-pane".into(),
-                agent: crate::fork::ForkableAgent::Pi,
+                agent,
                 session_id: "native-pi".into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-pi-1".into(),

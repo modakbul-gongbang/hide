@@ -182,17 +182,19 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
 
 #[test]
 #[cfg(unix)]
-fn a_pi_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
-    for phase in [
-        "none",
-        "before-close",
-        "before-wake",
-        "before-start",
-        "missing-source-before-close",
-        "missing-source-before-wake",
-        "missing-source-before-start",
-    ] {
-        durable_dormant_journey("pi", phase);
+fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
+    for kind in ["pi", "omp"] {
+        for phase in [
+            "none",
+            "before-close",
+            "before-wake",
+            "before-start",
+            "missing-source-before-close",
+            "missing-source-before-wake",
+            "missing-source-before-start",
+        ] {
+            durable_dormant_journey(kind, phase);
+        }
     }
 }
 
@@ -209,11 +211,11 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         .to_owned();
     let (mut runtime, _) = live_tab_order_runtime(&cwd);
     let home = tempfile::tempdir().unwrap();
-    let native_folder = home.path().join(".pi/agent/sessions").join(format!(
-        "--{}--",
-        cwd.trim_start_matches(['/', '\\'])
-            .replace(['/', '\\', ':'], "-")
-    ));
+    let native_folder = crate::fixture::native_session_folder(
+        home.path(),
+        if kind == "omp" { "omp" } else { "pi" },
+        std::path::Path::new(&cwd),
+    );
     std::fs::create_dir_all(&native_folder).unwrap();
     let native_path = native_folder.join("native.jsonl");
     let native_id = "11111111-2222-3333-4444-555555555555";
@@ -227,7 +229,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     .unwrap();
     let native_before = std::fs::read(&native_path).unwrap();
     let other_before = [native_before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
-    if kind == "pi" {
+    if matches!(kind, "pi" | "omp") {
         runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
         runtime.live.as_mut().unwrap().node = runtime.own_node();
     }
@@ -367,7 +369,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
     shared.lock().unwrap().write_ui_state().unwrap();
     if matches!(interference, "before-close" | "missing-source-before-close") {
-        wait_for("refused Pi close", || {
+        wait_for("refused native close", || {
             !shared
                 .lock()
                 .unwrap()

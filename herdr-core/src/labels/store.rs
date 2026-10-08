@@ -43,7 +43,7 @@ pub(crate) struct PaneRecord {
     /// Native metadata proven for `owner`; missing on prior helper answers.
     #[serde(default)]
     pub(crate) native_session_id: Option<String>,
-    /// The Pi reader's resolved path, re-proved before any effect.
+    /// The native-file reader's resolved path, re-proved before any effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) native_source_path: Option<String>,
     /// The Herdr reference under which `owner` was last proven. A path

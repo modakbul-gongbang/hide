@@ -966,12 +966,13 @@ impl LabelWorker {
         if self
             .panes
             .get(pane_id)
-            .is_some_and(|pane| pane.agent == hide_session::Agent::Pi)
+            .is_some_and(|pane| pane.agent.requires_native_file_proof())
         {
             let changed = self.records.get(pane_id).is_some_and(|record| {
                 record.owner.is_some()
                     || record.proven_reference.is_some()
                     || record.native_session_id.is_some()
+                    || record.turns_seq.is_some()
             });
             if let Some(record) = self.records.get_mut(pane_id) {
                 record.reset_session(None);

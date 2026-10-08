@@ -587,14 +587,19 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
 
 #[test]
 #[cfg(unix)]
-fn a_pi_fork_worker_refuses_control_retired_during_create_or_start_connect() {
+fn a_native_fork_worker_refuses_control_retired_during_create_or_start_connect() {
+    for kind in ["pi", "omp"] {
+        native_fork_current_journey(kind);
+    }
+}
+
+#[cfg(unix)]
+fn native_fork_current_journey(kind: &'static str) {
     for case in ["current", "during-tab-connect", "during-start-connect"] {
         let home = tempfile::tempdir().unwrap();
         let cwd = home.path().canonicalize().unwrap().display().to_string();
-        let folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.trim_start_matches('/').replace(['/', '\\', ':'], "-")
-        ));
+        let folder =
+            crate::fixture::native_session_folder(home.path(), kind, std::path::Path::new(&cwd));
         std::fs::create_dir_all(&folder).unwrap();
         let source = folder.join("native.jsonl");
         let bytes = format!(
@@ -611,7 +616,7 @@ fn a_pi_fork_worker_refuses_control_retired_during_create_or_start_connect() {
         let mut initial = tab_order_payload(&cwd, &["w-order:t1"], &["w-order:t1"], "w-order:t1");
         let mut owned: SessionSnapshotPayload =
             crate::sidebar::owned_label_fixture(serde_json::json!({"agents":[{
-                "pane_id":parent,"agent":"pi","agent_status":"idle","state_change_seq":4,"cwd":cwd,
+                "pane_id":parent,"agent":kind,"agent_status":"idle","state_change_seq":4,"cwd":cwd,
                 "agent_session":{"kind":"path","value":source.display().to_string()}
             }]}))
             .unwrap();
@@ -747,10 +752,11 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         let mut value: serde_json::Value =
             serde_json::from_slice(&resume_event(provider, session)).unwrap();
         value["payload"]["checkout_path"] = path.clone().into();
-        if provider == "pi" {
+        if matches!(provider, "pi" | "omp") {
             // B5/B8 admission retains the catalog's selected file. The
             // owning worker proves this expectation before any effect.
-            value["payload"]["resume_session_path"] = "/fixture/selected-pi.jsonl".into();
+            value["payload"]["resume_session_path"] =
+                format!("/fixture/selected-{provider}.jsonl").into();
         }
         serde_json::to_vec(&value).unwrap()
     };
@@ -766,15 +772,17 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         Some(vec!["resume".to_owned(), "019a-session".to_owned()])
     );
 
-    runtime.snapshot.task_operation = None;
-    assert!(runtime.dispatch_json(&event("pi", "native.one")));
-    assert_eq!(
-        runtime
-            .task_agent_launch
-            .as_ref()
-            .map(|launch| launch.args.clone()),
-        Some(vec!["--session".to_owned(), "native.one".to_owned()])
-    );
+    for (provider, flag) in [("pi", "--session"), ("omp", "--resume")] {
+        runtime.snapshot.task_operation = None;
+        assert!(runtime.dispatch_json(&event(provider, "native.one")));
+        assert_eq!(
+            runtime
+                .task_agent_launch
+                .as_ref()
+                .map(|launch| launch.args.clone()),
+            Some(vec![flag.to_owned(), "native.one".to_owned()])
+        );
+    }
 
     // Starts do not grant resume support before each complete reader
     // slice lands; an id that is not one token never reaches a command line.
@@ -782,7 +790,8 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         ("opencode", "ses_1", "agent_start.invalid_resume"),
         ("pi", "native.jsonl", "agent_start.invalid_resume"),
         ("pi", "../native", "agent_start.invalid_resume"),
-        ("omp", "native-one", "agent_start.invalid_resume"),
+        ("omp", "native.jsonl", "agent_start.invalid_resume"),
+        ("omp", "../native", "agent_start.invalid_resume"),
         ("grok", "native-one", "agent_start.invalid_resume"),
         ("cursor", "native-one", "agent_start.invalid_resume"),
         ("unknown", "native-one", "agent_start.unknown_provider"),

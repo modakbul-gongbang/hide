@@ -130,7 +130,8 @@ impl DormantRecord {
     /// An over-bound capture is refused, never truncated into another owner.
     pub fn validate(&self) -> Result<(), &'static str> {
         self.validate_context()?;
-        if hide_agent_adapter::canonical_kind(&self.kind) == "pi"
+        if hide_session::Agent::from_kind(&self.kind)
+            .is_some_and(hide_session::Agent::requires_native_file_proof)
             && self.source_reference.as_ref().is_none_or(|reference| {
                 reference.value.len() > 4096
                     || hide_session::label_reference_token(
