@@ -640,7 +640,7 @@ fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() 
 // about the work its agent delegated.
 fn hook_status_of(
     status: Option<hide_agent_hooks::HookStatus>,
-) -> impl Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus> {
+) -> impl Fn(hide_agent_adapter::HookDialect) -> Option<hide_agent_hooks::HookStatus> {
     move |_| status.clone()
 }
 

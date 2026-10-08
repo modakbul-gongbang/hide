@@ -18,19 +18,28 @@ fn herdr_kind(adapter: &hide_kit::AgentAdapter) -> &'static str {
 fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
     for adapter in hide_kit::agents::ADAPTERS {
         let kind = herdr_kind(adapter);
-        let hook = crate::agent_hooks::runtime_of(kind).is_some();
+        // What instruments a session: a settings-file hook the core reads a
+        // runtime for, or Hide's OpenCode plugin, which the kit installs.
+        let hook = crate::agent_hooks::runtime_of(kind).is_some()
+            || adapter.hook == hide_kit::HookSupport::Plugin;
         for feature in [Feature::Letters, Feature::Memory, Feature::Subagents] {
             assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
         }
+        // Letters reach exactly the kinds the mailbox hands them to.
+        assert_eq!(
+            adapter.supports(Feature::Letters),
+            crate::delivery::mailbox::prompt_hook(kind),
+            "{kind}: letters"
+        );
         // The doorbell rings for the core's own target list.
         assert_eq!(
             adapter.supports(Feature::Bell),
             crate::delivery::doorbell::bell_target(kind),
             "{kind}: bell"
         );
-        // The guard is the hook's `PreToolUse` entry, so an agent has it
-        // exactly when the hook the core instruments for it registers that
-        // event.
+        // The guard is the hook's `PreToolUse` entry or the plugin's
+        // `tool.execute.before`, so an agent has it exactly when the session
+        // is instrumented.
         assert_eq!(
             adapter.supports(Feature::SpawnGuard),
             hook && hide_agent_hooks::HookEvent::ALL

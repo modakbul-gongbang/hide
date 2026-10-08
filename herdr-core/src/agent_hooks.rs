@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use hide_agent_adapter::HookDialect;
 use hide_agent_hooks::runtime::{
     AgentRuntime, BLOCKED_TOKEN, DONE_TOKEN, INSTRUMENTED_TOKEN, WORKING_TOKEN,
 };
@@ -79,7 +80,7 @@ pub fn is_remote_pane(pane_id: &str) -> bool {
     pane_id.starts_with("remote:")
 }
 
-/// A device's hook for `runtime`, in the terms the pane judgement reads,
+/// A device's hook for `dialect`, in the terms the pane judgement reads,
 /// from what the device's kit last reported (PRD device-parity D-21). On a
 /// device where Hide has certainly installed nothing (`declined`: never
 /// allowed, or a platform it has no helper for) the hook is not installed;
@@ -90,19 +91,43 @@ pub fn is_remote_pane(pane_id: &str) -> bool {
 pub fn device_hook_status(
     declined: bool,
     kit: &crate::model::KitSnapshot,
-    runtime: AgentRuntime,
+    dialect: HookDialect,
+) -> Option<hide_agent_hooks::HookStatus> {
+    if declined {
+        return Some(hide_agent_hooks::HookStatus::NotInstalled);
+    }
+    kit_hook_status(kit, dialect)
+}
+
+/// The hook `dialect` speaks through, as a machine's kit reported it: Claude
+/// Code's and Codex's kit parts, or OpenCode's plugin piece on its agent row.
+/// This Mac's Claude Code and Codex hooks are read from their files instead
+/// (`hide_agent_hooks::Diagnosis`); OpenCode's plugin has no other reading.
+pub fn kit_hook_status(
+    kit: &crate::model::KitSnapshot,
+    dialect: HookDialect,
 ) -> Option<hide_agent_hooks::HookStatus> {
     use hide_agent_hooks::HookStatus;
     use hide_kit::{ComponentId, ComponentState};
-    if declined {
-        return Some(HookStatus::NotInstalled);
-    }
-    let id = match runtime {
-        AgentRuntime::ClaudeCode => ComponentId::ClaudeCodeHook,
-        AgentRuntime::Codex => ComponentId::CodexHook,
+    let part = |id: ComponentId| {
+        kit.components
+            .iter()
+            .find(|part| part.id == id)
+            .map(|part| part.state)
     };
-    let part = kit.components.iter().find(|part| part.id == id)?;
-    Some(match part.state {
+    let state = match dialect {
+        HookDialect::ClaudeCode => part(ComponentId::ClaudeCodeHook)?,
+        HookDialect::Codex => part(ComponentId::CodexHook)?,
+        HookDialect::OpenCode => {
+            kit.agents
+                .iter()
+                .find(|agent| agent.id == dialect.adapter().id)?
+                .hook
+                .as_ref()?
+                .state
+        }
+    };
+    Some(match state {
         ComponentState::Installed => HookStatus::Installed {
             version: hide_agent_hooks::HOOK_VERSION,
         },
@@ -180,7 +205,7 @@ mod tests {
             device_hook_status(
                 false,
                 &kit(hide_kit::ComponentState::Off),
-                AgentRuntime::ClaudeCode
+                HookDialect::ClaudeCode
             ),
             Some(hide_agent_hooks::HookStatus::Off)
         );
@@ -188,9 +213,69 @@ mod tests {
             device_hook_status(
                 false,
                 &kit(hide_kit::ComponentState::NotInstalled),
-                AgentRuntime::ClaudeCode
+                HookDialect::ClaudeCode
             ),
             Some(hide_agent_hooks::HookStatus::NotInstalled)
+        );
+    }
+
+    #[test]
+    fn opencodes_pane_is_judged_by_its_plugin_piece_on_the_kit_row() {
+        let piece = |state| crate::model::KitPieceSnapshot {
+            state,
+            reason: None,
+            location: None,
+        };
+        let kit = |hook| crate::model::KitSnapshot {
+            agents: vec![crate::model::KitAgentSnapshot {
+                id: "opencode".to_owned(),
+                label: "OpenCode".to_owned(),
+                availability: hide_kit::Availability::Available,
+                enabled: true,
+                chosen: true,
+                skill: piece(hide_kit::ComponentState::Installed),
+                hook,
+                herdr: None,
+                partial: false,
+                features: Vec::new(),
+                sessions: None,
+                doc_url: String::new(),
+            }],
+            ..Default::default()
+        };
+        use hide_agent_hooks::HookStatus;
+        use hide_kit::ComponentState;
+        for (state, status) in [
+            (
+                ComponentState::Installed,
+                HookStatus::Installed {
+                    version: hide_agent_hooks::HOOK_VERSION,
+                },
+            ),
+            // Edited or another build's plugin still speaks.
+            (
+                ComponentState::Outdated,
+                HookStatus::Outdated { version: 0 },
+            ),
+            (ComponentState::Off, HookStatus::Off),
+            (ComponentState::Absent, HookStatus::RuntimeAbsent),
+            (ComponentState::Removed, HookStatus::NotInstalled),
+        ] {
+            assert_eq!(
+                kit_hook_status(&kit(Some(piece(state))), HookDialect::OpenCode),
+                Some(status),
+                "{state:?}"
+            );
+        }
+        // A kit not read yet, or a row without the piece, leaves it unknown.
+        assert_eq!(kit_hook_status(&kit(None), HookDialect::OpenCode), None);
+        assert_eq!(
+            kit_hook_status(&crate::model::KitSnapshot::default(), HookDialect::OpenCode),
+            None
+        );
+        assert_eq!(
+            device_hook_status(true, &kit(None), HookDialect::OpenCode),
+            Some(HookStatus::NotInstalled)
         );
     }
 

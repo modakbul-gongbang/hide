@@ -1141,15 +1141,22 @@ impl Runtime {
     pub(super) fn sync_pane_lineage(&mut self) -> bool {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
-        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
-            diagnosis
-                .as_ref()
-                .and_then(|diagnosis| diagnosis.status_of(runtime))
-                .cloned()
+        let local_kit = self.kit_states.get(self.node.as_str()).cloned();
+        // Claude Code's and Codex's hooks are read from their files; OpenCode's
+        // plugin from this Mac's kit, the one place that judges it.
+        let status_of = |dialect: hide_agent_adapter::HookDialect| {
+            match hide_agent_hooks::AgentRuntime::from_dialect(dialect) {
+                Some(runtime) => diagnosis
+                    .as_ref()
+                    .and_then(|diagnosis| diagnosis.status_of(runtime))
+                    .cloned(),
+                None => local_kit
+                    .as_ref()
+                    .and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect)),
+            }
         };
-        let codex_daemon_on = self
-            .kit_states
-            .get(self.node.as_str())
+        let codex_daemon_on = local_kit
+            .as_ref()
             .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
