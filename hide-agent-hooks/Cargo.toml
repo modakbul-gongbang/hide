@@ -12,6 +12,7 @@ name = "hide-agent-hooks"
 path = "src/bin/hide-agent-hooks.rs"
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-memory = { path = "../hide-memory" }
 hide-platform = { path = "../hide-platform" }

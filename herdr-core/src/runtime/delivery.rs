@@ -127,12 +127,9 @@ impl Runtime {
                 .map(|old| old.status_changed_at_unix_ms)
                 .or_else(|| persisted.map(|watch| watch.status_changed_at_unix_ms))
                 .unwrap_or(now);
-            // The same reading of the kind the bell target uses, so a pane
-            // the bell reaches is never one whose session read is skipped.
-            let session_kind = crate::agent_hooks::runtime_of(kind).map(|runtime| match runtime {
-                hide_agent_hooks::runtime::AgentRuntime::Codex => hide_session::Agent::Codex,
-                hide_agent_hooks::runtime::AgentRuntime::ClaudeCode => hide_session::Agent::Claude,
-            });
+            // Turn reporting is a session-format fact, independent of letters
+            // and bell eligibility. An unread turn-capable session stays held.
+            let session_kind = hide_session::Agent::from_kind(kind);
             let turn = match session_kind {
                 Some(kind) if kind.reports_turns() => labels
                     .and_then(|labels| labels.waiting(agent))
@@ -140,6 +137,7 @@ impl Runtime {
                 _ => Turn::NotReported,
             };
             let session = session_kind
+                .filter(|kind| kind.has_session_file())
                 .zip(agent.agent_session.as_ref())
                 .filter(|(_, reference)| {
                     reference.value.len() <= 4096
@@ -924,6 +922,7 @@ pub(crate) mod tests {
                 codex_home: None,
             },
             std::sync::Arc::new(hide_node::Local::new(Some(root.to_owned()))),
+            crate::node::test_devices(),
         );
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
@@ -1286,11 +1285,14 @@ pub(crate) mod tests {
             observe(&mut guard, "claude", 2, "recipient-native", None),
             Turn::NotReported
         );
-        assert_eq!(
-            observe(&mut guard, " Codex", 2, "recipient-native", Some(&overlay)),
-            Turn::Unread,
-            "the kind as the bell target reads it"
-        );
+        // Adapter D-08/B5: every spelling of one agent reads the same turn.
+        for kind in [" Codex", "CODEX", "cOdEx"] {
+            assert_eq!(
+                observe(&mut guard, kind, 2, "recipient-native", Some(&overlay)),
+                Turn::Read(Waiting::PlanApproval),
+                "the normalized kind as the bell target and session reader read it"
+            );
+        }
     }
 
     /// B5: Herdr can read Codex done before its session file records the end
@@ -1434,6 +1436,7 @@ pub(crate) mod tests {
                 instance: "terminal-recipient".into(),
                 pane: "recipient".into(),
                 parent: None,
+                origin: None,
                 project: None,
                 actor,
                 ended: false,
@@ -1896,6 +1899,7 @@ pub(crate) mod tests {
                 instance: format!("terminal-{pane}"),
                 pane: pane.into(),
                 parent: (pane == "child").then(|| "agent-1".into()),
+                origin: None,
                 project: None,
                 actor: runtime.delivery_observations[pane].actor.clone(),
                 ended: false,

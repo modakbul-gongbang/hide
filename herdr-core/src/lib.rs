@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod agent_adapter_contract_tests;
 mod agent_find;
 pub mod agent_hooks;
 mod agent_sleep;
@@ -53,7 +55,6 @@ pub mod schema;
 mod session_sync;
 mod sidebar;
 mod split_tree;
-mod ssh_hosts;
 pub mod tasks;
 mod terminal_attachments;
 mod terminal_recovery;

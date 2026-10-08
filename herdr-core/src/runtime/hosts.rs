@@ -16,9 +16,8 @@ use std::sync::Arc;
 use super::*;
 use crate::model::{DeviceHostSnapshot, HostConsent};
 use crate::node_access::NodeLink;
-use crate::remote::host::{
-    self, EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
-    HelperPackages,
+use crate::remote::{
+    EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
 };
 
 /// The daemon may open a pane-scoped return route only while the same
@@ -29,7 +28,7 @@ pub struct WorkspaceRemoteRoute {
     pub device_id: String,
     pub generation: u64,
     pub helper_path: String,
-    pub client: Arc<crate::remote::RusshRemoteClient>,
+    pub transport: Arc<dyn crate::remote::DeviceTransport>,
     pub channel: Arc<dyn NodeLink>,
 }
 
@@ -44,6 +43,28 @@ pub(super) enum HostPhase {
     IdentityChanged(String),
     Unsupported(String),
     Unavailable(String),
+}
+
+/// How long a device's link waits before it is tried again after it was
+/// lost or could not start: two seconds, doubling to a minute. A link that
+/// starts begins the schedule over, and the operator's Retry tries at once.
+const HOST_RETRY_FIRST_MS: u64 = 2_000;
+const HOST_RETRY_MAX_MS: u64 = 60_000;
+
+/// When a lost or failed link may be tried again, and the wait after that.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct HostRetry {
+    pub(super) at_unix_ms: Option<u64>,
+    pub(super) delay_ms: u64,
+}
+
+impl Default for HostRetry {
+    fn default() -> Self {
+        Self {
+            at_unix_ms: None,
+            delay_ms: HOST_RETRY_FIRST_MS,
+        }
+    }
 }
 
 pub(super) struct DeviceHost {
@@ -78,12 +99,12 @@ impl Runtime {
                 {
                     return None;
                 }
-                let client = self.remote_connections.get(device_id)?.client.clone();
+                let transport = self.remote_connections.get(device_id)?.transport.clone();
                 Some(WorkspaceRemoteRoute {
                     device_id: device_id.clone(),
                     generation: host.generation,
                     helper_path: helper_path.clone(),
-                    client,
+                    transport,
                     channel: Arc::clone(channel),
                 })
             })
@@ -228,7 +249,7 @@ impl Runtime {
                 "contract": HOST_CONSENT_CONTRACT,
             }));
             self.close_device_host(device_id, "consent renewed");
-            self.start_device_host(device_id);
+            self.retry_device_host_now(device_id);
             self.relist_remote_files(device_id);
         } else {
             registration.host_consent = None;
@@ -278,6 +299,11 @@ impl Runtime {
             return false;
         }
         let generation = self.advance_host_generation(device_id);
+        // This is the attempt a waiting retry was for; a failed one
+        // schedules the next.
+        if let Some(retry) = self.device_host_retries.get_mut(device_id) {
+            retry.at_unix_ms = None;
+        }
         if self.device_kit_removing(device_id) {
             self.set_host_phase(
                 device_id,
@@ -300,7 +326,7 @@ impl Runtime {
         let Some(client) = self
             .remote_connections
             .get(device_id)
-            .map(|connection| Arc::clone(&connection.client))
+            .map(|connection| Arc::clone(&connection.transport))
         else {
             self.set_host_phase(
                 device_id,
@@ -316,7 +342,6 @@ impl Runtime {
             return self.refresh_device_snapshots();
         };
         self.set_host_phase(device_id, HostPhase::Connecting);
-        let packages = self.host_packages.clone();
         let retirement_projects = self.retirement_projects(device_id);
         let device = device_id.to_owned();
         let spawned = thread::Builder::new()
@@ -339,8 +364,7 @@ impl Runtime {
                         close_context.notifier.notify();
                     }
                 });
-                let result =
-                    host::establish(&client, &packages, &consent, &retirement_projects, on_close);
+                let result = client.establish(&consent, &retirement_projects, on_close);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -360,6 +384,64 @@ impl Runtime {
             );
         }
         self.refresh_device_snapshots()
+    }
+
+    /// Starts the device's link for a read that needs it, unless a lost or
+    /// failed one is still waiting out its retry.
+    fn reconnect_device_host(&mut self, device_id: &str, now_unix_ms: u64) -> bool {
+        let waiting = self
+            .device_host_retries
+            .get(device_id)
+            .and_then(|retry| retry.at_unix_ms)
+            .is_some_and(|at| now_unix_ms < at);
+        !waiting && self.start_device_host(device_id)
+    }
+
+    /// The operator asked for the device's link: it is tried at once and
+    /// its retry schedule begins over.
+    pub(super) fn retry_device_host_now(&mut self, device_id: &str) -> bool {
+        self.device_host_retries.remove(device_id);
+        self.start_device_host(device_id)
+    }
+
+    /// The link was lost or could not start: it is tried again after the
+    /// device's current wait, and the wait after that doubles.
+    fn schedule_host_retry(&mut self, device_id: &str, now_unix_ms: u64) {
+        let retry = self
+            .device_host_retries
+            .entry(device_id.to_owned())
+            .or_default();
+        retry.at_unix_ms = Some(now_unix_ms.saturating_add(retry.delay_ms));
+        crate::diagnostic!(serde_json::json!({
+            "component": "remote_host",
+            "kind": "host.retry_scheduled",
+            "target": device_id,
+            "delay_ms": retry.delay_ms,
+        }));
+        retry.delay_ms = retry.delay_ms.saturating_mul(2).min(HOST_RETRY_MAX_MS);
+    }
+
+    /// Tries again each device whose lost or failed link has waited out its
+    /// retry, so its panes' `hide` comes back without a read asking first.
+    pub(crate) fn tick_device_hosts(&mut self, now_unix_ms: u64) -> bool {
+        let due: Vec<String> = self
+            .device_host_retries
+            .iter()
+            .filter(|(_, retry)| retry.at_unix_ms.is_some_and(|at| at <= now_unix_ms))
+            .map(|(device_id, _)| device_id.clone())
+            .collect();
+        let mut changed = false;
+        for device_id in due {
+            if matches!(
+                self.device_hosts.get(&device_id).map(|host| &host.phase),
+                Some(HostPhase::Unavailable(_))
+            ) {
+                changed |= self.start_device_host(&device_id);
+            } else if let Some(retry) = self.device_host_retries.get_mut(&device_id) {
+                retry.at_unix_ms = None;
+            }
+        }
+        changed
     }
 
     fn device_host_entry(&mut self, device_id: &str) -> &mut DeviceHost {
@@ -430,10 +512,11 @@ impl Runtime {
                     "consent_bound": bound_now,
                     "upload": established.upload,
                 }));
+                self.device_host_retries.remove(device_id);
                 self.set_host_phase(
                     device_id,
                     HostPhase::Ready {
-                        host: Arc::new(established.host),
+                        host: established.host,
                         platform: format!("{} {}", established.hello.os, established.hello.arch),
                         helper_path: established.helper_path,
                     },
@@ -466,10 +549,15 @@ impl Runtime {
                     .entry(device_id.to_owned())
                     .or_default()
                     .unavailable = Some(message.clone());
+                // A changed identity or an unsupported device waits for the
+                // operator; anything else may pass, so it is tried again.
                 let phase = match error {
                     EstablishError::IdentityChanged { .. } => HostPhase::IdentityChanged(message),
                     EstablishError::Unsupported(_) => HostPhase::Unsupported(message),
-                    _ => HostPhase::Unavailable(message),
+                    _ => {
+                        self.schedule_host_retry(device_id, now_unix_ms());
+                        HostPhase::Unavailable(message)
+                    }
                 };
                 self.set_host_phase(device_id, phase);
                 self.refresh_device_catalog(device_id);
@@ -506,6 +594,7 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
+        self.schedule_host_retry(device_id, now_unix_ms());
         self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
@@ -535,6 +624,7 @@ impl Runtime {
     pub(super) fn forget_device_host(&mut self, device_id: &str) {
         self.close_device_host(device_id, "device removed");
         self.device_hosts.remove(device_id);
+        self.device_host_retries.remove(device_id);
         self.forget_device_catalog(device_id);
         self.device_kit_pending.remove(device_id);
         self.codex_daemon_off_running.remove(device_id);
@@ -561,7 +651,7 @@ impl Runtime {
                 return Ok(Arc::clone(host));
             }
             Some(HostPhase::Ready { .. }) | Some(HostPhase::Unavailable(_)) | None => {
-                self.start_device_host(device_id);
+                self.reconnect_device_host(device_id, now_unix_ms());
             }
             _ => {}
         }
@@ -656,20 +746,17 @@ impl Runtime {
         snapshot
     }
 
-    /// Installs the helper packages this daemon carries; a daemon that
-    /// carries none passes none. Also answers the install root and the
-    /// command folder a consent names.
-    pub(super) fn helper_packages_from(options: &CoreOptions) -> (HelperPackages, String, String) {
+    /// The install root and the command folder a consent names.
+    pub(super) fn helper_places_from(options: &CoreOptions) -> (String, String) {
         (
-            HelperPackages::new(options.host_helper_dir.as_ref().map(PathBuf::from)),
             options
                 .host_helper_root
                 .clone()
-                .unwrap_or_else(|| host::DEFAULT_HELPER_ROOT.to_owned()),
+                .unwrap_or_else(|| crate::remote::DEFAULT_HELPER_ROOT.to_owned()),
             options
                 .host_cli_dir
                 .clone()
-                .unwrap_or_else(|| host::DEFAULT_CLI_DIR.to_owned()),
+                .unwrap_or_else(|| crate::remote::DEFAULT_CLI_DIR.to_owned()),
         )
     }
 }

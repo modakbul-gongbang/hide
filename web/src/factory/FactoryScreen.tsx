@@ -23,9 +23,9 @@ import { outsideRead, shownFactories, shownFlow } from "./view";
 const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
 
 const FLOW_CELLS: readonly { column: Column; count: keyof ReturnType<typeof shownFlow> }[] = [
-  { column: "drafting", count: "drafting" },
-  { column: "waiting", count: "waiting" },
-  { column: "running", count: "running" },
+  { column: "before", count: "before" },
+  { column: "moving", count: "moving" },
+  { column: "stuck", count: "stuck" },
   { column: "done", count: "done_today" },
 ];
 
@@ -72,7 +72,7 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-factory-body={place.tab}>
         {place.tab === "turn" ? <MyTurn summary={summary} factory={factory} actions={actions} /> : null}
-        {place.tab === "board" ? <FactoryBoard factories={factories} place={place} actions={actions} /> : null}
+        {place.tab === "board" ? <FactoryBoard factories={factories} place={place} actions={actions} inbox={summary.inbox} /> : null}
         {place.tab === "graph" ? <FactoryGraph factories={factories} filtered={factory !== null} /> : null}
         {place.tab === "settings" ? <FactorySettings factories={factories} actions={actions} /> : null}
       </div>

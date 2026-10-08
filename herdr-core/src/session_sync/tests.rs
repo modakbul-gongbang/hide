@@ -560,7 +560,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
-            host_helper_dir: None,
             host_helper_root: None,
             host_cli_dir: None,
             workspace_views_path: None,
@@ -573,6 +572,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             codex_home: None,
         },
         std::sync::Arc::new(hide_node::Local::of_process()),
+        crate::node::test_devices(),
     )))
 }
 
@@ -588,14 +588,9 @@ fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> Ses
     SessionSyncContext::local(&live, std::sync::Arc::new(hide_node::Local::of_process()))
 }
 
-fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path).expect("remove socket");
-    }
-    if state_path.exists() {
-        std::fs::remove_file(state_path).expect("remove state");
-    }
-    std::fs::remove_dir(root).expect("remove socket directory");
+fn remove_fixture(folder: tempfile::TempDir, runtime: Arc<Mutex<Runtime>>) {
+    drop(runtime);
+    folder.close().expect("remove fixture directory");
 }
 
 #[test]
@@ -974,7 +969,6 @@ fn official_remote_session_coordinator_probe() {
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
-            host_helper_dir: None,
             host_helper_root: None,
             host_cli_dir: None,
             workspace_views_path: None,
@@ -987,6 +981,7 @@ fn official_remote_session_coordinator_probe() {
             codex_home: None,
         },
         std::sync::Arc::new(hide_node::Local::new(Some(PathBuf::from(home)))),
+        crate::node::test_devices(),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the
@@ -1950,7 +1945,7 @@ fn coordinator_rebuilds_from_a_fresh_snapshot_after_a_clean_disconnect() {
 
     drop(handle);
     server.join().expect("fake server joins");
-    remove_fixture(&root, &socket_path, &state_path);
+    remove_fixture(folder, runtime);
 }
 
 /// End to end through the coordinator: Herdr reports the active tab closed
@@ -2037,7 +2032,7 @@ fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
 
     drop(handle);
     server.join().expect("fake server joins");
-    remove_fixture(&root, &socket_path, &state_path);
+    remove_fixture(folder, runtime);
 }
 
 #[test]
@@ -2121,7 +2116,7 @@ fn coordinator_recovers_a_stream_error_with_one_fresh_snapshot_and_stops_its_rea
 
     drop(handle);
     server.join().expect("fake server joins");
-    remove_fixture(&root, &socket_path, &state_path);
+    remove_fixture(folder, runtime);
 }
 
 // Herdr's Socket API: a subscriber that falls behind gets `events_lost` and
@@ -2231,7 +2226,7 @@ fn coordinator_resyncs_after_events_lost_without_reporting_herdr_stale() {
 
     drop(handle);
     server.join().expect("fake server joins");
-    remove_fixture(&root, &socket_path, &state_path);
+    remove_fixture(folder, runtime);
 }
 
 /// Registrations ended on what Herdr's own session reads prove: a pane missing
@@ -2319,6 +2314,7 @@ fn registrations_end_only_on_a_fresh_snapshot_never_during_the_resync() {
             instance: format!("terminal-{id}"),
             pane: pane.into(),
             parent: None,
+            origin: None,
             project: None,
             actor: crate::delivery::Actor {
                 pane_id: pane.into(),
@@ -2374,7 +2370,7 @@ fn registrations_end_only_on_a_fresh_snapshot_never_during_the_resync() {
 
     drop(handle);
     server.join().expect("fake server joins");
-    remove_fixture(&root, &socket_path, &state_path);
+    remove_fixture(folder, runtime);
 }
 
 /// S6 B21: a device's declared parent is one of its own panes, so it is

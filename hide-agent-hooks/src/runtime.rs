@@ -32,7 +32,7 @@ pub const HOOK_VERSION: u32 = 6;
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`
 /// envelope, while the runtime argument remains explicit in the installed
 /// command so a future protocol difference has one dispatch point.
-pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`. Delegate new work with `hide agent spawn --parent here …` so its lineage remains visible. To put work into a Factory, run `hide factory add` rather than adding a GitHub label.";
+pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`. For work you will supervise, delegate with `hide agent spawn --parent here …`; this records responsibility and starts an automatic watch. For independent work the operator will handle, hand it off with `hide agent spawn …` without --parent; it becomes an operator-owned root with no automatic watch. Both modes record you as origin and leave the current screen and keyboard focus unchanged. To put work into a Factory, run `hide factory add` rather than adding a GitHub label.";
 
 pub fn hook_stdout(runtime: AgentRuntime, event: HookEvent) -> Option<String> {
     hook_stdout_with_context(runtime, event, None)
@@ -238,28 +238,39 @@ impl AgentRuntime {
 
     /// The stable identifier used in state, diagnostics and the wire.
     pub fn id(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-        }
+        self.dialect().adapter().id
     }
 
     /// Reads an id back. The wire carries the id, so this is the one place
     /// that turns it into a runtime rather than each caller matching strings.
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|runtime| runtime.id() == id)
+        match hide_agent_adapter::adapter(id)?.hook {
+            hide_agent_adapter::HookInstall::Runtime(dialect) => Some(Self::from_dialect(dialect)),
+            _ => None,
+        }
     }
 
     /// The name the operator sees.
     pub fn label(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::Codex => "Codex",
-        }
+        self.dialect().adapter().label
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|runtime| runtime.id() == value)
+        Self::from_id(value)
+    }
+
+    pub const fn dialect(self) -> hide_agent_adapter::HookDialect {
+        match self {
+            Self::ClaudeCode => hide_agent_adapter::HookDialect::ClaudeCode,
+            Self::Codex => hide_agent_adapter::HookDialect::Codex,
+        }
+    }
+
+    pub const fn from_dialect(dialect: hide_agent_adapter::HookDialect) -> Self {
+        match dialect {
+            hide_agent_adapter::HookDialect::ClaudeCode => Self::ClaudeCode,
+            hide_agent_adapter::HookDialect::Codex => Self::Codex,
+        }
     }
 
     /// The directory whose presence means this runtime is set up on this Mac.
@@ -420,6 +431,9 @@ mod tests {
                 "herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\""
             ));
             assert!(PURPOSE_CONTEXT.contains("`hide agent spawn --parent here"));
+            assert!(PURPOSE_CONTEXT.contains("`hide agent spawn …` without --parent"));
+            assert!(PURPOSE_CONTEXT.contains("operator-owned root with no automatic watch"));
+            assert!(PURPOSE_CONTEXT.contains("record you as origin"));
             for event in [
                 HookEvent::SubagentStart,
                 HookEvent::SubagentStop,

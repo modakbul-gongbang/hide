@@ -3,14 +3,19 @@
 //! one already made (B73). No real GitHub is touched.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hide_factory::adapters::*;
-use hide_factory::exec::{Output, Runner};
+use hide_factory::exec::{Machine, Output};
 use hide_factory::model::*;
 use hide_factory::project::{IssueBook, SharedProjects};
+use hide_node_link::cleanup::PathState;
+use hide_node_link::factory::{FactoryCall, RunAnswer};
+use hide_node_link::protocol::Call;
+use hide_node_link::{LinkAnswer, LinkError, NodeLink};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -50,33 +55,60 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
         .map(String::as_str)
 }
 
-impl Runner for FakeGh {
-    fn run(
-        &mut self,
-        program: &str,
-        args: &[String],
-        _cwd: Option<&Path>,
-    ) -> Result<Output, Failure> {
+/// The core's own node as the Factory reaches it: each git and `gh` shape
+/// reaches the fake as the command line the node would run.
+impl NodeLink for FakeGh {
+    fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let answer = match call {
+            Call::Factory {
+                call: FactoryCall::Git { command, .. },
+            } => self.run("git", &command.args().map_err(LinkError::Unknown)?),
+            Call::Factory {
+                call: FactoryCall::Gh { command },
+            } => self.run("gh", &command.args().map_err(LinkError::Unknown)?),
+            Call::Factory {
+                call: FactoryCall::VerifyClose,
+            } => return Ok(LinkAnswer::Parsed(Value::Null)),
+            // The Factory's own main worktree is not there yet.
+            Call::RealPaths { paths } => {
+                let missing = vec![PathState::Missing; paths.len()];
+                return Ok(LinkAnswer::Parsed(serde_json::to_value(missing).unwrap()));
+            }
+            other => panic!("a call the GitHub path never makes: {other:?}"),
+        };
+        Ok(LinkAnswer::Parsed(
+            serde_json::to_value(RunAnswer::Finished {
+                code: answer.code,
+                stdout: answer.stdout,
+                stderr: answer.stderr,
+            })
+            .unwrap(),
+        ))
+    }
+}
+
+impl FakeGh {
+    fn run(&self, program: &str, args: &[String]) -> Output {
         let mut hub = self.0.lock().unwrap();
         if program == "git" {
-            return Ok(match args.first().map(String::as_str) {
-                Some("rev-parse") => ok("headsha\n"),
+            return match args.first().map(String::as_str) {
+                Some("rev-parse") => ok("a1b2c3d4\n"),
                 Some("push") => {
                     hub.pushes.push(args.last().cloned().unwrap_or_default());
                     ok("")
                 }
                 _ => ok(""),
-            });
+            };
         }
         if let Some(stderr) = hub.fail_next.take() {
-            return Ok(Output {
+            return Output {
                 code: Some(1),
                 stdout: String::new(),
                 stderr,
-            });
+            };
         }
         let words: Vec<&str> = args.iter().map(String::as_str).collect();
-        Ok(match words.as_slice() {
+        match words.as_slice() {
             ["label", "create", ..] => {
                 hub.writes.push("label create".into());
                 ok("")
@@ -93,11 +125,11 @@ impl Runner for FakeGh {
             ["issue", "view", number, ..] => {
                 let number: u64 = number.parse().unwrap();
                 if let Some(stderr) = hub.view_errors.get(&number) {
-                    return Ok(Output {
+                    return Output {
                         code: Some(1),
                         stdout: String::new(),
                         stderr: stderr.clone(),
-                    });
+                    };
                 }
                 ok(match hub.issues.get(&number) {
                     Some((title, body, state)) => json!({"number": number, "title": title, "body": body, "state": state, "labels": [{"name": "factory"}]}),
@@ -126,18 +158,18 @@ impl Runner for FakeGh {
                 hub.next += 1;
                 let number = hub.next;
                 let head = flag(args, "--head").unwrap().to_owned();
-                hub.prs.insert(number, json!({"number": number, "url": format!("https://github.com/o/r/pull/{number}"), "state": "OPEN", "headRefName": head, "isCrossRepository": false, "headRefOid": "headsha", "mergeCommit": null, "closingIssuesReferences": []}));
+                hub.prs.insert(number, json!({"number": number, "url": format!("https://github.com/o/r/pull/{number}"), "state": "OPEN", "headRefName": head, "isCrossRepository": false, "headRefOid": "a1b2c3d4", "mergeCommit": null, "closingIssuesReferences": []}));
                 hub.writes.push(format!("pr create {number}"));
                 ok(format!("https://github.com/o/r/pull/{number}\n"))
             }
             ["pr", "view", number, ..] => ok(hub.prs[&number.parse::<u64>().unwrap()].to_string()),
             ["pr", "merge", number, ..] => {
                 let number: u64 = number.parse().unwrap();
-                assert_eq!(flag(args, "--match-head-commit"), Some("headsha"), "the head SHA is pinned");
+                assert_eq!(flag(args, "--match-head-commit"), Some("a1b2c3d4"), "the head SHA is pinned");
                 let later = hub.commit_later;
                 let pr = hub.prs.get_mut(&number).unwrap();
                 pr["state"] = json!("MERGED");
-                pr["mergeCommit"] = if later { Value::Null } else { json!({"oid": format!("merge{number}")}) };
+                pr["mergeCommit"] = if later { Value::Null } else { json!({"oid": format!("abc{number}")}) };
                 hub.writes.push(format!("pr merge {number}"));
                 ok("")
             }
@@ -163,7 +195,7 @@ impl Runner for FakeGh {
                 ok("")
             }
             other => panic!("gh call outside the allow list: {other:?}"),
-        })
+        }
     }
 }
 
@@ -206,7 +238,7 @@ fn task(id: &str, issue: Option<u64>) -> Task {
     // The Task-stage verification passed on the pushed head.
     task.attempts.push(Attempt {
         number: 1,
-        commit: Some("headsha".into()),
+        commit: Some("a1b2c3d4".into()),
         started_at: 0,
         stage: AttemptStage::Task,
         outcome: Some(AttemptOutcome::Passed),
@@ -228,7 +260,7 @@ fn task(id: &str, issue: Option<u64>) -> Task {
 
 fn projects(gh: &FakeGh) -> SharedProjects {
     SharedProjects::new(
-        Box::new(gh.clone()),
+        Machine::new(Arc::new(gh.clone()), Arc::new(AtomicBool::new(false))),
         Box::new(NoIssues),
         PathBuf::from("/nonexistent/logs"),
     )
@@ -300,8 +332,8 @@ fn a_merge_without_its_commit_yet_is_asked_again_and_not_merged_twice() {
         p.merge(&factory, &t, MergeMethod::Merge).is_err(),
         "still unnamed"
     );
-    gh.0.lock().unwrap().prs.get_mut(&number).unwrap()["mergeCommit"] = json!({"oid": "m1"});
-    assert_eq!(p.merge(&factory, &t, MergeMethod::Merge).unwrap(), "m1");
+    gh.0.lock().unwrap().prs.get_mut(&number).unwrap()["mergeCommit"] = json!({"oid": "aa11"});
+    assert_eq!(p.merge(&factory, &t, MergeMethod::Merge).unwrap(), "aa11");
     let merges =
         gh.0.lock()
             .unwrap()
@@ -361,7 +393,7 @@ fn a_factory_without_a_recorded_approval_writes_nothing_to_github() {
         p.close_pr(&factory, &pr).err(),
         p.reopen_pr(&factory, &pr).err(),
         p.merge(&factory, &t, MergeMethod::Squash).err(),
-        p.rerun_main(&factory, "headsha").err(),
+        p.rerun_main(&factory, "a1b2c3d4").err(),
     ];
     for refusal in refusals {
         assert_eq!(refusal.expect("refused").stage, "github.approval");
@@ -402,12 +434,12 @@ fn a_github_revert_is_one_pull_request_merged_once_at_its_commit() {
     let t = task("T-1", Some(1));
     let revert = p.revert(&factory, &t, "bad1").unwrap();
     let number = revert.pr.expect("a revert pull request");
-    assert_eq!(revert.commit.as_deref(), Some("headsha"));
+    assert_eq!(revert.commit.as_deref(), Some("a1b2c3d4"));
     // Asked again after a lost answer: the open pull request is found.
     let again = p.revert(&factory, &t, "bad1").unwrap();
     assert_eq!(again.pr, Some(number));
     let landed = p.merge_revert(&factory, &revert).unwrap();
-    assert_eq!(landed, format!("merge{number}"));
+    assert_eq!(landed, format!("abc{number}"));
     assert_eq!(p.merge_revert(&factory, &revert).unwrap(), landed);
     let hub = gh.0.lock().unwrap();
     assert_eq!(
@@ -449,12 +481,15 @@ fn required_checks_decide_and_a_cancelled_run_is_asked_again() {
     );
     gh.0.lock().unwrap().checks =
         vec![json!({"name": "test", "status": "completed", "conclusion": "cancelled"})];
-    assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Pending);
-    p.rerun_main(&factory, "abc").unwrap();
+    assert_eq!(
+        p.main_check(&factory, "abc123").unwrap(),
+        MainCheck::Pending
+    );
+    p.rerun_main(&factory, "abc123").unwrap();
     assert_eq!(gh.0.lock().unwrap().writes, vec!["run rerun 7"]);
     gh.0.lock().unwrap().checks =
         vec![json!({"name": "test", "status": "completed", "conclusion": "success"})];
-    assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Green);
+    assert_eq!(p.main_check(&factory, "abc123").unwrap(), MainCheck::Green);
 }
 
 #[test]
@@ -463,10 +498,19 @@ fn running_checks_are_not_asked_again_on_every_tick() {
     let mut p = projects(&gh).with_ci_poll_every(Duration::from_secs(3600));
     let factory = factory();
     gh.0.lock().unwrap().checks = vec![json!({"name": "test", "status": "in_progress"})];
-    assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Pending);
-    assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Pending);
+    assert_eq!(
+        p.main_check(&factory, "abc123").unwrap(),
+        MainCheck::Pending
+    );
+    assert_eq!(
+        p.main_check(&factory, "abc123").unwrap(),
+        MainCheck::Pending
+    );
     assert_eq!(gh.0.lock().unwrap().check_reads, 1);
-    assert_eq!(p.main_check(&factory, "def").unwrap(), MainCheck::Pending);
+    assert_eq!(
+        p.main_check(&factory, "def456").unwrap(),
+        MainCheck::Pending
+    );
     assert_eq!(
         gh.0.lock().unwrap().check_reads,
         2,

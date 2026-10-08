@@ -80,11 +80,10 @@ pub(crate) fn end_agent(
     if !matches!(state.status.as_str(), "idle" | "done") {
         return Err(EndError::Busy(format!("the agent is {} now", state.status)));
     }
-    if !state
-        .agent
-        .as_deref()
-        .is_some_and(|agent| agent.eq_ignore_ascii_case(kind))
-    {
+    if !state.agent.as_deref().is_some_and(|agent| {
+        hide_agent_adapter::canonical_kind(agent)
+            .eq_ignore_ascii_case(hide_agent_adapter::canonical_kind(kind))
+    }) {
         return Err(EndError::Failed(format!(
             "the pane now runs {} rather than {kind}",
             state.agent.as_deref().unwrap_or("no agent")
@@ -312,6 +311,87 @@ mod tests {
             "pane_id": "w1:p1", "shell_pid": shell, "foreground_process_group_id": foreground,
             "foreground_processes": []
         }})
+    }
+
+    #[test]
+    fn wake_sends_canonical_kinds_and_preserves_resume_arguments_for_aliases() {
+        for (kind, canonical, args) in [
+            ("claude-code", "claude", vec!["--resume", "session"]),
+            (" CLAUDE ", "claude", vec!["--resume", "session"]),
+            (" CLAUDE_CODE ", "claude", vec!["--resume", "session"]),
+            (" CODEX ", "codex", vec!["resume", "session"]),
+        ] {
+            let expected = args.clone();
+            let herdr = FakeHerdr::start("wake-alias", move |method, params| match method {
+                "pane.process_info" => process_info(42, 42),
+                "agent.start" => {
+                    assert_eq!(params["kind"], canonical);
+                    assert_eq!(params["args"], json!(expected));
+                    assert_eq!(params["pane_id"], "w1:p1");
+                    let mut agent = agent_info("idle", 3)["agent"].clone();
+                    agent["agent"] = json!(canonical);
+                    json!({"type": "agent_started", "argv": [], "agent": agent})
+                }
+                other => panic!("unexpected {other}"),
+            });
+            assert_eq!(
+                start_agent(
+                    &herdr.connector(),
+                    &hide_node::Local::of_process(),
+                    &WakeRequest {
+                        pane_id: "w1:p1".into(),
+                        name: "wake".into(),
+                        kind: kind.into(),
+                        mode: WakeMode::Resume,
+                        args: args.into_iter().map(str::to_owned).collect(),
+                        cwd: None,
+                        codex_daemon: crate::codex_launch::CodexDaemon::Unsupported,
+                    }
+                ),
+                WakeOutcome::Started,
+                "{kind}"
+            );
+            assert_eq!(herdr.methods(), ["pane.process_info", "agent.start"]);
+        }
+    }
+
+    #[test]
+    fn sleep_end_accepts_known_aliases_but_keeps_process_group_and_agent_guards() {
+        for kind in ["claude-code", " CLAUDE ", " CLAUDE_CODE "] {
+            let herdr = FakeHerdr::start("end-alias", |method, _| match method {
+                "agent.get" => agent_info("idle", 3),
+                "pane.process_info" => process_info(42, 42),
+                other => panic!("unexpected {other}"),
+            });
+            let error = end_agent(
+                &herdr.connector(),
+                &hide_node::Local::of_process(),
+                "w1:p1",
+                kind,
+            )
+            .expect_err("a canonical identity still cannot signal the shell")
+            .to_string();
+            assert!(error.contains("shell already holds"), "{kind}: {error}");
+            assert_eq!(herdr.methods(), ["agent.get", "pane.process_info"]);
+        }
+        for kind in ["codex", "future-agent"] {
+            let herdr = FakeHerdr::start("end-other-agent", |method, _| match method {
+                "agent.get" => agent_info("idle", 3),
+                other => panic!("identity refusal must not query or signal a group: {other}"),
+            });
+            assert!(
+                end_agent(
+                    &herdr.connector(),
+                    &hide_node::Local::of_process(),
+                    "w1:p1",
+                    kind
+                )
+                .expect_err("another agent cannot be ended")
+                .to_string()
+                .contains("rather than")
+            );
+            assert_eq!(herdr.methods(), ["agent.get"]);
+        }
     }
 
     #[test]

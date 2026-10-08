@@ -2340,7 +2340,7 @@ impl Runtime {
                 let device_id = payload.device_id.trim().to_owned();
                 if self.device_registration_exists(&device_id) {
                     self.close_device_host(&device_id, "retry requested");
-                    self.start_device_host(&device_id);
+                    self.retry_device_host_now(&device_id);
                 } else {
                     self.set_error(
                         "device.host.unknown_device",
@@ -3014,7 +3014,9 @@ impl Runtime {
                     .agents
                     .iter()
                     .find(|agent| agent.pane_id == payload.pane_id);
-                let report = agent.is_some_and(|agent| agent.agent_kind == "claude");
+                let report = agent
+                    .and_then(|agent| hide_agent_adapter::adapter(&agent.agent_kind))
+                    .is_some_and(|row| row.terminal_click);
                 crate::diagnostic!(serde_json::json!({
                     "component": "terminal", "kind": "terminal.click_routed",
                     "pane_id": payload.pane_id,

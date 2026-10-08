@@ -3,52 +3,19 @@
 // of them the machine has, and the one line each row owes the operator. Every
 // value is the kit snapshot's; nothing here decides what an agent supports.
 
+import { AGENT_ADAPTERS, agentAdapter } from "../agentAdapters";
 import type { Device, KitAgent, KitPiece, RemoteStatus } from "../snapshot";
 import { deviceState, kitPartNeedsReinstall } from "../settings";
 
-/** The agents Hide supports, in the order every machine lists them (D-06). */
-export const SUPPORTED_AGENTS = ["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor"] as const;
+/** The supported order and trusted vendor links come from this build's contract. */
+export const SUPPORTED_AGENTS = AGENT_ADAPTERS.map((row) => row.id);
 
-/**
- * Where an agent's own installation guide lives, for the Install link of a row
- * whose program the machine does not have (B8). The kit's `doc_url` is its
- * skills page and the row's Docs link; these are the vendors' installation
- * pages, each read on 2026-10-06 (omp's on 2026-10-07).
- */
-const INSTALL_DOCS: Record<string, string> = {
-  "claude-code": "https://code.claude.com/docs/en/setup",
-  codex: "https://learn.chatgpt.com/docs/codex/cli",
-  grok: "https://github.com/xai-org/grok-build",
-  opencode: "https://opencode.ai/docs/",
-  pi: "https://pi.dev/",
-  omp: "https://omp.sh/docs/quickstart",
-  cursor: "https://cursor.com/docs/cli/installation",
-};
-
-/**
- * Where an agent's own documentation lives, for the row's Docs link. A table
- * of this build, never the kit's `doc_url`: a device's helper reports that
- * field, and a link the page draws must not come from a machine it does not
- * run on.
- */
-const DOCS: Record<string, string> = {
-  "claude-code": "https://code.claude.com/docs/en/skills",
-  codex: "https://learn.chatgpt.com/docs/build-skills",
-  grok: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
-  opencode: "https://opencode.ai/docs/skills/",
-  pi: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
-  omp: "https://omp.sh/docs/skills",
-  cursor: "https://cursor.com/docs/context/skills",
-};
-
-/** The documentation page of an agent Hide supports, or null for any other id. */
 export function docsUrl(agentId: string): string | null {
-  return DOCS[agentId] ?? null;
+  return agentAdapter(agentId)?.doc_url ?? null;
 }
 
-/** The vendor's installation page for an agent, or null for one Hide does not support. */
 export function installDocUrl(agentId: string): string | null {
-  return INSTALL_DOCS[agentId] ?? null;
+  return agentAdapter(agentId)?.install_url ?? null;
 }
 
 /**
@@ -58,9 +25,9 @@ export function installDocUrl(agentId: string): string | null {
  */
 export function supportedAgents(agents: readonly KitAgent[] | undefined): KitAgent[] {
   const byId = new Map((agents ?? []).map((agent) => [agent.id, agent]));
-  return SUPPORTED_AGENTS.flatMap((id) => {
-    const agent = byId.get(id);
-    return agent ? [agent] : [];
+  return AGENT_ADAPTERS.flatMap((row) => {
+    const agent = byId.get(row.id);
+    return agent ? [{ ...agent, label: row.label }] : [];
   });
 }
 
@@ -142,7 +109,7 @@ export function agentLeftover(agent: KitAgent): KitPiece | null {
 
 /**
  * The status an agent that is on wears (B16, B19): how many of its sessions
- * run now, or Ready when it is set up and has none. A Partial agent, one that
+ * run now, or Ready when it is set up and has none. A Basic agent, one that
  * is off and one whose sessions were not read yet wear none.
  */
 export type AgentStatus = { kind: "none" } | { kind: "ready" } | { kind: "sessions"; count: number };

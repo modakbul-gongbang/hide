@@ -13,6 +13,7 @@ name = "hide"
 path = "src/bin/hide.rs"
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 herdr-core = { path = "../herdr-core" }
 hide-factory = { path = "../hide-factory" }
 hide-host = { path = "../hide-host" }
@@ -41,10 +42,21 @@ futures-util = "=0.3.34"
 # hide-memory and herdr-core.
 ring = "=0.17.14"
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+# A device pane's command stream arrives as bytes over its node link and is
+# served as HTTP in process (`server::serve_link_connection`); axum already
+# builds both.
+hyper = { version = "=1.11.1", features = ["http1", "server"] }
+hyper-util = { version = "=0.1.20", features = ["service", "tokio"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
+# A link with no device behind it, for tests of what a link's identity decides.
+hide-node = { path = "../hide-node", features = ["test-support"] }
+anyhow = "=1.0.104"
+hide-agent-hooks = { path = "../hide-agent-hooks" }
+# The loopback SSH server of the device link's tests (tests/support).
+russh = { version = "=0.63.3", default-features = false, features = ["ring", "rsa"] }
 http-body-util = "=0.1.5"
-hyper = { version = "=1.11.1", features = ["client", "http1"] }
-hyper-util = { version = "=0.1.20", features = ["client-legacy", "http1", "tokio"] }
+hyper = { version = "=1.11.1", features = ["client", "http1", "server"] }
+hyper-util = { version = "=0.1.20", features = ["client-legacy", "http1", "service", "tokio"] }
 tower = "=0.5.3"

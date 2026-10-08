@@ -203,6 +203,7 @@ impl Fixture {
                 instance: format!("terminal-{pane}"),
                 pane,
                 parent: (index == 2).then(|| "agent-1".into()),
+                origin: None,
                 project: None,
                 actor,
                 ended: false,
@@ -483,6 +484,42 @@ fn retired_same_device_success_preserves_new_observations_registrations_and_watc
     // The worker may refresh watch activity; coordinator-owned memory is unchanged.
     assert_eq!(coordinator_memory(&test.runtime.lock().unwrap()), before);
     assert!(!admitted);
+}
+
+#[test]
+fn retired_coordinator_preserves_handoff_origin_and_its_manual_watch() {
+    let mut test = Fixture::new();
+    test.ledger.agents[1].origin = Some("agent-1".into());
+    test.ledger.validate().unwrap();
+    ledger::save(&test.ledger_path, &test.ledger).unwrap();
+    test.runtime
+        .lock()
+        .unwrap()
+        .publish_delivery(Arc::new(test.ledger.clone()), true);
+    let old = test.context();
+    test.start_current(&old);
+    let _current = test.replace(&old);
+    let before = coordinator_memory(&test.runtime.lock().unwrap());
+    assert!(!begin_delivery_pane_read(&old));
+    assert!(!publish(&old, &mut test.replica(&[])));
+    assert!(!publish_failure(
+        &old,
+        SessionFetchError::Unreachable("retired handoff observer".into()),
+    ));
+    test.assert_preserved(&before);
+    let persisted = test.commit_pending();
+    assert_eq!(persisted.agents, test.ledger.agents);
+    let handoff = crate::coordination::view(&persisted.agents[1], &persisted);
+    assert!(handoff["parent"].is_null());
+    assert_eq!(handoff["origin"], "agent-1");
+    assert_eq!(persisted.watches.len(), 2);
+    assert!(
+        persisted
+            .watches
+            .iter()
+            .any(|watch| watch.target.same_identity(&remote_actor(MANUAL)))
+    );
+    assert_eq!(coordinator_memory(&test.runtime.lock().unwrap()), before);
 }
 
 #[test]

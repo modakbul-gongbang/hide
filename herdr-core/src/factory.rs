@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread::{self, JoinHandle};
@@ -18,12 +18,14 @@ use hide_factory::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, Removal,
     WorkerRuntime, WorkerSpawn, WorkerStatus,
 };
-use hide_factory::exec::SystemRunner;
+use hide_factory::exec::Machine;
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentOutcome};
 use hide_factory::model::{Runtime as AgentRuntime, UnixMs, WorkerRef};
 use hide_factory::project::{IssueBook, SharedProjects};
 use hide_factory::role::Role;
 use hide_factory::{Command, Engine, Inbound, Ports, Refusal};
+use hide_node_link::factory::{FactoryCall, MemoryPressure as NodeMemoryPressure};
+use hide_node_link::protocol::Call;
 use serde_json::{Value, json};
 
 use crate::delivery;
@@ -401,20 +403,21 @@ fn run(
     let mut engine: Option<Engine> = None;
     let mut judge: Option<JudgeThread> = None;
     let open = |judge: &mut Option<JudgeThread>| -> Option<Engine> {
+        // The Factory decides here; its machine work is the core's own
+        // node's (PRD core-host-node D-01).
+        let machine = Machine::new(guard(&lock(&runtime)?).own_node(), Arc::clone(&runner_stop));
         let started = JudgeThread::start(runtime.clone(), home.clone());
         let port = started.port();
         *judge = Some(started);
         let projects = SharedProjects::new(
-            Box::new(SystemRunner {
-                stop: Arc::clone(&runner_stop),
-            }),
+            machine.clone(),
             Box::new(CoreIssues {
                 runtime: runtime.clone(),
             }),
             paths.files.join("logs"),
         );
         let ports = Ports {
-            clock: Box::new(SystemClock),
+            clock: Box::new(SystemClock::new(machine.clone())),
             source: Box::new(projects.clone()),
             verifier: Box::new(projects.clone()),
             merge: Box::new(projects),
@@ -423,15 +426,21 @@ fn run(
                 state: Arc::clone(&workers),
             }),
             judge: Box::new(port),
-            environment: Box::new(MachineEnvironment),
+            environment: Box::new(MachineEnvironment(machine.clone())),
             notifier: Box::new(CoreNotifier {
                 runtime: runtime.clone(),
             }),
         };
         match Engine::open(&paths.store, &paths.files, ports) {
             Ok(mut engine) => {
-                if let Some(program) = hide_program() {
-                    engine.set_hide_program(program);
+                match machine.call::<Option<String>>("hide_program", FactoryCall::HideProgram) {
+                    Ok(Some(program)) => engine.set_hide_program(program),
+                    Ok(None) => {}
+                    Err(failure) => crate::diagnostic!(json!({
+                        "component": "factory",
+                        "kind": "hide_program.unread",
+                        "error": failure.detail,
+                    })),
                 }
                 Some(engine)
             }
@@ -658,16 +667,6 @@ fn report_intent(pane: &str, epoch: u64, body: &str) -> String {
     )
 }
 
-/// The `hide` program beside the running daemon (the app bundle's
-/// Resources, or a build's target folder).
-fn hide_program() -> Option<String> {
-    let name = if cfg!(windows) { "hide.exe" } else { "hide" };
-    let program = std::env::current_exe().ok()?.parent()?.join(name);
-    program
-        .is_file()
-        .then(|| program.to_string_lossy().into_owned())
-}
-
 /// Runs one command with the caller's role (D-33). A worker's report travels
 /// as a ledger letter from its own pane, so a harness that only speaks the
 /// letter protocol lands on the same path (B25).
@@ -891,7 +890,26 @@ fn settle_sleeps(state: &Arc<Mutex<WorkerState>>, runtime: &Weak<Mutex<Runtime>>
     }
 }
 
-struct SystemClock;
+/// The time, and the local day's offset as the core's own node reads it.
+/// A read the node cannot answer keeps the last offset it gave, so a busy
+/// moment does not move the done-today day; before any answer it is UTC.
+struct SystemClock {
+    machine: Machine,
+    /// The last offset the node answered; [`i64::MIN`] before the first.
+    last: AtomicI64,
+    /// Whether the last read failed, so a run of failures is said once.
+    failing: AtomicBool,
+}
+
+impl SystemClock {
+    fn new(machine: Machine) -> Self {
+        Self {
+            machine,
+            last: AtomicI64::new(i64::MIN),
+            failing: AtomicBool::new(false),
+        }
+    }
+}
 
 impl Clock for SystemClock {
     fn now(&self) -> UnixMs {
@@ -899,20 +917,23 @@ impl Clock for SystemClock {
     }
 
     fn utc_offset_ms(&self) -> i64 {
-        match hide_platform::time::local_utc_offset_ms() {
-            Ok(offset) => offset,
+        match self.machine.read::<i64>(FactoryCall::UtcOffset) {
+            Ok(offset) => {
+                self.last.store(offset, Ordering::Relaxed);
+                self.failing.store(false, Ordering::Relaxed);
+                offset
+            }
             Err(error) => {
-                // Counted in UTC until the system names its zone again; said once.
-                static SAID: std::sync::atomic::AtomicBool =
-                    std::sync::atomic::AtomicBool::new(false);
-                if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                let last = self.last.load(Ordering::Relaxed);
+                if !self.failing.swap(true, Ordering::Relaxed) {
                     crate::diagnostic!(serde_json::json!({
                         "component": "factory",
                         "kind": "clock.offset_unavailable",
                         "error": error.to_string(),
+                        "kept_last": last != i64::MIN,
                     }));
                 }
-                0
+                if last == i64::MIN { 0 } else { last }
             }
         }
     }
@@ -1224,16 +1245,6 @@ impl WorkerRuntime for CoreWorkers {
 
     fn remove_worktree(&mut self, worker: &WorkerRef, removal: Removal) -> Result<(), Failure> {
         let discard = removal == Removal::Discarded;
-        let checkout = Path::new(&worker.worktree);
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        // The repository the worktree belongs to, read before it goes; a
-        // folder already gone leaves only the branch to delete.
-        let root = match checkout.exists() {
-            true => Some(repository_root(&mut runner, checkout)?),
-            false => None,
-        };
         let runtime = self.runtime()?;
         let (connector, node) = {
             let guard = guard(&runtime);
@@ -1243,6 +1254,15 @@ impl WorkerRuntime for CoreWorkers {
             )
         };
         drop(runtime);
+        let machine = Machine::new(Arc::clone(&node), Arc::new(AtomicBool::new(false)));
+        // The repository the worktree belongs to, read before it goes; a
+        // folder already gone leaves nothing to remove.
+        let root: Option<String> = machine.call(
+            "worktree.root",
+            FactoryCall::WorktreeRoot {
+                checkout: worker.worktree.clone(),
+            },
+        )?;
         let connector = connector
             .ok_or_else(|| Failure::environment("worktree", EnvSignal::HerdrSocket, "no Herdr"))?;
         let panes: Vec<String> = worker.pane.iter().cloned().collect();
@@ -1260,42 +1280,22 @@ impl WorkerRuntime for CoreWorkers {
             return Ok(());
         };
         // Leftovers in a finished Task's worktree are the operator's to look
-        // at: only a discarded one is forced (D-58).
-        hide_host::worktrees::remove_worktree(&root, checkout, discard)
-            .map_err(|reason| Failure::task("worktree.remove", reason))?;
-        if discard {
-            hide_factory::exec::checked(
-                &mut runner,
-                "branch.delete",
-                "git",
-                &["branch", "-D", "--", &worker.branch],
-                Some(&root),
-            )?;
-        }
-        Ok(())
+        // at: only a discarded one is forced, with its branch (D-58).
+        machine.call(
+            "worktree.remove",
+            FactoryCall::RemoveWorktree {
+                root,
+                checkout: worker.worktree.clone(),
+                branch: worker.branch.clone(),
+                discard,
+            },
+        )
     }
 
     fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
         let core = self.runtime().ok()?;
         guard(&core).factory_usage_limit(runtime.as_str(), now_ms())
     }
-}
-
-/// The main checkout of the repository a linked worktree belongs to.
-fn repository_root(runner: &mut SystemRunner, checkout: &Path) -> Result<PathBuf, Failure> {
-    let output = hide_factory::exec::checked(
-        runner,
-        "worktree.root",
-        "git",
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        Some(checkout),
-    )?;
-    let common = PathBuf::from(output.trim());
-    common
-        .parent()
-        .filter(|_| common.file_name().is_some_and(|name| name == ".git"))
-        .map(Path::to_path_buf)
-        .ok_or_else(|| Failure::task("worktree.root", "the repository has no main checkout"))
 }
 
 /// One worker start through the coordination path, on the starter thread.
@@ -1357,14 +1357,13 @@ fn start_worker(
         authority,
         actor,
         crate::coordination::Command::Spawn {
-            parent,
+            parent: Some(parent),
             name: request.name.clone(),
             intent,
             kind: request.runtime.as_str().into(),
             repo: request.project.clone(),
             branch: request.branch.clone(),
             path,
-            no_watch: false,
             args,
         },
     )
@@ -1473,34 +1472,32 @@ impl IssueBook for CoreIssues {
     }
 }
 
-struct MachineEnvironment;
+/// The machine the Factory's projects live on, as its node reports it.
+struct MachineEnvironment(Machine);
 
 impl Environment for MachineEnvironment {
     fn disk_free(&mut self, project: &str) -> Option<u64> {
-        hide_platform::fs::space::free_bytes(Path::new(project)).ok()
+        self.0
+            .node_call::<Option<u64>>(
+                "disk",
+                Call::VolumeFree {
+                    path: project.to_owned(),
+                },
+            )
+            .ok()
+            .flatten()
     }
 
-    /// macOS reports 1 (normal), 2 (warn) or 4 (critical).
+    /// A reading the node cannot give is normal pressure, as on a system
+    /// without one.
     fn memory_pressure(&mut self) -> MemoryPressure {
-        if !cfg!(target_os = "macos") {
-            return MemoryPressure::Normal;
-        }
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        match hide_factory::exec::checked(
-            &mut runner,
-            "memory",
-            "/usr/sbin/sysctl",
-            &["-n", "kern.memorystatus_vm_pressure_level"],
-            None,
-        )
-        .ok()
-        .and_then(|text| text.trim().parse::<u32>().ok())
+        match self
+            .0
+            .call::<NodeMemoryPressure>("memory", FactoryCall::MemoryPressure)
         {
-            Some(4) => MemoryPressure::Critical,
-            Some(2) => MemoryPressure::Warn,
-            _ => MemoryPressure::Normal,
+            Ok(NodeMemoryPressure::Critical) => MemoryPressure::Critical,
+            Ok(NodeMemoryPressure::Warn) => MemoryPressure::Warn,
+            Ok(NodeMemoryPressure::Normal) | Err(_) => MemoryPressure::Normal,
         }
     }
 }
@@ -1732,7 +1729,59 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    /// The core's own node answering the offset in turn, then busy.
+    struct Offsets(Mutex<Vec<Result<i64, ()>>>);
+
+    impl NodeLink for Offsets {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
+            assert!(matches!(
+                call,
+                Call::Factory {
+                    call: FactoryCall::UtcOffset
+                }
+            ));
+            match self.0.lock().unwrap().remove(0) {
+                Ok(offset) => Ok(LinkAnswer::Parsed(json!(offset))),
+                Err(()) => Err(LinkError::Busy),
+            }
+        }
+
+        fn call_with_progress(
+            &self,
+            call: Call,
+            timeout: Duration,
+            _progress: &mut dyn FnMut(serde_json::Value) -> bool,
+        ) -> Result<LinkAnswer, LinkError> {
+            self.call(call, timeout)
+        }
+    }
+
+    fn clock(answers: Vec<Result<i64, ()>>) -> SystemClock {
+        SystemClock::new(Machine::new(
+            Arc::new(Offsets(Mutex::new(answers))),
+            Arc::new(AtomicBool::new(false)),
+        ))
+    }
+
+    /// A node too busy to answer keeps the day where it was: Seoul stays nine
+    /// hours east through a busy read, and only a clock that never heard is UTC.
+    #[test]
+    fn a_busy_node_keeps_the_last_offset_it_gave() {
+        const SEOUL: i64 = 9 * 3_600_000;
+        let heard = clock(vec![Ok(SEOUL), Err(()), Err(()), Ok(SEOUL - 3_600_000)]);
+        assert_eq!(heard.utc_offset_ms(), SEOUL);
+        assert_eq!(heard.utc_offset_ms(), SEOUL);
+        assert_eq!(heard.utc_offset_ms(), SEOUL);
+        assert_eq!(
+            heard.utc_offset_ms(),
+            SEOUL - 3_600_000,
+            "a new answer is taken"
+        );
+        assert_eq!(clock(vec![Err(())]).utc_offset_ms(), 0);
+    }
 
     #[test]
     fn the_same_report_after_the_task_moved_is_a_new_letter() {
@@ -1951,59 +2000,5 @@ mod tests {
         assert!(busy.starting && busy.signal.is_none());
         assert_eq!(busy.again_in_ms, Some(2_000));
         assert!(!spawn_failure("worktree_create_failed").starting);
-    }
-
-    fn git(cwd: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
-    }
-
-    #[test]
-    fn a_worker_worktree_outside_its_repository_resolves_to_the_main_checkout() {
-        let root = tempfile::tempdir().unwrap();
-        let main = root.path().join("project");
-        std::fs::create_dir(&main).unwrap();
-        git(&main, &["init", "--quiet", "-b", "main"]);
-        git(
-            &main,
-            &[
-                "-c",
-                "user.email=f@example.com",
-                "-c",
-                "user.name=F",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--quiet",
-                "--allow-empty",
-                "-m",
-                "base",
-            ],
-        );
-        // Spawned worktrees live in a folder of their own, not in the repository.
-        let worktree = root.path().join("worktrees/project/factory-l1-task");
-        git(
-            &main,
-            &[
-                "worktree",
-                "add",
-                "--quiet",
-                "-b",
-                "factory/1-task",
-                worktree.to_str().unwrap(),
-            ],
-        );
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        };
-        let found = repository_root(&mut runner, &worktree).unwrap();
-        assert_eq!(found.canonicalize().unwrap(), main.canonicalize().unwrap());
-        hide_host::worktrees::remove_worktree(&found, &worktree, true).unwrap();
-        assert!(!worktree.exists());
     }
 }

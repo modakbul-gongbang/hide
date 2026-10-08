@@ -3,18 +3,81 @@
 //! main verification and the revert of one merge (B38, B42, B44, B45).
 #![cfg(unix)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use hide_factory::adapters::*;
-use hide_factory::exec::SystemRunner;
+use hide_factory::exec::Machine;
 use hide_factory::model::*;
 use hide_factory::project::{IssueBook, SharedProjects};
+use hide_node::Local;
+use hide_node_link::factory::{FactoryCall, RunAnswer};
+use hide_node_link::protocol::Call;
+use hide_node_link::{LinkAnswer, LinkError, NodeLink};
 use serde_json::json;
+
+/// A node that names each request it answers, so a test can show the
+/// Factory's machine work all went through it (PRD core-host-node D-01):
+/// the Factory crate itself starts no process and reads no project file.
+struct Counting<N> {
+    node: N,
+    calls: Arc<Mutex<BTreeSet<String>>>,
+}
+
+impl<N: NodeLink> Counting<N> {
+    fn record(&self, call: &Call) {
+        let value = serde_json::to_value(call).unwrap();
+        let kind = match value["call"]["factory"].as_str() {
+            Some(factory) => format!("factory.{factory}"),
+            None => value["op"].as_str().unwrap().to_owned(),
+        };
+        self.calls.lock().unwrap().insert(kind);
+    }
+}
+
+impl<N: NodeLink> NodeLink for Counting<N> {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        self.record(&call);
+        self.node.call(call, timeout)
+    }
+
+    fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        self.record(&call);
+        self.node.call_with_progress(call, timeout, progress)
+    }
+}
+
+/// The core's own node, as the Factory reaches it in Hide, counted.
+fn node<N: NodeLink + 'static>(node: N) -> (Machine, Arc<Mutex<BTreeSet<String>>>) {
+    let calls = Arc::default();
+    let counting = Counting {
+        node,
+        calls: Arc::clone(&calls),
+    };
+    (
+        Machine::new(Arc::new(counting), Arc::new(AtomicBool::new(false))),
+        calls,
+    )
+}
+
+fn seen(calls: &Mutex<BTreeSet<String>>, kinds: &[&str]) {
+    let calls = calls.lock().unwrap();
+    for kind in kinds {
+        assert!(
+            calls.contains(*kind),
+            "{kind} never reached the node: {calls:?}"
+        );
+    }
+}
 
 #[derive(Default)]
 struct Book(BTreeMap<u32, (String, String)>);
@@ -69,10 +132,15 @@ fn write(dir: &Path, name: &str, text: &str) {
 struct Fixture {
     _root: tempfile::TempDir,
     project: PathBuf,
+    calls: Arc<Mutex<BTreeSet<String>>>,
     projects: SharedProjects,
 }
 
 fn fixture() -> Fixture {
+    fixture_on(Local::new(None))
+}
+
+fn fixture_on<N: NodeLink + 'static>(node_link: N) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let project = root.path().join("repo");
     std::fs::create_dir(&project).unwrap();
@@ -85,18 +153,14 @@ fn fixture() -> Fixture {
     write(&project, "Makefile", "test:\n\ttrue\n");
     git(&project, &["add", "."]);
     git(&project, &["commit", "--quiet", "-m", "base"]);
-    let runner = SystemRunner {
-        stop: Arc::new(AtomicBool::new(false)),
-    };
-    let projects = SharedProjects::new(
-        Box::new(runner),
-        Box::new(Book::default()),
-        root.path().join("logs"),
-    );
+    let (machine, calls) = node(node_link);
+    let projects =
+        SharedProjects::new(machine, Box::new(Book::default()), root.path().join("logs"));
     Fixture {
         _root: root,
         project,
         projects,
+        calls,
     }
 }
 
@@ -173,6 +237,51 @@ fn settle_main(projects: &mut SharedProjects, factory: &Factory, sha: &str) -> M
         }
         std::thread::yield_now();
     }
+}
+
+/// The core's own node, busy for the first verify poll it is asked.
+struct BusyOnce {
+    node: Local,
+    busy: AtomicBool,
+}
+
+impl NodeLink for BusyOnce {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let poll = matches!(
+            call,
+            Call::Factory {
+                call: FactoryCall::VerifyPoll { .. }
+            }
+        );
+        if poll && self.busy.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            return Err(LinkError::Busy);
+        }
+        self.node.call(call, timeout)
+    }
+
+    fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        self.node.call_with_progress(call, timeout, progress)
+    }
+}
+
+/// A node too busy to answer a poll says nothing about the run: the poll
+/// stays pending, and the next one reads the run's own verdict.
+#[test]
+fn a_busy_node_leaves_a_verify_pending_rather_than_failed() {
+    let mut fx = fixture_on(BusyOnce {
+        node: Local::new(None),
+        busy: AtomicBool::new(true),
+    });
+    let factory = factory(&fx.project, &["true"]);
+    let t = task(&fx, "T-1", "b.txt", "two\n");
+    let run = fx.projects.start(&factory, &t).unwrap();
+    assert_eq!(fx.projects.poll(&factory, &run), VerifyPoll::Pending);
+    assert_eq!(settle(&mut fx.projects, &factory, &run), VerifyPoll::Passed);
 }
 
 #[test]
@@ -282,6 +391,18 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
         fx.project.join("c.txt").exists(),
         "only that merge is undone"
     );
+    seen(
+        &fx.calls,
+        &[
+            "factory.git",
+            "factory.project",
+            "factory.verify_submit",
+            "factory.verify_poll",
+            "factory.verify_known",
+            "agent_installed",
+            "real_paths",
+        ],
+    );
 }
 
 #[test]
@@ -380,32 +501,35 @@ fn a_risk_path_and_a_quick_check_gate_the_merge() {
         fx.projects.premerge(&factory, &t).is_err(),
         "no worktree is a failure, not a pass"
     );
+    seen(&fx.calls, &["factory.git", "factory.check"]);
 }
 
-/// Real git against a bare remote; `gh` answers that no pull request is open
-/// and opens one when asked.
-struct RealGitFakeGh(SystemRunner);
+/// Real git on the core's own node against a bare remote; `gh` answers
+/// that no pull request is open and opens one when asked.
+struct RealGitFakeGh(Local);
 
-impl hide_factory::exec::Runner for RealGitFakeGh {
-    fn run(
-        &mut self,
-        program: &str,
-        args: &[String],
-        cwd: Option<&Path>,
-    ) -> Result<hide_factory::exec::Output, Failure> {
-        if program == "git" {
-            return self.0.run(program, args, cwd);
-        }
+impl NodeLink for RealGitFakeGh {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        let Call::Factory {
+            call: FactoryCall::Gh { command },
+        } = call
+        else {
+            return self.0.call(call, timeout);
+        };
+        let args = command.args().map_err(LinkError::Unknown)?;
         let stdout = match args.get(1).map(String::as_str) {
             Some("list") => "[]".to_owned(),
             Some("create") => "https://github.com/o/r/pull/7\n".to_owned(),
             other => panic!("unexpected gh {other:?}"),
         };
-        Ok(hide_factory::exec::Output {
-            code: Some(0),
-            stdout,
-            stderr: String::new(),
-        })
+        Ok(LinkAnswer::Parsed(
+            serde_json::to_value(RunAnswer::Finished {
+                code: Some(0),
+                stdout,
+                stderr: String::new(),
+            })
+            .unwrap(),
+        ))
     }
 }
 
@@ -422,10 +546,9 @@ fn a_report_after_the_remote_deleted_the_task_branch_still_pushes() {
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
     git(&fx.project, &["push", "--quiet", "origin", "main"]);
+    let (machine, calls) = node(RealGitFakeGh(Local::new(None)));
     let mut projects = SharedProjects::new(
-        Box::new(RealGitFakeGh(SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
-        })),
+        machine,
         Box::new(Book::default()),
         fx.project.with_file_name("gh-logs"),
     );
@@ -455,4 +578,5 @@ fn a_report_after_the_remote_deleted_the_task_branch_still_pushes() {
         git(&remote, &["rev-parse", &format!("refs/heads/{branch}")]),
         git(&worktree, &["rev-parse", "HEAD"]),
     );
+    seen(&calls, &["factory.git", "factory.gh"]);
 }

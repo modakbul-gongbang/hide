@@ -2,6 +2,7 @@
 //! ends. The input is the SSH channel, so the helper lives exactly as long as
 //! the connection that started it (PRD S5.5 D-20).
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -12,8 +13,8 @@ use serde_json::Value;
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::protocol::{
-    Call, Hello, MachineIdentity, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow,
-    RootOpened, RootRef,
+    Call, Hello, MachineIdentity, Outcome, PROTOCOL_VERSION, Progress, Request, Response,
+    RevisionNow, RootOpened, RootRef,
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
@@ -23,31 +24,85 @@ use hide_node_link::process::ProcessStart;
 /// many per device, so the helper never queues behind itself.
 pub const CONCURRENCY: usize = 4;
 
+/// Requests waiting for a worker. The core admits at most [`CONCURRENCY`]
+/// at once, so this fills only behind calls the core stopped waiting for; a
+/// request past it is answered busy, and the reader never waits, so a cancel
+/// or the end of input is always read.
+const QUEUED: usize = 32;
+
 /// A request line longer than this is refused without being parsed: a save
 /// carries at most the 16 MiB editable size, as JSON-escaped text.
 const MAX_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
+    serve_in(input, output, Env::of_process())
+}
+
+fn serve_in(input: impl BufRead, output: impl Write + Send, env: Env) -> io::Result<()> {
     let output = Mutex::new(output);
-    let (sender, receiver) = mpsc::sync_channel::<Request>(0);
+    // The calls handed to a worker and not yet answered, each with whether
+    // it was asked to stop; the reader enters one before handing it over, so
+    // a cancel that arrives first still reaches it.
+    let running: Mutex<HashMap<u64, bool>> = Mutex::new(HashMap::new());
+    let panes = crate::panes::Panes::new();
+    // Where a pane's `hide` on this machine finds the node's bootstrap
+    // socket; read once, so every start of the service agrees.
+    let bridges = hide_platform::host::home_dir().map(|home| {
+        hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(&home))
+    });
+    let (sender, receiver) = mpsc::sync_channel::<Request>(QUEUED);
     // Only the workers hold the receiver. A worker stops when its answer
     // cannot be written, which means the SSH channel is gone; once the last
-    // one has stopped, the next request's send fails and the helper exits,
-    // rather than waiting on a rendezvous no worker will ever take.
+    // one has stopped, the next request's send fails and the helper exits.
     let receiver = Arc::new(Mutex::new(receiver));
-    std::thread::scope(|scope| {
+    let result = std::thread::scope(|scope| {
         for _ in 0..CONCURRENCY {
             let receiver = Arc::clone(&receiver);
             let output = &output;
+            let panes = &panes;
+            let bridges = &bridges;
+            let env = &env;
+            let running = &running;
             scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
                         Ok(Ok(request)) => request,
                         _ => return,
                     };
+                    let id = request.id;
+                    let outcome = match request.call {
+                        call if !call.answered_by_device() => Err(HostError::new(
+                            ErrorCode::Unsupported,
+                            "A device does not answer this request; the core's own node does",
+                        )),
+                        Call::PanesStart { herdr_socket } => match bridges {
+                            Ok(bridges) => panes
+                                .start(scope, output, bridges, &herdr_socket)
+                                .and_then(to_value),
+                            Err(error) => Err(HostError::new(ErrorCode::Io, error.to_string())),
+                        },
+                        Call::PaneProofAnswer { request, answer } => {
+                            panes.answer_proof(request, answer)
+                        }
+                        Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
+                        Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
+                        Call::StreamClose { stream } => panes.close_stream(stream),
+                        call => handle_with_progress(call, env, &mut |report| {
+                            write_line(
+                                output,
+                                &Progress {
+                                    progress: id,
+                                    report,
+                                },
+                            )
+                            .is_ok()
+                                && lock(running).get(&id) == Some(&false)
+                        }),
+                    };
+                    lock(running).remove(&id);
                     let response = Response {
-                        id: request.id,
-                        outcome: match handle(request.call) {
+                        id,
+                        outcome: match outcome {
                             Ok(value) => Outcome::Ok(value),
                             Err(error) => Outcome::Error(error),
                         },
@@ -59,19 +114,24 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
             });
         }
         drop(receiver);
-        let result = read_requests(input, &sender, &output);
+        let result = read_requests(input, &sender, &output, &running);
         drop(sender);
         // The connection is gone: a kit step still running ends its child
-        // rather than keep the helper alive after it.
+        // rather than keep the helper alive after it, and the pane service
+        // ends its listener and streams so the scope can close.
         crate::kit::stop();
+        panes.stop();
         result
-    })
+    });
+    panes.remove_folder();
+    result
 }
 
 fn read_requests(
     mut input: impl BufRead,
     sender: &mpsc::SyncSender<Request>,
     output: &Mutex<impl Write>,
+    running: &Mutex<HashMap<u64, bool>>,
 ) -> io::Result<()> {
     let mut line = Vec::new();
     loop {
@@ -110,14 +170,66 @@ fn read_requests(
                 continue;
             }
         };
-        if sender.send(request).is_err() {
-            return Ok(());
+        // A cancel is answered here, never queued behind the call it stops,
+        // which may hold a worker for as long as it runs.
+        if let Call::Cancel { request: target } = request.call {
+            if let Some(cancelled) = lock(running).get_mut(&target) {
+                *cancelled = true;
+            }
+            write_line(
+                output,
+                &Response {
+                    id: request.id,
+                    outcome: Outcome::Ok(Value::Null),
+                },
+            )?;
+            continue;
+        }
+        let id = request.id;
+        // An id still in flight would share its entry, and one ending would
+        // take the other's cancel with it.
+        if lock(running).contains_key(&id) {
+            write_line(
+                output,
+                &Response {
+                    id,
+                    outcome: Outcome::Error(HostError::new(
+                        ErrorCode::InvalidRequest,
+                        "A request with this id is still running",
+                    )),
+                },
+            )?;
+            continue;
+        }
+        lock(running).insert(id, false);
+        match sender.try_send(request) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                lock(running).remove(&id);
+                write_line(
+                    output,
+                    &Response {
+                        id,
+                        outcome: Outcome::Error(HostError::new(
+                            ErrorCode::Busy,
+                            "The device is working on as many requests as it holds",
+                        )),
+                    },
+                )?;
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Ok(()),
         }
     }
 }
 
-fn write_line(output: &Mutex<impl Write>, response: &Response) -> io::Result<()> {
-    let mut bytes = serde_json::to_vec(response).map_err(io::Error::other)?;
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write_line(output: &Mutex<impl Write>, line: &impl serde::Serialize) -> io::Result<()> {
+    let mut bytes = serde_json::to_vec(line).map_err(io::Error::other)?;
     bytes.push(b'\n');
     let mut output = output
         .lock()
@@ -146,6 +258,30 @@ fn absolute(path: &str) -> HostResult<std::path::PathBuf> {
         ));
     }
     Ok(path.to_path_buf())
+}
+
+/// The agents whose session files the core reads by path.
+const SESSION_FILE_AGENTS: &[hide_session::Agent] =
+    &[hide_session::Agent::Claude, hide_session::Agent::Codex];
+
+/// A session file the core names, refused unless it lies in one of `agents`'
+/// session folders in this machine's home, answered with every link resolved.
+fn session_file(env: &Env, agents: &[hide_session::Agent], path: &str) -> HostResult<PathBuf> {
+    let path = absolute(path)?;
+    let home = env.home("sessions_home_unavailable")?;
+    hide_session::inside_session_root(Path::new(&home), agents, &path).map_err(|refusal| {
+        match refusal {
+            hide_session::RootRefusal::Unsupported | hide_session::RootRefusal::Outside => {
+                HostError::new(ErrorCode::OutsideRoot, "session_outside_roots")
+            }
+            hide_session::RootRefusal::Missing => {
+                HostError::new(ErrorCode::Io, "session_file_missing")
+            }
+            hide_session::RootRefusal::Unreadable => {
+                HostError::new(ErrorCode::Io, "session_unreadable")
+            }
+        }
+    })
 }
 
 fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
@@ -217,6 +353,9 @@ pub struct Env {
     pub stop: Arc<AtomicBool>,
     /// The background AI backends this node keeps for its core.
     pub ai: Arc<crate::ai::Backends>,
+    /// The verify bundles this node runs for its core's Factory, ended when
+    /// the last copy of the environment is dropped.
+    pub factory: Arc<crate::factory::Verifies>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -248,6 +387,7 @@ impl Env {
             kit: KitPlace::Installed,
             stop: crate::kit::process_stop(),
             ai: process_ai(),
+            factory: Arc::default(),
         }
     }
 
@@ -259,6 +399,7 @@ impl Env {
             kit: KitPlace::Standalone,
             stop: Arc::default(),
             ai: Arc::default(),
+            factory: Arc::default(),
         }
     }
 
@@ -414,13 +555,7 @@ pub fn handle_with_progress(
                 .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
         ),
         Call::PathFacts { paths } => to_value(crate::catalog::path_facts(&paths)?),
-        Call::RealPaths { paths } => {
-            let paths = paths
-                .iter()
-                .map(|path| absolute(path))
-                .collect::<HostResult<Vec<_>>>()?;
-            to_value(crate::cleanup::real_paths(&paths))
-        }
+        Call::RealPaths { paths } => to_value(crate::cleanup::real_paths(&paths)),
         Call::Repository { path } => to_value(crate::cleanup::repository(&absolute(&path)?)),
         Call::JudgeFolders {
             root,
@@ -594,9 +729,9 @@ pub fn handle_with_progress(
             to_value(listed)
         }
         Call::SessionIndexRead { agent, path, saved } => {
-            let (step, _) =
-                hide_session::search_read::read_step(saved.as_ref(), agent, &absolute(&path)?)
-                    .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            let path = session_file(env, &[agent], &path)?;
+            let (step, _) = hide_session::search_read::read_step(saved.as_ref(), agent, &path)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
             to_value(step)
         }
         Call::SessionStamps { paths } => {
@@ -609,7 +744,25 @@ pub fn handle_with_progress(
                     ),
                 ));
             }
-            to_value(hide_session::search_read::stamps(&paths))
+            let home = env.home("sessions_home_unavailable")?;
+            to_value(
+                paths
+                    .iter()
+                    .map(|path| {
+                        let path = Path::new(path);
+                        if !path.is_absolute() {
+                            return None;
+                        }
+                        let path = hide_session::inside_session_root(
+                            Path::new(&home),
+                            SESSION_FILE_AGENTS,
+                            path,
+                        )
+                        .ok()?;
+                        hide_session::search_read::stamp_at(&path)
+                    })
+                    .collect::<Vec<_>>(),
+            )
         }
         Call::ProjectSessions { project } => {
             let home = env.home("sessions_home_unavailable")?;
@@ -620,16 +773,27 @@ pub fn handle_with_progress(
             to_value(sessions)
         }
         Call::SessionStat { path } => to_value(
-            crate::sessions::stat(&absolute(&path)?)
+            crate::sessions::stat(&session_file(env, SESSION_FILE_AGENTS, &path)?)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::SessionChunk { path, checkpoint } => to_value(
-            crate::sessions::chunk(&absolute(&path)?, checkpoint)
+            crate::sessions::chunk(&session_file(env, SESSION_FILE_AGENTS, &path)?, checkpoint)
                 .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
+        Call::PanesStart { .. }
+        | Call::PaneProofAnswer { .. }
+        | Call::PaneInspect { .. }
+        | Call::StreamWrite { .. }
+        | Call::StreamClose { .. } => Err(HostError::new(
+            ErrorCode::Unsupported,
+            "Only a device node's link carries its panes' credentials and commands",
+        )),
         Call::SessionText { path } => to_value(
-            hide_session::read_bounded(&absolute(&path)?, hide_session::SESSION_READ_LIMIT_BYTES)
-                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
+            hide_session::read_bounded(
+                &session_file(env, SESSION_FILE_AGENTS, &path)?,
+                hide_session::SESSION_READ_LIMIT_BYTES,
+            )
+            .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
         ),
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
@@ -723,6 +887,10 @@ pub fn handle_with_progress(
                 &expected_revision,
             )?)
         }
+        Call::Factory { call } => crate::factory::handle(call, &env.factory, progress),
+        // In a process, a reporting call stops through its reports; there is
+        // no request to cancel.
+        Call::Cancel { .. } => Ok(Value::Null),
     }
 }
 
@@ -767,6 +935,87 @@ mod tests {
         assert_eq!(error.message, "session_kind_unsupported");
     }
 
+    /// A session read names a file the core found in the agents' session
+    /// folders; a path outside them, or a link planted inside one that
+    /// leads out, is refused unread, and a pipe in their place is refused
+    /// at once instead of holding the node.
+    #[cfg(unix)]
+    #[test]
+    fn a_session_read_stays_in_the_session_folders_and_never_waits() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::standalone(Some(home.path().to_path_buf()));
+        let folder = home.path().join(".claude/projects/-project");
+        std::fs::create_dir_all(&folder).unwrap();
+        let session = folder.join("session.jsonl");
+        std::fs::write(&session, "{\"type\":\"user\"}\n").unwrap();
+        let secret = home.path().join("secret.jsonl");
+        std::fs::write(&secret, "secret\n").unwrap();
+        let planted = folder.join("planted.jsonl");
+        std::os::unix::fs::symlink(&secret, &planted).unwrap();
+        let named = |path: &Path| path.to_string_lossy().into_owned();
+        let reads = |path: String| {
+            vec![
+                Call::SessionText { path: path.clone() },
+                Call::SessionStat { path: path.clone() },
+                Call::SessionChunk {
+                    path: path.clone(),
+                    checkpoint: None,
+                },
+                Call::SessionIndexRead {
+                    agent: hide_session::Agent::Claude,
+                    path,
+                    saved: None,
+                },
+            ]
+        };
+
+        for call in reads(named(&session)) {
+            handle_in(call, &env).unwrap();
+        }
+        for (path, code) in [
+            (named(&secret), ErrorCode::OutsideRoot),
+            (named(&planted), ErrorCode::OutsideRoot),
+            ("session.jsonl".to_owned(), ErrorCode::InvalidPath),
+        ] {
+            for call in reads(path.clone()) {
+                let refused = handle_in(call, &env).unwrap_err();
+                assert_eq!(refused.code, code, "{path}");
+            }
+        }
+        let stamps = handle_in(
+            Call::SessionStamps {
+                paths: vec![named(&session), named(&secret), named(&planted)],
+            },
+            &env,
+        )
+        .unwrap();
+        let stamps = stamps.as_array().unwrap();
+        assert!(stamps[0].is_string());
+        assert!(stamps[1].is_null() && stamps[2].is_null());
+
+        let pipe = folder.join("pipe.jsonl");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (sender, answers) = mpsc::channel();
+        std::thread::spawn(move || {
+            for call in reads(named(&pipe)) {
+                if matches!(call, Call::SessionStat { .. }) {
+                    continue;
+                }
+                sender.send(handle_in(call, &env).map(|_| ())).unwrap();
+            }
+        });
+        for _ in 0..3 {
+            let refused = answers
+                .recv_timeout(Duration::from_secs(5))
+                .expect("a pipe read answers at once");
+            assert_eq!(refused.unwrap_err().code, ErrorCode::Io);
+        }
+    }
+
     /// The SSH channel is gone: nothing written reaches anyone.
     struct Closed;
 
@@ -794,5 +1043,206 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("the helper kept running after its channel closed");
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// What the helper writes, kept for the test to read.
+    #[derive(Clone, Default)]
+    struct Kept(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Kept {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Every worker held by a call that reports until stopped: the reader
+    /// still queues, answers past its queue busy, reads each cancel, and
+    /// ends at the end of its input.
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_never_waits_for_a_worker() {
+        use std::os::unix::net::UnixStream;
+        /// Each line the helper writes, as it writes it.
+        struct Lines(mpsc::Sender<Vec<u8>>);
+        impl Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let _ = self.0.send(bytes.to_vec());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let common = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(common.path().join("refs/heads")).unwrap();
+        let line = |id: u64, call: Call| {
+            let mut line = serde_json::to_vec(&Request { id, call }).unwrap();
+            line.push(b'\n');
+            line
+        };
+        let watch = || Call::GitWatch {
+            common_dirs: vec![common.path().to_string_lossy().into_owned()],
+        };
+        let (mut input, theirs) = UnixStream::pair().unwrap();
+        let (written, lines) = mpsc::channel();
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            // A stop of its own: another test's helper ending stops the
+            // process's watches.
+            let env = Env {
+                stop: Arc::default(),
+                ..Env::of_process()
+            };
+            let _ = done.send(serve_in(io::BufReader::new(theirs), Lines(written), env));
+        });
+        let mut text = String::new();
+        let mut next = || {
+            let bytes = lines
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the helper went quiet");
+            text.push_str(std::str::from_utf8(&bytes).unwrap());
+            text.clone()
+        };
+        for id in 1..=CONCURRENCY as u64 {
+            input.write_all(&line(id, watch())).unwrap();
+        }
+        // Every worker holds a watch once each has reported.
+        let mut reported = std::collections::BTreeSet::new();
+        while reported.len() < CONCURRENCY {
+            for progress in next()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Progress>(line).ok())
+            {
+                reported.insert(progress.progress);
+            }
+        }
+        for id in 0..=QUEUED as u64 {
+            input.write_all(&line(100 + id, Call::Hello)).unwrap();
+        }
+        for request in 1..=CONCURRENCY as u64 {
+            input
+                .write_all(&line(200 + request, Call::Cancel { request }))
+                .unwrap();
+        }
+        input.shutdown(std::net::Shutdown::Write).unwrap();
+        let result = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the helper waited behind its workers");
+        assert!(result.is_ok(), "{result:?}");
+        let mut text = String::new();
+        while let Ok(bytes) = lines.try_recv() {
+            text.push_str(std::str::from_utf8(&bytes).unwrap());
+        }
+        let answers: Vec<(u64, Option<ErrorCode>)> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Response>(line).ok())
+            .map(|answer| match answer.outcome {
+                Outcome::Error(error) => (answer.id, Some(error.code)),
+                _ => (answer.id, None),
+            })
+            .collect();
+        let busy = 100 + QUEUED as u64;
+        assert!(
+            answers.contains(&(busy, Some(ErrorCode::Busy))),
+            "{answers:?}"
+        );
+        for id in (1..=CONCURRENCY as u64)
+            .chain(100..busy)
+            .chain(201..=200 + CONCURRENCY as u64)
+        {
+            assert!(
+                answers
+                    .iter()
+                    .any(|(answered, code)| *answered == id && *code != Some(ErrorCode::Busy)),
+                "request {id} was not answered: {answers:?}"
+            );
+        }
+    }
+
+    /// A request whose id is still running is refused, and the running one
+    /// keeps its own cancel.
+    #[cfg(unix)]
+    #[test]
+    fn a_repeated_id_is_refused_and_leaves_the_running_call_alone() {
+        use std::os::unix::net::UnixStream;
+        let common = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(common.path().join("refs/heads")).unwrap();
+        let line = |id: u64, call: Call| {
+            let mut line = serde_json::to_vec(&Request { id, call }).unwrap();
+            line.push(b'\n');
+            line
+        };
+        let watch = || Call::GitWatch {
+            common_dirs: vec![common.path().to_string_lossy().into_owned()],
+        };
+        let (mut input, theirs) = UnixStream::pair().unwrap();
+        let kept = Kept::default();
+        let output = kept.clone();
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            let env = Env {
+                stop: Arc::default(),
+                ..Env::of_process()
+            };
+            let _ = done.send(serve_in(io::BufReader::new(theirs), output, env));
+        });
+        input.write_all(&line(7, watch())).unwrap();
+        input.write_all(&line(7, watch())).unwrap();
+        input
+            .write_all(&line(8, Call::Cancel { request: 7 }))
+            .unwrap();
+        input.shutdown(std::net::Shutdown::Write).unwrap();
+        let result = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the cancelled watch kept the helper running");
+        assert!(result.is_ok(), "{result:?}");
+        let written = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+        let mut answers: Vec<(u64, Option<ErrorCode>)> = written
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Response>(line).ok())
+            .map(|answer| match answer.outcome {
+                Outcome::Error(error) => (answer.id, Some(error.code)),
+                _ => (answer.id, None),
+            })
+            .collect();
+        answers.sort_by_key(|(id, code)| (*id, code.is_none()));
+        assert_eq!(
+            answers,
+            [(7, Some(ErrorCode::InvalidRequest)), (7, None), (8, None)]
+        );
+    }
+
+    /// A device refuses, unrun, what acts with the operator's logins or is
+    /// the Factory's, and still answers its own work on the same channel.
+    #[test]
+    fn a_device_refuses_the_core_machine_s_requests_unrun() {
+        let requests = [
+            r#"{"id":1,"op":"gh","cwd":null,"args":["auth","status"]}"#,
+            r#"{"id":2,"op":"factory","call":{"factory":"hide_program"}}"#,
+            r#"{"id":3,"op":"codex_credentials","codex_home":"/"}"#,
+            r#"{"id":4,"op":"hello"}"#,
+        ];
+        let input = requests.join("\n") + "\n";
+        let kept = Kept::default();
+        serve(io::Cursor::new(input.into_bytes()), kept.clone()).unwrap();
+        let written = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+        let mut answers: Vec<Response> = written
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        answers.sort_by_key(|answer| answer.id);
+        assert_eq!(answers.len(), 4, "{written}");
+        for answer in &answers[..3] {
+            match &answer.outcome {
+                Outcome::Error(error) => assert_eq!(error.code, ErrorCode::Unsupported),
+                other => panic!("request {} was answered: {other:?}", answer.id),
+            }
+        }
+        assert!(matches!(answers[3].outcome, Outcome::Ok(_)));
     }
 }

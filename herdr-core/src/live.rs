@@ -31,7 +31,7 @@ use crate::recent_closed::{
     ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutBranch, ClosedLayoutNode, ClosedPane,
     PanePlacement, resume_arguments,
 };
-use crate::remote::RusshRemoteClient;
+use crate::remote::DeviceTransport;
 use crate::runtime::{LaneStart, PendingPaneFocusControl, Runtime};
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
@@ -83,7 +83,7 @@ pub struct LiveContext {
 #[derive(Clone)]
 pub struct RemoteTerminalContext {
     target_id: String,
-    client: Arc<RusshRemoteClient>,
+    transport: Arc<dyn DeviceTransport>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
@@ -91,13 +91,13 @@ pub struct RemoteTerminalContext {
 impl RemoteTerminalContext {
     pub(crate) fn new(
         target_id: impl Into<String>,
-        client: Arc<RusshRemoteClient>,
+        transport: Arc<dyn DeviceTransport>,
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
     ) -> Self {
         Self {
             target_id: target_id.into(),
-            client,
+            transport,
             runtime,
             notifier,
         }
@@ -235,6 +235,7 @@ pub fn spawn_workspace_creation(
                                     &registration.path,
                                     &registration.label,
                                 ),
+                                true,
                                 Default::default(),
                             )
                             .map_err(|error| error.message().to_owned())
@@ -627,6 +628,7 @@ fn execute_remote_control(
                     workspace_id,
                     cwd,
                     label,
+                    true,
                     local_create_env(*admission_id),
                 )?,
             )?;
@@ -645,6 +647,7 @@ fn execute_remote_control(
                 owner,
                 cwd,
                 label,
+                true,
                 local_create_env(*admission_id),
             )?;
             (Some(tab.tab_id), Some(tab.pane_id))
@@ -710,9 +713,10 @@ pub(crate) fn open_owner_tab(
     owner: &OwnerOpen,
     cwd: &str,
     label: &str,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<OwnedTab, ControlFailure> {
-    let (workspace_id, first_tab) = ensure_owner(connector, owner, env.clone())?;
+    let (workspace_id, first_tab) = ensure_owner(connector, owner, focus, env.clone())?;
     let owned = match first_tab {
         Some((tab_id, pane_id)) => {
             // The owner's first tab is the new tab, so it takes the label the
@@ -739,7 +743,7 @@ pub(crate) fn open_owner_tab(
                 pane_id,
             }
         }
-        None => create_tab_in(connector, &workspace_id, cwd, label, env)?,
+        None => create_tab_in(connector, &workspace_id, cwd, label, focus, env)?,
     };
     crate::diagnostic!(json!({
         "component": "checkout_owner",
@@ -759,6 +763,7 @@ pub(crate) fn open_owner_tab(
 fn ensure_owner(
     connector: &dyn ApiConnector,
     owner: &OwnerOpen,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<(String, Option<(String, String)>), ControlFailure> {
     match owner {
@@ -770,7 +775,7 @@ fn ensure_owner(
             let opened = wire::opened_worktree(mutation_request(
                 connector,
                 "worktree.open",
-                wire::worktree_open_params(path, repository_root)?,
+                wire::worktree_open_params(path, repository_root, focus)?,
             )?)
             .map_err(ControlFailure::Ambiguous)?;
             if opened.already_open {
@@ -822,7 +827,7 @@ fn ensure_owner(
             let created = mutation_request(
                 connector,
                 "workspace.create",
-                wire::workspace_create_with_env_params(path, label, env)?,
+                wire::workspace_create_with_env_params(path, label, focus, env)?,
             )?;
             let (workspace_id, tab_id, pane_id) =
                 wire::created_workspace(created).map_err(ControlFailure::Ambiguous)?;
@@ -851,12 +856,13 @@ fn create_tab_in(
     workspace_id: &str,
     cwd: &str,
     label: &str,
+    focus: bool,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<OwnedTab, ControlFailure> {
     let result = mutation_request(
         connector,
         "tab.create",
-        wire::tab_create_with_env_params(workspace_id, cwd, label, env)?,
+        wire::tab_create_with_env_params(workspace_id, cwd, label, focus, env)?,
     )?;
     let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
     Ok(OwnedTab {
@@ -1647,6 +1653,7 @@ fn ensure_workspace_and_tab(
         let (workspace_id, first_tab) = ensure_owner(
             connector,
             owner,
+            true,
             reopen_intent_env(key, ReopenIntentStage::Workspace),
         )
         .map_err(|failure| failure.message().to_owned())?;
@@ -2130,10 +2137,10 @@ fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> 
     fetch_session_with_connector(connector).is_ok_and(|snapshot| {
         snapshot.agents.iter().any(|agent| {
             agent.pane_id.as_deref() == Some(pane_id)
-                && agent
-                    .agent
-                    .as_deref()
-                    .is_some_and(|agent_kind| agent_kind.eq_ignore_ascii_case(kind))
+                && agent.agent.as_deref().is_some_and(|agent_kind| {
+                    hide_agent_adapter::canonical_kind(agent_kind)
+                        .eq_ignore_ascii_case(hide_agent_adapter::canonical_kind(kind))
+                })
         })
     })
 }
@@ -3512,11 +3519,10 @@ impl TerminalSession {
         rows: u16,
         cols: u16,
     ) -> Result<Self, String> {
-        let process = context
-            .client
+        let (reader, transport_writer, shutdown) = context
+            .transport
             .open_terminal_session(source_pane_id, mode.as_str(), rows, cols)
             .map_err(|error| error.to_string())?;
-        let (reader, transport_writer, shutdown) = process.into_parts();
         let writer = match (mode, transport_writer) {
             (TerminalSessionMode::Control, Some(writer)) => {
                 match spawn_terminal_control_writer(
@@ -4014,6 +4020,80 @@ mod tests {
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
+
+    #[test]
+    fn reopen_canonicalizes_alias_starts_and_confirms_only_the_same_pane_agent() {
+        for (kind, canonical, args) in [
+            (" CLAUDE-CODE ", "claude", vec!["--resume", "session"]),
+            (" CLAUDE ", "claude", vec!["--resume", "session"]),
+            (" CLAUDE_CODE ", "claude", vec!["--resume", "session"]),
+            (" CODEX ", "codex", vec!["resume", "session"]),
+        ] {
+            let herdr = FakeHerdr::start("reopen-alias", move |method, params| match method {
+                "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                    "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                    "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": []
+                }}),
+                "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                    "pane_id": "pane", "shell_pid": 42, "foreground_process_group_id": 42,
+                    "foreground_processes": []
+                }}),
+                "agent.start" => {
+                    assert_eq!(params["kind"], canonical);
+                    assert_eq!(params["args"], json!(args));
+                    json!({"type": "agent_started", "argv": [], "agent": {
+                        "pane_id": "pane", "terminal_id": "term", "workspace_id": "w1",
+                        "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1
+                    }})
+                }
+                other => panic!("unexpected {other}"),
+            });
+            let mut notices = Vec::new();
+            start_or_degrade_agent(
+                &herdr.connector(),
+                "key",
+                0,
+                "pane",
+                &ClosedAgent {
+                    kind: kind.into(),
+                    session_id: Some("session".into()),
+                },
+                crate::codex_launch::CodexDaemon::Unsupported,
+                &mut notices,
+            );
+            assert!(notices.is_empty(), "{kind}: {notices:?}");
+            assert_eq!(
+                herdr.methods(),
+                ["session.snapshot", "pane.process_info", "agent.start"]
+            );
+        }
+        let herdr = FakeHerdr::start("reopen-alias-confirm", |method, _| match method {
+            "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": [{
+                    "pane_id": "pane", "terminal_id": "term", "workspace_id": "w1", "tab_id": "w1:t1",
+                    "name": "agent", "agent": "claude", "agent_status": "idle", "focused": false, "revision": 1
+                }]
+            }}),
+            other => panic!("unexpected {other}"),
+        });
+        assert!(agent_is_running(
+            &herdr.connector(),
+            "pane",
+            " CLAUDE_CODE "
+        ));
+        assert!(!agent_is_running(
+            &herdr.connector(),
+            "other-pane",
+            "claude_code"
+        ));
+        assert!(!agent_is_running(&herdr.connector(), "pane", "codex"));
+        assert!(!agent_is_running(
+            &herdr.connector(),
+            "pane",
+            "future-agent"
+        ));
+    }
 
     #[test]
     fn internal_registration_failure_keeps_the_started_fork() {
@@ -4954,45 +5034,50 @@ mod tests {
 
     #[test]
     fn a_second_request_for_an_open_owner_adds_a_tab_there_instead_of_another_workspace() {
-        let herdr = FakeHerdr::start("owner-already-open", |method, _| match method {
-            "worktree.open" => json!({
-                "type": "worktree_opened",
-                "already_open": true,
-                "workspace": {"workspace_id": "w9", "number": 9, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
-                "worktree": {"path": "/repo", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": false, "label": "hide"},
-                "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
-            }),
-            "tab.create" => json!({
-                "type": "tab_created",
-                "tab": {"tab_id": "w9:t2", "workspace_id": "w9", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w9:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w9", "tab_id": "w9:t2", "focused": true, "agent_status": "idle", "revision": 1}
-            }),
-            other => panic!("unexpected {other}"),
-        });
+        for focus in [true, false] {
+            let herdr = FakeHerdr::start("owner-already-open", |method, _| match method {
+                "worktree.open" => json!({
+                    "type": "worktree_opened",
+                    "already_open": true,
+                    "workspace": {"workspace_id": "w9", "number": 9, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
+                    "worktree": {"path": "/repo", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": false, "label": "hide"},
+                    "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                    "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
+                }),
+                "tab.create" => json!({
+                    "type": "tab_created",
+                    "tab": {"tab_id": "w9:t2", "workspace_id": "w9", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                    "root_pane": {"pane_id": "w9:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w9", "tab_id": "w9:t2", "focused": true, "agent_status": "idle", "revision": 1}
+                }),
+                other => panic!("unexpected {other}"),
+            });
 
-        let tab = open_owner_tab(
-            &herdr.connector(),
-            &OwnerOpen::Worktree {
-                path: "/repo".to_owned(),
-                repository_root: "/repo".to_owned(),
-                label: "hide".to_owned(),
-            },
-            "/repo",
-            "Tab 2",
-            Default::default(),
-        )
-        .expect("owner tab");
+            let tab = open_owner_tab(
+                &herdr.connector(),
+                &OwnerOpen::Worktree {
+                    path: "/repo".to_owned(),
+                    repository_root: "/repo".to_owned(),
+                    label: "hide".to_owned(),
+                },
+                "/repo",
+                "Tab 2",
+                focus,
+                Default::default(),
+            )
+            .expect("owner tab");
 
-        assert_eq!(
-            tab,
-            OwnedTab {
-                workspace_id: "w9".to_owned(),
-                tab_id: "w9:t2".to_owned(),
-                pane_id: "w9:p2".to_owned(),
-            }
-        );
-        assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);
+            assert_eq!(
+                tab,
+                OwnedTab {
+                    workspace_id: "w9".to_owned(),
+                    tab_id: "w9:t2".to_owned(),
+                    pane_id: "w9:p2".to_owned(),
+                }
+            );
+            assert_eq!(herdr.methods(), ["worktree.open", "tab.create"]);
+            assert_eq!(herdr.calls()[0].1["focus"], focus);
+            assert_eq!(herdr.calls()[1].1["focus"], focus);
+        }
     }
 
     #[test]
@@ -5011,6 +5096,7 @@ mod tests {
             },
             "/gone",
             "Tab 1",
+            true,
             Default::default(),
         )
         .expect_err("a refused open fails");
@@ -5022,88 +5108,94 @@ mod tests {
 
     #[test]
     fn a_plain_folder_reuses_its_marked_owner_and_marks_a_new_one_only_when_none_is_live() {
-        let mark = crate::checkout_owner::owner_mark(crate::node::TEST_NODE, "/notes");
-        let listed_mark = mark.clone();
-        let marked = Arc::new(Mutex::new(false));
-        let marked_in_server = marked.clone();
-        let herdr = FakeHerdr::start("owner-folder", move |method, params| match method {
-            "workspace.list" => {
-                let tokens = if *marked_in_server.lock().unwrap() {
-                    json!({"hide_owner": listed_mark})
-                } else {
-                    json!({})
-                };
-                json!({"type": "workspace_list", "workspaces": [
-                    {"workspace_id": "w1", "number": 1, "label": "other", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
-                    {"workspace_id": "w4", "number": 4, "label": "notes", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w4:t1", "agent_status": "idle", "tokens": tokens}
-                ]})
-            }
-            "workspace.create" => json!({
-                "type": "workspace_created",
-                "workspace": {"workspace_id": "w4", "number": 4, "label": "notes", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w4:t1", "agent_status": "idle"},
-                "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w4:p1", "terminal_id": "fixture-terminal", "workspace_id": "w4", "tab_id": "w4:t1", "focused": true, "agent_status": "idle", "revision": 1}
-            }),
-            "workspace.report_metadata" => {
-                assert_eq!(params["tokens"]["hide_owner"], json!(listed_mark));
-                *marked_in_server.lock().unwrap() = true;
-                json!({"type": "ok"})
-            }
-            "tab.rename" => json!({
-                "type": "tab_info",
-                "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "Tab 1", "focused": true, "pane_count": 1, "agent_status": "idle"}
-            }),
-            "tab.create" => json!({
-                "type": "tab_created",
-                "tab": {"tab_id": "w4:t2", "workspace_id": "w4", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w4:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w4", "tab_id": "w4:t2", "focused": true, "agent_status": "idle", "revision": 1}
-            }),
-            other => panic!("unexpected {other}"),
-        });
-        let owner = OwnerOpen::Folder {
-            path: "/notes".to_owned(),
-            label: "notes".to_owned(),
-            mark,
-            legacy_mark: None,
-        };
+        for focus in [true, false] {
+            let mark = crate::checkout_owner::owner_mark(crate::node::TEST_NODE, "/notes");
+            let listed_mark = mark.clone();
+            let marked = Arc::new(Mutex::new(false));
+            let marked_in_server = marked.clone();
+            let herdr = FakeHerdr::start("owner-folder", move |method, params| match method {
+                "workspace.list" => {
+                    let tokens = if *marked_in_server.lock().unwrap() {
+                        json!({"hide_owner": listed_mark})
+                    } else {
+                        json!({})
+                    };
+                    json!({"type": "workspace_list", "workspaces": [
+                        {"workspace_id": "w1", "number": 1, "label": "other", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
+                        {"workspace_id": "w4", "number": 4, "label": "notes", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w4:t1", "agent_status": "idle", "tokens": tokens}
+                    ]})
+                }
+                "workspace.create" => json!({
+                    "type": "workspace_created",
+                    "workspace": {"workspace_id": "w4", "number": 4, "label": "notes", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w4:t1", "agent_status": "idle"},
+                    "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                    "root_pane": {"pane_id": "w4:p1", "terminal_id": "fixture-terminal", "workspace_id": "w4", "tab_id": "w4:t1", "focused": true, "agent_status": "idle", "revision": 1}
+                }),
+                "workspace.report_metadata" => {
+                    assert_eq!(params["tokens"]["hide_owner"], json!(listed_mark));
+                    *marked_in_server.lock().unwrap() = true;
+                    json!({"type": "ok"})
+                }
+                "tab.rename" => json!({
+                    "type": "tab_info",
+                    "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "Tab 1", "focused": true, "pane_count": 1, "agent_status": "idle"}
+                }),
+                "tab.create" => json!({
+                    "type": "tab_created",
+                    "tab": {"tab_id": "w4:t2", "workspace_id": "w4", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                    "root_pane": {"pane_id": "w4:p2", "terminal_id": "fixture-terminal-2", "workspace_id": "w4", "tab_id": "w4:t2", "focused": true, "agent_status": "idle", "revision": 1}
+                }),
+                other => panic!("unexpected {other}"),
+            });
+            let owner = OwnerOpen::Folder {
+                path: "/notes".to_owned(),
+                label: "notes".to_owned(),
+                mark,
+                legacy_mark: None,
+            };
 
-        let first = open_owner_tab(
-            &herdr.connector(),
-            &owner,
-            "/notes",
-            "Tab 1",
-            Default::default(),
-        )
-        .expect("first tab");
-        let second = open_owner_tab(
-            &herdr.connector(),
-            &owner,
-            "/notes",
-            "Tab 2",
-            Default::default(),
-        )
-        .expect("second tab");
+            let first = open_owner_tab(
+                &herdr.connector(),
+                &owner,
+                "/notes",
+                "Tab 1",
+                focus,
+                Default::default(),
+            )
+            .expect("first tab");
+            let second = open_owner_tab(
+                &herdr.connector(),
+                &owner,
+                "/notes",
+                "Tab 2",
+                focus,
+                Default::default(),
+            )
+            .expect("second tab");
 
-        assert_eq!(
-            (first.workspace_id.as_str(), first.tab_id.as_str()),
-            ("w4", "w4:t1")
-        );
-        assert_eq!(
-            (second.workspace_id.as_str(), second.tab_id.as_str()),
-            ("w4", "w4:t2")
-        );
-        assert!(*marked.lock().unwrap());
-        assert_eq!(
-            herdr.methods(),
-            [
-                "workspace.list",
-                "workspace.create",
-                "workspace.report_metadata",
-                "tab.rename",
-                "workspace.list",
-                "tab.create"
-            ]
-        );
+            assert_eq!(
+                (first.workspace_id.as_str(), first.tab_id.as_str()),
+                ("w4", "w4:t1")
+            );
+            assert_eq!(
+                (second.workspace_id.as_str(), second.tab_id.as_str()),
+                ("w4", "w4:t2")
+            );
+            assert!(*marked.lock().unwrap());
+            assert_eq!(herdr.calls()[1].1["focus"], focus);
+            assert_eq!(herdr.calls()[5].1["focus"], focus);
+            assert_eq!(
+                herdr.methods(),
+                [
+                    "workspace.list",
+                    "workspace.create",
+                    "workspace.report_metadata",
+                    "tab.rename",
+                    "workspace.list",
+                    "tab.create"
+                ]
+            );
+        }
     }
 
     #[test]
@@ -5347,17 +5439,15 @@ mod tests {
         );
 
         let home = std::env::var_os("HOME").expect("HOME is configured");
-        let alias = crate::remote::SshAlias::from_config_file(
-            &std::path::PathBuf::from(home).join(".ssh/config"),
-            &alias_name,
-        )
-        .expect("SSH alias resolves");
-        let client =
-            crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
-        let connector = client.herdr_api_connector();
+        use crate::remote::DeviceConnector as _;
+        let connector = hide_node::ssh::Connector::new(None)
+            .transport(std::path::Path::new(&home), "probe", &alias_name, None)
+            .expect("SSH alias resolves")
+            .herdr_api_connector();
+        let connector = &*connector;
 
         let response = request_with_connector(
-            &connector,
+            connector,
             "session.snapshot",
             json!({}),
             Duration::from_secs(5),
@@ -5392,14 +5482,14 @@ mod tests {
             .to_owned();
 
         execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::FocusWorkspace {
                 workspace_id: workspace_id.clone(),
             },
         )
         .expect("focus owned fixture workspace");
         execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::FocusTab {
                 tab_id: original_tab_id,
             },
@@ -5410,7 +5500,7 @@ mod tests {
             created_tab_id: Some(created_tab_id),
             created_pane_id: Some(created_root_pane_id),
         } = execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::CreateTab {
                 workspace_id: workspace_id.clone(),
                 cwd: cwd.clone(),
@@ -5428,7 +5518,7 @@ mod tests {
             created_tab_id: None,
             created_pane_id: Some(created_split_pane_id),
         } = execute_remote_control(
-            &connector,
+            connector,
             &RemoteControlAction::Pane(PaneControlAction::Split {
                 pane_id: created_root_pane_id.clone(),
                 direction: PaneSplitDirection::Right,
@@ -5454,11 +5544,11 @@ mod tests {
                 pane_id: created_split_pane_id.clone(),
             }),
         ] {
-            execute_remote_control(&connector, &action).expect("mutate only the fixture pane");
+            execute_remote_control(connector, &action).expect("mutate only the fixture pane");
         }
 
         remote_snapshot_until(
-            &connector,
+            connector,
             "authoritative snapshot did not converge after remote controls",
             |snapshot| {
                 let created_tab_visible = snapshot["tabs"].as_array().is_some_and(|tabs| {

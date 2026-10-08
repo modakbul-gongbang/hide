@@ -9,8 +9,8 @@
 //! conversation in Herdr's history, and Hide's find bar searches that, so the
 //! decision also asks Herdr whether it holds any (`live::spawn_agent_find`).
 //!
-//! Adding an agent is one row in [`agent_find`]; an agent without one keeps
-//! Hide's find bar.
+//! The shared adapter selects a find dialect; this module owns its keys.
+//! An agent without one keeps Hide's find bar.
 
 /// How one agent's own search is opened, in Herdr's key names for
 /// `pane.send_keys`. Every key is a mode switch in the agent: none of them
@@ -39,10 +39,10 @@ pub(crate) struct AlreadyOpen {
 /// `agent_kind`'s own search over its conversation, or `None` for an agent
 /// Hide knows no such search for.
 pub(crate) fn agent_find(agent_kind: &str) -> Option<AgentFind> {
-    match agent_kind {
+    match hide_agent_adapter::adapter(agent_kind)?.find? {
         // Ctrl+O toggles the transcript, where `/` searches, `n` and `N` step
         // and the footer counts (Claude Code 2.1, fullscreen renderer).
-        "claude" => Some(AgentFind {
+        hide_agent_adapter::FindDialect::ClaudeTranscript => Some(AgentFind {
             open: &["ctrl+o", "/"],
             already_open: Some(AlreadyOpen {
                 footer: "Showing detailed transcript",
@@ -51,11 +51,10 @@ pub(crate) fn agent_find(agent_kind: &str) -> Option<AgentFind> {
         }),
         // F3 finds over the full transcript and stays open when pressed
         // again; Enter steps and Ctrl+P goes back (Codex 0.157).
-        "codex" => Some(AgentFind {
+        hide_agent_adapter::FindDialect::CodexTranscript => Some(AgentFind {
             open: &["f3"],
             already_open: None,
         }),
-        _ => None,
     }
 }
 

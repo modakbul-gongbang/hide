@@ -8,7 +8,7 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { deviceLabel, failureKey, foldLines, resumable, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
+import { deviceLabel, failureKey, foldLines, resumeProvider, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
 import { allAgents } from "./navigation";
 import { catalogWorkspaces, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
 import { startAnswer, startRequestId } from "./startAnswer";
@@ -157,8 +157,9 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   const asked = live?.kind === "question" ? rowLine(live.agent)?.text : null;
   const view = () => actions.openOverview(project.device_id, project.id, { session: { id: line.id, request: line.request } });
   const resumeLine = () => {
-    if (!checkout || !resumable(line.agent)) return;
-    start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === node ? undefined : line.device_id, provider: line.agent as "claude" | "codex", resumeSessionId: line.id, requestId }));
+    const provider = resumeProvider(line.agent);
+    if (!checkout || !provider) return;
+    start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === node ? undefined : line.device_id, provider, resumeSessionId: line.id, requestId }));
   };
   const request = line.request ?? t("links.noRequest");
   return (

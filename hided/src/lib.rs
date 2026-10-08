@@ -18,9 +18,10 @@ pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;
+pub mod node_cli;
 
+pub mod node_panes;
 pub mod pane_auth;
-pub mod remote_bridge;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -91,7 +92,6 @@ pub struct RunningDaemon {
     pane_capabilities: Arc<pane_auth::Registry>,
     pane_bootstrap_socket: std::path::PathBuf,
     pane_bootstrap_record: std::path::PathBuf,
-    remote_bridges: Arc<remote_bridge::Supervisor>,
     pub mobile: Arc<mobile::Mobile>,
     /// Ended on drop, before the instance lock is released: the core's last
     /// layout and state saves are on disk before another daemon can start,
@@ -109,7 +109,6 @@ impl RunningDaemon {
     }
 
     pub fn stop(&self) {
-        self.remote_bridges.stop_all();
         self.pane_capabilities.revoke_all();
         self.remove_bootstrap_socket();
         self.shutdown.notify_waiters();
@@ -118,7 +117,6 @@ impl RunningDaemon {
 
 impl Drop for RunningDaemon {
     fn drop(&mut self) {
-        self.remote_bridges.stop_all();
         self.shutdown.notify_waiters();
         self.pane_capabilities.revoke_all();
         self.remove_bootstrap_socket();
@@ -289,10 +287,6 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .as_ref()
             .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
-        // The device helper packages ship beside this binary.
-        host_helper_dir: std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
         host_helper_root: env.host_helper_root.clone(),
         host_cli_dir: env.host_cli_dir.clone(),
         // The web shell draws separate Agent and View areas; each
@@ -321,17 +315,16 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         ),
     };
     let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);
-    let core = Arc::new(CoreHandle::spawn(options)?);
+    // Each device link's pane traffic goes here from the start; answered
+    // once the server's state exists, below.
+    let node_panes = Arc::new(node_panes::NodePanes::new(tokio::runtime::Handle::current()));
+    let pane_events: hide_node::ssh::PaneEventsSlot = Default::default();
+    let _ = pane_events.set(Arc::new(node_panes::Events(Arc::clone(&node_panes))));
+    let core = Arc::new(CoreHandle::spawn(options, pane_events)?);
     // After the core installed the diagnostic log beside its state.
     #[cfg(unix)]
     state_move::log_left_behind(env.legacy_state_dir.as_deref(), &env.state_dir);
     let pane_capabilities = Arc::new(pane_auth::Registry::new(&env.state_dir)?);
-    let remote_bridges = remote_bridge::Supervisor::spawn(
-        Arc::clone(&core),
-        Arc::clone(&pane_capabilities),
-        port,
-        env.workspace_bridge_dir.clone(),
-    );
     let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
     let watch = Arc::new(watch::WatchService::new(Arc::clone(&core)));
     let index = Arc::new(IndexService::new());
@@ -418,6 +411,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         })),
         mobile: Arc::clone(&mobile),
     };
+    node_panes.serve(app.clone());
     let env_state_dir = env.state_dir.clone();
     // Seeded before the server accepts a client with the registrations the
     // core loaded in `CoreHandle::spawn`. A checkout the core learns later,
@@ -454,7 +448,6 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         pane_capabilities,
         pane_bootstrap_socket,
         pane_bootstrap_record: pane_auth::bootstrap_socket_record(&env.state_dir),
-        remote_bridges,
         mobile,
         core,
     })

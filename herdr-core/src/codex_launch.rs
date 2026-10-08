@@ -54,7 +54,9 @@ pub(crate) fn start_arguments(
     daemon: CodexDaemon,
     args: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    if !kind.eq_ignore_ascii_case("codex") {
+    if hide_agent_adapter::adapter(kind).and_then(|row| row.start)
+        != Some(hide_agent_adapter::LaunchDialect::Codex)
+    {
         return Ok(args);
     }
     match daemon {

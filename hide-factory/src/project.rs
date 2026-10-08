@@ -11,13 +11,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use hide_node_link::LinkError;
+use hide_node_link::cleanup::PathState;
+use hide_node_link::factory::{
+    FactoryCall, FactoryGh, FactoryGit, GhMergeMethod, PrFindFields, ProjectFiles, VerifyJob,
+    VerifyOutcome, VerifyStep,
+};
+use hide_node_link::protocol::Call;
 use serde_json::Value;
 
 use crate::adapters::*;
 use crate::engine::{MERGE_COMMIT_AGAIN_MS, task_marker};
-use crate::exec::{Runner, checked, classify};
+use crate::exec::{Machine, checked, classify, read_run};
 use crate::model::*;
-use crate::verify::{Job, Prepare, VerifyRunner};
 
 /// Local issues (`L-<n>`) for a project without GitHub, owned by the core.
 pub trait IssueBook: Send {
@@ -32,14 +38,18 @@ pub trait IssueBook: Send {
     fn read(&mut self, project: &str, number: u32) -> Result<IssueText, Failure>;
 }
 
-pub const LABEL: &str = "factory";
+pub const LABEL: &str = hide_node_link::factory::LABEL;
+/// The most output a running verify bundle may write before it is ended;
+/// the node keeps only the end of its log (rule 15).
+pub const RUN_OUTPUT_LIMIT: u64 = 256 * 1024 * 1024;
 /// The check name a Factory without its own CI uses in [`MainCheck`].
 const MAIN_WORKTREE: &str = "factory-main";
 
 pub struct Projects {
-    pub runner: Box<dyn Runner>,
+    pub machine: Machine,
     pub issues: Box<dyn IssueBook>,
-    pub verify: VerifyRunner,
+    /// The folder the node writes verify logs in.
+    logs: PathBuf,
     /// Issue bodies already seen, to tell an edit from the first read.
     bodies: BTreeMap<(String, u64), String>,
     /// When each commit's checks last answered Pending: they are asked again
@@ -65,11 +75,11 @@ const CI_PENDING_LIMIT: usize = 256;
 pub struct SharedProjects(pub Arc<Mutex<Projects>>);
 
 impl SharedProjects {
-    pub fn new(runner: Box<dyn Runner>, issues: Box<dyn IssueBook>, logs: PathBuf) -> Self {
+    pub fn new(machine: Machine, issues: Box<dyn IssueBook>, logs: PathBuf) -> Self {
         Self(Arc::new(Mutex::new(Projects {
-            runner,
+            machine,
             issues,
-            verify: VerifyRunner::new(logs),
+            logs,
             bodies: BTreeMap::new(),
             ci_pending: BTreeMap::new(),
             ci_poll_every: CI_POLL_EVERY,
@@ -89,14 +99,31 @@ impl SharedProjects {
     }
 }
 
-/// The runtimes a worker can start with here, in the order D-45 prefers.
-fn installed_runtimes() -> Vec<Runtime> {
-    let Ok(path) = hide_platform::host::login_path() else {
-        return Vec::new();
-    };
+impl Drop for Projects {
+    /// The engine is closing: the verify runs it asked for end with it
+    /// (engineering rule 14).
+    fn drop(&mut self) {
+        let _ = self
+            .machine
+            .call::<()>("verify.close", FactoryCall::VerifyClose);
+    }
+}
+
+/// The runtimes a worker can start with on the node, in the order D-45
+/// prefers; one the node cannot answer for is left out.
+fn installed_runtimes(machine: &Machine) -> Vec<Runtime> {
     [Runtime::Claude, Runtime::Codex]
         .into_iter()
-        .filter(|runtime| hide_platform::host::find_program(&path, runtime.as_str()).is_some())
+        .filter(|runtime| {
+            machine
+                .node_call::<bool>(
+                    "probe",
+                    Call::AgentInstalled {
+                        name: runtime.as_str().to_owned(),
+                    },
+                )
+                .unwrap_or(false)
+        })
         .collect()
 }
 
@@ -146,36 +173,28 @@ pub fn main_worktree(factory: &Factory) -> PathBuf {
 }
 
 impl Projects {
-    fn git(&mut self, stage: &str, cwd: &Path, args: &[&str]) -> Result<String, Failure> {
-        checked(self.runner.as_mut(), stage, "git", args, Some(cwd))
+    fn git(&mut self, stage: &str, cwd: &Path, command: FactoryGit) -> Result<String, Failure> {
+        checked(stage, self.machine.git(cwd, command))
     }
 
-    fn gh(&mut self, stage: &str, args: &[&str]) -> Result<String, Failure> {
-        checked(self.runner.as_mut(), stage, "gh", args, None)
+    fn gh(&mut self, stage: &str, command: FactoryGh) -> Result<String, Failure> {
+        checked(stage, self.machine.gh(command))
     }
 
     /// The primary checkout is off the default branch or has uncommitted
     /// tracked changes: nothing merges into it then.
     fn main_dirty(&mut self, factory: &Factory) -> Result<bool, Failure> {
         let project = PathBuf::from(&factory.project);
-        let branch = self.git(
-            "git.status",
-            &project,
-            &["rev-parse", "--abbrev-ref", "HEAD"],
-        )?;
+        let branch = self.git("git.status", &project, FactoryGit::AbbrevHead)?;
         if branch.trim() != factory.default_branch {
             return Ok(true);
         }
-        let status = self.git(
-            "git.status",
-            &project,
-            &["status", "--porcelain", "--untracked-files=no"],
-        )?;
+        let status = self.git("git.status", &project, FactoryGit::TrackedStatus)?;
         Ok(!status.trim().is_empty())
     }
 
-    fn gh_json(&mut self, stage: &str, args: &[&str]) -> Result<Value, Failure> {
-        let text = self.gh(stage, args)?;
+    fn gh_json(&mut self, stage: &str, command: FactoryGh) -> Result<Value, Failure> {
+        let text = self.gh(stage, command)?;
         serde_json::from_str(&text)
             .map_err(|error| Failure::task(stage, format!("gh answered no JSON: {error}")))
     }
@@ -189,7 +208,9 @@ impl Projects {
                 self.git(
                     "git.fetch",
                     &project,
-                    &["fetch", "--quiet", "origin", &factory.default_branch],
+                    FactoryGit::Fetch {
+                        branch: factory.default_branch.clone(),
+                    },
                 )?;
                 Ok(format!("origin/{}", factory.default_branch))
             }
@@ -198,19 +219,22 @@ impl Projects {
 
     fn ensure_main_worktree(&mut self, factory: &Factory) -> Result<PathBuf, Failure> {
         let path = main_worktree(factory);
-        if !path.join(".git").exists() {
+        let marker = path.join(".git").to_string_lossy().into_owned();
+        let states: Vec<PathState> = self.machine.node_call(
+            "git.worktree",
+            Call::RealPaths {
+                paths: vec![marker],
+            },
+        )?;
+        if !matches!(states.first(), Some(PathState::Real { .. })) {
             let project = PathBuf::from(&factory.project);
-            let text = path.display().to_string();
             self.git(
                 "git.worktree",
                 &project,
-                &[
-                    "worktree",
-                    "add",
-                    "--detach",
-                    &text,
-                    &factory.default_branch,
-                ],
+                FactoryGit::WorktreeAdd {
+                    path: path.to_string_lossy().into_owned(),
+                    branch: factory.default_branch.clone(),
+                },
             )?;
         }
         Ok(path)
@@ -221,23 +245,60 @@ impl Projects {
             return Ok(());
         };
         let path = self.ensure_main_worktree(factory)?;
-        self.verify.submit(Job {
+        let cwd = path.to_string_lossy().into_owned();
+        let commands = commands.clone();
+        self.submit(VerifyJob {
             id: id.to_owned(),
-            cwd: path.clone(),
-            commands: commands.clone(),
-            prepare: vec![Prepare {
-                program: "git".into(),
-                args: vec![
-                    "checkout".into(),
-                    "--quiet".into(),
-                    "--detach".into(),
-                    sha.into(),
-                ],
-                cwd: path,
+            logs: String::new(),
+            cwd: cwd.clone(),
+            commands,
+            prepare: vec![VerifyStep {
+                cwd,
+                command: FactoryGit::CheckoutDetached {
+                    revision: sha.to_owned(),
+                },
             }],
-            timeout: Duration::from_millis(factory.config.verify_timeout_ms),
-            output_limit: crate::verify::RUN_OUTPUT_LIMIT,
+            timeout_ms: factory.config.verify_timeout_ms,
+            output_limit: RUN_OUTPUT_LIMIT,
         })
+        .map(|_| ())
+    }
+
+    /// Queues a run on the node, its log in the Factory's log folder, and
+    /// answers the log's path.
+    fn submit(&mut self, mut job: VerifyJob) -> Result<String, Failure> {
+        job.logs = self.logs.to_string_lossy().into_owned();
+        self.machine
+            .call("verify", FactoryCall::VerifySubmit { job })
+    }
+
+    fn known(&mut self, id: &str) -> Result<bool, Failure> {
+        self.machine
+            .call("verify", FactoryCall::VerifyKnown { id: id.to_owned() })
+    }
+
+    fn forget(&mut self, id: &str) -> Result<(), Failure> {
+        self.machine
+            .call("verify", FactoryCall::VerifyForget { id: id.to_owned() })
+    }
+
+    /// Where the node's run of `id` stands, read for what it means here.
+    fn verify_poll(&mut self, id: &str) -> VerifyPoll {
+        match self
+            .machine
+            .read(FactoryCall::VerifyPoll { id: id.to_owned() })
+        {
+            Ok(outcome) => read_outcome(outcome),
+            // The link failed, not the run: a poll is a read, and the next
+            // one asks again.
+            Err(LinkError::Busy | LinkError::NotConnected(_) | LinkError::Unknown(_)) => {
+                VerifyPoll::Pending
+            }
+            Err(refused @ LinkError::Refused(_)) => VerifyPoll::Failed {
+                check: "verify".into(),
+                link: refused.to_string(),
+            },
+        }
     }
 
     fn main_result(
@@ -246,10 +307,10 @@ impl Projects {
         id: &str,
         sha: &str,
     ) -> Result<MainCheck, Failure> {
-        if !self.verify.known(id) {
+        if !self.known(id)? {
             self.main_job(factory, id, sha)?;
         }
-        Ok(match self.verify.poll(self.runner.as_mut(), id) {
+        Ok(match self.verify_poll(id) {
             VerifyPoll::Pending => MainCheck::Pending,
             VerifyPoll::Passed => MainCheck::Green,
             VerifyPoll::Failed { check, link } => MainCheck::Red {
@@ -257,7 +318,7 @@ impl Projects {
             },
             VerifyPoll::Environment { check, .. } => {
                 // The environment's failure says nothing about main: ask again.
-                self.verify.forget(id);
+                self.forget(id)?;
                 let _ = check;
                 MainCheck::Pending
             }
@@ -294,8 +355,13 @@ impl Projects {
 
     fn read_checks(&mut self, factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
         let repo = repo(factory)?;
-        let path = format!("repos/{repo}/commits/{sha}/check-runs?per_page=100");
-        let value = self.gh_json("github.checks", &["api", &path])?;
+        let value = self.gh_json(
+            "github.checks",
+            FactoryGh::CheckRuns {
+                repo,
+                sha: sha.to_owned(),
+            },
+        )?;
         let required = match &factory.config.verification {
             Verification::Ci { checks } => checks.clone(),
             _ => Vec::new(),
@@ -350,26 +416,20 @@ impl Projects {
     fn head_sha(&mut self, task: &Task) -> Result<String, Failure> {
         let path = worktree(task)?;
         Ok(self
-            .git("git.head", &path, &["rev-parse", "HEAD"])?
+            .git(
+                "git.head",
+                &path,
+                FactoryGit::RevParse {
+                    revision: "HEAD".into(),
+                },
+            )?
             .trim()
             .to_owned())
     }
 
     fn pr_view(&mut self, factory: &Factory, number: u64) -> Result<Value, Failure> {
         let repo = repo(factory)?;
-        let number = number.to_string();
-        self.gh_json(
-            "github.pr_view",
-            &[
-                "pr",
-                "view",
-                &number,
-                "--repo",
-                &repo,
-                "--json",
-                "number,url,state,headRefName,headRefOid,mergeCommit",
-            ],
-        )
+        self.gh_json("github.pr_view", FactoryGh::PrView { repo, number })
     }
 }
 
@@ -384,34 +444,60 @@ fn verify_id(task: &Task, stage: &str) -> String {
 }
 
 impl TaskSource for SharedProjects {
+    fn repo_context(&mut self, project: &str) -> RepoContext {
+        self.project_context(project)
+    }
+
+    fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String> {
+        use base64::Engine as _;
+        let encoded: String = self
+            .lock()
+            .machine
+            .call(
+                "attachment",
+                FactoryCall::ReadPrd {
+                    path: path.to_owned(),
+                },
+            )
+            .map_err(|failure| failure.detail)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| error.to_string())
+    }
+
     fn probe(&mut self, project: &str) -> Result<ProjectProbe, Failure> {
         let mut this = self.lock();
         let path = PathBuf::from(project);
-        this.git("probe", &path, &["rev-parse", "--show-toplevel"])?;
+        this.git("probe", &path, FactoryGit::ShowToplevel)?;
         let branch = this
-            .git("probe", &path, &["rev-parse", "--abbrev-ref", "HEAD"])?
+            .git("probe", &path, FactoryGit::AbbrevHead)?
             .trim()
             .to_owned();
-        let remote = checked(
-            this.runner.as_mut(),
+        let remote =
+            checked("probe", this.machine.git(&path, FactoryGit::OriginUrl)).unwrap_or_default();
+        let files: ProjectFiles = this.machine.call(
             "probe",
-            "git",
-            &["remote", "get-url", "origin"],
-            Some(&path),
-        )
-        .unwrap_or_default();
+            FactoryCall::Project {
+                path: project.to_owned(),
+            },
+        )?;
         let mut probe = ProjectProbe {
             default_branch: branch,
-            verify_candidates: verify_candidates(&path),
-            runtimes: installed_runtimes(),
+            verify_candidates: verify_candidates(&files),
+            runtimes: installed_runtimes(&this.machine),
             ..ProjectProbe::default()
         };
         if remote.contains("github.com") {
-            let view = this.gh_json("probe", &["repo", "view", remote.trim(), "--json", "nameWithOwner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"])?;
+            let view = this.gh_json(
+                "probe",
+                FactoryGh::RepoView {
+                    remote: remote.trim().to_owned(),
+                },
+            )?;
             probe.github = true;
             probe.repo = view["nameWithOwner"].as_str().map(str::to_owned);
             // The login every GitHub read and write runs as (D-62).
-            probe.account = this.gh_json("probe", &["api", "user"])?["login"]
+            probe.account = this.gh_json("probe", FactoryGh::User)?["login"]
                 .as_str()
                 .map(str::to_owned);
             if let Some(branch) = view["defaultBranchRef"]["name"].as_str() {
@@ -427,12 +513,10 @@ impl TaskSource for SharedProjects {
                 }
             }
             let repo = probe.repo.clone().unwrap_or_default();
-            let path = format!(
-                "repos/{repo}/branches/{}/protection/required_status_checks",
-                probe.default_branch
-            );
-            let args: Vec<String> = ["api", &path].iter().map(|a| (*a).to_owned()).collect();
-            let answer = this.runner.run("gh", &args, None)?;
+            let answer = this.machine.gh(FactoryGh::RequiredChecks {
+                repo,
+                branch: probe.default_branch.clone(),
+            })?;
             if answer.ok() {
                 let value: Value = serde_json::from_str(&answer.stdout).unwrap_or_default();
                 probe.required_checks = value["contexts"]
@@ -454,21 +538,8 @@ impl TaskSource for SharedProjects {
             return Ok(());
         }
         let repo = write_repo(factory)?;
-        self.lock().gh(
-            "github.label",
-            &[
-                "label",
-                "create",
-                LABEL,
-                "--repo",
-                &repo,
-                "--force",
-                "--color",
-                "5319e7",
-                "--description",
-                "Software Factory Task",
-            ],
-        )?;
+        self.lock()
+            .gh("github.label", FactoryGh::LabelCreate { repo })?;
         Ok(())
     }
 
@@ -489,21 +560,12 @@ impl TaskSource for SharedProjects {
             }
             SourceKind::Github => {
                 let repo = write_repo(factory)?;
-                let search = format!("\"{marker}\" in:body");
                 let found = this.gh_json(
                     "github.issue_find",
-                    &[
-                        "issue",
-                        "list",
-                        "--repo",
-                        &repo,
-                        "--state",
-                        "all",
-                        "--search",
-                        &search,
-                        "--json",
-                        "number,body",
-                    ],
+                    FactoryGh::IssueFind {
+                        repo: repo.clone(),
+                        marker: marker.clone(),
+                    },
                 )?;
                 if let Some(number) = found
                     .as_array()
@@ -516,18 +578,11 @@ impl TaskSource for SharedProjects {
                 }
                 let url = this.gh(
                     "github.issue_create",
-                    &[
-                        "issue",
-                        "create",
-                        "--repo",
-                        &repo,
-                        "--title",
-                        &task.card.title,
-                        "--body",
-                        body,
-                        "--label",
-                        LABEL,
-                    ],
+                    FactoryGh::IssueCreate {
+                        repo,
+                        title: task.card.title.clone(),
+                        body: body.to_owned(),
+                    },
                 )?;
                 number_from_url(&url)
                     .map(|number| IssueRef::Github { number })
@@ -541,18 +596,12 @@ impl TaskSource for SharedProjects {
             return Ok(());
         };
         let repo = write_repo(factory)?;
-        let number = number.to_string();
         self.lock().gh(
             "github.label_issue",
-            &[
-                "issue",
-                "edit",
-                &number,
-                "--repo",
-                &repo,
-                "--add-label",
-                LABEL,
-            ],
+            FactoryGh::IssueLabel {
+                repo,
+                number: *number,
+            },
         )?;
         Ok(())
     }
@@ -563,18 +612,12 @@ impl TaskSource for SharedProjects {
             IssueRef::Local { number } => this.issues.read(&factory.project, *number),
             IssueRef::Github { number } => {
                 let repo = repo(factory)?;
-                let number = number.to_string();
                 let value = this.gh_json(
                     "github.issue_view",
-                    &[
-                        "issue",
-                        "view",
-                        &number,
-                        "--repo",
-                        &repo,
-                        "--json",
-                        "title,body,state",
-                    ],
+                    FactoryGh::IssueView {
+                        repo,
+                        number: *number,
+                    },
                 )?;
                 Ok(IssueText {
                     title: value["title"].as_str().unwrap_or_default().to_owned(),
@@ -613,35 +656,11 @@ impl TaskSource for SharedProjects {
         let repo = repo(factory)?;
         let issues = this.gh_json(
             "github.observe",
-            &[
-                "issue",
-                "list",
-                "--repo",
-                &repo,
-                "--label",
-                LABEL,
-                "--state",
-                "all",
-                "--limit",
-                "200",
-                "--json",
-                "number,title,body,state",
-            ],
+            FactoryGh::LabelledIssues { repo: repo.clone() },
         )?;
         let prs = this.gh_json(
             "github.observe",
-            &[
-                "pr",
-                "list",
-                "--repo",
-                &repo,
-                "--state",
-                "all",
-                "--limit",
-                "100",
-                "--json",
-                "number,url,state,headRefName,isCrossRepository,closingIssuesReferences",
-            ],
+            FactoryGh::RecentPrs { repo: repo.clone() },
         )?;
         let held: BTreeMap<u64, &&Task> = tasks
             .iter()
@@ -681,15 +700,10 @@ impl TaskSource for SharedProjects {
         for number in &asked {
             let issue = match this.gh_json(
                 "github.observe",
-                &[
-                    "issue",
-                    "view",
-                    &number.to_string(),
-                    "--repo",
-                    &repo,
-                    "--json",
-                    "number,title,body,state,labels",
-                ],
+                FactoryGh::IssueLabels {
+                    repo: repo.clone(),
+                    number: *number,
+                },
             ) {
                 Ok(issue) => issue,
                 Err(failure) if failure.signal.is_some() => return Err(failure),
@@ -756,6 +770,7 @@ impl TaskSource for SharedProjects {
                         events.push(OutsideEvent::BodyEdited {
                             issue: issue_ref.clone(),
                             body_hash: hash,
+                            body: body.to_owned(),
                         });
                     }
                     let closing: Vec<&Value> = prs
@@ -821,6 +836,21 @@ impl TaskSource for SharedProjects {
     }
 }
 
+impl SharedProjects {
+    fn project_context(&mut self, project: &str) -> RepoContext {
+        self.lock()
+            .machine
+            .call::<ProjectFiles>(
+                "project",
+                FactoryCall::Project {
+                    path: project.to_owned(),
+                },
+            )
+            .map(context_of)
+            .unwrap_or_default()
+    }
+}
+
 impl MergeTarget for SharedProjects {
     fn merged_commit(&mut self, factory: &Factory, task: &Task) -> Result<Option<String>, Failure> {
         if factory.source != SourceKind::Github {
@@ -839,7 +869,11 @@ impl MergeTarget for SharedProjects {
         let base = this.base(factory)?;
         let project = PathBuf::from(&factory.project);
         Ok(this
-            .git("git.main_head", &project, &["rev-parse", &base])?
+            .git(
+                "git.main_head",
+                &project,
+                FactoryGit::RevParse { revision: base },
+            )?
             .trim()
             .to_owned())
     }
@@ -869,48 +903,35 @@ impl MergeTarget for SharedProjects {
         let remote = this.git(
             "git.push",
             &path,
-            &[
-                "ls-remote",
-                "--heads",
-                "origin",
-                &format!("refs/heads/{branch}"),
-            ],
+            FactoryGit::RemoteHead {
+                branch: branch.clone(),
+            },
         )?;
         if remote.trim().is_empty() {
             this.git(
                 "git.push",
                 &path,
-                &["update-ref", "-d", &format!("refs/remotes/origin/{branch}")],
+                FactoryGit::DropRemoteRef {
+                    branch: branch.clone(),
+                },
             )?;
         }
         this.git(
             "git.push",
             &path,
-            &[
-                "push",
-                "--quiet",
-                "--force-with-lease",
-                "--set-upstream",
-                "origin",
-                &format!("HEAD:refs/heads/{branch}"),
-            ],
+            FactoryGit::PushLeased {
+                branch: branch.clone(),
+            },
         )?;
         // Only an open pull request is this report's: a merged one from before
         // a revert is history, and a relanding opens a new one (B46).
         let existing = this.gh_json(
             "github.pr_find",
-            &[
-                "pr",
-                "list",
-                "--repo",
-                &repo,
-                "--head",
-                &branch,
-                "--state",
-                "open",
-                "--json",
-                "number,url,state,headRefName,isCrossRepository",
-            ],
+            FactoryGh::PrFind {
+                repo: repo.clone(),
+                branch: branch.clone(),
+                fields: PrFindFields::Task,
+            },
         )?;
         // `--head` matches a branch name in any fork; only this repository's
         // own branch is the Task's.
@@ -929,20 +950,13 @@ impl MergeTarget for SharedProjects {
         }
         let url = this.gh(
             "github.pr_create",
-            &[
-                "pr",
-                "create",
-                "--repo",
-                &repo,
-                "--head",
-                &branch,
-                "--base",
-                &factory.default_branch,
-                "--title",
-                &task.card.title,
-                "--body",
-                body,
-            ],
+            FactoryGh::PrCreate {
+                repo,
+                branch: branch.clone(),
+                base: factory.default_branch.clone(),
+                title: task.card.title.clone(),
+                body: body.to_owned(),
+            },
         )?;
         let number = number_from_url(&url)
             .ok_or_else(|| Failure::task("github.pr_create", "gh answered no pull request URL"))?;
@@ -957,7 +971,6 @@ impl MergeTarget for SharedProjects {
 
     fn close_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure> {
         let repo = write_repo(factory)?;
-        let number = pr.number.to_string();
         let mut this = self.lock();
         let state = this.pr_view(factory, pr.number)?;
         if state["state"].as_str() != Some("OPEN") {
@@ -965,14 +978,16 @@ impl MergeTarget for SharedProjects {
         }
         this.gh(
             "github.pr_close",
-            &["pr", "close", &number, "--repo", &repo],
+            FactoryGh::PrClose {
+                repo,
+                number: pr.number,
+            },
         )?;
         Ok(())
     }
 
     fn reopen_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure> {
         let repo = write_repo(factory)?;
-        let number = pr.number.to_string();
         let mut this = self.lock();
         let state = this.pr_view(factory, pr.number)?;
         if state["state"].as_str() != Some("CLOSED") {
@@ -980,7 +995,10 @@ impl MergeTarget for SharedProjects {
         }
         this.gh(
             "github.pr_reopen",
-            &["pr", "reopen", &number, "--repo", &repo],
+            FactoryGh::PrReopen {
+                repo,
+                number: pr.number,
+            },
         )?;
         Ok(())
     }
@@ -989,8 +1007,7 @@ impl MergeTarget for SharedProjects {
         let mut this = self.lock();
         let base = this.base(factory)?;
         let path = worktree(task)?;
-        let range = format!("{base}...HEAD");
-        let text = this.git("git.diff", &path, &["diff", "--numstat", &range])?;
+        let text = this.git("git.diff", &path, FactoryGit::DiffNumstat { base })?;
         Ok(text
             .lines()
             .map(|line| {
@@ -1006,9 +1023,8 @@ impl MergeTarget for SharedProjects {
         let mut this = self.lock();
         let base = this.base(factory)?;
         let path = worktree(task)?;
-        let range = format!("{base}...HEAD");
         Ok(this
-            .git("git.diff", &path, &["diff", "--name-only", &range])?
+            .git("git.diff", &path, FactoryGit::DiffNames { base })?
             .lines()
             .map(str::to_owned)
             .collect())
@@ -1018,8 +1034,7 @@ impl MergeTarget for SharedProjects {
         let mut this = self.lock();
         let base = this.base(factory)?;
         let path = worktree(task)?;
-        let range = format!("{base}...HEAD");
-        let text = this.git("git.diff", &path, &["diff", "--stat", "--patch", &range])?;
+        let text = this.git("git.diff", &path, FactoryGit::DiffPatch { base })?;
         Ok(crate::judgment::cut(&text, crate::judgment::DIFF_LIMIT))
     }
 
@@ -1028,18 +1043,9 @@ impl MergeTarget for SharedProjects {
         let base = this.base(factory)?;
         let path = worktree(task)?;
         // merge-tree answers 1 with the conflicted files listed (B38).
-        let args: Vec<String> = [
-            "merge-tree",
-            "--write-tree",
-            "--name-only",
-            "--no-messages",
-            &base,
-            "HEAD",
-        ]
-        .iter()
-        .map(|a| (*a).to_owned())
-        .collect();
-        let output = this.runner.run("git", &args, Some(&path))?;
+        let output = this
+            .machine
+            .git(&path, FactoryGit::MergeTree { base: base.clone() })?;
         match output.code {
             Some(0) => {}
             Some(1) => {
@@ -1056,9 +1062,7 @@ impl MergeTarget for SharedProjects {
             _ => return Err(classify("git.merge_tree", &output)),
         }
         if let Some(check) = factory.config.quick_check.clone() {
-            let (program, flag) = crate::exec::shell();
-            let args = vec![flag.to_owned(), check.clone()];
-            let output = this.runner.run(program, &args, Some(&path))?;
+            let output = this.machine.check(&path, &check)?;
             if !output.ok() {
                 // The project's own check speaks for the machine only when
                 // the disk or memory ran out; any other text is its result.
@@ -1073,9 +1077,8 @@ impl MergeTarget for SharedProjects {
             }
         }
         if !factory.config.risk_paths.is_empty() {
-            let range = format!("{base}...HEAD");
             let changed: Vec<String> = this
-                .git("git.diff", &path, &["diff", "--name-only", &range])?
+                .git("git.diff", &path, FactoryGit::DiffNames { base })?
                 .lines()
                 .map(str::to_owned)
                 .collect();
@@ -1122,15 +1125,11 @@ impl MergeTarget for SharedProjects {
                     Some(commit) => commit,
                     None => branch.clone(),
                 };
-                let ancestor = this.runner.run(
-                    "git",
-                    &[
-                        "merge-base".into(),
-                        "--is-ancestor".into(),
-                        target.clone(),
-                        "HEAD".into(),
-                    ],
-                    Some(&project),
+                let ancestor = this.machine.git(
+                    &project,
+                    FactoryGit::IsAncestor {
+                        revision: target.clone(),
+                    },
                 )?;
                 if !ancestor.ok() {
                     let message = format!(
@@ -1142,19 +1141,24 @@ impl MergeTarget for SharedProjects {
                     if let Err(failure) = this.git(
                         "git.merge",
                         &project,
-                        &["merge", "--no-ff", "--no-edit", "-m", &message, &target],
+                        FactoryGit::Merge {
+                            message,
+                            revision: target,
+                        },
                     ) {
                         // Never leave the operator's checkout mid-merge.
-                        let _ = this.runner.run(
-                            "git",
-                            &["merge".into(), "--abort".into()],
-                            Some(&project),
-                        );
+                        let _ = this.machine.git(&project, FactoryGit::MergeAbort);
                         return Err(failure);
                     }
                 }
                 Ok(this
-                    .git("git.merge", &project, &["rev-parse", "HEAD"])?
+                    .git(
+                        "git.merge",
+                        &project,
+                        FactoryGit::RevParse {
+                            revision: "HEAD".into(),
+                        },
+                    )?
                     .trim()
                     .to_owned())
             }
@@ -1179,24 +1183,19 @@ impl MergeTarget for SharedProjects {
                         .ok_or_else(|| Failure::task("github.merge", "pull request has no head"))?
                         .to_owned(),
                 };
-                let number = pr.number.to_string();
-                let flag = match method {
-                    MergeMethod::Merge => "--merge",
-                    MergeMethod::Squash => "--squash",
-                    MergeMethod::Rebase => "--rebase",
+                let method = match method {
+                    MergeMethod::Merge => GhMergeMethod::Merge,
+                    MergeMethod::Squash => GhMergeMethod::Squash,
+                    MergeMethod::Rebase => GhMergeMethod::Rebase,
                 };
                 this.gh(
                     "github.merge",
-                    &[
-                        "pr",
-                        "merge",
-                        &number,
-                        "--repo",
-                        &repo,
-                        flag,
-                        "--match-head-commit",
-                        &head,
-                    ],
+                    FactoryGh::PrMerge {
+                        repo,
+                        number: pr.number,
+                        method,
+                        head,
+                    },
                 )?;
                 let view = this.pr_view(factory, pr.number)?;
                 merge_commit("github.merge", &view)
@@ -1221,23 +1220,33 @@ impl MergeTarget for SharedProjects {
         match &factory.config.verification {
             Verification::Ci { .. } => {
                 let repo = write_repo(factory)?;
-                let path = format!("repos/{repo}/actions/runs?head_sha={sha}&per_page=50");
-                let runs = this.gh_json("github.runs", &["api", &path])?;
+                let runs = this.gh_json(
+                    "github.runs",
+                    FactoryGh::WorkflowRuns {
+                        repo: repo.clone(),
+                        sha: sha.to_owned(),
+                    },
+                )?;
                 for run in runs["workflow_runs"].as_array().into_iter().flatten() {
                     if matches!(
                         run["conclusion"].as_str(),
                         Some("cancelled") | Some("skipped") | Some("stale")
                     ) && let Some(id) = run["id"].as_u64()
                     {
-                        let id = id.to_string();
-                        this.gh("github.rerun", &["run", "rerun", &id, "--repo", &repo])?;
+                        this.gh(
+                            "github.rerun",
+                            FactoryGh::RunRerun {
+                                repo: repo.clone(),
+                                run: id,
+                            },
+                        )?;
                     }
                 }
                 Ok(())
             }
             Verification::Commands { .. } => {
                 let id = format!("{}:main:{sha}", factory.id);
-                this.verify.forget(&id);
+                this.forget(&id)?;
                 this.main_job(factory, &id, sha)
             }
             Verification::None => Ok(()),
@@ -1251,29 +1260,36 @@ impl MergeTarget for SharedProjects {
         this.git(
             "git.revert",
             &path,
-            &["checkout", "--quiet", "--detach", &base],
+            FactoryGit::CheckoutDetached { revision: base },
         )?;
         let parents = this.git(
             "git.revert",
             &path,
-            &["rev-list", "--parents", "-n", "1", sha],
+            FactoryGit::Parents {
+                revision: sha.to_owned(),
+            },
         )?;
-        let mut args = vec!["revert", "--no-edit"];
-        if parents.split_whitespace().count() > 2 {
-            args.extend(["-m", "1"]);
-        }
-        args.push(sha);
-        if let Err(mut failure) = this.git("git.revert", &path, &args) {
+        let revert = FactoryGit::Revert {
+            revision: sha.to_owned(),
+            mainline: parents.split_whitespace().count() > 2,
+        };
+        if let Err(mut failure) = this.git("git.revert", &path, revert) {
             // A conflicting revert leaves its state in the Factory's own main
             // worktree, and every later checkout there would fail on it; an
             // abort that fails too is named in the failure a person reads.
-            if let Err(abort) = this.git("git.revert", &path, &["revert", "--abort"]) {
+            if let Err(abort) = this.git("git.revert", &path, FactoryGit::RevertAbort) {
                 failure.detail = format!("{}; abort failed: {}", failure.detail, abort.detail);
             }
             return Err(failure);
         }
         let commit = this
-            .git("git.revert", &path, &["rev-parse", "HEAD"])?
+            .git(
+                "git.revert",
+                &path,
+                FactoryGit::RevParse {
+                    revision: "HEAD".into(),
+                },
+            )?
             .trim()
             .to_owned();
         if factory.source == SourceKind::Local {
@@ -1286,26 +1302,20 @@ impl MergeTarget for SharedProjects {
         }
         let repo = write_repo(factory)?;
         let branch = format!("factory/revert-{}", task.id.to_ascii_lowercase());
-        let refspec = format!("HEAD:refs/heads/{branch}");
         this.git(
             "git.push",
             &path,
-            &["push", "--quiet", "--force", "origin", &refspec],
+            FactoryGit::PushForced {
+                branch: branch.clone(),
+            },
         )?;
         let existing = this.gh_json(
             "github.pr_find",
-            &[
-                "pr",
-                "list",
-                "--repo",
-                &repo,
-                "--head",
-                &branch,
-                "--state",
-                "open",
-                "--json",
-                "number,isCrossRepository",
-            ],
+            FactoryGh::PrFind {
+                repo: repo.clone(),
+                branch: branch.clone(),
+                fields: PrFindFields::Revert,
+            },
         )?;
         let number = match existing
             .as_array()
@@ -1321,20 +1331,13 @@ impl MergeTarget for SharedProjects {
                 );
                 let url = this.gh(
                     "github.pr_create",
-                    &[
-                        "pr",
-                        "create",
-                        "--repo",
-                        &repo,
-                        "--head",
-                        &branch,
-                        "--base",
-                        &factory.default_branch,
-                        "--title",
-                        &title,
-                        "--body",
-                        &body,
-                    ],
+                    FactoryGh::PrCreate {
+                        repo,
+                        branch,
+                        base: factory.default_branch.clone(),
+                        title,
+                        body,
+                    },
                 )?;
                 number_from_url(&url).ok_or_else(|| {
                     Failure::task("github.pr_create", "gh answered no pull request URL")
@@ -1374,19 +1377,14 @@ impl MergeTarget for SharedProjects {
                 let repo = write_repo(factory)?;
                 let view = this.pr_view(factory, number)?;
                 if view["state"].as_str() != Some("MERGED") {
-                    let number = number.to_string();
                     this.gh(
                         "github.revert_merge",
-                        &[
-                            "pr",
-                            "merge",
-                            &number,
-                            "--repo",
-                            &repo,
-                            "--merge",
-                            "--match-head-commit",
-                            &commit,
-                        ],
+                        FactoryGh::PrMerge {
+                            repo,
+                            number,
+                            method: GhMergeMethod::Merge,
+                            head: commit.clone(),
+                        },
                     )?;
                 }
                 let view = this.pr_view(factory, number)?;
@@ -1404,7 +1402,9 @@ impl MergeTarget for SharedProjects {
                 this.git(
                     "git.revert_merge",
                     &project,
-                    &["merge", "--ff-only", &commit],
+                    FactoryGit::MergeFastForward {
+                        revision: commit.clone(),
+                    },
                 )?;
                 Ok(commit)
             }
@@ -1420,16 +1420,16 @@ impl Verifier for SharedProjects {
                 let id = verify_id(task, "task");
                 let cwd = worktree(task)?;
                 let commit = this.head_sha(task)?;
-                this.verify.forget(&id);
-                this.verify.submit(Job {
+                this.forget(&id)?;
+                let log = this.submit(VerifyJob {
                     id: id.clone(),
-                    cwd,
+                    logs: String::new(),
+                    cwd: cwd.to_string_lossy().into_owned(),
                     commands: commands.clone(),
                     prepare: Vec::new(),
-                    timeout: Duration::from_millis(factory.config.verify_timeout_ms),
-                    output_limit: crate::verify::RUN_OUTPUT_LIMIT,
+                    timeout_ms: factory.config.verify_timeout_ms,
+                    output_limit: RUN_OUTPUT_LIMIT,
                 })?;
-                let log = this.verify.log_path(&id).display().to_string();
                 Ok(VerifyRun {
                     id,
                     log: Some(log),
@@ -1459,22 +1459,22 @@ impl Verifier for SharedProjects {
         let base = this.base(factory)?;
         let cwd = worktree(task)?;
         let id = verify_id(task, "premerge");
-        this.verify.forget(&id);
+        this.forget(&id)?;
+        let cwd = cwd.to_string_lossy().into_owned();
         // The bundle runs on the latest main merged into the Task (B38).
-        let prepare = vec![Prepare {
-            program: "git".into(),
-            args: vec!["merge".into(), "--no-edit".into(), "--quiet".into(), base],
+        let prepare = vec![VerifyStep {
             cwd: cwd.clone(),
+            command: FactoryGit::MergeQuiet { revision: base },
         }];
-        this.verify.submit(Job {
+        let log = this.submit(VerifyJob {
             id: id.clone(),
+            logs: String::new(),
             cwd,
             commands: commands.clone(),
             prepare,
-            timeout: Duration::from_millis(factory.config.verify_timeout_ms),
-            output_limit: crate::verify::RUN_OUTPUT_LIMIT,
+            timeout_ms: factory.config.verify_timeout_ms,
+            output_limit: RUN_OUTPUT_LIMIT,
         })?;
-        let log = this.verify.log_path(&id).display().to_string();
         Ok(VerifyRun {
             id,
             log: Some(log),
@@ -1501,13 +1501,103 @@ impl Verifier for SharedProjects {
                 },
             };
         }
-        let id = run.id.clone();
-        let Projects { runner, verify, .. } = &mut *this;
-        verify.poll(runner.as_mut(), &id)
+        this.verify_poll(&run.id)
     }
 
     fn cancel(&mut self, run: &VerifyRun) {
-        self.lock().verify.cancel(&run.id);
+        // A run the node no longer holds has nothing left to end.
+        let _ = self.lock().machine.call::<()>(
+            "verify.cancel",
+            FactoryCall::VerifyCancel { id: run.id.clone() },
+        );
+    }
+
+    fn log_tail(&self, log: &str) -> Option<String> {
+        // A CI run's link is a page, not a log the node wrote.
+        if !Path::new(log).is_absolute() {
+            return None;
+        }
+        self.lock()
+            .machine
+            .call(
+                "verify.log",
+                FactoryCall::LogTail {
+                    path: log.to_owned(),
+                },
+            )
+            .ok()
+            .flatten()
+    }
+}
+
+/// What a node's verify outcome means for the Task: a full disk or a killed
+/// process is the environment's (D-31 rule 2), anything else the Task's.
+fn read_outcome(outcome: VerifyOutcome) -> VerifyPoll {
+    match outcome {
+        VerifyOutcome::Pending => VerifyPoll::Pending,
+        VerifyOutcome::Passed => VerifyPoll::Passed,
+        VerifyOutcome::StepFailed { step, answer } => {
+            let failure = match read_run("verify.prepare", answer) {
+                Ok(output) => classify("verify.prepare", &output),
+                Err(failure) => failure,
+            };
+            match failure.signal {
+                Some(signal) => VerifyPoll::Environment {
+                    signal,
+                    check: step,
+                },
+                None => VerifyPoll::Failed {
+                    check: step,
+                    link: failure.detail,
+                },
+            }
+        }
+        VerifyOutcome::Failed {
+            command,
+            code,
+            tail,
+            log,
+        } => {
+            let tail = tail.to_lowercase();
+            if tail.contains("no space left on device") {
+                VerifyPoll::Environment {
+                    signal: EnvSignal::DiskFull,
+                    check: command,
+                }
+            } else if code == Some(137) || code.is_none() && tail.contains("killed") {
+                VerifyPoll::Environment {
+                    signal: EnvSignal::OutOfMemory,
+                    check: command,
+                }
+            } else {
+                VerifyPoll::Failed {
+                    check: command,
+                    link: log,
+                }
+            }
+        }
+        VerifyOutcome::TimedOut { command, minutes } => VerifyPoll::Failed {
+            check: format!("{command} (timeout {minutes}m)"),
+            link: String::new(),
+        },
+        VerifyOutcome::OverOutput { command, log } => VerifyPoll::Failed {
+            check: format!("{command} (output over the log cap)"),
+            link: log,
+        },
+        VerifyOutcome::LogUnwritable {
+            disk_full: true, ..
+        } => VerifyPoll::Environment {
+            signal: EnvSignal::DiskFull,
+            check: "verify log".into(),
+        },
+        VerifyOutcome::LogUnwritable { error, .. } => VerifyPoll::Failed {
+            check: "verify log".into(),
+            link: error,
+        },
+        VerifyOutcome::Unstarted { command, error } => VerifyPoll::Failed {
+            check: command,
+            link: error,
+        },
     }
 }
 
@@ -1515,7 +1605,7 @@ impl Verifier for SharedProjects {
 /// Factory without verification. A verified Factory with no passed commit is
 /// refused rather than merged at whatever the branch holds now.
 fn verified_commit(factory: &Factory, task: &Task) -> Result<Option<String>, Failure> {
-    if !factory.config.verification.exists() {
+    if !factory.config.verification.configured() {
         return Ok(None);
     }
     task.attempts
@@ -1564,31 +1654,49 @@ fn number_from_url(text: &str) -> Option<u64> {
 }
 
 /// Verify command candidates read from the project's files (B1).
-fn verify_candidates(project: &Path) -> Vec<String> {
+fn verify_candidates(files: &ProjectFiles) -> Vec<String> {
+    let marked = |name: &str| files.markers.iter().any(|marker| marker == name);
     let mut candidates = Vec::new();
-    if project.join("Cargo.toml").exists() {
+    if marked("Cargo.toml") {
         candidates.push("cargo test".into());
     }
-    if let Ok(text) = std::fs::read_to_string(project.join("package.json"))
-        && let Ok(value) = serde_json::from_str::<Value>(&text)
+    if let Some(text) = files.texts.get("package.json")
+        && let Ok(value) = serde_json::from_str::<Value>(text)
         && value["scripts"]["test"].is_string()
     {
-        let tool = if project.join("pnpm-lock.yaml").exists() {
+        let tool = if marked("pnpm-lock.yaml") {
             "pnpm"
         } else {
             "npm"
         };
         candidates.push(format!("{tool} test"));
     }
-    if let Ok(text) = std::fs::read_to_string(project.join("Makefile"))
+    if let Some(text) = files.texts.get("Makefile")
         && text.lines().any(|line| line.starts_with("test:"))
     {
         candidates.push("make test".into());
     }
-    if project.join("pyproject.toml").exists() {
+    if marked("pyproject.toml") {
         candidates.push("pytest".into());
     }
     candidates
+}
+
+/// The names a review judgment reads, hidden ones left out but `.github`,
+/// and the first guide the project has, cut short.
+fn context_of(files: ProjectFiles) -> RepoContext {
+    let guide = ["AGENTS.md", "CLAUDE.md", "README.md"]
+        .iter()
+        .find_map(|name| files.texts.get(*name))
+        .map(|text| crate::judgment::cut(text, 8 * 1024));
+    RepoContext {
+        files: files
+            .entries
+            .into_iter()
+            .filter(|name| !name.starts_with('.') || name == ".github")
+            .collect(),
+        guide,
+    }
 }
 
 #[cfg(test)]

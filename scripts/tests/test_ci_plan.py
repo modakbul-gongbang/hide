@@ -76,11 +76,11 @@ class Selection(unittest.TestCase):
 
     def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
         # It builds hided, hide, the agent hooks and the host helper and runs
-        # herdr-core's remote_delivery test, so a change to one of those crates
+        # hided's remote_delivery test, so a change to one of those crates
         # or to a crate they depend on plans it.
         for path in (
             "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-host/src/lib.rs",
-            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "herdr-core/tests/remote_delivery.rs",
+            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "hided/tests/remote_delivery.rs",
         ):
             with self.subTest(path=path):
                 self.assertIn("remote-mailbox", plan(path)["lanes"])
@@ -100,7 +100,7 @@ class Selection(unittest.TestCase):
 
     def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
         for path in (
-            "herdr-core/src/lib.rs", "herdr-core/tests/remote_delivery.rs", "hided/src/main.rs",
+            "herdr-core/src/lib.rs", "hided/tests/remote_delivery.rs", "hided/src/main.rs",
             "hide-host/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-platform/src/process.rs",
             "hide-session/src/lib.rs", "hide-ai/src/lib.rs",
         ):
@@ -127,9 +127,24 @@ class Selection(unittest.TestCase):
         result = plan("hide-platform/src/process.rs")
         self.assertTrue({"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
         self.assertNotIn("desktop-e2e", result["lanes"])
-        # Every workspace crate depends on the platform layer, hide-project included.
-        self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
+        # The data-only adapter is independent; every other crate consumes the platform layer.
+        self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-agent-adapter"])
         self.assertFalse(result["full"])
+
+    def test_an_adapter_change_tests_its_real_consumers_and_compiles_on_windows(self):
+        # These consumers follow the workspace manifests, independently of the planner.
+        # Factory reaches the adapter through its node-link request types too.
+        consumers = [
+            "herdr-core", "hide-agent-adapter", "hide-agent-hooks", "hide-factory", "hide-host", "hide-kit",
+            "hide-node", "hide-node-link", "hide-session", "hided",
+        ]
+        for path in ("hide-agent-adapter/src/lib.rs", "hide-agent-adapter/Cargo.toml"):
+            with self.subTest(path=path):
+                result = plan(path)
+                self.assertEqual(result["rust_packages"], consumers)
+                self.assertTrue({"rust", "windows-check", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
+                self.assertFalse(set(result["lanes"]) & {"os-contract", "os-contract-macos", "windows-e2e", "desktop-e2e"})
+                self.assertFalse(result["full"])
 
     def test_a_leaf_crate_tests_its_reverse_dependencies_and_compiles_on_windows(self):
         result = plan("hide-session/src/lib.rs")

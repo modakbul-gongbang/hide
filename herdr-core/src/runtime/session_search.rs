@@ -96,7 +96,10 @@ impl SearchWorker {
     }
 }
 impl Runtime {
-    pub(super) fn request_session_search(&mut self, payload: SearchPayload) -> bool {
+    pub(super) fn request_session_search(&mut self, mut payload: SearchPayload) -> bool {
+        if let Some(agent) = hide_session::Agent::from_kind(&payload.provider) {
+            payload.provider = agent.as_str().to_owned();
+        }
         let Some(sessions) = self.snapshot.project_sessions.as_ref() else {
             return false;
         };
@@ -108,7 +111,9 @@ impl Runtime {
         }
         self.search_generation += 1;
         if payload.query.chars().count() > 256
-            || !["all", "codex", "claude"].contains(&payload.provider.as_str())
+            || (payload.provider != "all"
+                && !hide_session::Agent::from_kind(&payload.provider)
+                    .is_some_and(|agent| agent.has_session_file()))
             || payload.days.is_some_and(|d| ![0, 30, 90, 365].contains(&d))
         {
             if let Some(client) = &self.search_client {
@@ -458,10 +463,12 @@ fn run(
                     break;
                 };
                 let row = &request.rows[i];
-                let agent = if row.provider == "codex" {
-                    hide_session::Agent::Codex
-                } else {
-                    hide_session::Agent::Claude
+                let Some(agent) = hide_session::Agent::from_kind(&row.provider)
+                    .filter(|agent| agent.has_session_file())
+                else {
+                    state.failure = Some(format!("Unsupported session provider: {}", row.provider));
+                    queue.clear();
+                    break;
                 };
                 let step = db
                     .saved(&request.project, &row.id)
@@ -516,7 +523,10 @@ fn run(
                     request
                         .rows
                         .iter()
-                        .filter(|row| row.provider == request.provider)
+                        .filter(|row| {
+                            hide_session::Agent::from_kind(&row.provider)
+                                == hide_session::Agent::from_kind(&request.provider)
+                        })
                         .map(|row| row.id.clone())
                         .collect::<Vec<_>>()
                 });

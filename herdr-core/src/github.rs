@@ -34,20 +34,11 @@ use hide_node_link::protocol::Call;
 /// The node bounds one `gh` command at fifteen seconds.
 const GH_CALL_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// What the list of every pull request asks for. `statusCheckRollup` is
-/// left out: asking GitHub for the checks of all 200 pull requests, merged
-/// and closed ones included, is what made one read take 11 - 14 seconds
-/// against the 15-second limit, and nothing draws a settled pull request's
-/// checks as news.
-const PULL_REQUEST_FIELDS: &str = "number,title,headRefName,headRefOid,isCrossRepository,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences";
-
-/// The second list: only the open pull requests, only their checks.
-const OPEN_CHECK_FIELDS: &str = "number,statusCheckRollup";
-
-/// Every pull request `gh` will return in one call. Past this, older pull
-/// requests are simply absent and their branches read as having none; the
-/// limit is stated here so the risk is findable from the code that takes it.
-pub(crate) const PULL_REQUEST_LIMIT: &str = "200";
+pub(crate) use hide_node_link::gh::PULL_REQUEST_LIMIT;
+use hide_node_link::gh::{
+    ISSUE_LIST_FIELDS, ISSUE_LIST_LIMIT, ISSUE_LIST_PROJECT_FIELDS, ISSUE_LIST_SEARCH,
+    MERGED_PROOF_FIELDS, MERGED_PROOF_LIMIT, OPEN_CHECK_FIELDS, PULL_REQUEST_FIELDS,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GithubProjectRequest {
@@ -528,9 +519,9 @@ fn list_issues(
     include_projects: bool,
 ) -> Result<Vec<crate::issues::IssueSnapshot>, GhFailure> {
     let fields = if include_projects {
-        "number,title,url,state,labels,projectItems,updatedAt,createdAt,closedAt"
+        ISSUE_LIST_PROJECT_FIELDS
     } else {
-        "number,title,url,state,labels,updatedAt,createdAt,closedAt"
+        ISSUE_LIST_FIELDS
     };
     let output = run(&[
         "issue",
@@ -538,9 +529,9 @@ fn list_issues(
         "--state",
         "open",
         "--limit",
-        "201",
+        ISSUE_LIST_LIMIT,
         "--search",
-        "sort:updated-desc",
+        ISSUE_LIST_SEARCH,
         "--json",
         fields,
     ])?;
@@ -1394,9 +1385,9 @@ pub(crate) fn merged_pull_request_proofs(
             "--head",
             branch,
             "--limit",
-            "100",
+            MERGED_PROOF_LIMIT,
             "--json",
-            "headRefOid,baseRefName",
+            MERGED_PROOF_FIELDS,
         ],
     )
     .map_err(|failure| {
@@ -2832,153 +2823,5 @@ mod tests {
             error.contains("/broken") && error.contains("502"),
             "{error}"
         );
-    }
-
-    #[test]
-    fn a_search_takes_its_repositories_the_cap_fixed_fields_and_the_query_words_after_the_dashes() {
-        let allowed = |arguments: &[&str]| hide_node_link::gh::allowed(arguments);
-        let prs = |repositories: &[&'static str], words: &[&'static str]| {
-            let mut arguments = vec!["search", "prs"];
-            for repository in repositories {
-                arguments.extend(["--repo", repository]);
-            }
-            arguments.extend(["--limit", "20", "--json", SEARCH_PR_FIELDS, "--"]);
-            arguments.extend(words);
-            arguments
-        };
-        assert!(allowed(&prs(&["acme/app"], &["reader"])));
-        assert!(allowed(&prs(
-            &["acme/app", "acme/other"],
-            &["two", "words"]
-        )));
-        assert!(
-            allowed(&prs(&["acme/app"], &["--web"])),
-            "a word is never a flag"
-        );
-        assert!(allowed(&[
-            "search",
-            "issues",
-            "--repo",
-            "acme/app",
-            "--limit",
-            "20",
-            "--json",
-            SEARCH_ISSUE_FIELDS,
-            "--",
-            "-w",
-        ]));
-        let twenty = ["acme/app"; SEARCH_REPOSITORY_LIMIT];
-        assert!(allowed(&prs(&twenty, &["q"])));
-        let long = "x".repeat(SEARCH_QUERY_LIMIT + 1);
-        let long: &'static str = Box::leak(long.into_boxed_str());
-        let twenty_one = ["acme/app"; SEARCH_REPOSITORY_LIMIT + 1];
-        let refused: Vec<Vec<&str>> = vec![
-            prs(&["acme/app"], &[""]),
-            prs(&["acme/app"], &["  "]),
-            prs(&["acme/app"], &[]),
-            prs(&["acme/app"], &[long]),
-            prs(&["acme/app"], &[&long[..150], &long[..100]]),
-            prs(&twenty_one, &["q"]),
-            prs(&[], &["q"]),
-            prs(&["acme/app/extra"], &["q"]),
-            prs(&["acme"], &["q"]),
-            prs(&["--repo"], &["q"]),
-            prs(&["acme/../app"], &["q"]),
-            // A different limit, field list, flag position or subcommand.
-            vec![
-                "search",
-                "prs",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "21",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "--",
-                "q",
-            ],
-            vec![
-                "search",
-                "prs",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_ISSUE_FIELDS,
-                "--",
-                "q",
-            ],
-            vec![
-                "search",
-                "issues",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "--",
-                "q",
-            ],
-            vec![
-                "search", "prs", "--repo", "acme/app", "--limit", "20", "--json", "body", "--", "q",
-            ],
-            vec![
-                "search",
-                "prs",
-                "--limit",
-                "20",
-                "--repo",
-                "acme/app",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "--",
-                "q",
-            ],
-            vec![
-                "search",
-                "prs",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "q",
-                "--",
-            ],
-            vec![
-                "search",
-                "prs",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "q",
-            ],
-            vec![
-                "search",
-                "code",
-                "--repo",
-                "acme/app",
-                "--limit",
-                "20",
-                "--json",
-                SEARCH_PR_FIELDS,
-                "--",
-                "q",
-            ],
-            vec![
-                "search", "repos", "--limit", "20", "--json", "name", "--", "q",
-            ],
-            vec!["search", "prs", "q"],
-            vec!["search", "prs", "--web", "q"],
-        ];
-        for arguments in &refused {
-            assert!(!allowed(arguments), "{arguments:?} must be refused");
-        }
     }
 }

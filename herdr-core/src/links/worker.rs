@@ -991,7 +991,7 @@ mod tests {
     const CREATED: u64 = 1_790_000_000_000;
 
     /// A connected device whose helper answers the two link calls from its
-    /// own home, the way `hide-host-helper serve` does.
+    /// own home, the way `hided node serve` does.
     struct Device {
         home: PathBuf,
         connected: AtomicBool,

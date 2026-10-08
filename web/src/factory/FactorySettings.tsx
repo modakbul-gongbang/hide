@@ -158,8 +158,8 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
   const send = (command: FactoryCommand) => write.send(command);
   const numbers = (rows: NumberSetting[]) => rows.map((row) => <NumberRow key={row.key} reset={refusals} label={t(row.label)} value={row.read(answer)} onCommit={(value) => set(row.key, String(value))} data={row.key} />);
   const verify = config.verification.kind === "commands" ? config.verification.commands.join(" &&& ") : "";
-  // The engine refuses to close while its Running column holds a Task, in any of that column's states.
-  const running = factory.columns.some((column) => column.column === "running" && column.cards.length > 0);
+  // Closing follows the lifecycle states, independent of board presentation.
+  const running = factory.columns.some((column) => column.cards.some((card) => !["drafting", "waiting", "done", "cancelled"].includes(card.state)));
   return (
     // The last write's phase, so a reader can wait for the engine's answer.
     <div className="contents" data-factory-settings-write={write.state.phase}>

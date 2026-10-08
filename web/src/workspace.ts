@@ -7,6 +7,7 @@
 // `viewLayout.ts`.
 
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
+import { agentAdapter } from "./agentAdapters";
 
 /** The Tools column's one tool, separate from Memory's `sessions` reader. */
 export type Tool = "agent_sessions" | "explorer" | "changes";
@@ -179,11 +180,11 @@ export function agentEntries(checkout: Checkout): StripTab[] {
 }
 
 /** The agent kinds whose own mark Hide ships; any other agent is drawn with the neutral mark (D-09). */
-export const KNOWN_PROVIDERS = ["claude", "codex"] as const;
-export type Provider = (typeof KNOWN_PROVIDERS)[number];
+export type Provider = "claude" | "codex";
 
 export function knownProvider(kind: string | null | undefined): Provider | null {
-  return (KNOWN_PROVIDERS as readonly string[]).includes(kind ?? "") ? (kind as Provider) : null;
+  // The generated SidebarMark enum selects the artwork; this type names the assets.
+  return (agentAdapter(kind ?? "")?.sidebar_mark as Provider | null | undefined) ?? null;
 }
 
 /** What the page has read of the core's File Views calls. */

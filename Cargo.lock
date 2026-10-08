@@ -1157,6 +1157,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "cap-std",
+ "hide-agent-adapter",
  "hide-agent-hooks",
  "hide-ai",
  "hide-factory",
@@ -1175,9 +1176,6 @@ dependencies = [
  "regex",
  "regress 0.12.0",
  "rusqlite",
- "russh",
- "russh-config",
- "russh-sftp",
  "schemars",
  "serde",
  "serde_json",
@@ -1202,9 +1200,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
+name = "hide-agent-adapter"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hide-agent-hooks"
 version = "0.1.0"
 dependencies = [
+ "hide-agent-adapter",
  "hide-herdr-client",
  "hide-memory",
  "hide-platform",
@@ -1232,7 +1239,9 @@ dependencies = [
 name = "hide-factory"
 version = "0.1.0"
 dependencies = [
- "hide-platform",
+ "base64 0.23.1",
+ "hide-node",
+ "hide-node-link",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1256,6 +1265,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "cap-std",
+ "hide-agent-adapter",
  "hide-agent-hooks",
  "hide-ai",
  "hide-herdr-client",
@@ -1276,6 +1286,7 @@ dependencies = [
 name = "hide-kit"
 version = "0.1.0"
 dependencies = [
+ "hide-agent-adapter",
  "hide-agent-hooks",
  "hide-herdr-client",
  "hide-platform",
@@ -1306,13 +1317,20 @@ dependencies = [
 name = "hide-node"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cap-std",
  "hide-herdr-client",
  "hide-host",
+ "hide-kit",
  "hide-node-link",
  "hide-platform",
  "libc",
+ "russh",
+ "russh-config",
+ "russh-sftp",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
 ]
@@ -1324,6 +1342,7 @@ dependencies = [
  "base64 0.23.1",
  "hide-agent-hooks",
  "hide-ai",
+ "hide-herdr-client",
  "hide-kit",
  "hide-platform",
  "hide-project",
@@ -1363,6 +1382,7 @@ name = "hide-session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hide-agent-adapter",
  "hide-platform",
  "hide-project",
  "libc",
@@ -1377,6 +1397,7 @@ dependencies = [
 name = "hided"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "base64 0.23.1",
  "cap-std",
@@ -1384,6 +1405,8 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-agent-adapter",
+ "hide-agent-hooks",
  "hide-factory",
  "hide-herdr-client",
  "hide-host",
@@ -1398,6 +1421,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "ring",
+ "russh",
  "serde",
  "serde_json",
  "subtle",

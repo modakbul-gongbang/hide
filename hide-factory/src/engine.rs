@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use crate::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MainCheck, MemoryPressure, MergeTarget,
-    Notifier, OutsideEvent, PreMerge, Removal, RevertRef, TaskSource, Verifier, VerifyPoll,
-    VerifyRun, WorkerRuntime, WorkerSpawn, WorkerStatus,
+    Notifier, OutsideEvent, PreMerge, Removal, RepoContext, RevertRef, TaskSource, Verifier,
+    VerifyPoll, VerifyRun, WorkerRuntime, WorkerSpawn, WorkerStatus,
 };
 use crate::command::{CardInput, Command, Refusal, VerificationChoice};
 use crate::dag;
@@ -374,6 +374,7 @@ impl Engine {
             &tasks,
             self.now(),
             self.ports.clock.utc_offset_ms(),
+            &self.runtime_blocked,
         )
     }
 
@@ -1207,13 +1208,13 @@ impl Engine {
             None => Verification::None,
         };
         let auto_unavailable =
-            (!verification.exists()).then_some("검증이 없으면 auto를 쓸 수 없습니다");
-        let requested_mode = merge_mode.unwrap_or(if verification.exists() {
+            (!verification.configured()).then_some("검증이 없으면 auto를 쓸 수 없습니다");
+        let requested_mode = merge_mode.unwrap_or(if verification.configured() {
             MergeMode::Auto
         } else {
             MergeMode::Manual
         });
-        if requested_mode == MergeMode::Auto && !verification.exists() {
+        if requested_mode == MergeMode::Auto && !verification.configured() {
             return Err(refuse(
                 "auto_needs_verification",
                 "Choose --ci or --verify, or use --merge manual",
@@ -1461,6 +1462,9 @@ impl Engine {
             );
         }
         Ok(Card {
+            summary: existing
+                .filter(|old| old.goal.trim() == goal.trim())
+                .and_then(|old| old.summary.clone()),
             title: title.trim().to_owned(),
             goal: goal.trim().to_owned(),
             criteria: criteria
@@ -1565,11 +1569,16 @@ impl Engine {
         task.producer_pane = producer_pane;
         if let Some(prd) = &input.prd {
             let attachment = self
-                .store
-                .attach(&factory_id, &id, Path::new(prd), 1)
+                .ports
+                .source
+                .read_prd(prd)
+                .and_then(|bytes| {
+                    self.store
+                        .attach(&factory_id, &id, Path::new(prd), &bytes, 1)
+                        .map_err(|error| error.0)
+                })
                 .map_err(|error| {
-                    refuse("attachment_failed", "Check the PRD path")
-                        .with(json!({"error": error.0}))
+                    refuse("attachment_failed", "Check the PRD path").with(json!({"error": error}))
                 })?;
             task.attachments.push(attachment);
         }
@@ -1634,11 +1643,17 @@ impl Engine {
             Some(prd) => {
                 let version = task.attachments.last().map_or(1, |a| a.version + 1);
                 let attachment = self
-                    .store
-                    .attach(factory_id, id, Path::new(prd), version)
+                    .ports
+                    .source
+                    .read_prd(prd)
+                    .and_then(|bytes| {
+                        self.store
+                            .attach(factory_id, id, Path::new(prd), &bytes, version)
+                            .map_err(|error| error.0)
+                    })
                     .map_err(|error| {
                         refuse("attachment_failed", "Check the PRD path")
-                            .with(json!({"error": error.0}))
+                            .with(json!({"error": error}))
                     })?;
                 (task.attachments.last().map(|a| &a.sha256) != Some(&attachment.sha256))
                     .then_some(attachment)
@@ -1820,7 +1835,10 @@ impl Engine {
             .get(factory)
             .map(|f| f.project.clone())
             .unwrap_or_default();
-        let (repo_files, guide) = repo_context(&project);
+        let RepoContext {
+            files: repo_files,
+            guide,
+        } = self.ports.source.repo_context(&project);
         let judgment_id = format!(
             "{factory}:{id}:intake:{}",
             sha256_hex(
@@ -1967,6 +1985,18 @@ impl Engine {
             Err(reason) => return self.review_failed(factory, id, &reason),
         };
         let mut result = verdict.result();
+        self.with_task(factory, id, |task| {
+            if task.card.summary.is_none() {
+                task.card.summary = Some(
+                    verdict
+                        .summary
+                        .as_deref()
+                        .map(short_summary)
+                        .filter(|summary| !summary.is_empty())
+                        .unwrap_or_else(|| goal_summary(&task.card.goal, &task.card.title)),
+                );
+            }
+        });
         let now = self.now();
         // A worker's claim is not the fit: only a review that says the card
         // fits its enabled scope lets it start without a person (B30).
@@ -2393,6 +2423,7 @@ impl Engine {
         // The original becomes the first piece and keeps its issue (D-55).
         self.with_task(factory, id, |task| {
             task.card.title = first.title.clone();
+            task.card.summary = None;
             task.card.goal = first.goal.clone();
             task.card.criteria = first.criteria.clone();
             task.review = ReviewState::Pending;
@@ -2409,6 +2440,7 @@ impl Engine {
             }
             let card = Card {
                 title: piece.title.clone(),
+                summary: None,
                 goal: piece.goal.clone(),
                 criteria: piece.criteria.clone(),
                 out_of_scope: Vec::new(),
@@ -2888,7 +2920,7 @@ impl Engine {
             .cloned()
             .ok_or_else(|| refuse("factory_not_found", "?"))?;
         self.start_checks(factory_id, id);
-        if !factory.config.verification.exists() {
+        if !factory.config.verification.configured() {
             // No verification: straight to merge waiting (B2, B35).
             self.advance_merge(factory_id, id);
             return Ok(
@@ -3284,7 +3316,7 @@ impl Engine {
             return;
         }
         // Merge-tree and the quick check, in seconds (B38).
-        if factory.config.verification.exists() || factory.source == SourceKind::Local {
+        if factory.config.verification.configured() || factory.source == SourceKind::Local {
             match self.ports.merge.premerge(&factory, &task) {
                 Ok(PreMerge::Clean) => {}
                 Ok(PreMerge::Conflict { files }) => {
@@ -3384,7 +3416,7 @@ impl Engine {
         if task.breaking {
             gates.push(Gate::BreakingChange);
         }
-        if !factory.config.verification.exists() {
+        if !factory.config.verification.configured() {
             gates.push(Gate::NoVerification);
         }
         if mode == MergeMode::Manual {
@@ -4210,7 +4242,15 @@ impl Engine {
         let factory = self.factory_id(project)?;
         let running: Vec<String> = self
             .tasks_of(&factory)
-            .filter(|t| t.state.column() == Some(Column::Running))
+            .filter(|t| {
+                !matches!(
+                    t.state,
+                    TaskState::Drafting
+                        | TaskState::Waiting
+                        | TaskState::Done
+                        | TaskState::Cancelled
+                )
+            })
             .map(Task::display_id)
             .collect();
         if !running.is_empty() {
@@ -4371,7 +4411,7 @@ impl Engine {
             }
         }
         if !set.is_empty() {
-            if config.merge_mode == MergeMode::Auto && !config.verification.exists() {
+            if config.merge_mode == MergeMode::Auto && !config.verification.configured() {
                 return Err(refuse(
                     "auto_needs_verification",
                     "Set a verification before auto merge",
@@ -4412,12 +4452,14 @@ impl Engine {
         let factory = self.factories.get(factory)?;
         let tasks = self.tasks.get(&factory.id)?;
         let task = tasks.get(id)?;
+        let verifier = &self.ports.verifier;
         Some(summary::detail(
             factory,
             task,
             tasks,
             Self::allowed_actions(task),
-            self.now(),
+            self.ports.clock.now(),
+            &mut |log| verifier.log_tail(log),
         ))
     }
 
@@ -5279,7 +5321,11 @@ impl Engine {
                     );
                 }
             }
-            OutsideEvent::BodyEdited { issue, body_hash } => {
+            OutsideEvent::BodyEdited {
+                issue,
+                body_hash,
+                body,
+            } => {
                 let Some(task) = self.task_for_issue(factory_id, &issue) else {
                     return;
                 };
@@ -5288,7 +5334,8 @@ impl Engine {
                 }
                 let first = task.source_body_hash.is_none();
                 self.with_task(factory_id, &task.id, |t| {
-                    t.source_body_hash = Some(body_hash.clone())
+                    t.source_body_hash = Some(body_hash.clone());
+                    t.card.summary = Some(goal_summary(&body, &t.card.title));
                 });
                 if first {
                     return;
@@ -5957,6 +6004,7 @@ impl Engine {
             &self.tasks_of(factory_id).collect::<Vec<_>>(),
             now,
             self.ports.clock.utc_offset_ms(),
+            &self.runtime_blocked,
         ))
         .unwrap_or_default();
         let judgment = Judgment {
@@ -6326,25 +6374,6 @@ fn extract_criteria(body: &str) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .take(LIST_LIMIT)
         .collect()
-}
-
-fn repo_context(project: &str) -> (Vec<String>, Option<String>) {
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(project) {
-        for entry in entries.flatten().take(200) {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') && name != ".github" {
-                continue;
-            }
-            files.push(name);
-        }
-    }
-    files.sort();
-    let guide = ["AGENTS.md", "CLAUDE.md", "README.md"]
-        .iter()
-        .find_map(|name| std::fs::read_to_string(Path::new(project).join(name)).ok())
-        .map(|text| judgment::cut(&text, 8 * 1024));
-    (files, guide)
 }
 
 /// The marker that lets an issue write converge on retry (B73).

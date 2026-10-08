@@ -329,6 +329,7 @@ mod tests {
             instance: pane.into(),
             pane: pane.into(),
             parent: parent.map(str::to_owned),
+            origin: None,
             project: None,
             actor: Actor {
                 pane_id: pane.into(),
@@ -739,6 +740,13 @@ mod tests {
             .find(|record| record.id == "agent-3")
             .unwrap()
             .parent = None;
+        fixture
+            .ledger
+            .agents
+            .iter_mut()
+            .find(|record| record.id == "agent-3")
+            .unwrap()
+            .origin = Some("agent-1".into());
         fixture.ledger.validate().unwrap();
         fixture.native.tokens = fixture.expected.clone();
         let untouched = agent(&fixture.ledger.agents[0], fixture.expected);

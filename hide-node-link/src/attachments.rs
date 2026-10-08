@@ -9,6 +9,39 @@ pub const MAX_FILES: usize = 8;
 pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 pub const MAX_REQUEST_BYTES: u64 = 40 * 1024 * 1024;
+/// Files and bytes staged on a device at once, and how long a staged file
+/// may wait there before a later staging removes it.
+pub const MAX_STAGED_FILES: usize = 128;
+pub const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
+pub const STAGING_TTL_SECONDS: u64 = 24 * 60 * 60;
+
+/// One file to stage on a device, read already.
+#[derive(Clone, Debug)]
+pub struct AttachmentFile {
+    pub path: String,
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// An attachment request's id: a UUID in its hyphenated form.
+pub fn valid_request_id(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+pub fn check_cancelled(cancelled: &std::sync::atomic::AtomicBool) -> Result<(), String> {
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        Err("File transfer was cancelled.".to_owned())
+    } else {
+        Ok(())
+    }
+}
 
 /// How long a committed file is safe from eviction. The pasted token is the
 /// staged file's path, so the core waits no longer than this for a terminal

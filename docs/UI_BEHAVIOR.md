@@ -453,7 +453,7 @@ The web shell has no Project Memory entry point, disabled control, or placeholde
 
 ## Terminal image attachment boundary
 
-Web owner: `web/src/attachments.ts`, `web/src/PaneView.tsx`. Core owner: `herdr-core/src/runtime/attachments.rs`, `herdr-core/src/remote/attachments.rs`.
+Web owner: `web/src/attachments.ts`, `web/src/PaneView.tsx`. Core owner: `herdr-core/src/runtime/attachments.rs`; device staging `hide-node/src/ssh/attachments.rs`.
 
 Dropping local file URLs into a visible terminal focuses that receiving pane and starts one attachment intent through the existing ordered writer.
 Paste captures PNG or TIFF clipboard images at the same ingress; ordinary text and keys keep their existing terminal behavior.
@@ -1159,7 +1159,7 @@ A start whose default-runtime read is refused, or that gets no answer within 20 
 ### The screen
 
 The header holds the Factory name, the project filter, the flow bar and '비서에게 묻기'.
-The flow bar shows 정리 중 · 대기 · 실행 중 · 완료 오늘 (today in the machine's time zone) and never a person's-turn cell; a cell opens the board filtered to that column.
+The flow bar shows 시작 전 · 진행 중 · 멈춤 · 완료 오늘 (today in the machine's time zone) and never a person's-turn cell; a cell opens the board filtered to that column.
 The flow bar ends with the time of the last GitHub read, which turns the warning colour after three failed reads in a row and back when a read succeeds; there is no banner.
 The tabs are 내 차례 · 보드 · 그래프 · 설정, and the screen opens on 내 차례; the project filter applies to every tab.
 The 내 차례 tab's count and the sidebar badge are the engine's `my_turn` and are always the same number.
@@ -1180,13 +1180,30 @@ Factory workers are left out of the 요청 view and the Overview's yellow count.
 
 ### Board and graph
 
-The board has four columns, 정리 중 · 대기 · 실행 중 · 완료, in the engine's order within each column.
-A card that needs the person (blocked, stopped, waiting to merge, an open question) has the warning border and stands at the top of its column; verifying, waiting to merge, blocked, stopped, relanding and outside work sit in 실행 중 with their state mark.
-A done Task the person has not seen has the unread dot; done Tasks older than three days fold into one group, and those past 90 days leave the group while their Task page still opens.
-A cancelled Task leaves the board and is found under the '취소됨' filter, which offers 되살리기 for seven days; cancelling asks nothing and leaves '취소됨 · 되살리기' in its place.
-The graph tab draws each Factory's dependencies in the Issues view's Dependencies layout with every arrow a longer path implies left out (A→B→C draws no A→C), which the Issues view does not do; the engine's data keeps every edge.
-Only cards that need the person are emphasised, done cards are dimmed, waiting cards say what they wait for, unrelated Tasks sit below, folded completions leave the drawing, and a node opens its Task page.
-A filter that leaves the board or graph empty offers to clear it; a Factory whose cards are all archived is empty, not filtered.
+The board has four movement columns: 시작 전 · 진행 중 · 멈춤 · 완료, using the CLI's same classification.
+시작 전 and 완료 are narrower than 진행 중 and 멈춤 on a wide board.
+멈춤 contains 나를 기다림 above 다른 걸 기다림; person waits and stopped Tasks come first in the engine's order.
+A narrow board stacks its columns with 멈춤 first.
+An empty column keeps only its label and zero count; old completions still fold and cancelled Tasks keep their existing filter and revival behavior.
+
+One card component serves the board and graph, choosing its contents by its own width.
+Below 240 CSS pixels it shows only the state icon, a title capped at two lines, real issue and PR links at the top left, the worker runtime's existing logo at the top right, and a left band when a person is needed.
+GitHub numbers open their source URL; a local issue opens its Overview panel when the local catalog carries its identity, and otherwise stays a plain reference until that catalog read arrives.
+From 240 through 419 pixels it adds the one-line summary (at most 60 Unicode characters), elapsed time, the existing child-agent badge and popover, a four-cell stage bar, one problem line and the primary action.
+From 420 pixels it allows a two-line summary and adds the state word, the worker's existing status mark, secondary actions, and an existing AI label below a dashed rule with ✦, only when that label exists and summaries are enabled.
+Unknown runtime logos use the shared initial fallback.
+Color belongs only to the state icon, problem line and person band; the other information is small and gray, the title and question are bold, and done cards are dimmed.
+Korean wraps between words, long English identifiers may wrap anywhere, and excess title, summary and question lines truncate.
+The stage bar fills past cells, grays the current cell, hatches the current cell of a stuck Task and leaves future cells empty.
+A problem line explains one applicable failure, merge gate, stop reason, usage-hold resume time, predecessor wait or outside PR number.
+A resting Task has no action button and follows the engine's ordinary resume transition.
+
+The suggested answer, merge and retry buttons send the same commands as 내 차례, with the same refusal and retry path and no duplicate send while sending or taken.
+다른 답 opens the corresponding 내 차례 item for a custom answer.
+Wide cards also expose the listed answers, PR link or history action as applicable.
+The card background opens Task detail; its links, action buttons and child-agent popover are independent keyboard controls.
+The graph uses these same small cards below 240 pixels at one fixed height, so arrows meet consistent node centers.
+The graph still reduces transitive edges and places unrelated Tasks below; folded and archived completions leave its drawing.
 
 ### The Task page
 
@@ -1496,8 +1513,11 @@ A row is the agent's official mark (the same in light and dark), its name and a 
 The switch is that machine's: turning an agent on installs its skill and hook and the Herdr integration there, turning it off takes out only what Hide installed (docs/agent-hooks.md), and an agent that is off wears no status.
 An agent that is on says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
-Grok, OpenCode, Pi, omp and Cursor wear a `Partial` chip, on or off, and show no counts; the chip opens a popover with every feature of the kit's feature table, `✓ Works` or `– Not available`.
-Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row an older device helper still reports for an agent Hide no longer supports (Gemini CLI) is not drawn.
+Grok, OpenCode, Pi, omp and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off, and show no counts; Claude Code and Codex have both prompt intake and spawn refusal and wear no chip.
+The chip opens a popover with every feature of the kit's feature table, grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
+The chip, headings and feature text wrap within the popover in every interface language.
+Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row whose id this build does not know is omitted and its id and device are diagnosed once.
+The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
 A switch-off whose removal did not finish keeps the row from reading Off and says so in its own line.

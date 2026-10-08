@@ -37,14 +37,13 @@ pub enum Command {
         actor: Option<String>,
     },
     Spawn {
-        parent: String,
+        parent: Option<String>,
         name: String,
         intent: String,
         kind: String,
         repo: String,
         branch: String,
         path: Option<String>,
-        no_watch: bool,
         args: Vec<String>,
     },
 }
@@ -60,22 +59,45 @@ pub struct AgentRecord {
     pub instance: String,
     pub pane: String,
     pub parent: Option<String>,
+    /// Provenance only for handoffs; delegated provenance is the parent.
+    #[serde(default)]
+    pub origin: Option<String>,
     pub project: Option<String>,
     pub actor: Actor,
     pub ended: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnMode {
+    #[default]
+    Delegation,
+    Handoff,
+}
+
+impl SpawnMode {
+    fn responsibility(self, caller: &str) -> Option<String> {
+        (self == Self::Delegation).then(|| caller.to_owned())
+    }
+
+    fn origin(self, caller: &str) -> Option<String> {
+        (self == Self::Handoff).then(|| caller.to_owned())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnRecord {
     pub id: String,
+    /// The caller authorizes the receipt, including a parentless handoff.
     pub parent: String,
+    #[serde(default)]
+    pub mode: SpawnMode,
     pub intent: String,
     pub name: String,
     pub kind: String,
     pub repo: String,
     pub branch: String,
     pub requested_path: Option<String>,
-    pub no_watch: bool,
     pub args: Vec<String>,
     pub path: Option<String>,
     pub pane: Option<String>,
@@ -190,6 +212,7 @@ pub(crate) fn agent_view(record: &AgentRecord, ledger: &Ledger) -> AgentView {
         instance: record.instance.clone(),
         pane: record.pane.clone(),
         parent: record.parent.clone(),
+        origin: record.origin.clone().or_else(|| record.parent.clone()),
         project: record.project.clone(),
         runtime: if record.ended {
             Runtime::Ended
@@ -237,6 +260,11 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             || !record.actor.valid()
             || record.actor.device_id != record.machine
             || record.actor.session != crate::wire::session_digest(&record.session)
+            || record.origin.as_ref().is_some_and(|origin| {
+                record.parent.is_some()
+                    || origin == &record.id
+                    || !ledger.agents.iter().any(|record| &record.id == origin)
+            })
             || record.parent.as_ref().is_some_and(|parent| {
                 parent == &record.id || !ledger.agents.iter().any(|record| &record.id == parent)
             })
@@ -265,14 +293,18 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             || record.child.as_ref().is_some_and(|id| {
                 !ledger.agents.iter().any(|child| {
                     &child.id == id
-                        && child.parent.as_ref() == Some(&record.parent)
+                        && child.parent == record.mode.responsibility(&record.parent)
+                        && child.origin == record.mode.origin(&record.parent)
                         && record.pane.as_ref() == Some(&child.pane)
                 })
             })
             || (record.completed
                 && (record.path.is_none() || record.pane.is_none() || record.child.is_none()))
             || record.auto_watch_id.as_ref().is_some_and(|id| {
-                !record.completed || record.no_watch || !key(id) || !id.starts_with("watch-")
+                !record.completed
+                    || record.mode == SpawnMode::Handoff
+                    || !key(id)
+                    || !id.starts_with("watch-")
             })
             || record.args.len() > 128
             || record.args.iter().map(String::len).sum::<usize>() > 8192
@@ -291,14 +323,7 @@ pub(crate) fn apply(
 ) -> Result<Value, String> {
     match mutation {
         Mutation::Register { record, check } => {
-            // Only a Factory registers under its own reserved name (D-14).
-            if (record.actor.code_owned() && !record.actor.same_identity(caller))
-                || (!record.actor.code_owned()
-                    && (crate::delivery::reserved_name(&record.name)
-                        || crate::delivery::reserved_name(&record.pane)))
-            {
-                return Err("reserved_name".into());
-            }
+            validate_registration_name(caller, record)?;
             if record.parent.as_ref().is_some_and(|id| {
                 !ledger
                     .agents
@@ -308,38 +333,19 @@ pub(crate) fn apply(
             {
                 return Err("parent_authority_required".into());
             }
-            if let Some(existing) = ledger
-                .agents
-                .iter()
-                .find(|existing| !existing.ended && existing.actor.same_identity(&record.actor))
+            // Registration has no provenance input. A handoff's own retry
+            // keeps its stored origin; binding a spawn still compares the
+            // complete immutable identity through the strict insertion path.
+            let mut registration = record.clone();
+            if registration.origin.is_none()
+                && let Some(existing) = ledger
+                    .agents
+                    .iter()
+                    .find(|existing| !existing.ended && existing.actor.same_identity(&record.actor))
             {
-                if existing.parent != record.parent || existing.name != record.name {
-                    return Err("registration_conflict".into());
-                }
-                return Ok(view(existing, ledger));
+                registration.origin = existing.origin.clone();
             }
-            if ledger.agents.iter().any(|existing| {
-                !existing.ended
-                    && existing.machine == record.machine
-                    && existing.host_scope == record.host_scope
-                    && existing.name == record.name
-            }) {
-                return Err("name_in_use".into());
-            }
-            if *check {
-                return Ok(json!(RegisterCheck {
-                    registered: false,
-                    name: record.name.clone(),
-                    pane: record.pane.clone(),
-                }));
-            }
-            if ledger.agents.len() >= AGENT_LIMIT {
-                return Err("capacity".into());
-            }
-            let mut record = record.clone();
-            record.id = allocate(ledger, "agent")?;
-            ledger.agents.push(record.clone());
-            Ok(view(&record, ledger))
+            insert_record(ledger, &registration, *check)
         }
         Mutation::End { id, actor } => {
             let record = ledger
@@ -354,7 +360,7 @@ pub(crate) fn apply(
             if !record.actor.same_identity(caller)
                 && !parent.is_some_and(|parent| parent.same_identity(caller))
             {
-                return Err("agent_authority_required".into());
+                return Err("parent_authority_required".into());
             }
             if actor.as_ref().is_some_and(|id| {
                 !resolve_actor(ledger, id).is_some_and(|actor| actor.same_identity(caller))
@@ -379,12 +385,22 @@ pub(crate) fn apply(
                 repo,
                 branch,
                 path,
-                no_watch,
                 args,
                 ..
             } = command
             else {
                 return Err("invalid_spawn".into());
+            };
+            let mode = if matches!(
+                command,
+                Command::Spawn {
+                    parent: Some(_),
+                    ..
+                }
+            ) {
+                SpawnMode::Delegation
+            } else {
+                SpawnMode::Handoff
             };
             if !resolve_actor(ledger, parent).is_some_and(|parent| parent.same_identity(caller)) {
                 return Err("parent_authority_required".into());
@@ -395,11 +411,12 @@ pub(crate) fn apply(
                 .find(|record| &record.parent == parent && &record.intent == intent)
             {
                 if record.name != *name
-                    || record.kind != *kind
+                    || hide_agent_adapter::canonical_kind(&record.kind)
+                        != hide_agent_adapter::canonical_kind(kind)
                     || record.repo != *repo
                     || record.branch != *branch
                     || record.requested_path != *path
-                    || record.no_watch != *no_watch
+                    || record.mode != mode
                     || record.args != *args
                 {
                     return Err("intent_conflict".into());
@@ -412,13 +429,13 @@ pub(crate) fn apply(
             let record = SpawnRecord {
                 id: allocate(ledger, "spawn")?,
                 parent: parent.clone(),
+                mode,
                 intent: intent.clone(),
                 name: name.clone(),
                 kind: kind.clone(),
                 repo: repo.clone(),
                 branch: branch.clone(),
                 requested_path: path.clone(),
-                no_watch: *no_watch,
                 args: args.clone(),
                 path: None,
                 pane: None,
@@ -486,14 +503,17 @@ pub(crate) fn apply(
             {
                 return Err("parent_authority_required".into());
             }
-            if record.parent.as_ref() != Some(&spawn.parent)
+            if record.parent != spawn.mode.responsibility(&spawn.parent)
+                || record.origin != spawn.mode.origin(&spawn.parent)
                 || spawn.pane.as_ref() != Some(&record.pane)
                 || record.name != spawn.name
-                || record.actor.kind != spawn.kind
+                || hide_agent_adapter::canonical_kind(&record.actor.kind)
+                    != hide_agent_adapter::canonical_kind(&spawn.kind)
                 || record.project != spawn.path
             {
                 return Err("child_identity_changed".into());
             }
+            validate_registration_name(caller, record)?;
             let existing = if let Some(child) = &spawn.child {
                 Some(
                     ledger
@@ -513,21 +533,14 @@ pub(crate) fn apply(
             let child = if let Some(existing) = existing {
                 if !existing.actor.same_identity(&record.actor)
                     || existing.parent != record.parent
+                    || existing.origin != record.origin
                     || existing.name != record.name
                 {
                     return Err("child_identity_changed".into());
                 }
                 existing.id.clone()
             } else {
-                apply(
-                    ledger,
-                    caller,
-                    &Mutation::Register {
-                        record: record.clone(),
-                        check: false,
-                    },
-                    now,
-                )?["id"]
+                insert_record(ledger, record, false)?["id"]
                     .as_str()
                     .ok_or("child_unavailable")?
                     .to_owned()
@@ -576,11 +589,12 @@ pub(crate) fn apply(
                     && letter.recipient.same_identity(&parent)
                     && letter.intake_confirmed()
             });
-            let auto_watch_id = if !spawn.no_watch && !child.ended && !reported_complete {
-                Some(watch::start(ledger, &parent, &child.actor, now)?.id)
-            } else {
-                None
-            };
+            let auto_watch_id =
+                if spawn.mode == SpawnMode::Delegation && !child.ended && !reported_complete {
+                    Some(watch::start(ledger, &parent, &child.actor, now)?.id)
+                } else {
+                    None
+                };
             let spawn = ledger
                 .spawns
                 .iter_mut()
@@ -591,6 +605,57 @@ pub(crate) fn apply(
             Ok(json!(spawn))
         }
     }
+}
+
+fn validate_registration_name(caller: &Actor, record: &AgentRecord) -> Result<(), String> {
+    // Only a Factory registers under its own reserved name (D-14).
+    if (record.actor.code_owned() && !record.actor.same_identity(caller))
+        || (!record.actor.code_owned()
+            && (crate::delivery::reserved_name(&record.name)
+                || crate::delivery::reserved_name(&record.pane)))
+    {
+        return Err("reserved_name".into());
+    }
+
+    Ok(())
+}
+
+fn insert_record(ledger: &mut Ledger, record: &AgentRecord, check: bool) -> Result<Value, String> {
+    if let Some(existing) = ledger
+        .agents
+        .iter()
+        .find(|existing| !existing.ended && existing.actor.same_identity(&record.actor))
+    {
+        if existing.parent != record.parent
+            || existing.origin != record.origin
+            || existing.name != record.name
+        {
+            return Err("registration_conflict".into());
+        }
+        return Ok(view(existing, ledger));
+    }
+    if ledger.agents.iter().any(|existing| {
+        !existing.ended
+            && existing.machine == record.machine
+            && existing.host_scope == record.host_scope
+            && existing.name == record.name
+    }) {
+        return Err("name_in_use".into());
+    }
+    if check {
+        return Ok(json!(RegisterCheck {
+            registered: false,
+            name: record.name.clone(),
+            pane: record.pane.clone(),
+        }));
+    }
+    if ledger.agents.len() >= AGENT_LIMIT {
+        return Err("capacity".into());
+    }
+    let mut record = record.clone();
+    record.id = allocate(ledger, "agent")?;
+    ledger.agents.push(record.clone());
+    Ok(view(&record, ledger))
 }
 
 /// Ends a registration and the watches on it. Returns whether it was live.
@@ -726,6 +791,7 @@ mod tests {
             instance: format!("terminal-{pane}"),
             pane: pane.into(),
             parent,
+            origin: None,
             project: None,
             actor: Actor {
                 pane_id: pane.into(),
@@ -754,14 +820,13 @@ mod tests {
     }
     fn command(intent: &str) -> Command {
         Command::Spawn {
-            parent: "here".into(),
+            parent: Some("here".into()),
             name: "worker".into(),
             intent: intent.into(),
             kind: "codex".into(),
             repo: "/fixture".into(),
             branch: "topic".into(),
             path: None,
-            no_watch: false,
             args: vec!["--model".into(), "fixture model".into()],
         }
     }
@@ -1026,8 +1091,8 @@ mod tests {
         )
         .unwrap();
         let mut changed = command("key");
-        if let Command::Spawn { no_watch, .. } = &mut changed {
-            *no_watch = true;
+        if let Command::Spawn { parent, .. } = &mut changed {
+            *parent = None;
         }
         assert_eq!(
             apply(
@@ -1046,16 +1111,31 @@ mod tests {
         assert!(ledger.bytes().is_err());
     }
     fn pending_spawn() -> (Ledger, Actor, String, String, AgentRecord) {
+        pending_spawn_mode(SpawnMode::Delegation, "local")
+    }
+
+    fn pending_spawn_mode(
+        mode: SpawnMode,
+        device: &str,
+    ) -> (Ledger, Actor, String, String, AgentRecord) {
         let mut ledger = Ledger::default();
-        let parent = record("parent", "native-parent", None);
+        let mut parent = record("parent", "native-parent", None);
+        parent.machine = device.into();
+        parent.actor.device_id = device.into();
         let actor = parent.actor.clone();
         let parent_id = register(&mut ledger, parent, &actor);
+        let mut command = command("once");
+        if mode == SpawnMode::Handoff
+            && let Command::Spawn { parent, .. } = &mut command
+        {
+            *parent = None;
+        }
         let reserved = apply(
             &mut ledger,
             &actor,
             &Mutation::Reserve {
                 parent: parent_id.clone(),
-                command: command("once"),
+                command,
             },
             1,
         )
@@ -1073,9 +1153,441 @@ mod tests {
             2,
         )
         .unwrap();
-        let mut child = record("worker", "native-child", Some(parent_id.clone()));
+        let mut child = record("worker", "native-child", mode.responsibility(&parent_id));
+        child.origin = mode.origin(&parent_id);
+        child.machine = device.into();
+        child.actor.device_id = device.into();
         child.project = Some("/fixture/topic".into());
         (ledger, actor, parent_id, id, child)
+    }
+
+    #[test]
+    fn both_spawn_modes_bind_and_replay_known_agent_spellings() {
+        // B5/D-08 applies to native observations and retries of the same intent.
+        for mode in [SpawnMode::Delegation, SpawnMode::Handoff] {
+            for (requested, reported) in [
+                ("CODEX", "codex"),
+                ("codex", " Codex"),
+                ("claude_code", "CLAUDE"),
+            ] {
+                let (mut ledger, caller, parent, spawn, mut child) =
+                    pending_spawn_mode(mode, "local");
+                ledger.spawns[0].kind = requested.into();
+                child.actor.kind = reported.into();
+                let bound = apply(
+                    &mut ledger,
+                    &caller,
+                    &Mutation::BindChild {
+                        id: spawn.clone(),
+                        record: child,
+                    },
+                    3,
+                )
+                .unwrap();
+                let registered = ledger
+                    .agents
+                    .iter()
+                    .find(|record| Some(record.id.as_str()) == bound["child"].as_str())
+                    .unwrap();
+                assert_eq!(registered.actor.kind, reported);
+                assert_eq!(registered.parent, mode.responsibility(&parent));
+                assert_eq!(registered.origin, mode.origin(&parent));
+                let mut retry = command("once");
+                if let Command::Spawn { kind, parent, .. } = &mut retry {
+                    *kind = reported.into();
+                    if mode == SpawnMode::Handoff {
+                        *parent = None;
+                    }
+                }
+                let replay = apply(
+                    &mut ledger,
+                    &caller,
+                    &Mutation::Reserve {
+                        parent,
+                        command: retry,
+                    },
+                    4,
+                )
+                .unwrap();
+                assert_eq!(replay["id"], spawn);
+                assert_eq!(replay["kind"], requested);
+                assert_eq!(ledger.spawns.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_binding_keeps_other_agents_and_unknown_spellings_distinct() {
+        for mode in [SpawnMode::Delegation, SpawnMode::Handoff] {
+            for (requested, reported) in [("codex", "claude"), ("future", "FUTURE")] {
+                let (mut ledger, caller, parent, spawn, mut child) =
+                    pending_spawn_mode(mode, "local");
+                ledger.spawns[0].kind = requested.into();
+                child.actor.kind = reported.into();
+                assert_eq!(
+                    apply(
+                        &mut ledger,
+                        &caller,
+                        &Mutation::BindChild {
+                            id: spawn,
+                            record: child,
+                        },
+                        3
+                    ),
+                    Err("child_identity_changed".into())
+                );
+                assert_eq!(ledger.agents.len(), 1);
+                assert!(ledger.spawns[0].child.is_none());
+                let mut retry = command("once");
+                if let Command::Spawn { kind, parent, .. } = &mut retry {
+                    *kind = reported.into();
+                    if mode == SpawnMode::Handoff {
+                        *parent = None;
+                    }
+                }
+                assert_eq!(
+                    apply(
+                        &mut ledger,
+                        &caller,
+                        &Mutation::Reserve {
+                            parent,
+                            command: retry
+                        },
+                        4
+                    ),
+                    Err("intent_conflict".into())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pane_retirement_preserves_spawn_receipts_and_responsibility() {
+        for device in ["local", "connected-device"] {
+            for mode in [SpawnMode::Delegation, SpawnMode::Handoff] {
+                let (mut ledger, caller, origin, spawn, child) = pending_spawn_mode(mode, device);
+                let expected_parent = match mode {
+                    SpawnMode::Delegation => Some(origin.clone()),
+                    SpawnMode::Handoff => None,
+                };
+                let scope = child.host_scope.clone();
+                let child_actor = child.actor.clone();
+                let bound = apply(
+                    &mut ledger,
+                    &caller,
+                    &Mutation::BindChild {
+                        id: spawn.clone(),
+                        record: child,
+                    },
+                    3,
+                )
+                .unwrap();
+                let child_id = bound["child"].as_str().unwrap().to_owned();
+                let complete = Mutation::Complete { id: spawn };
+                let receipt = apply(&mut ledger, &caller, &complete, 4).unwrap();
+                assert_eq!(
+                    receipt["auto_watch_id"].is_null(),
+                    mode == SpawnMode::Handoff
+                );
+                if mode == SpawnMode::Handoff {
+                    watch::start(&mut ledger, &caller, &child_actor, 5).unwrap();
+                }
+                let live = ledger.clone();
+                let read = PaneRead {
+                    host_scope: Some(scope.clone()),
+                    floor: Some(ledger.next_id),
+                    panes: Some([caller.pane_id.clone()].into()),
+                };
+                let gone = gone_registrations(&ledger, device, &read, None)
+                    .into_iter()
+                    .collect();
+                assert_eq!(end_gone(&mut ledger, &gone).len(), 1);
+                let ended = ledger.agents.iter().find(|r| r.id == child_id).unwrap();
+                assert!(ended.ended);
+                assert_eq!(ended.parent, expected_parent);
+                assert_eq!(view(ended, &ledger)["origin"], origin);
+                assert!(ledger.watches.is_empty());
+                assert!(!ledger.agents.iter().find(|r| r.id == origin).unwrap().ended);
+                let mut restored: Ledger =
+                    serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+                let before = restored.clone();
+                assert_eq!(
+                    apply(&mut restored, &caller, &complete, 6).unwrap(),
+                    receipt
+                );
+                assert_eq!(restored, before);
+
+                // Losing the spawner's pane ends that registration alone;
+                // provenance and responsibility are not cascade authority.
+                let mut ledger = live;
+                let read = PaneRead {
+                    host_scope: Some(scope),
+                    floor: Some(ledger.next_id),
+                    panes: Some([child_actor.pane_id.clone()].into()),
+                };
+                let gone = gone_registrations(&ledger, device, &read, None)
+                    .into_iter()
+                    .collect();
+                assert_eq!(end_gone(&mut ledger, &gone).len(), 1);
+                assert!(ledger.agents.iter().find(|r| r.id == origin).unwrap().ended);
+                let child = ledger.agents.iter().find(|r| r.id == child_id).unwrap();
+                assert!(!child.ended);
+                assert_eq!(child.parent, expected_parent);
+                assert_eq!(view(child, &ledger)["origin"], origin);
+                assert_eq!(ledger.watches.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn handoff_is_an_independent_root_with_provenance_and_only_self_end_authority() {
+        use crate::delivery::mailbox;
+        for device in ["local", "connected-device"] {
+            let (ledger, actor, origin, spawn, child) =
+                pending_spawn_mode(SpawnMode::Handoff, device);
+            let child_actor = child.actor.clone();
+            let mut ledger: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            let before = ledger.clone();
+            assert_eq!(
+                apply(
+                    &mut ledger,
+                    &actor,
+                    &Mutation::Reserve {
+                        parent: origin.clone(),
+                        command: command("once")
+                    },
+                    3
+                )
+                .unwrap_err(),
+                "intent_conflict"
+            );
+            assert_eq!(ledger, before);
+            let bind = Mutation::BindChild {
+                id: spawn.clone(),
+                record: child,
+            };
+            let bound = apply(&mut ledger, &actor, &bind, 3).unwrap();
+            let child = bound["child"].as_str().unwrap().to_owned();
+            let complete = Mutation::Complete { id: spawn };
+            let receipt = apply(&mut ledger, &actor, &complete, 4).unwrap();
+            assert!(receipt["auto_watch_id"].is_null());
+            let child_view = view(
+                ledger
+                    .agents
+                    .iter()
+                    .find(|record| record.id == child)
+                    .unwrap(),
+                &ledger,
+            );
+            assert!(child_view["parent"].is_null());
+            assert_eq!(child_view["origin"], origin);
+            assert!(child_view["watch"].is_null());
+            assert!(view(&ledger.agents[0], &ledger)["origin"].is_null());
+            let before = ledger.clone();
+            assert_eq!(
+                apply(
+                    &mut ledger,
+                    &actor,
+                    &Mutation::End {
+                        id: child.clone(),
+                        actor: None
+                    },
+                    5
+                )
+                .unwrap_err(),
+                "parent_authority_required"
+            );
+            assert_eq!(ledger, before);
+            mailbox::send(
+                &mut ledger,
+                &child_actor,
+                &actor,
+                "report",
+                "finished",
+                "report",
+                None,
+                6,
+            )
+            .unwrap();
+            let manual = watch::start(&mut ledger, &actor, &child_actor, 7).unwrap();
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            assert_eq!(
+                apply(&mut restored, &actor, &bind, 8).unwrap()["child"],
+                child
+            );
+            assert_eq!(apply(&mut restored, &actor, &complete, 8).unwrap(), receipt);
+            assert_eq!(restored.watches[0].id, manual.id);
+            apply(
+                &mut restored,
+                &actor,
+                &Mutation::End {
+                    id: origin.clone(),
+                    actor: None,
+                },
+                9,
+            )
+            .unwrap();
+            let live = restored
+                .agents
+                .iter()
+                .find(|record| record.id == child)
+                .unwrap();
+            assert!(!live.ended);
+            assert_eq!(view(live, &restored)["origin"], origin);
+            apply(
+                &mut restored,
+                &child_actor,
+                &Mutation::End {
+                    id: child,
+                    actor: None,
+                },
+                10,
+            )
+            .unwrap();
+            assert!(restored.watches.is_empty());
+        }
+    }
+
+    #[test]
+    fn handoff_self_registration_preserves_provenance_without_transferring_responsibility() {
+        let (mut ledger, caller, origin, spawn, child) =
+            pending_spawn_mode(SpawnMode::Handoff, "local");
+        let mut registration = child.clone();
+        registration.origin = None; // The public register command has no origin input.
+        let id = apply(
+            &mut ledger,
+            &caller,
+            &Mutation::BindChild {
+                id: spawn,
+                record: child,
+            },
+            3,
+        )
+        .unwrap()["child"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let before = ledger.clone();
+        for check in [false, true] {
+            let reply = apply(
+                &mut ledger,
+                &registration.actor,
+                &Mutation::Register {
+                    record: registration.clone(),
+                    check,
+                },
+                4,
+            )
+            .unwrap();
+            assert_eq!(reply["id"], id);
+            assert_eq!(reply["origin"], origin);
+            assert!(reply["parent"].is_null());
+            assert_eq!(ledger, before);
+            for changed in [
+                AgentRecord {
+                    name: "changed".into(),
+                    ..registration.clone()
+                },
+                AgentRecord {
+                    parent: Some(origin.clone()),
+                    ..registration.clone()
+                },
+                AgentRecord {
+                    origin: Some("someone-else".into()),
+                    ..registration.clone()
+                },
+            ] {
+                assert!(
+                    apply(
+                        &mut ledger,
+                        &registration.actor,
+                        &Mutation::Register {
+                            record: changed,
+                            check
+                        },
+                        5,
+                    )
+                    .is_err()
+                );
+                assert_eq!(ledger, before);
+            }
+        }
+    }
+
+    #[test]
+    fn version_one_ledger_without_mode_or_origin_preserves_delegation_and_watches() {
+        let (mut ledger, actor, parent, spawn, child) = pending_spawn();
+        apply(
+            &mut ledger,
+            &actor,
+            &Mutation::BindChild {
+                id: spawn.clone(),
+                record: child,
+            },
+            3,
+        )
+        .unwrap();
+        let complete = Mutation::Complete { id: spawn };
+        let receipt = apply(&mut ledger, &actor, &complete, 4).unwrap();
+        let mut legacy = serde_json::to_value(&ledger).unwrap();
+        for record in legacy["agents"].as_array_mut().unwrap() {
+            record.as_object_mut().unwrap().remove("origin");
+        }
+        for record in legacy["spawns"].as_array_mut().unwrap() {
+            record.as_object_mut().unwrap().remove("mode");
+            record["no_watch"] = json!(false);
+        }
+        let mut restored: Ledger = serde_json::from_value(legacy).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored, ledger);
+        assert_eq!(restored.spawns[0].mode, SpawnMode::Delegation);
+        assert_eq!(view(&restored.agents[1], &restored)["origin"], parent);
+        let before = restored.clone();
+        assert_eq!(apply(&mut restored, &actor, &complete, 5).unwrap(), receipt);
+        assert_eq!(restored, before);
+
+        // Completed old opt-outs remain completed without installing a watch.
+        let mut legacy = serde_json::to_value(&ledger).unwrap();
+        legacy["watches"] = json!([]);
+        legacy["spawns"][0].as_object_mut().unwrap().remove("mode");
+        legacy["spawns"][0]["no_watch"] = json!(true);
+        legacy["spawns"][0]["auto_watch_id"] = Value::Null;
+        let mut restored: Ledger = serde_json::from_value(legacy).unwrap();
+        restored.validate().unwrap();
+        let before = restored.clone();
+        let receipt = apply(&mut restored, &actor, &complete, 5).unwrap();
+        assert!(receipt["auto_watch_id"].is_null());
+        assert_eq!(restored, before);
+    }
+
+    #[test]
+    fn handoff_receipt_requires_its_caller_at_every_transition() {
+        let (mut ledger, _, caller, spawn, child) = pending_spawn_mode(SpawnMode::Handoff, "local");
+        let stranger = record("stranger", "native-stranger", None).actor;
+        for mutation in [
+            Mutation::Reserve {
+                parent: caller,
+                command: command("once"),
+            },
+            Mutation::Advance {
+                id: spawn.clone(),
+                path: Some("/fixture/topic".into()),
+                pane: None,
+                child: None,
+            },
+            Mutation::BindChild {
+                id: spawn.clone(),
+                record: child,
+            },
+            Mutation::Complete { id: spawn },
+        ] {
+            let before = ledger.clone();
+            assert_eq!(
+                apply(&mut ledger, &stranger, &mutation, 3).unwrap_err(),
+                "parent_authority_required"
+            );
+            assert_eq!(ledger, before);
+        }
     }
 
     #[test]

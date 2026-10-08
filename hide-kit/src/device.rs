@@ -1,4 +1,4 @@
-//! A device's kit target, as `hide-host-helper` builds it on the device.
+//! A device's kit target, as `hided node serve` builds it on the device.
 //!
 //! The core uploads each build's parts into `<root>/<version>/` beside the
 //! helper, and the helper points `<root>/current` at its own version before

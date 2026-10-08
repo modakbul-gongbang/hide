@@ -322,8 +322,12 @@ impl Runtime {
             .filter(|row| {
                 let provider_matches = match filter {
                     SessionsProviderFilter::All => true,
-                    SessionsProviderFilter::Codex => row.provider == "codex",
-                    SessionsProviderFilter::Claude => row.provider == "claude",
+                    SessionsProviderFilter::Codex => {
+                        Agent::from_kind(&row.provider) == Some(Agent::Codex)
+                    }
+                    SessionsProviderFilter::Claude => {
+                        Agent::from_kind(&row.provider) == Some(Agent::Claude)
+                    }
                 };
                 provider_matches
                     && (query.is_empty()
@@ -404,10 +408,10 @@ impl Runtime {
     }
 
     pub(super) fn set_sessions_filter(&mut self, provider: &str, query: String) -> bool {
-        let filter = match provider {
-            "all" => SessionsProviderFilter::All,
-            "codex" => SessionsProviderFilter::Codex,
-            "claude" => SessionsProviderFilter::Claude,
+        let filter = match (provider, Agent::from_kind(provider)) {
+            ("all", _) => SessionsProviderFilter::All,
+            (_, Some(Agent::Codex)) => SessionsProviderFilter::Codex,
+            (_, Some(Agent::Claude)) => SessionsProviderFilter::Claude,
             _ => {
                 self.set_error(
                     "sessions.filter_invalid",
@@ -899,7 +903,12 @@ mod scope_tests {
     #[test]
     fn session_detail_opens_before_memory_database_exists() {
         let temp = tempdir().unwrap();
-        let session_path = temp.path().join("session.jsonl");
+        let folder = temp
+            .path()
+            .join(hide_session::CLAUDE_SESSIONS)
+            .join("-project");
+        fs::create_dir_all(&folder).unwrap();
+        let session_path = folder.join("session.jsonl");
         fs::write(
             &session_path,
             concat!(
@@ -923,7 +932,7 @@ mod scope_tests {
         });
 
         let detail = load_session_detail(
-            &hide_node::Local::of_process(),
+            &hide_node::Local::new(Some(temp.path().to_path_buf())),
             &temp.path().join("missing.sqlite3"),
             "project-1",
             row,
@@ -1244,7 +1253,9 @@ mod scope_tests {
             assert!(context.contains("auth=\""));
             assert!(!context.contains("Project Memory ready 0"));
 
-            let locator = temp.path().join(format!("{provider}-empty.jsonl"));
+            let folder = hide_session::session_root(&home, agent).unwrap();
+            fs::create_dir_all(&folder).unwrap();
+            let locator = folder.join(format!("{provider}-empty.jsonl"));
             let transcript = match agent {
                 Agent::Claude => json!({
                     "type": "user",
@@ -1280,7 +1291,7 @@ mod scope_tests {
             let mut store = MemoryStore::open(&database).unwrap();
             update_hook_projection(
                 &mut store,
-                &hide_node::Local::of_process(),
+                &hide_node::Local::new(Some(home.clone())),
                 &project.id,
                 &session,
             )
@@ -2228,12 +2239,9 @@ pub(super) fn load_sessions(
 fn persisted_unavailable_session_row(source: SessionSourceRecord) -> SessionRowSnapshot {
     SessionRowSnapshot {
         id: source.id,
-        provider_label: if source.provider == "codex" {
-            "Codex"
-        } else {
-            "Claude Code"
-        }
-        .to_owned(),
+        provider_label: hide_agent_adapter::adapter(&source.provider)
+            .map_or(source.provider.as_str(), |row| row.label)
+            .to_owned(),
         provider: source.provider,
         locator: source.locator,
         checkout_path: hide_platform::path::to_wire_lossy(Path::new(&source.checkout_path)),
@@ -2257,12 +2265,7 @@ fn project_session_row(session: ProjectSession) -> SessionRowSnapshot {
     SessionRowSnapshot {
         id: session.id,
         provider: session.agent.as_str().to_owned(),
-        provider_label: match session.agent {
-            Agent::Codex => "Codex",
-            Agent::Claude => "Claude Code",
-            Agent::OpenCode => "OpenCode",
-        }
-        .to_owned(),
+        provider_label: session.agent.format().adapter().label.to_owned(),
         locator: session.locator.to_string_lossy().into_owned(),
         checkout_path: hide_platform::path::to_wire_lossy(&session.checkout_path),
         first_human_request: session.first_human_request,
@@ -2320,11 +2323,9 @@ pub(super) fn load_session_detail(
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
-    let agent = if row.provider == "codex" {
-        Agent::Codex
-    } else {
-        Agent::Claude
-    };
+    let agent = Agent::from_kind(&row.provider)
+        .filter(|agent| agent.has_session_file())
+        .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
     let parsed = hide_session::parse_events(agent, &contents);
     let events = parsed
         .events

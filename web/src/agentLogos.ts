@@ -1,13 +1,14 @@
 // The logos the onboarding grid draws, by adapter id. Every file is listed in
 // `assets/agents/manifest.json` with its source and licence note, and an
 // agent with none draws a monogram (`scripts/check-agent-logos.mjs`).
+import { agentAdapter } from "./agentAdapters";
 import claudeMark from "./assets/agent-claude.png";
 import codexMark from "./assets/agent-codex.png";
 
 // A vendor's mark is bundled in the format it publishes: SVG, or PNG where no SVG exists.
 const bundled = import.meta.glob<string>("./assets/agents/*.{svg,png}", { eager: true, query: "?url", import: "default" });
 
-const LOGOS: Record<string, string> = { "claude-code": claudeMark, codex: codexMark };
+const LOGOS: Record<string, string> = { "claude-code": claudeMark, claude: claudeMark, codex: codexMark };
 for (const [path, url] of Object.entries(bundled)) {
   const id = /\/([^/]+)\.(?:svg|png)$/.exec(path)?.[1];
   if (id) LOGOS[id] = url;
@@ -15,7 +16,7 @@ for (const [path, url] of Object.entries(bundled)) {
 
 /** The bundled logo of an agent, or null when the tile draws a monogram. */
 export function agentLogo(id: string): string | null {
-  return LOGOS[id] ?? null;
+  return LOGOS[agentAdapter(id)?.logo_id ?? id] ?? null;
 }
 
 /** Up to two letters of a name: the monogram of an agent with no logo. */

@@ -38,7 +38,9 @@ const POPOVER_REFRESH_AGE: Duration = Duration::from_secs(60);
 const STALE_LIMIT_MS: u64 = 15 * 60 * 1_000;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 /// The name the row shows when the CLI is not on `PATH`.
-const CLAUDE_BINARY: &str = "claude";
+const CLAUDE_BINARY: &str = hide_agent_adapter::AgentId::ClaudeCode
+    .adapter()
+    .executables[0];
 /// A reset the CLI prints is at most one weekly window away. A wall time
 /// that matched this recently is the reset that just passed (the CLI prints
 /// minutes, and the read takes seconds), not the same date a year ahead, so
@@ -116,6 +118,11 @@ struct ProviderState {
 }
 
 impl ProviderState {
+    fn for_dialect(dialect: hide_agent_adapter::UsageDialect) -> Self {
+        let row = dialect.adapter();
+        Self::new(row.herdr.name, row.label)
+    }
+
     fn new(provider: &'static str, label: &'static str) -> Self {
         Self {
             provider,
@@ -220,8 +227,8 @@ impl ProviderUsageReader {
         Self {
             started_at: Instant::now(),
             last_seen_popover_generation: 0,
-            claude: ProviderState::new("claude", "Claude Code"),
-            codex: ProviderState::new("codex", "Codex"),
+            claude: ProviderState::for_dialect(hide_agent_adapter::UsageDialect::Claude),
+            codex: ProviderState::for_dialect(hide_agent_adapter::UsageDialect::Codex),
             codex_fallback: None,
             published: ProviderUsageSnapshot::initial_rows(),
             codex_read,
@@ -494,7 +501,8 @@ fn project_provider(
         );
     }
 
-    if state.provider == "codex"
+    if hide_agent_adapter::adapter(state.provider).and_then(|row| row.usage)
+        == Some(hide_agent_adapter::UsageDialect::Codex)
         && *disposition != FailureDisposition::Schema
         && let Some(fallback) = fallback
     {
@@ -513,7 +521,10 @@ fn project_provider(
         }
         // A Claude read that timed out or exited is a local child failing,
         // not the network, so its row does not claim to be offline.
-        FailureDisposition::Offline if state.provider == "claude" => {
+        FailureDisposition::Offline
+            if hide_agent_adapter::adapter(state.provider).and_then(|row| row.usage)
+                == Some(hide_agent_adapter::UsageDialect::Claude) =>
+        {
             format!("{} weekly usage response is unavailable", state.label)
         }
         FailureDisposition::Offline => {
@@ -1116,7 +1127,7 @@ fn log_failure(provider: &str, status: Option<u16>, kind: &str) {
 fn log_scoped_failure(kind: &str) {
     crate::diagnostic!(json!({
         "component": "provider_usage",
-        "provider": "claude",
+        "provider": hide_agent_adapter::UsageDialect::Claude.adapter().herdr.name,
         "scope": "weekly_scoped",
         "kind": kind,
     }));

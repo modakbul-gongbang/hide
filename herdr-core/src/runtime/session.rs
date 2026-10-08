@@ -1906,7 +1906,7 @@ impl Runtime {
         let herdr_version = self
             .remote_connections
             .get(target_id)
-            .and_then(|connection| connection.client.cached_herdr_version());
+            .and_then(|connection| connection.transport.cached_herdr_version());
         let status = &mut self.snapshot.status.remote[status_index];
 
         let mut changed = read_changed;

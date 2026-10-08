@@ -116,7 +116,8 @@ pub enum Verification {
 }
 
 impl Verification {
-    pub fn exists(&self) -> bool {
+    /// Whether the Factory verifies at all.
+    pub fn configured(&self) -> bool {
         !matches!(self, Self::None)
     }
 }
@@ -399,17 +400,6 @@ impl TaskState {
         }
     }
 
-    /// The board column (D-47). Cancelled sits outside the board.
-    pub fn column(self) -> Option<Column> {
-        match self {
-            Self::Drafting => Some(Column::Drafting),
-            Self::Waiting => Some(Column::Waiting),
-            Self::Done => Some(Column::Done),
-            Self::Cancelled => None,
-            _ => Some(Column::Running),
-        }
-    }
-
     /// Whether the Task holds one of the machine's worker slots.
     pub fn holds_slot(self) -> bool {
         matches!(self, Self::Running | Self::Relanding)
@@ -424,29 +414,29 @@ impl TaskState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Column {
-    Drafting,
-    Waiting,
-    Running,
+    Before,
+    Moving,
+    Stuck,
     Done,
 }
 
 impl Column {
-    pub const ALL: [Self; 4] = [Self::Drafting, Self::Waiting, Self::Running, Self::Done];
+    pub const ALL: [Self; 4] = [Self::Before, Self::Moving, Self::Stuck, Self::Done];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Drafting => "drafting",
-            Self::Waiting => "waiting",
-            Self::Running => "running",
+            Self::Before => "before",
+            Self::Moving => "moving",
+            Self::Stuck => "stuck",
             Self::Done => "done",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Drafting => "정리 중",
-            Self::Waiting => "대기",
-            Self::Running => "실행 중",
+            Self::Before => "시작 전",
+            Self::Moving => "진행 중",
+            Self::Stuck => "멈춤",
             Self::Done => "완료",
         }
     }
@@ -458,6 +448,9 @@ impl Column {
 pub struct Card {
     pub title: String,
     pub goal: String,
+    /// Intake's one-line description. Old records use the goal at read time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     pub criteria: Vec<String>,
     pub out_of_scope: Vec<String>,
     pub open_decisions: Vec<String>,
@@ -465,6 +458,63 @@ pub struct Card {
     pub depends_on: Vec<String>,
     /// Waits on a Task of another repository: shown only (B64).
     pub external: Vec<String>,
+}
+
+impl Card {
+    pub fn summary(&self) -> String {
+        self.summary
+            .as_deref()
+            .filter(|summary| !summary.trim().is_empty())
+            .map(short_summary)
+            .unwrap_or_else(|| goal_summary(&self.goal, &self.title))
+    }
+}
+
+/// A bounded, single-line description; count Unicode characters, not bytes.
+pub fn short_summary(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= 60 {
+        line
+    } else {
+        format!("{}…", line.chars().take(59).collect::<String>().trim_end())
+    }
+}
+
+/// Legacy and failed-review cards need no migration or additional AI call.
+pub fn goal_summary(goal: &str, title: &str) -> String {
+    let body = goal
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            let heading = line.trim_matches(['*', '_', ':', ' ']);
+            !line.is_empty()
+                && !line.starts_with(['#', '<'])
+                && !matches!(*line, "---" | "***")
+                && heading != title.trim()
+                && ![
+                    "goal",
+                    "summary",
+                    "description",
+                    "task",
+                    "목표",
+                    "요약",
+                    "설명",
+                    "작업",
+                ]
+                .iter()
+                .any(|name| heading.eq_ignore_ascii_case(name))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut sentence = String::new();
+    let mut chars = body.chars().peekable();
+    while let Some(ch) = chars.next() {
+        sentence.push(ch);
+        if matches!(ch, '.' | '!' | '?') && chars.peek().is_none_or(|next| next.is_whitespace()) {
+            break;
+        }
+    }
+    short_summary(&sentence)
 }
 
 /// What a person sets on a card (D-06); empty means the Factory default.
@@ -972,7 +1022,7 @@ impl Task {
     }
 
     pub fn merge_mode(&self, factory: &Factory) -> MergeMode {
-        if !factory.config.verification.exists() {
+        if !factory.config.verification.configured() {
             return MergeMode::Manual;
         }
         self.human.merge_mode.unwrap_or(factory.config.merge_mode)
@@ -1016,5 +1066,25 @@ impl Task {
         } else {
             format!("factory/{number}-{slug}")
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    #[test]
+    fn an_old_card_skips_title_and_template_headings_and_bounds_unicode() {
+        let old = serde_json::json!({"title":"알림 설정", "goal":"알림 설정\n### Goal\n**목표:**\n한 곳에서 알림을 고른다. 다음 문장은 제외한다.","criteria":[],"out_of_scope":[],"open_decisions":[],"depends_on":[],"external":[]});
+        let card: Card = serde_json::from_value(old).unwrap();
+        assert_eq!(card.summary(), "한 곳에서 알림을 고른다.");
+        assert_eq!(
+            card.summary, None,
+            "reading a legacy card does not migrate it"
+        );
+        let long = short_summary(&"가".repeat(80));
+        assert_eq!(long.chars().count(), 60);
+        assert!(long.ends_with('…'));
+        assert_eq!(short_summary(" two\n lines  "), "two lines");
     }
 }

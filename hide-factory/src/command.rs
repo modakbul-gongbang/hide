@@ -392,12 +392,12 @@ fn render_status(answer: &Value) -> String {
     for factory in answer["factories"].as_array().into_iter().flatten() {
         let flow = &factory["flow"];
         text.push_str(&format!(
-            "{} {}  정리 중 {} · 대기 {} · 실행 중 {} · 완료 오늘 {}  내 차례 {}\n",
+            "{} {}  시작 전 {} · 진행 중 {} · 멈춤 {} · 완료 오늘 {}  내 차례 {}\n",
             factory["id"].as_str().unwrap_or("?"),
             factory["project_name"].as_str().unwrap_or("?"),
-            flow["drafting"],
-            flow["waiting"],
-            flow["running"],
+            flow["before"],
+            flow["moving"],
+            flow["stuck"],
             flow["done_today"],
             factory["my_turn"],
         ));
