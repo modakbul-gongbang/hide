@@ -147,7 +147,7 @@ fn mixed_groups_keep_each_unowned_handler_and_group_metadata_when_owned_commands
 #[test]
 fn removing_owned_first_event_retains_later_operator_event_bytes_and_order() {
     let owned = r#"{"hooks":[{"command":"'/gone/helper' hook --source hide-subagents@0"}]}"#;
-    let first = format!(r#""UserPrompt\u0053ubmit" : [ {HANDLER} ]"#);
+    let first = format!(r#""UserPrompt\u0053ubmit" : [ {{"hooks":[{HANDLER}]}} ]"#);
     let second = format!(r#""SessionStart"  : [ {GROUP} ]"#);
     let source = format!(r#"{{"hooks":{{"Stop":[{owned}],{first},{second}}}}}"#);
     for runtime in AgentRuntime::ALL {
@@ -284,4 +284,34 @@ fn guidance_uses_the_same_source_preserving_writer() {
     let removed = fs::read_to_string(&path).unwrap();
     literal_survives(&removed, SETTING);
     literal_survives(&removed, HANDLER);
+}
+
+#[test]
+fn guidance_removal_retains_surviving_operator_event_spans_and_order() {
+    use hide_agent_hooks::guidance::{self, GuidanceAgent};
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(".cursor/hooks.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let owned = r#"{"command":"'/gone/helper' hook --runtime cursor --event SessionStart --source hide-guidance@0"}"#;
+    let first = r#""beforeReadFile" : [{ "command":"echo \u006fperator", "timeout":1e+02 }]"#;
+    let second = r#""stop"  : [{"command" : "echo \u0073top"}]"#;
+    let source = format!(
+        r#" {{"version":1,{SETTING},"hooks":{{"sessionStart":[{owned}],{first},{second}}}}} "#
+    );
+    fs::write(&path, &source).unwrap();
+    let outcome = guidance::remove(GuidanceAgent::Cursor, home.path()).unwrap();
+    assert_eq!(outcome.removed_entries, 1);
+    let removed = fs::read_to_string(&path).unwrap();
+    for literal in [SETTING, first, second] {
+        literal_survives(&removed, literal);
+    }
+    assert!(removed.find(first).unwrap() < removed.find(second).unwrap());
+    let parsed: serde_json::Value = serde_json::from_str(&removed).unwrap();
+    assert!(parsed["hooks"].get("sessionStart").is_none());
+    assert!(
+        !guidance::remove(GuidanceAgent::Cursor, home.path())
+            .unwrap()
+            .changed
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), removed);
 }

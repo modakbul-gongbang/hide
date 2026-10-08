@@ -779,23 +779,23 @@ fn drop_empty(document: &mut Value, layout: &Layout) {
         } => {
             if *under_hooks_key {
                 if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-                    hooks.remove(*event);
+                    hooks.shift_remove(*event);
                     // An empty `hooks` object is Hide's scaffolding too.
                     if hooks.is_empty() {
-                        root.remove("hooks");
+                        root.shift_remove("hooks");
                     }
                 }
             } else {
-                root.remove(*event);
+                root.shift_remove(*event);
             }
         }
         Shape::Copilot | Shape::Cursor => {
             if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-                hooks.remove("sessionStart");
+                hooks.shift_remove("sessionStart");
             }
         }
         Shape::Kiro => {
-            root.remove("hooks");
+            root.shift_remove("hooks");
         }
     }
 }
