@@ -286,7 +286,11 @@ A first warning left unacknowledged, uncancelled and unreplied for 60 minutes tr
 The receipt lives on the existing warning letters and survives daemon restart and watch stop/restart; new target activity starts a new episode.
 The second agent warning introduces no second human notification schedule.
 An overdue letter's notification key is its ID plus the cause and sends once across both channels.
-A failed first channel falls back to the other; two failures record a diagnostic without retry.
+A channel that cannot reach the operator is not tried, and a failed first channel falls back to the other; two failures record a diagnostic without retry.
+The phone is skipped before any send when the push key is missing (`no_vapid`), the push mode is off (`mode_off`) or is app-closed-only while a desktop or web shell is connected (`app_open`), Mobile is off (`mobile_off`) or no paired phone has a push subscription (`no_subscription`); the first that applies is the reason, and a send that fails or finds every subscription gone is `send_failed` or `subscription_gone`.
+Herdr is skipped only when this Mac has no Herdr socket (`no_socket`), because the pinned contract has no method that reads its toast setting; otherwise its answer decides, and `disabled`, `rate_limited`, `no_foreground_client` and `busy` are Herdr's own `reason` for a notification it did not show, with `call_failed` and `answer_unreadable` when it gave no usable answer.
+When neither channel reached the operator, one `human.channels_failed` record in `Logs/core.jsonl` carries the notice (`letter_undelivered` or `observer_unconfirmed`), the letter id, `push` and `herdr`; it never carries a letter's text, a phone endpoint or a key.
+The claim stays consumed, so the same letter or warning is never announced again, and nothing is drawn on screen: an operator with phone push off and Herdr's toast off learns of a held letter from that record only.
 These cases add no Inbox screen or automatic escalation chain.
 
 ## Verification
