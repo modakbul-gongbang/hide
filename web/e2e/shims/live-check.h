@@ -21,10 +21,12 @@ static int live_check(int argc, char **argv) {
   const char *home = getenv("HOME");
   if (!home) return 2;
   char location[4096];
-  if (snprintf(location, sizeof location, "%s/.claude.json", home) >= (int)sizeof location) return 2;
+  const int codex = run_as_codex(argv[0]);
+  const char *configuration = codex ? ".codex/config.toml" : ".claude.json";
+  if (snprintf(location, sizeof location, "%s/%s", home, configuration) >= (int)sizeof location) return 2;
   FILE *config = fopen(location, "wb");
   if (!config) return 2;
-  fputs("{\"fixture\":\"temporarily-mutated\"}\n", config);
+  fputs(codex ? "model = \"fixture-temporary\"\n" : "{\"fixture\":\"temporarily-mutated\"}\n", config);
   fclose(config);
   if (snprintf(location, sizeof location, "%s/.live-check-child.json", home) >= (int)sizeof location) return 2;
   FILE *identity = fopen(location, "wb");

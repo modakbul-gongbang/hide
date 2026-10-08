@@ -8,6 +8,7 @@ import { copyFixtureShim } from "./shims/build";
 import { runPython, startPython } from "./live-check-process";
 
 const originalConfig = '{"fixture":"before-run"}\n';
+const originalCodexConfig = 'model = "fixture-original"\n';
 // Fault injection stays in the test runner. Production has no hidden route to
 // mutate operator configuration or fake successful native delivery.
 const toolRunner = `
@@ -23,6 +24,10 @@ def initialize(self,*args,**kwargs):
  file=self.home/'.claude.json'
  file.write_bytes(${JSON.stringify(originalConfig)}.encode())
  file.chmod(0o640)
+ codex=self.home/'.codex/config.toml'
+ codex.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+ codex.write_bytes(${JSON.stringify(originalCodexConfig)}.encode())
+ codex.chmod(0o640)
  peer=self.home/'.claude/settings.local.json'
  peer.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
  peer.write_bytes(${JSON.stringify(originalConfig)}.encode())
@@ -74,6 +79,8 @@ function assertClean(run: string, configurationFailure = false) {
   expect(fs.existsSync(path.join(run, "probe"))).toBe(false);
   expect(fs.readFileSync(path.join(run, "daemon-home", ".claude.json"), "utf8")).toBe(originalConfig);
   expect(fs.statSync(path.join(run, "daemon-home", ".claude.json")).mode & 0o777).toBe(0o640);
+  expect(fs.readFileSync(path.join(run, "daemon-home", ".codex", "config.toml"), "utf8")).toBe(originalCodexConfig);
+  expect(fs.statSync(path.join(run, "daemon-home", ".codex", "config.toml")).mode & 0o777).toBe(0o640);
   expect(fs.readFileSync(path.join(run, "daemon-home", ".claude", "settings.local.json"), "utf8")).toBe(originalConfig);
   return report;
 }
@@ -102,7 +109,8 @@ for (const provider of ["claude-code", "codex"]) test(`live check retains every 
     expect(report.fixture).toBe(true);
     expect(report.herdr.manifests.length).toBeGreaterThan(0);
     expect(report.configuration.failures).toEqual([]);
-    expect(report.configuration.restored).toContainEqual({ path: path.join(run, "daemon-home", ".claude.json"), result: "restored" });
+    const configuration = provider === "codex" ? path.join(".codex", "config.toml") : ".claude.json";
+    expect(report.configuration.restored).toContainEqual({ path: path.join(run, "daemon-home", configuration), result: "restored" });
     expect(report.cleanup).toMatchObject({ confirmed: true, probe_removed: true, socket_removed: true });
     expect(fs.existsSync(path.join(run, "probe"))).toBe(false);
     expect(report.agents).toHaveLength(1);
