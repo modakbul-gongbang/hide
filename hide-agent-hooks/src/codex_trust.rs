@@ -422,7 +422,7 @@ struct Target {
 ///   a managed file can name the same command and are not Hide's write);
 /// - its event, handler type, command and matcher are, byte for byte, one
 ///   Hide writes for that event with this kit's helper (a command hook; the
-///   matcher `Bash` for `PreToolUse`, none for the rest), or one the kit
+///   matcher `Bash|request_user_input` for `PreToolUse`, none for the rest), or one the kit
 ///   recorded Herdr's own integration install writing (the one other tool
 ///   whose entries are here, and only through that record);
 /// - Codex does not trust it yet (`untrusted`, or `modified` after a change).

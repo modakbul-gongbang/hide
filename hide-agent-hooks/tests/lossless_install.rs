@@ -145,6 +145,24 @@ fn mixed_groups_keep_each_unowned_handler_and_group_metadata_when_owned_commands
 }
 
 #[test]
+fn removing_owned_first_event_retains_later_operator_event_bytes_and_order() {
+    let owned = r#"{"hooks":[{"command":"'/gone/helper' hook --source hide-subagents@0"}]}"#;
+    let first = format!(r#""UserPrompt\u0053ubmit" : [ {HANDLER} ]"#);
+    let second = format!(r#""SessionStart"  : [ {GROUP} ]"#);
+    let source = format!(r#"{{"hooks":{{"Stop":[{owned}],{first},{second}}}}}"#);
+    for runtime in AgentRuntime::ALL {
+        let (home, _) = fixture(runtime, &source);
+        assert_eq!(remove(runtime, home.path()).unwrap().removed_entries, 1);
+        let removed = read(runtime, home.path());
+        literal_survives(&removed, &first);
+        literal_survives(&removed, &second);
+        assert!(removed.find(&first).unwrap() < removed.find(&second).unwrap());
+        assert!(!remove(runtime, home.path()).unwrap().changed);
+        assert_eq!(read(runtime, home.path()), removed);
+    }
+}
+
+#[test]
 fn equal_handlers_in_distinct_groups_keep_their_own_spelling_and_order() {
     let mixed_handler = r#"{ "command" : "echo \u006fther" }"#;
     let standalone = r#"{ "hooks" : [{"command":"echo other"}] }"#;

@@ -219,7 +219,7 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
         // Only an event Hide emptied is dropped; an event another tool left
         // empty was already empty before this ran.
         if HookEvent::parse(&event).is_some() {
-            hooks.remove(&event);
+            hooks.shift_remove(&event);
         }
     }
     if removed == 0 {

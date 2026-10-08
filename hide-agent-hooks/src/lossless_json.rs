@@ -139,27 +139,28 @@ impl<'a> Node<'a> {
             _ => return serde_json::to_string(target),
         };
         let mut mapping = vec![None; targets.len()];
-        // Hook writers retain existing order and append their replacement.
-        // Match in that same order, including mixed groups that lost only
-        // marked commands. Equal handlers in different groups must not swap
-        // their distinct source spans.
+        // Object members have unique decoded keys, so their source identity
+        // does not depend on target iteration order. Array entries retain
+        // order, including mixed groups that lost only marked commands.
+        // Equal handlers in different groups must not swap their source spans.
         let mut next = 0;
         for (slot, (key, value)) in targets.iter().enumerate() {
-            let candidate =
-                self.entries
+            let candidate = match key {
+                Some(key) => self
+                    .entries
+                    .iter()
+                    .position(|entry| entry.key.as_deref() == Some(*key)),
+                None => self
+                    .entries
                     .iter()
                     .enumerate()
                     .skip(next)
-                    .find_map(|(index, entry)| {
-                        let matches = match key {
-                            Some(key) => entry.key.as_deref() == Some(*key),
-                            None => {
-                                self.entry_value(before, index) == *value
-                                    || shares_handler(self.entry_value(before, index), value)
-                            }
-                        };
+                    .find_map(|(index, _)| {
+                        let matches = self.entry_value(before, index) == *value
+                            || shares_handler(self.entry_value(before, index), value);
                         matches.then_some(index)
-                    });
+                    }),
+            };
             if let Some(index) = candidate {
                 mapping[slot] = Some(index);
                 next = index + 1;
@@ -234,4 +235,28 @@ fn shares_handler(before: &Value, after: &Value) -> bool {
         return false;
     };
     before.iter().any(|handler| after.contains(handler))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reordered_object_members_keep_their_original_literal_values() {
+        let first = r#""a\u006cpha" : { "text":"\u2603", "number":1e+02 }"#;
+        let second = r#""beta"  : [ true, null ]"#;
+        let source = format!("{{{first},{second}}}");
+        let mut target = super::parse(&source).unwrap();
+        let members = target.as_object_mut().unwrap();
+        let first_value = members.shift_remove("alpha").unwrap();
+        members.insert("alpha".into(), first_value);
+        // An owned edit forces a render even though the surviving values match.
+        members.insert("owned".into(), serde_json::json!(true));
+        let rewritten = super::rewrite(&source, &target).unwrap();
+        assert!(rewritten.contains(first));
+        assert!(rewritten.contains(second));
+        assert!(rewritten.find(second).unwrap() < rewritten.find(first).unwrap());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rewritten).unwrap(),
+            target
+        );
+    }
 }
