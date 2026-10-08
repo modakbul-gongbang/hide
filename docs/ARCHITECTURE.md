@@ -1560,6 +1560,7 @@ The request and its answer changed shape, so the helper protocol version moved w
 Protocol 25 adds bounded reader-feature facts to the existing authenticated Hello, retained only for that live connection.
 Structured question and plan content is a separate feature from turn lifecycle facts.
 An unsupported content field is removed before typed decoding in both directions, preserving native question identities, answered markers and plan waits for a helper that supports turns alone.
+Native session ID projection is independently gated by Identity support; Labels-only answers retain their owner proof while the optional native ID is removed before decoding.
 Missing or malformed facts disable the affected reader feature while file and Git operations remain available; the protocol number alone grants no reader.
 The audited protocol-24 transition keeps its frozen Claude/Codex and partial OpenCode label/link capabilities, with no new reader or structured user-turn content inferred from the current build.
 Reader requests and returned bodies are checked against the live link before serialization and decoding; draining, closed or replaced links cannot lend their retired facts to a checkpoint.

@@ -211,9 +211,10 @@ fn label_answer(
         ))
     })?;
     let titles = features.supports(agent.as_str(), ReaderFeature::Titles);
+    let identity = features.supports(agent.as_str(), ReaderFeature::Identity);
     let turns = features.supports(agent.as_str(), ReaderFeature::Turns);
     let content = features.supports(agent.as_str(), ReaderFeature::UserTurnContent);
-    if titles && turns && content {
+    if identity && titles && turns && content {
         return Ok(answer);
     }
     let raw = match answer {
@@ -225,6 +226,21 @@ fn label_answer(
     let mut fields: RawReaderFields =
         serde_json::from_str(raw.get()).map_err(|_| invalid_label_answer())?;
     let mut refused = Vec::new();
+    if !identity
+        && let Some(raw) = fields.0.get_mut("confirmed")
+        && raw.get() != "null"
+    {
+        let mut confirmed: RawReaderFields =
+            serde_json::from_str(raw.get()).map_err(|_| invalid_label_answer())?;
+        if confirmed
+            .0
+            .remove("native_session_id")
+            .is_some_and(|raw| raw.get() != "null")
+        {
+            refused.push("reader_identity_unsupported");
+        }
+        *raw = serde_json::value::to_raw_value(&confirmed.0).map_err(|_| invalid_label_answer())?;
+    }
     if !titles {
         for name in ["title", "custom_title"] {
             if fields.0.remove(name).is_some_and(|raw| raw.get() != "null") {
@@ -514,6 +530,8 @@ mod tests {
     struct LabelProbe {
         events: Vec<hide_session::label_transcript::LabelEvent>,
         #[serde(default)]
+        confirmed: Option<hide_session::ConfirmedLabelSession>,
+        #[serde(default)]
         title: Option<String>,
         #[serde(default)]
         turns: Option<hide_session::turns::TurnTracker>,
@@ -560,6 +578,69 @@ mod tests {
             answer.skipped_reasons.get("reader_turns_unsupported"),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn labels_keep_owner_proof_without_decoding_unadvertised_native_identity() {
+        let peer = LabelPeer {
+            features: serde_json::from_str(r#"[{"provider":"claude","features":["labels"]}]"#)
+                .unwrap(),
+            response: r#"{"confirmed":{"owner":"v1:fixture","native_session_id":{"future":true},"incarnation":"1:2","bytes":10},"events":[{"kind":"human","at_unix_ms":1,"text":"working request","offset":0}],"skipped_reasons":{}}"#,
+        };
+        let answer: LabelProbe = call_as(
+            &peer,
+            label_call(hide_session::Agent::Claude),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(answer.events[0].text, "working request");
+        let confirmed = answer.confirmed.unwrap();
+        assert_eq!(confirmed.owner, "v1:fixture");
+        assert!(confirmed.native_session_id.is_none());
+        assert_eq!(
+            answer.skipped_reasons.get("reader_identity_unsupported"),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn advertised_native_identity_is_retained_and_validated() {
+        for (response, valid) in [
+            (
+                r#"{"confirmed":{"owner":"v1:fixture","native_session_id":"native-fixture","incarnation":"1:2","bytes":10},"events":[],"skipped_reasons":{}}"#,
+                true,
+            ),
+            (
+                r#"{"confirmed":{"owner":"v1:fixture","native_session_id":"outside/session","incarnation":"1:2","bytes":10},"events":[],"skipped_reasons":{}}"#,
+                false,
+            ),
+        ] {
+            let peer = LabelPeer {
+                features: serde_json::from_str(
+                    r#"[{"provider":"claude","features":["labels","identity"]}]"#,
+                )
+                .unwrap(),
+                response,
+            };
+            let answer: Result<LabelProbe, _> = call_as(
+                &peer,
+                label_call(hide_session::Agent::Claude),
+                Duration::from_secs(1),
+            );
+            if valid {
+                assert_eq!(
+                    answer
+                        .unwrap()
+                        .confirmed
+                        .unwrap()
+                        .native_session_id
+                        .as_deref(),
+                    Some("native-fixture")
+                );
+            } else {
+                assert!(answer.is_err());
+            }
+        }
     }
 
     #[test]
