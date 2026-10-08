@@ -18,6 +18,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path('../scripts').resolve()))
 from agent_live_check.cli import main
 from agent_live_check.runtime import Runtime
+from agent_live_check.processes import ProcessSafetyError
 original=Runtime.__init__
 def initialize(self,*args,**kwargs):
  original(self,*args,**kwargs)
@@ -33,8 +34,6 @@ def initialize(self,*args,**kwargs):
  peer.write_bytes(${JSON.stringify(originalConfig)}.encode())
 def fail(self,*args,**kwargs):
  original_workspace(self,*args,**kwargs)
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian':
-  self.owner.run([sys.executable,'-c','raise SystemExit(125)'],env=self.env,check=False)
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='server-loss':
   child=next(child for child,output,label in self.servers if label=='herdr')
   self.owner.end(child)
@@ -43,8 +42,20 @@ def fail(self,*args,**kwargs):
   os.link(self.home/'.claude.json',self.home/'.claude/unexpected-link')
  raise RuntimeError('injected_after_registered_private_workspace')
 original_workspace=Runtime.new_workspace
+original_command=Runtime.command
+def guardian_after_workspace(self,args,**kwargs):
+ if args[:2]==['agent','start']:
+  try:
+   self.owner.run([sys.executable,'-c','raise SystemExit(125)'],env=self.env,check=False)
+  except ProcessSafetyError:
+   child=next(child for child,output,label in self.servers if label=='herdr')
+   self.owner.end(child)
+   raise
+ return original_command(self,args,**kwargs)
 with patch.object(Runtime,'__init__',initialize):
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration','server-loss','guardian'):
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian':
+  with patch.object(Runtime,'command',guardian_after_workspace): raise SystemExit(main(sys.argv[1:]))
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration','server-loss'):
   with patch.object(Runtime,'new_workspace',fail): raise SystemExit(main(sys.argv[1:]))
  raise SystemExit(main(sys.argv[1:]))
 `;
@@ -187,13 +198,17 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
         const result = await runPython(args, { env, timeout: 45_000 });
         expect(result.error, result.stderr).toBeUndefined();
         expect(result.status, result.stdout + result.stderr).toBe(2);
-        const report = assertClean(run, scenario === "configuration", scenario === "server-loss");
+        const report = assertClean(run, scenario === "configuration", ["server-loss", "guardian"].includes(scenario));
         expect(report.herdr.version).toContain("herdr");
         if (scenario === "guardian") {
           expect(report.failures[0]).toMatchObject({ type: "ProcessSafetyError",
             reason: "guardian_cleanup_or_resource_failure" });
           expect(report.agents).toHaveLength(1);
           expect(report.agents[0].scenes).toEqual([]);
+          expect(report.failures.slice(1)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ phase: "scene_integration", agent: "claude-code", scene: "startup" }),
+            expect.objectContaining({ phase: "scene_workspace_close", agent: "claude-code", scene: "startup" }),
+          ]));
         } else expect(report.failures[0].reason).toBe("injected_after_registered_private_workspace");
         clean = true;
       } else {

@@ -163,6 +163,7 @@ No group signal is sent after that child is reaped.
 If a group signal is denied with EPERM, a fresh complete group snapshot may confirm that only zombies or no members remain; this ends that signal obligation, while reaping and final absence checks remain required.
 A live member or unavailable group metadata retains the signal failure, and bounded diagnostics record the original errno and refresh result.
 Guardian and cleanup failures end the measurement as failures rather than being reported as scene timeouts.
+Per-scene integration observation and workspace close are attempted independently; their failures are reported beside any original scene failure without replacing it.
 Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
 If Darwin's RSS read fails, one fresh BSD identity read distinguishes a vanished or replaced subject, a zombie and a still-live unreadable process.
 An observed replacement in the owned group retains unknown RSS; a host-wide replacement requires its own ownership proof, and a replacement outside the sampled group never inherits the old identity's ownership.

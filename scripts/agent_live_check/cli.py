@@ -234,13 +234,31 @@ def main(argv=None):
                                 write_private(evidence, json.dumps({"reason": str(error)}).encode())
                         finally:
                             if workspace:
+                                primary = sys.exc_info()[1]
+                                finalization_errors = []
                                 try:
                                     current_integration = observe_integration(runtime, pane, recipe, integration)
                                     if (current_integration["native_source"] or
                                             not provider["integration"].get("native_source")):
                                         provider["integration"] = current_integration
-                                finally:
+                                except Exception as error:
+                                    finalization_errors.append(("scene_integration", error))
+                                try:
                                     runtime.close_workspace(workspace)
+                                except Exception as error:
+                                    finalization_errors.append(("scene_workspace_close", error))
+                                # Keep a pending scene exception primary. With
+                                # no pending exception, the first failed close
+                                # becomes primary and still aborts measurement.
+                                secondary = finalization_errors if primary else finalization_errors[1:]
+                                for phase, error in secondary:
+                                    failure = {"type": type(error).__name__, "reason": str(error),
+                                               "phase": phase, "agent": recipe["id"], "scene": scene}
+                                    if isinstance(error, ProtectionError) and error.path is not None:
+                                        failure["path"] = error.path
+                                    report["failures"].append(failure)
+                                if primary is None and finalization_errors:
+                                    raise finalization_errors[0][1]
             if provider.get("skipped"):
                 observed = {row["scene"] for row in provider["scenes"]}
                 provider["scenes"].extend({"scene": scene, "arrival": "skipped", "status": "unknown",
@@ -248,9 +266,9 @@ def main(argv=None):
                                         for scene in SCENES if scene not in observed)
             report["resources"] = owner.usage()
     except Exception as error:
-        report["failures"].append({"type": type(error).__name__, "reason": str(error)})
+        report["failures"].insert(0, {"type": type(error).__name__, "reason": str(error)})
         if isinstance(error, ProtectionError) and error.path is not None:
-            report["failures"][-1]["path"] = error.path
+            report["failures"][0]["path"] = error.path
     finally:
         try:
             if runtime:
