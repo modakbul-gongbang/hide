@@ -116,7 +116,7 @@
       "sample": "hide-agent-hooks/tests/fixtures/hook-bytes/pi-extension.ts"
     },
     "session": {
-      "absent": "No session reader in this build"
+      "sample": "hide-session/tests/fixtures/adapters/pi-1.0.4/session.jsonl"
     },
     "features": [
       "skill",
@@ -124,7 +124,10 @@
       "letters",
       "spawn_guard",
       "herdr_integration",
-      "start"
+      "sleep",
+      "fork",
+      "start",
+      "titles"
     ],
     "factory": {
       "direct_ask": "unavailable",

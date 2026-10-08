@@ -8,8 +8,9 @@
 //! checkpoint and hands it back on the next read. A read locates the session
 //! Herdr's reference names (a Claude Code or Codex file, an OpenCode
 //! database row), proves the provider's native owner before and after the
-//! read, and returns only conversation events, never injected scaffolding or
-//! a path. Failures are stable reason codes.
+//! read, and returns conversation events without injected scaffolding.
+//! Pi additionally returns its resolved source as an internal effect expectation;
+//! callers never project that path into UI snapshots. Failures are stable codes.
 //!
 //! What every adapter answers, and nothing more: the session's own title,
 //! each person's message with its time, images and Hide letter sender, each
@@ -25,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::turns::TurnTracker;
 use crate::{
     Agent, ConfirmedLabelSession, ConversationCheckpoint, ConversationCursor, EventKind,
-    SessionError, SessionIdentity, SessionLocator, confirm_label_session,
+    SessionError, SessionIdentity, SessionLocator,
 };
 
 /// What the caller knows about the pane's conversation.
@@ -170,6 +171,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         request.cwd.as_deref(),
     )?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
+    let stamp = crate::search_read::stamp_at(&path);
     let mut cursor = request
         .checkpoint
         .clone()
@@ -192,12 +194,15 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             return Err(reason.as_str().to_owned());
         }
     }
-    let after = confirm_label_session(request.agent, &path, reported_id)
-        .map_err(|error| error.to_string())?;
-    if after.owner != before.owner
-        || after.incarnation != before.incarnation
-        || after.bytes < before.bytes
-    {
+    let after = crate::confirm_session_file(
+        home,
+        request.agent,
+        &path,
+        reported_id,
+        request.cwd.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    if !crate::label_owner::same_read(&path, &before, &after, stamp.as_deref()) {
         return Err("label_session_read_changed".to_owned());
     }
     let mut events = Vec::with_capacity(parsed.events.len());
@@ -252,7 +257,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Pi | Agent::OpenCode => parsed.title.clone(),
     };
     let anchor = events
         .iter()
@@ -317,8 +322,8 @@ pub(crate) fn locate_confirmed(
         })?;
     let path = inside_agent_root(home, agent, &located)?;
     let reported_id = (reference_kind == "id").then_some(reference_value);
-    let confirmed =
-        confirm_label_session(agent, &path, reported_id).map_err(|error| error.to_string())?;
+    let confirmed = crate::confirm_session_file(home, agent, &path, reported_id, cwd)
+        .map_err(|error| error.to_string())?;
     Ok((path, confirmed))
 }
 

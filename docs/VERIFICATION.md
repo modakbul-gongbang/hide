@@ -171,6 +171,7 @@ The successful `start_new_session` spawn establishes its reserved group; the gua
 It does not use `getpgid` as a liveness check, because Darwin returns ESRCH for an unreaped zombie that remains visible in that snapshot.
 An EOF guardian sends CONT and TERM to that group, allows a bounded grace period, then sends KILL and requires the kernel to report the group absent.
 It retains the direct child's unreaped identity until the last group signal, so its group ID cannot be reused during signalling.
+It learns that child's exit from the kernel (kqueue `NOTE_EXIT` on macOS, a pidfd on Linux) without reaping it, so a command that ends at once is not held for a whole poll.
 No group signal is sent after that child is reaped.
 If a group signal is denied with EPERM, a fresh complete group snapshot may confirm that only zombies or no members remain; this ends that signal obligation, while reaping and final absence checks remain required.
 A live member or unavailable group metadata retains the signal failure, and bounded diagnostics record the original errno and refresh result.

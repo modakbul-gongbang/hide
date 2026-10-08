@@ -749,7 +749,8 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     // so it is no longer Basic, while no bell rings for it). The
     // session-reader common contract B1/B6 enables starts for the five
     // agents besides Claude Code and Codex without enabling their future
-    // reader/sleep/fork features.
+    // reader/sleep/fork features. The complete Pi slice adds native title
+    // and exact sleep/fork without changing its Basic collaboration grade.
     let opencode = [
         Skill,
         Guidance,
@@ -762,14 +763,17 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     ];
     // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
     // launch through Hide's extension; only omp runs subagents, and no bell
-    // rings for either.
+    // rings for either. Pi's session reader adds its sleep, fork and titles.
     let pi = [
         Skill,
         Guidance,
         Letters,
         SpawnGuard,
         HerdrIntegration,
+        Sleep,
+        Fork,
         Start,
+        Titles,
     ];
     let omp = [
         Skill,

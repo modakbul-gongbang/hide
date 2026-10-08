@@ -218,12 +218,12 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         // picks the highlighted item (measured 2026-10-07). Letters reach it on
         // its next prompt instead.
         bell: false,
-        session: None,
-        sleep: None,
-        fork: None,
-        resume: None,
-        conversation: None,
-        titles: None,
+        session: Some(SessionFormat::Pi),
+        sleep: Some(LaunchDialect::Pi),
+        fork: Some(LaunchDialect::Pi),
+        resume: Some(LaunchDialect::Pi),
+        conversation: Some(SessionFormat::Pi),
+        titles: Some(SessionFormat::Pi),
         start: Some(LaunchDialect::Pi),
         find: None,
         usage: None,
