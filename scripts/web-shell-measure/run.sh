@@ -296,7 +296,7 @@ wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 # A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
 # through the Projects sidebar once its checkout row appears.
-wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-selected') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { if (!window.__measureCheckoutOpened) { window.__measureCheckoutOpened = true; checkout.click(); } return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects && projects.getAttribute('aria-selected') !== 'true') { projects.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { if (!window.__measureCheckoutOpened) { window.__measureCheckoutOpened = true; checkout.click(); } return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
 wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID'"
 sleep 2
 if [[ "$scenario" == areas* ]]; then
