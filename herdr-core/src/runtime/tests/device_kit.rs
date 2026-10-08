@@ -1910,8 +1910,20 @@ fn a_devices_terminals_ride_its_link_and_end_with_it() {
 
 /// A device's connection whose node runs a terminal service.
 fn established_with_terminals() -> hide_node_link::device::Established {
+    established(
+        KitDevice::answering(Err("not asked".to_owned())),
+        Some(Arc::new(RecordedTerminals::default())),
+    )
+}
+
+/// A device's connection over `host`, with `terminals` when its node runs a
+/// terminal service.
+pub(super) fn established(
+    host: Arc<dyn crate::node_access::NodeLink>,
+    terminals: Option<Arc<dyn hide_node_link::terminal::TerminalNode>>,
+) -> hide_node_link::device::Established {
     hide_node_link::device::Established {
-        host: KitDevice::answering(Err("not asked".to_owned())),
+        host,
         identity: hide_node_link::device::HostIdentity {
             user: "me".to_owned(),
             hostname: "studio.local".to_owned(),
@@ -1932,7 +1944,7 @@ fn established_with_terminals() -> hide_node_link::device::Established {
         installed: false,
         helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
         upload: Default::default(),
-        terminals: Some(Arc::new(RecordedTerminals::default())),
+        terminals,
     }
 }
 

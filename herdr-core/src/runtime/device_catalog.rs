@@ -311,7 +311,7 @@ impl Runtime {
         let known = self.device_facts.get(target);
         // One request at a time; and a helper that could not be reached is
         // not asked again on every session sync, only when a connection is
-        // established (`reset_device_facts`).
+        // established (`reread_device_facts`).
         if known.is_some_and(|facts| facts.in_flight.is_some() || facts.unavailable.is_some()) {
             return self.refresh_device_catalog(target);
         }
@@ -325,7 +325,7 @@ impl Runtime {
         let missing = device_catalog::needed_paths(raw)
             .into_iter()
             .chain(registered)
-            .filter(|path| known.is_none_or(|facts| !facts.facts.contains_key(path)))
+            .filter(|path| known.is_none_or(|facts| facts.reread || !facts.facts.contains_key(path)))
             .collect::<Vec<_>>();
         if missing.is_empty() {
             return self.refresh_device_catalog(target);
@@ -350,6 +350,7 @@ impl Runtime {
         let entry = self.device_facts.entry(target.to_owned()).or_default();
         entry.in_flight = Some(generation);
         entry.unavailable = None;
+        entry.reread = false;
         crate::diagnostic!(serde_json::json!({
             "component": "device_catalog",
             "kind": "catalog.facts_requested",
@@ -537,11 +538,25 @@ impl Runtime {
     }
 
     /// A new helper connection answers afresh: a branch or a checkout may
-    /// have moved while none was connected.
-    pub(super) fn reset_device_facts(&mut self, target: &str) -> bool {
-        self.device_facts.remove(target);
-        self.device_worktrees.remove(target);
-        self.request_device_facts(target)
+    /// have moved while none was connected. What the last connection
+    /// answered stays until the new answer replaces it, so the device's
+    /// panes keep their checkout across a reconnect: a pane's `hide` command
+    /// is bound to its checkout when it starts and refused if that changed
+    /// before it ran, and a regrouping that would undo itself a moment later
+    /// is no change. An answer the old connection still owes is dropped.
+    pub(super) fn reread_device_facts(&mut self, target: &str) -> bool {
+        if let Some(entry) = self.device_facts.get_mut(target) {
+            entry.in_flight = None;
+            entry.unavailable = None;
+            entry.reread = true;
+        }
+        if let Some(entry) = self.device_worktrees.get_mut(target) {
+            entry.in_flight = None;
+            entry.unavailable = None;
+            entry.again = false;
+        }
+        let changed = self.request_device_facts(target);
+        changed | self.request_device_worktrees(target, true)
     }
 
     pub(super) fn forget_device_catalog(&mut self, target: &str) {

@@ -408,6 +408,153 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
     );
 }
 
+/// A device's helper that answers only the catalog's reads, from this
+/// machine's files, each once the test lets it; anything else is refused, so
+/// a kit step the new connection queues never runs here.
+struct CatalogDevice {
+    held: Mutex<bool>,
+    released: std::sync::Condvar,
+}
+
+impl CatalogDevice {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            held: Mutex::new(false),
+            released: std::sync::Condvar::new(),
+        })
+    }
+
+    fn hold(&self) {
+        *self.held.lock().unwrap() = true;
+    }
+
+    fn release(&self) {
+        *self.held.lock().unwrap() = false;
+        self.released.notify_all();
+    }
+}
+
+impl crate::node_access::NodeLink for CatalogDevice {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        use hide_node_link::protocol::Call;
+        if !matches!(call, Call::Project { .. } | Call::Worktrees { .. }) {
+            return Err(crate::node_access::LinkError::NotConnected(
+                "this device answers only the catalog".to_owned(),
+            ));
+        }
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            held = self.released.wait(held).unwrap();
+        }
+        drop(held);
+        crate::node_access::NodeLink::call(&hide_node::Local::of_process(), call, timeout)
+    }
+}
+
+/// A reconnect does not move a device's panes: what the last connection's
+/// helper answered stays until the new one answers, so a pane's command
+/// bound to its checkout before that answer is not refused as moved after
+/// it, and the catalog does not fall back to folders meanwhile. The new
+/// connection does ask again: a folder that became a repository while none
+/// was connected is grouped as one once its helper answers.
+#[test]
+fn a_reconnected_device_keeps_its_panes_in_their_checkouts_until_its_helper_answers_again() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(connected_status(TARGET));
+    let views = tempfile::tempdir().unwrap();
+    runtime.workspace_views = Some(
+        WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0,
+    );
+    let device = CatalogDevice::new();
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: device.clone(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
+    shared.lock().unwrap().ingest_remote_session(
+        TARGET,
+        Ok(session(vec![
+            herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+            herdr_workspace(TARGET, "w3", &t.other, &[("t4", &t.other)]),
+        ])),
+    );
+    wait(&shared, "the first connection's facts", |runtime| {
+        runtime.snapshot.status.remote[0].catalog.state == "ready"
+    });
+    let worktree = format!("remote:{TARGET}:pane:t3");
+    let context = |runtime: &Runtime| {
+        runtime
+            .workspace_control_query(TARGET, &worktree, crate::workspace_control::Query::Info)
+            .map(|result| result.context)
+            .map_err(|refusal| refusal.reason)
+    };
+    let is_git = |runtime: &Runtime, path: &str| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .and_then(|session| {
+                session
+                    .workspaces
+                    .iter()
+                    .find(|project| project.path == path)
+            })
+            .is_some_and(|project| project.is_git)
+    };
+    let bound = context(&shared.lock().unwrap()).unwrap();
+    assert_eq!(
+        bound.checkout_id,
+        device_catalog::checkout_id(TARGET, &t.linked)
+    );
+    assert!(!is_git(&shared.lock().unwrap(), &t.other));
+
+    // The link drops, and `other` becomes a repository meanwhile.
+    std::fs::create_dir_all(Path::new(&t.other).join(".git")).unwrap();
+    std::fs::write(
+        Path::new(&t.other).join(".git/HEAD"),
+        "ref: refs/heads/main\n",
+    )
+    .unwrap();
+    let mut runtime = shared.lock().unwrap();
+    runtime.ingest_host_closed(TARGET, 1, "the link dropped".to_owned());
+    let generation = runtime.advance_host_generation(TARGET);
+    device.hold();
+    runtime.ingest_host_established(
+        TARGET,
+        generation,
+        Ok(super::device_kit::established(device.clone(), None)),
+    );
+    // The new connection's helper has not answered: nothing moved.
+    assert_eq!(context(&runtime), Ok(bound.clone()));
+    assert_eq!(runtime.snapshot.status.remote[0].catalog.state, "ready");
+    drop(runtime);
+
+    device.release();
+    wait(&shared, "the new connection's facts", |runtime| {
+        is_git(runtime, &t.other)
+    });
+    assert_eq!(
+        context(&shared.lock().unwrap()),
+        Ok(bound),
+        "the checkout the new helper confirmed is the one the command was bound to"
+    );
+}
+
 #[test]
 fn a_device_whose_helper_is_not_allowed_shows_its_workspaces_unconfirmed() {
     let t = tree();

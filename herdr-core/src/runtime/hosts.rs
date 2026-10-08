@@ -533,7 +533,7 @@ impl Runtime {
                     self.reconcile_remote_terminal_selection();
                 }
                 self.settle_device_saves(device_id);
-                self.reset_device_facts(device_id);
+                self.reread_device_facts(device_id);
                 self.relist_remote_files(device_id);
                 // A device Workspace in front waited for this helper to
                 // bring its View tabs back.
