@@ -1297,6 +1297,11 @@ The global `ui_state.right_panel_visible` and `right_panel_section` are projecte
 The Sessions tool projects `RightPanelSection::AgentSessions`, never the legacy `Sessions` section that activates Memory and conversation reads.
 It draws `agent_scope.sessions` and row state through `web/src/AgentSessions.tsx`; `sessionPanel.ts` only resolves the selected device, front project and core member references.
 Its visible-board demand reuses the existing running-checks observation gate rather than adding a polling worker or clock.
+Session escalation, resolve and pane headers are pure core projections over accepted agent, delivery and PR facts (`agent_state`, `runtime/session_state.rs`).
+Changed inputs refresh the projection under Runtime and publish only changed values; repeated transport-control frames do not rederive headers.
+Resolve uses the existing coalesced state-save worker and publishes its durable result after the save answers; local-day rollover compares one deadline on the existing coordinator tick.
+Remembered sidebar folds survive incomplete startup and reconnect catalogs, as recent checkouts do, and leave only with a confirmed project or device removal.
+
 That projection is never saved: `core-state.json` keeps the right panel it held when the process started (`ui_state_to_save`), so an older build started on the same state directory opens with its own panel.
 A new Workspace starts with File Views and Tools off on the Explorer, so it shows Agent Views alone.
 The columns are docked (D-02), which reverses issue 170's floating panel: a column turned on or off, or a divider landing that moves Agent Views' edge, resizes the agents' terminals once, and a drag in progress, an open inside File Views and an agent choice resize nothing.

@@ -2487,6 +2487,11 @@ impl Runtime {
                 // project registrations, expanded folders and file tabs. Its
                 // panes, agents and folders are not touched.
                 let scope = format!("remote:{}:", payload.device_id);
+                let cleanup_key = format!("cleanup/{}", payload.device_id);
+                self.snapshot
+                    .ui_state
+                    .session_open_folds
+                    .retain(|key| !key.starts_with(&scope) && key != &cleanup_key);
                 let registrations = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
                     .ui_state

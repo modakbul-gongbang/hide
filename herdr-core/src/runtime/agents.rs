@@ -1111,22 +1111,13 @@ impl Runtime {
     /// moved or copied: the full collections stay authoritative for search,
     /// focus, and non-sidebar consumers.
     pub(super) fn refresh_inactive_groups(&mut self) -> bool {
-        let keys = self.session_fold_keys();
-        let before = self.snapshot.ui_state.session_open_folds.len();
-        self.snapshot
-            .ui_state
-            .session_open_folds
-            .retain(|key| keys.contains(key));
-        let pruned = self.snapshot.ui_state.session_open_folds.len() != before;
-        if pruned {
-            self.persist_ui_state();
-        }
-        let mut changed = pruned
-            | crate::project_context::refresh_inactive_groups(
-                &mut self.snapshot.navigator,
-                &self.snapshot.ui_state,
-                unix_milliseconds(),
-            );
+        // A bootstrap or reconnect can temporarily publish no catalog rows.
+        // Like recent checkouts, remembered folds leave only on explicit removal.
+        let mut changed = crate::project_context::refresh_inactive_groups(
+            &mut self.snapshot.navigator,
+            &self.snapshot.ui_state,
+            unix_milliseconds(),
+        );
         for remote in &mut self.snapshot.status.remote {
             if let Some(session) = &mut remote.session {
                 let agents = session
