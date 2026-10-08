@@ -6,11 +6,15 @@
 //! the probe keeps its fixture variables, markers and assertions.
 //!
 //! It connects with the operator's SSH configuration under `HOME` and
-//! installs this build's node on the device under the default consent
-//! folders, so run it only against an isolated device account: a private
-//! sshd with its own HOME and state, never an operator's. The fixture pane
-//! must be fresh: the scroll to the top of its history has to land on the
-//! probe's own first line.
+//! installs this build's node on the device under the folders
+//! `HERDR_TEST_REMOTE_HELPER_ROOT` and `HERDR_TEST_REMOTE_CLI_DIR` name, so
+//! run it only against an isolated device account: a private sshd with its
+//! own HOME and state, never an operator's. Both are absolute: the install
+//! spells `~/` from the SFTP home, which is the account's own home even
+//! where the private sshd gives commands another `HOME`, so a `~/` folder
+//! lands in the operator's real one. The fixture pane must be fresh: the
+//! scroll to the top of its history has to land on the probe's own first
+//! line.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Sender, channel};
@@ -18,9 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hide_node::terminal::device::DeviceSink;
-use hide_node_link::device::{
-    DEFAULT_CLI_DIR, DEFAULT_HELPER_ROOT, DeviceConnector, HOST_CONSENT_CONTRACT, HostConsent,
-};
+use hide_node_link::device::{DeviceConnector, HOST_CONSENT_CONTRACT, HostConsent};
 use hide_node_link::terminal::{GridSize, KeyTarget, TerminalControl, TerminalReport};
 use serde_json::json;
 
@@ -110,6 +112,14 @@ fn official_remote_terminal_session_fixture_probe() {
         std::env::var_os("HERDR_TEST_REMOTE_HELPER_DIR")
             .expect("HERDR_TEST_REMOTE_HELPER_DIR names the folder of the build the device runs"),
     );
+    let helper_root = std::env::var("HERDR_TEST_REMOTE_HELPER_ROOT")
+        .expect("HERDR_TEST_REMOTE_HELPER_ROOT names the isolated account's helper folder");
+    let cli_dir = std::env::var("HERDR_TEST_REMOTE_CLI_DIR")
+        .expect("HERDR_TEST_REMOTE_CLI_DIR names the isolated account's command folder");
+    assert!(
+        helper_root.starts_with('/') && cli_dir.starts_with('/'),
+        "the probe installs only into absolute folders of the isolated account"
+    );
     assert!(
         cwd.starts_with("/tmp/herdr-ide-verify-"),
         "remote terminal fixture must use the owned fixture namespace"
@@ -172,8 +182,8 @@ fn official_remote_terminal_session_fixture_probe() {
     // The device's node link, with its terminal service started.
     let consent = HostConsent {
         contract: HOST_CONSENT_CONTRACT,
-        helper_root: DEFAULT_HELPER_ROOT.to_owned(),
-        cli_dir: Some(DEFAULT_CLI_DIR.to_owned()),
+        helper_root,
+        cli_dir: Some(cli_dir),
         granted_at_unix_ms: 0,
         identity: None,
     };
