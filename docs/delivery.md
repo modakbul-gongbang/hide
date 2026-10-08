@@ -170,7 +170,7 @@ Capacity errors retain existing letters and watches.
 | First inactivity warning | 20 minutes without activity; the Factory's stall window (30 minutes by default) when the observer is a Factory |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
-| Answer wait of a `request` or `block` | 24 hours from the send, then `answer_wait_ended: "deadline"`; an end of either registration ends it at once as `party_ended` |
+| Answer wait of a `request` or `block` | 24 hours from the send, then `answer_wait_ended: "deadline"`; an end of either registration ends it at once as `party_ended` for a letter the recipient took in |
 | Intent retention and finished-letter cleanup | 30 days; open letters remain |
 | Open / retained letters | 1024 / 5000; a letter is open while it awaits intake or a reply |
 | Watches | 32 |
