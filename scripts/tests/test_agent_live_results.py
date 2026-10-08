@@ -129,6 +129,34 @@ class MeasurementResults(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 save(run, report)
 
+    def test_mixed_provider_reports_keep_all_rows_and_unsafe_exit_in_both_orders(self):
+        # B1/B9: a later provider must not overwrite an earlier unsafe result.
+        # The expected provider/scene pairs come from the complete PRD matrix.
+        unsafe = safe_agent()
+        unsafe["id"] = "claude-code"
+        unsafe["scenes"][-1].update(effect="unsent_draft", reason="unsafe fixture menu")
+        other = safe_agent()
+        for outcome in ("verified", "unknown"):
+            for reverse in (False, True):
+                with self.subTest(outcome=outcome, reverse=reverse), tempfile.TemporaryDirectory() as temporary:
+                    other["delivery"]["outcome"] = outcome
+                    agents = copy.deepcopy([other, unsafe] if reverse else [unsafe, other])
+                    report = {"herdr": {}, "agents": agents, "configuration": {},
+                              "cleanup": {"confirmed": True}, "failures": [], "resources": {}}
+                    run = Path(temporary)
+                    self.assertEqual(save(run, report), 1)
+                    stored = json.loads((run / "report.json").read_text())
+                    self.assertEqual([agent["id"] for agent in stored["agents"]],
+                                     ["codex", "claude-code"] if reverse else ["claude-code", "codex"])
+                    pairs = [(agent["id"], row["scene"]) for agent in stored["agents"] for row in agent["scenes"]]
+                    self.assertCountEqual(pairs, [(agent, scene) for agent in ("claude-code", "codex") for scene in SCENES])
+                    markdown = (run / "report.md").read_text()
+                    for agent in ("claude-code", "codex"):
+                        for scene in SCENES:
+                            self.assertIn(f"| {agent} | {scene} |", markdown)
+                    self.assertIn("| claude-code | fixture | fixture | {} | True | unsafe |", markdown)
+                    self.assertIn("unsent_draft", markdown)
+
     def test_operator_socket_refused_before_any_executable_or_candidate_check(self):
         with tempfile.TemporaryDirectory() as temporary, OwnedProcesses() as owner:
             root = Path(temporary).resolve()

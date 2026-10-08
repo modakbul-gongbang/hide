@@ -39,7 +39,7 @@ with patch.object(Runtime,'__init__',initialize):
  raise SystemExit(main(sys.argv[1:]))
 `;
 
-function fixtureRoot() {
+function fixtureRoot(agents = "claude-code,codex") {
   const runs = path.resolve("..", "agents", "runs");
   fs.mkdirSync(runs, { recursive: true });
   const root = fs.mkdtempSync(path.join(runs, "live-check-e2e-"));
@@ -52,7 +52,7 @@ function fixtureRoot() {
     fs.chmodSync(program, 0o700);
   }
   const run = path.join(root, "measurement");
-  return { root, run, args: ["-c", toolRunner, "--agents", "claude-code,codex",
+  return { root, run, args: ["-c", toolRunner, "--agents", agents,
     "--fixture-bin", bin, "--herdr-bin", herdrBinary(), "--run-dir", run, "--scene-seconds", "1"] };
 }
 
@@ -86,10 +86,13 @@ test("live check guards preserve bytes, refuse aliases, and end detached childre
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
 
-test("live check retains the full scene matrix and rejects unsafe picker or plan input", async () => {
+// Each provider keeps all ten scenes and its own bounded native lifecycle.
+// Mixed-provider report/exit aggregation is covered at the report boundary;
+// authenticated acceptance still requires one invocation with all adapters.
+for (const provider of ["claude-code", "codex"]) test(`live check retains every ${provider} scene and rejects unsafe picker or plan input`, async () => {
   test.skip(process.platform === "win32", "Native measurement's process guardian supports Unix hosts");
   test.setTimeout(240_000);
-  const { root, run, args } = fixtureRoot();
+  const { root, run, args } = fixtureRoot(provider);
   let clean = false;
   const result = await runPython(args, { timeout: 220_000 });
   try {
@@ -102,12 +105,17 @@ test("live check retains the full scene matrix and rejects unsafe picker or plan
     expect(report.configuration.restored).toContainEqual({ path: path.join(run, "daemon-home", ".claude.json"), result: "restored" });
     expect(report.cleanup).toMatchObject({ confirmed: true, probe_removed: true, socket_removed: true });
     expect(fs.existsSync(path.join(run, "probe"))).toBe(false);
-    expect(report.agents).toHaveLength(2);
+    expect(report.agents).toHaveLength(1);
+    expect(report.agents[0].id).toBe(provider);
     for (const agent of report.agents) {
       expect(agent.scenes.map((row: { scene: string }) => row.scene).sort()).toEqual([
         "rest", "working", "shell_approval", "file_approval", "question", "plan_approval",
         "model_picker", "resume_picker", "mcp_approval", "startup"].sort());
       expect(agent.scenes.every((row: { arrival: string }) => row.arrival === "reached")).toBe(true);
+      for (const row of agent.scenes) {
+        const evidence = JSON.parse(fs.readFileSync(path.join(run, row.evidence), "utf8"));
+        expect(evidence.samples.length, `${provider}/${row.scene} has no screen evidence`).toBeGreaterThan(0);
+      }
       expect(agent.verdict).toBe("unsafe");
       expect(agent.scenes.some((row: { scene: string; effect: string }) =>
         ["model_picker", "resume_picker", "plan_approval"].includes(row.scene)
