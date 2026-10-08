@@ -6,6 +6,8 @@ real-pinned-server lane owns the measurement tool's protocol acceptance.
 
 import json
 import ctypes
+import errno
+import io
 import os
 from pathlib import Path
 import signal
@@ -20,7 +22,8 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import (BsdInfo, Process, ProcessTable, descendants, marked_descendants,
                                            procargs_owned, require_complete, snapshot, validate_linux_procfs)
-from agent_live_check.processes import OwnedProcesses, ProcessError, RssSamples, control_plane, linux_children_remain
+from agent_live_check.processes import (OwnedProcesses, ProcessError, ProcessSafetyError, RssSamples,
+                                       control_plane, linux_children_remain, signal_reserved_group)
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 from agent_live_check.runtime import Runtime
@@ -650,8 +653,79 @@ class ProcessProtection(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="agent-diagnostic-") as name:
             with OwnedProcesses(diagnostics=Path(name) / "diagnostics") as owner:
                 (Path(name) / "diagnostics/1.json").write_text("occupied")
-                with self.assertRaisesRegex(ProcessError, "guardian_cleanup_or_resource_failure"):
+                with self.assertRaisesRegex(ProcessSafetyError, "guardian_cleanup_or_resource_failure"):
                     owner.run([sys.executable, "-c", "pass"], env=dict(os.environ), check=False)
+
+    @unittest.skipUnless(sys.platform == "darwin", "XNU excludes zombies from killpg's target count")
+    def test_reserved_zombie_group_finishes_after_permission_refusal(self):
+        # B8 requires final absence, not an unnecessary signal to a zombie.
+        # The child holds its own unreaped leader so the PGID cannot be reused.
+        program = '''import os,signal,time
+from agent_live_check.process_table import snapshot
+from agent_live_check.processes import signal_reserved_group
+reader,writer=os.pipe()
+pid=os.fork()
+if pid==0:
+ os.close(reader);os.setsid();os.write(writer,b"1");os.close(writer);os._exit(0)
+os.close(writer)
+try:
+ assert os.read(reader,1)==b"1"
+ os.close(reader)
+ deadline=time.monotonic()+2
+ while True:
+  table=snapshot(pid)
+  if pid in table and table[pid].zombie:break
+  if time.monotonic()>=deadline:raise RuntimeError("zombie_not_observed")
+  time.sleep(.01)
+ signal_reserved_group(pid,signal.SIGKILL)
+finally:
+ os.waitpid(pid,0)
+try:os.killpg(pid,0)
+except ProcessLookupError:print("group_absent_after_reap")
+else:raise RuntimeError("group_survived_reap")
+'''
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        with OwnedProcesses() as owner:
+            code, output, error = owner.run([sys.executable, "-c", program], env=env, seconds=10, check=False)
+        self.assertEqual((code, output.strip()), (0, "group_absent_after_reap"), error)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin libproc boundary")
+    def test_permission_refusal_requires_complete_terminal_group(self):
+        # The kernel boundary may change after killpg. Live or unreadable
+        # membership cannot turn EPERM into a completed signal obligation.
+        for outcome in ("live", "unavailable", "zombie", "empty"):
+            with self.subTest(outcome=outcome):
+                library = Mock()
+                def list_group(group, pids, size):
+                    if outcome == "empty":
+                        return 0
+                    pids[0] = 123
+                    return 1
+                def read_info(pid, flavor, arg, buffer, size):
+                    if outcome == "unavailable":
+                        ctypes.set_errno(errno.EPERM)
+                        return 0
+                    if flavor == 3:
+                        value = ctypes.cast(buffer, ctypes.POINTER(BsdInfo)).contents
+                        value.pid, value.pgid, value.uid = 123, 123, os.getuid()
+                        value.sec, value.status = 10, 5 if outcome == "zombie" else 1
+                    return size
+                library.proc_listpgrppids.side_effect = list_group
+                library.proc_pidinfo.side_effect = read_info
+                output = io.StringIO()
+                with patch.object(os, "killpg", side_effect=PermissionError(errno.EPERM, "denied")), \
+                        patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
+                        patch.object(sys, "stderr", output):
+                    if outcome in ("live", "unavailable"):
+                        with self.assertRaisesRegex(ProcessError, '"errno":1'):
+                            signal_reserved_group(123, signal.SIGKILL)
+                        self.assertEqual(output.getvalue(), "")
+                    else:
+                        signal_reserved_group(123, signal.SIGKILL)
+                        record = json.loads(output.getvalue().split(":", 1)[1])
+                        self.assertEqual(record, {"group": 123, "signal": signal.SIGKILL,
+                                                  "errno": errno.EPERM, "refresh": "terminal",
+                                                  "zombie_members": int(outcome == "zombie")})
 
     def test_prior_issued_marker_is_owned_under_a_live_parent_but_fabricated_marker_is_not(self):
         with OwnedProcesses() as previous:

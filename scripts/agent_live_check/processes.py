@@ -36,6 +36,39 @@ class ProcessError(RuntimeError):
     pass
 
 
+class ProcessSafetyError(ProcessError):
+    """A guardian or cleanup failure that must end the measurement."""
+
+
+def signal_reserved_group(group, signum):
+    """Signal a group while its caller keeps the group leader unreaped."""
+    try:
+        os.killpg(group, signum)
+    except ProcessLookupError:
+        pass
+    except PermissionError as error:
+        details = {"group": group, "signal": signum, "errno": error.errno}
+        try:
+            current = snapshot(group)
+            require_complete(current)
+        except Exception as refresh:
+            details.update(refresh="unavailable", refresh_error=type(refresh).__name__)
+            raise ProcessError("owned_group_signal:" + json.dumps(details, separators=(",", ":"))) from error
+        live = sum(not process.zombie for process in current.values())
+        if live:
+            details.update(refresh="live", live_members=live)
+            raise ProcessError("owned_group_signal:" + json.dumps(details, separators=(",", ":"))) from error
+        # XNU's explicit-group kill excludes zombies and can return EPERM
+        # when none remain signalable. This refresh ends only the signal
+        # obligation; the caller still reaps and proves final group absence.
+        details.update(refresh="terminal", zombie_members=len(current))
+        sys.stderr.write("guardian_signal_terminal:" + json.dumps(details, separators=(",", ":")) + "\n")
+    except OSError as error:
+        raise ProcessError("owned_group_signal:" + json.dumps(
+            {"group": group, "signal": signum, "errno": error.errno},
+            separators=(",", ":"))) from error
+
+
 class RssSamples:
     """RSS availability is a sampled budget, independent of ownership proof."""
 
@@ -230,7 +263,7 @@ class OwnedProcesses:
                     reasons = [line[:MAX_FAILURE_REASON] for line in output[1].decode("utf-8", errors="replace").splitlines()
                                if line.startswith(("guardian_failure:", "guardian_cleanup_failure:",
                                                    "guardian_orphan_scan_failure:", "guardian_signal_failure:"))]
-                    raise ProcessError(str(error) + (": " + "; ".join(reasons[:4]) if reasons else "")) from error
+                    raise type(error)(str(error) + (": " + "; ".join(reasons[:4]) if reasons else "")) from error
             finally:
                 child.stdout.close()
                 child.stderr.close()
@@ -248,18 +281,18 @@ class OwnedProcesses:
             except subprocess.TimeoutExpired as error:
                 # Killing the guardian here would discard its ownership proof.
                 self.children[child] = None
-                raise ProcessError("cleanup_unconfirmed") from error
+                raise ProcessSafetyError("cleanup_unconfirmed") from error
         if writer is not None and (child.returncode == 125 or child.returncode < 0):
-            raise ProcessError("guardian_cleanup_or_resource_failure")
+            raise ProcessSafetyError("guardian_cleanup_or_resource_failure")
         receipt = self.receipts.pop(child, None)
         if receipt is not None:
             try:
                 with receipt.open("rb") as stream:
                     data = stream.read(MAX_OUTPUT + 1)
                 if len(data) > MAX_OUTPUT or json.loads(data).get("confirmed") is not True:
-                    raise ProcessError("guardian_cleanup_receipt_unconfirmed")
+                    raise ProcessSafetyError("guardian_cleanup_receipt_unconfirmed")
             except (OSError, ValueError) as error:
-                raise ProcessError("guardian_cleanup_receipt_missing_or_invalid") from error
+                raise ProcessSafetyError("guardian_cleanup_receipt_missing_or_invalid") from error
 
     def usage(self):
         table = snapshot()
@@ -479,15 +512,6 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
         return errors
 
     def signal_owned(signum):
-        def signal_group():
-            try:
-                os.killpg(group, signum)
-            except ProcessLookupError:
-                pass
-            except OSError as error:
-                raise ProcessError("owned_group_signal:" + json.dumps(
-                    {"group": group, "signal": signum, "errno": error.errno},
-                    separators=(",", ":"))) from error
         errors = []
         try:
             table = collect()
@@ -501,7 +525,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
             errors.append({"type": type(error).__name__, "reason": str(error)[:MAX_FAILURE_REASON]})
         if needs_group:
             try:
-                signal_group()
+                signal_reserved_group(group, signum)
             except Exception as error:
                 errors.append({"type": type(error).__name__, "reason": str(error)[:MAX_FAILURE_REASON]})
         # Group signals are atomic with respect to membership. Escaped marked

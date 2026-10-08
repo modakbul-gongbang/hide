@@ -18,7 +18,7 @@ from .delivery import measure as measure_delivery
 from .overlay import prepare as prepare_overlay
 from .history import LABEL as PREVIOUS_LABEL, seed as seed_history
 from .integration import prepare as prepare_integration, project_args, observe as observe_integration
-from .processes import OwnedProcesses, ProcessError
+from .processes import OwnedProcesses, ProcessError, ProcessSafetyError
 from .protection import ConfigGuard, ProtectionError, beneath, private_directory, stamp, write_private
 from .report import save
 from .runtime import Runtime, clean_env
@@ -226,7 +226,7 @@ def main(argv=None):
                                               "reason": "not_authenticated_no_login_attempted"}).encode())
                             break
                         except ProcessError as error:
-                            if owner.cancelled.is_set():
+                            if owner.cancelled.is_set() or isinstance(error, ProcessSafetyError):
                                 raise
                             provider["scenes"].append({"scene": scene, "arrival": "timeout", "status": "unknown",
                                                        "effect": "not_tested", "reason": str(error), "evidence": evidence.name})

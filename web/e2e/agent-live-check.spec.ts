@@ -33,6 +33,8 @@ def initialize(self,*args,**kwargs):
  peer.write_bytes(${JSON.stringify(originalConfig)}.encode())
 def fail(self,*args,**kwargs):
  original_workspace(self,*args,**kwargs)
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian':
+  self.owner.run([sys.executable,'-c','raise SystemExit(125)'],env=self.env,check=False)
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='server-loss':
   child=next(child for child,output,label in self.servers if label=='herdr')
   self.owner.end(child)
@@ -42,7 +44,7 @@ def fail(self,*args,**kwargs):
  raise RuntimeError('injected_after_registered_private_workspace')
 original_workspace=Runtime.new_workspace
 with patch.object(Runtime,'__init__',initialize):
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration','server-loss'):
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration','server-loss','guardian'):
   with patch.object(Runtime,'new_workspace',fail): raise SystemExit(main(sys.argv[1:]))
  raise SystemExit(main(sys.argv[1:]))
 `;
@@ -175,7 +177,7 @@ test("live check refuses operator socket and state before a server starts", asyn
 test("live check tears down a started runtime on failure and Ctrl-C", async () => {
   test.skip(process.platform === "win32", "Unix signal and private socket contract");
   test.setTimeout(120_000);
-  for (const scenario of ["failure", "configuration", "server-loss", "hold"]) {
+  for (const scenario of ["failure", "configuration", "server-loss", "guardian", "hold"]) {
     const { root, run, args } = fixtureRoot();
     let running: ReturnType<typeof startPython> | undefined;
     let clean = false;
@@ -187,7 +189,12 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
         expect(result.status, result.stdout + result.stderr).toBe(2);
         const report = assertClean(run, scenario === "configuration", scenario === "server-loss");
         expect(report.herdr.version).toContain("herdr");
-        expect(report.failures[0].reason).toBe("injected_after_registered_private_workspace");
+        if (scenario === "guardian") {
+          expect(report.failures[0]).toMatchObject({ type: "ProcessSafetyError",
+            reason: "guardian_cleanup_or_resource_failure" });
+          expect(report.agents).toHaveLength(1);
+          expect(report.agents[0].scenes).toEqual([]);
+        } else expect(report.failures[0].reason).toBe("injected_after_registered_private_workspace");
         clean = true;
       } else {
         args[args.indexOf("--scene-seconds") + 1] = "120";
