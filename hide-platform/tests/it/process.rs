@@ -137,28 +137,6 @@ fn child_role() {
             println!("READY {}", grandchild.id());
             let _ = grandchild.wait();
         }
-        // Ten guarded launches, each leaving the role's own tree as it found it.
-        "repeat_guarded" => {
-            let baseline = measure_tree(std::process::id()).unwrap().descendants;
-            for _ in 0..10 {
-                let deadline = Instant::now() + HANG_LIMIT;
-                let mut command = role_command("echo");
-                command.stdin(Stdio::null());
-                let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
-                assert!(
-                    child
-                        .capture_until(deadline, 64 * 1024)
-                        .unwrap()
-                        .status
-                        .success()
-                );
-                drop(child);
-                assert_eq!(
-                    measure_tree(std::process::id()).unwrap().descendants,
-                    baseline
-                );
-            }
-        }
         // Two levels below it: a child that has a `tree` child.
         "deep" => {
             let mut child = Command::new(std::env::current_exe().unwrap())
@@ -562,22 +540,32 @@ fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
     drop(identities);
 }
 
-/// Counted in a process of its own: every test in this binary shares one
-/// process, so the test process's own tree also holds the children of the
-/// tests running beside this one.
 #[test]
 fn repeated_guarded_work_releases_children_and_capture_resources() {
     let _serial = serial();
-    let ran = role_command("repeat_guarded")
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap();
-    assert!(
-        ran.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&ran.stdout),
-        String::from_utf8_lossy(&ran.stderr)
-    );
+    for _ in 0..10 {
+        let deadline = Instant::now() + HANG_LIMIT;
+        let mut command = role_command("echo");
+        command.stdin(Stdio::null());
+        let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+        let pid = child.id();
+        assert!(
+            child
+                .capture_until(deadline, 64 * 1024)
+                .unwrap()
+                .status
+                .success()
+        );
+        drop(child);
+        // This test's own child, not the process's whole count: tests in
+        // other modules of this binary start and end children meanwhile.
+        // An unreaped child is still in the table under this process.
+        assert!(
+            !hide_platform::process::descendants(std::process::id())
+                .unwrap()
+                .contains(&pid)
+        );
+    }
 }
 
 /// A detached child holds none of its parent's standard handles: whoever reads
