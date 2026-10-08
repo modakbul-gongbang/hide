@@ -6,7 +6,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::watch::Watch;
-use super::{Actor, BODY_LIMIT, FILE_LIMIT, LETTER_LIMIT, OPEN_LIMIT, RETENTION_MS, WATCH_LIMIT};
+use super::{
+    ANSWER_WAIT_MS, Actor, BODY_LIMIT, FILE_LIMIT, LETTER_LIMIT, OPEN_LIMIT, RETENTION_MS,
+    WATCH_LIMIT,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -17,6 +20,27 @@ pub enum State {
     Cancelled,
     Expired,
     Undelivered,
+}
+
+/// Why a letter stopped waiting for an answer nobody gave.
+// The letter keeps its state: a new `State` value would make an older build
+// refuse the whole ledger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerWaitEnd {
+    /// The sender's or the recipient's registration ended.
+    PartyEnded,
+    /// The letter was sent 24 hours ago and no answer came.
+    Deadline,
+}
+
+impl AnswerWaitEnd {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PartyEnded => "party_ended",
+            Self::Deadline => "deadline",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -42,6 +66,9 @@ pub struct Letter {
     pub human_notified: bool,
     #[serde(default)]
     pub watch_warning: Option<super::watch::WarningReceipt>,
+    /// Set when the wait for an answer ended without one; null otherwise.
+    #[serde(default)]
+    pub answer_wait_ended: Option<AnswerWaitEnd>,
 }
 
 impl Letter {
@@ -66,6 +93,21 @@ impl Letter {
     pub(crate) fn intake_overdue(&self, now: u64) -> bool {
         self.awaiting_intake()
             && now.saturating_sub(self.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
+    }
+
+    /// Whether the answer is still awaited past its deadline.
+    pub(crate) fn answer_overdue(&self, now: u64) -> bool {
+        self.waiting_answer && now.saturating_sub(self.created_at_unix_ms) >= ANSWER_WAIT_MS
+    }
+
+    /// Ends the wait for an answer. A letter still awaiting intake stays open
+    /// for that, and `finished_at_unix_ms` is set once nothing else is awaited.
+    fn end_answer_wait(&mut self, why: AnswerWaitEnd, now: u64) {
+        self.waiting_answer = false;
+        self.answer_wait_ended = Some(why);
+        if !self.open() {
+            self.finished_at_unix_ms.get_or_insert(now);
+        }
     }
 
     pub(crate) fn attempts(&self) -> u8 {
@@ -154,6 +196,7 @@ impl Ledger {
                     .as_ref()
                     .is_some_and(|warning| letter.kind != "watch" || !warning.valid())
                 || (!letter.open() && letter.finished_at_unix_ms.is_none())
+                || (letter.waiting_answer && letter.answer_wait_ended.is_some())
                 || (matches!(
                     letter.state,
                     State::Cancelled | State::Undelivered | State::Expired
@@ -221,6 +264,33 @@ impl Ledger {
             changed = true;
         }
         changed
+    }
+
+    /// Ends the answer wait of every letter `actor` sent or received, because
+    /// its registration ended. Returns whether any wait ended.
+    pub(crate) fn end_answer_waits_of(&mut self, actor: &Actor, now: u64) -> bool {
+        let mut ended = false;
+        for letter in &mut self.letters {
+            if letter.waiting_answer
+                && (letter.sender.same_identity(actor) || letter.recipient.same_identity(actor))
+            {
+                letter.end_answer_wait(AnswerWaitEnd::PartyEnded, now);
+                ended = true;
+            }
+        }
+        ended
+    }
+
+    /// Ends the answer wait of every letter sent `ANSWER_WAIT_MS` ago.
+    pub fn end_overdue_answer_waits(&mut self, now: u64) -> bool {
+        let mut ended = false;
+        for letter in &mut self.letters {
+            if letter.answer_overdue(now) {
+                letter.end_answer_wait(AnswerWaitEnd::Deadline, now);
+                ended = true;
+            }
+        }
+        ended
     }
 
     pub fn bytes(&self) -> Result<Vec<u8>, String> {
