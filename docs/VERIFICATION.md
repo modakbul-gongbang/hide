@@ -163,7 +163,12 @@ No group signal is sent after that child is reaped.
 Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
 If Darwin's RSS read fails, one fresh BSD identity read distinguishes a vanished or replaced subject, a zombie and a still-live unreadable process.
 An observed replacement in the owned group retains unknown RSS; a host-wide replacement requires its own ownership proof, and a replacement outside the sampled group never inherits the old identity's ownership.
-Only positively ended subjects leave the active RSS calculation; an unreadable live subject still fails, without a delayed retry or a larger cap.
+RSS measures resource use independently of ownership; a missing sample never removes a live identity from process counts, signalling or cleanup.
+Vanished subjects and zombies need no RSS sample.
+A still-live unreadable PID and birth counts as a missed sample and is measured again on the existing next polling cycle.
+Three consecutive missed samples of that same live identity fail; a successful read, disappearance, zombie or replacement birth resets its streak.
+Available samples still enforce the unchanged RSS cap immediately, and an incomplete sum is explicitly marked as such in the resource summary.
+Guardian receipts and the final report record total missed samples, the largest consecutive streak and its fixed limit of three.
 A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
 A different live guardian's marker belongs to concurrent work and is excluded.
 Private issued marker families are retained under `agents/runs/process-owner-families/` so a fabricated scope prefix cannot claim a previous run.

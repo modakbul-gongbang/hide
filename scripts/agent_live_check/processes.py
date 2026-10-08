@@ -29,10 +29,41 @@ MAX_OWNER_FAMILIES = 4096
 COMMAND_SECONDS = 15
 RUN_SECONDS = 30 * 60
 POLL_SECONDS = 0.1
+RSS_CONSECUTIVE_MISS_LIMIT = 3
 
 
 class ProcessError(RuntimeError):
     pass
+
+
+class RssSamples:
+    """RSS availability is a sampled budget, independent of ownership proof."""
+
+    def __init__(self):
+        self.consecutive = {}
+        self.missed = 0
+        self.max_consecutive = 0
+
+    def summary(self):
+        return {"missed": self.missed, "max_consecutive_misses": self.max_consecutive,
+                "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT}
+
+    def measure(self, table):
+        # snapshot refreshes identity after a failed RSS read. Only a still
+        # live birth accrues a miss; success/exit/replacement resets its streak.
+        missing = {(p.pid, p.birth) for p in table.values() if p.rss < 0 and not p.zombie}
+        self.consecutive = {key: self.consecutive.get(key, 0) + 1 for key in missing}
+        self.missed += len(missing)
+        self.max_consecutive = max(self.max_consecutive, max(self.consecutive.values(), default=0))
+        exhausted = [key for key, count in self.consecutive.items()
+                     if count >= RSS_CONSECUTIVE_MISS_LIMIT]
+        if exhausted:
+            raise ProcessError("rss_samples_unavailable:" + json.dumps(
+                {"count": len(exhausted), "identities": [
+                    {"pid": pid, "birth": birth} for pid, birth in sorted(exhausted)[:16]],
+                 **self.summary()}, separators=(",", ":")))
+        return {"rss_bytes": sum(p.rss for p in table.values() if p.rss >= 0 and not p.zombie),
+                "rss_complete": not missing, "rss_samples_missed": self.missed}
 
 
 def owner_registry():
@@ -104,6 +135,7 @@ class OwnedProcesses:
         self.receipts = {}
         self.family = None
         self.sequence = 0
+        self.rss_samples = RssSamples()
         if diagnostics is not None:
             diagnostics.mkdir(mode=0o700)
         self.cancelled = cancelled or threading.Event()
@@ -236,13 +268,11 @@ class OwnedProcesses:
         for child in self.children:
             if child.poll() is None:
                 current.update(descendants(table, child.pid))
-        if any(item.rss < 0 and not item.zombie for item in current.values()):
-            raise ProcessError("descendant_rss_unavailable")
-        measured = {"descendants": len(current),
-                    "rss_bytes": sum(max(0, item.rss) for item in current.values()),
+        if len(current) > MAX_CHILDREN * (MAX_DESCENDANTS + 1):
+            raise ProcessError("owned_processes_over_budget")
+        measured = {"descendants": len(current), **self.rss_samples.measure(current),
                     "in_flight": len(self.children), "sampled": True}
-        if (measured["descendants"] > MAX_CHILDREN * (MAX_DESCENDANTS + 1)
-                or measured["rss_bytes"] > MAX_CHILDREN * MAX_RSS_BYTES):
+        if measured["rss_bytes"] > MAX_CHILDREN * MAX_RSS_BYTES:
             raise ProcessError("owned_processes_over_budget")
         return measured
 
@@ -259,6 +289,7 @@ class OwnedProcesses:
     def attribution_report(self):
         records = {}
         omitted = False
+        rss_missed, rss_max_consecutive = 0, 0
         if self.diagnostics is not None:
             count = 0
             for path in self.diagnostics.iterdir():
@@ -270,6 +301,9 @@ class OwnedProcesses:
                 record = json.loads(data)
                 if record.get("confirmed") is not True:
                     raise ProcessError("guardian_cleanup_receipt_unconfirmed")
+                samples = record["rss_samples"]
+                rss_missed += samples["missed"]
+                rss_max_consecutive = max(rss_max_consecutive, samples["max_consecutive_misses"])
                 omitted |= record["additional_records_omitted"]
                 for item in record["unattributed"]:
                     key = (item["pid"], item["birth"])
@@ -281,6 +315,8 @@ class OwnedProcesses:
                 raise ProcessError("guardian_cleanup_receipt_missing")
         return {"status": "출처 확인 못 함", "processes": list(records.values()),
                 "limit": MAX_DESCENDANTS, "additional_records_omitted": omitted,
+                "rss_samples": {"missed": rss_missed, "max_consecutive_misses": rss_max_consecutive,
+                                "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT},
                 "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}
 
     def __enter__(self):
@@ -327,6 +363,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
     failed = False
     confirmed = False
     root_exited = False
+    rss_samples = RssSamples()
     initial = snapshot()
     identity = initial[os.getpid()]
     # Neither the controller nor its ancestors were started by this guardian.
@@ -454,13 +491,11 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
             raise ProcessError("owned_group_unconfirmed")
         while not cancelled.is_set():
             table = collect()
-            unavailable = [{"pid": p.pid, "birth": p.birth} for p in table.values()
-                           if p.rss < 0 and not p.zombie]
-            if unavailable:
-                raise ProcessError("owned_process_rss_unavailable:" + json.dumps(
-                    {"count": len(unavailable), "identities": unavailable[:16]}, separators=(",", ":")))
-            rss = sum(max(0, p.rss) for p in table.values())
-            if len(table) > MAX_DESCENDANTS or rss > MAX_RSS_BYTES:
+            if len(table) > MAX_DESCENDANTS:
+                raise ProcessError("owned_processes_over_budget:" + json.dumps(
+                    {"descendants": len(table)}, separators=(",", ":")))
+            rss = rss_samples.measure(table)["rss_bytes"]
+            if rss > MAX_RSS_BYTES:
                 raise ProcessError("owned_processes_over_budget:" + json.dumps(
                     {"descendants": len(table), "rss_bytes": rss}, separators=(",", ":")))
             root = table.get(child.pid)
@@ -568,6 +603,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
             try:
                 with open(diagnostic, "x", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
                     json.dump({"confirmed": confirmed, "unattributed": list(unattributed.values()),
+                               "rss_samples": rss_samples.summary(),
                                "unattributed_limit": MAX_DESCENDANTS,
                                "additional_records_omitted": omitted}, stream)
             except BaseException as error:

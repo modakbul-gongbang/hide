@@ -20,7 +20,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import (BsdInfo, Process, ProcessTable, descendants, marked_descendants,
                                            procargs_owned, require_complete, snapshot, validate_linux_procfs)
-from agent_live_check.processes import OwnedProcesses, ProcessError, control_plane, linux_children_remain
+from agent_live_check.processes import OwnedProcesses, ProcessError, RssSamples, control_plane, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 from agent_live_check.runtime import Runtime
@@ -434,9 +434,47 @@ raise SystemExit('FIFO was accepted as configuration')
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_rss_samples_bound_consecutive_misses_by_live_identity(self):
+        # Letter 2709 supplies the oracle: two misses may recover, the third
+        # consecutive miss of the same live birth fails. Pure policy input
+        # avoids mocking supervision; full5 covers its real guardian callers.
+        def subject(pid=123, birth=10, rss=-1, zombie=False):
+            return Process(pid, 2, 123, birth, rss, zombie, os.getuid())
+
+        samples = RssSamples()
+        for count in (1, 2):
+            result = samples.measure({123: subject(), 124: subject(pid=124, rss=17)})
+            self.assertEqual(result["rss_bytes"], 17)
+            self.assertFalse(result["rss_complete"])
+            self.assertEqual(result["rss_samples_missed"], count)
+        result = samples.measure({123: subject(rss=23)})
+        self.assertEqual(result["rss_bytes"], 23)
+        self.assertTrue(result["rss_complete"])
+        for _ in range(2):
+            samples.measure({123: subject()})
+        with self.assertRaisesRegex(ProcessError, "rss_samples_unavailable"):
+            samples.measure({123: subject()})
+        self.assertEqual(samples.summary(), {"missed": 5, "max_consecutive_misses": 3,
+                                             "consecutive_miss_limit": 3})
+
+        for ending in ("disappeared", "zombie", "replaced"):
+            with self.subTest(ending=ending):
+                samples = RssSamples()
+                for _ in range(2):
+                    samples.measure({123: subject()})
+                if ending == "disappeared":
+                    self.assertTrue(samples.measure({})["rss_complete"])
+                elif ending == "zombie":
+                    self.assertTrue(samples.measure({123: subject(zombie=True)})["rss_complete"])
+                else:
+                    samples.measure({123: subject(birth=11)})
+                # Neither disappearance, a zombie nor another birth carries
+                # the previous live identity's consecutive-miss streak.
+                samples.measure({123: subject(birth=11 if ending == "replaced" else 10)})
+
     def test_failed_rss_read_distinguishes_exit_from_live_measurement_failure(self):
-        # B8 requires a live unreadable subject to fail, while a kernel-proven
-        # exit is no longer resident work. Inject only libproc's read boundary.
+        # The sampler retains unknown live RSS for the bounded miss policy;
+        # identity failure remains strict. Inject only libproc's read boundary.
         import errno
         for outcome in ("gone", "zombie", "replacement_owned", "replacement_outside",
                         "replacement_host", "live", "unreadable", "uid_changed"):
