@@ -1094,7 +1094,10 @@ fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
     assert_eq!(h.engine.role_for(Some(&pane), None), bound);
     let inside = format!("{}/src", worker.worktree);
     assert_eq!(h.engine.role_for(None, Some(&inside)), bound);
-    assert_eq!(h.engine.question_worker(&pane), Some(&worker));
+    let cancelled_worker = h.task(&f, &t).worker.unwrap();
+    assert_eq!(cancelled_worker.agent, worker.agent);
+    assert_eq!(cancelled_worker.pane, worker.pane);
+    assert_eq!(h.engine.question_worker(&pane), Some(&cancelled_worker));
     assert_eq!(
         h.engine.question_worker(&inside),
         None,
@@ -1104,7 +1107,7 @@ fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
     h.op(Command::Revive { task: t.clone() });
     assert_eq!(
         h.engine.question_worker(&pane),
-        Some(&worker),
+        Some(&cancelled_worker),
         "revive retains its accepted spawn"
     );
 }
