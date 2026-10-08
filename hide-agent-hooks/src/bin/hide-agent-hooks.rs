@@ -187,6 +187,34 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     else {
         return;
     };
+    // Question tools have no shell command and take their own readonly route.
+    if let Some(question) = guard::may_hold_question(&payload)
+        .then(|| guard::read_question(&payload, truncated, runtime.id()))
+        .flatten()
+    {
+        let Some(home) = home_directory() else { return };
+        let Some(program) = workspace_context::cli_program() else {
+            return;
+        };
+        match guard::question_decision(
+            &program,
+            runtime.id(),
+            &question.session,
+            started + GUARD_BUDGET,
+        ) {
+            guard::QuestionDecision::Worker => {
+                guard::record_question_refusal(&home, runtime.id(), &pane, question.tool);
+                let output = guard::deny_output(guard::QUESTION_REASON);
+                let mut stdout = std::io::stdout().lock();
+                let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
+            }
+            guard::QuestionDecision::Allow => {}
+            guard::QuestionDecision::Unreachable(cause) => {
+                guard::unreachable(&home, runtime.id(), cause)
+            }
+        }
+        return;
+    }
     // Every shell call comes through here: this one search decides the rest.
     if !guard::may_hold_launch(&payload) {
         return;

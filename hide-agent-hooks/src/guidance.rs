@@ -41,8 +41,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::install::{
-    HookStatus, InstallFailure, InstallOutcome, Quoting, RemoveOutcome, read_document,
-    write_document,
+    HookDocument, HookStatus, InstallFailure, InstallOutcome, Quoting, RemoveOutcome,
+    read_document, write_document,
 };
 use crate::runtime::{PURPOSE_CONTEXT, marker_version_of};
 
@@ -204,7 +204,7 @@ impl GuidanceAgent {
 fn settings_has_hooks(settings: &Path) -> bool {
     matches!(
         read_document(settings),
-        Ok(Some(Value::Object(document))) if document.contains_key("hooks")
+        Ok(Some(document)) if document.as_object().is_some_and(|root| root.contains_key("hooks"))
     )
 }
 
@@ -662,7 +662,8 @@ fn install_any(
     helper: &Path,
 ) -> Result<InstallOutcome, InstallFailure> {
     let layout = agent.layout(home);
-    let mut document = read_document(&layout.path)?.unwrap_or_else(|| blank_document(&layout));
+    let mut document =
+        read_document(&layout.path)?.unwrap_or_else(|| HookDocument::new(blank_document(&layout)));
     let before = serde_json::to_string(&document).unwrap_or_default();
     // Cursor's documentation requires `version` (a positive integer, 1) in
     // `hooks.json`, so a file that never had one is given it, only when it is
@@ -778,23 +779,23 @@ fn drop_empty(document: &mut Value, layout: &Layout) {
         } => {
             if *under_hooks_key {
                 if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-                    hooks.remove(*event);
+                    hooks.shift_remove(*event);
                     // An empty `hooks` object is Hide's scaffolding too.
                     if hooks.is_empty() {
-                        root.remove("hooks");
+                        root.shift_remove("hooks");
                     }
                 }
             } else {
-                root.remove(*event);
+                root.shift_remove(*event);
             }
         }
         Shape::Copilot | Shape::Cursor => {
             if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-                hooks.remove("sessionStart");
+                hooks.shift_remove("sessionStart");
             }
         }
         Shape::Kiro => {
-            root.remove("hooks");
+            root.shift_remove("hooks");
         }
     }
 }

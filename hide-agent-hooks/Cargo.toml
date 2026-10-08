@@ -18,11 +18,8 @@ hide-memory = { path = "../hide-memory" }
 hide-platform = { path = "../hide-platform" }
 hide-project = { path = "../hide-project" }
 serde = { version = "=1.0.229", features = ["derive"] }
-# `preserve_order` keeps the operator's own keys in the order their editor
-# wrote them. Without it, appending one hook rewrites the whole settings file
-# in alphabetical order, which reads as Hide having rearranged a file it was
-# only supposed to append to.
-serde_json = { version = "=1.0.151", features = ["preserve_order"] }
+# Keep key order and borrow exact source spans while editing owned entries.
+serde_json = { version = "=1.0.151", features = ["preserve_order", "raw_value"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

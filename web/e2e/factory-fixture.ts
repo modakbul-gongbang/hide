@@ -11,8 +11,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fixtureExecutable } from "./platform-fixture";
-import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { runInPane, sessionOf, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { copyFixtureShim } from "./shims/build";
 
 export type FactoryStack = {
   herdr: HerdrFixture;
@@ -115,4 +116,73 @@ export async function seedDag(stack: FactoryStack): Promise<Dag> {
 export async function openFactory(page: Page): Promise<void> {
   await page.locator("[data-sidebar-factory]").click();
   await expect(page.locator('[data-factory-screen="ready"]')).toBeVisible({ timeout: 20_000 });
+}
+
+export type QuestionHookReplies = Record<"AskUserQuestion" | "ExitPlanMode", string>;
+
+/**
+ * Opts this private stack's interactive Claude panes into the compiled
+ * spawn-provider runner, retaining claude-shim's normal judgment replies.
+ * Its bounded owned child invokes the actual hook from the actual pane.
+ * No Factory state is seeded: the spec must init, configure and add a Task.
+ */
+export function factoryQuestionFixture(stack: FactoryStack): {
+  hooks: (pane: string) => Promise<QuestionHookReplies>;
+  state: (pane: string, state: "working" | "idle") => Promise<void>;
+} {
+  const root = stack.herdr.root;
+  const runner = path.join(root, "worker-bin", fixtureExecutable("claude"));
+  fs.mkdirSync(path.dirname(runner));
+  copyFixtureShim("spawn-provider", runner);
+  fs.writeFileSync(path.join(root, "factory-question-runner.config"), runner);
+  const command = path.join(root, "factory-question-command.json");
+  const completed = path.join(root, "factory-question-command.status");
+  const replies = path.join(root, "factory-question-replies.json");
+  const driver = path.join(root, "factory-question-driver.cjs");
+  const hook = path.resolve("..", "target", "debug", fixtureExecutable("hide-agent-hooks"));
+  fs.writeFileSync(driver, `
+const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const request = JSON.parse(fs.readFileSync(${JSON.stringify(command)}, "utf8"));
+if (request.pane !== process.env.HERDR_PANE_ID) throw new Error("question fixture pane mismatch");
+if (request.state) {
+  process.stdout.write(request.state === "working" ? "\\x1b]0;⠋ Working\\x07" : "\\x1b]0;✳ Claude Code\\x07");
+} else {
+  const replies = {};
+  for (const tool_name of ["AskUserQuestion", "ExitPlanMode"]) {
+    const tool_input = tool_name === "AskUserQuestion"
+      ? { questions: [{ question: "Choose a target", header: "Target", options: [{ label: "Preview", description: "Review deployment" }, { label: "Production", description: "Public deployment" }], multiSelect: false }] }
+      : { plan: "Use the preview deployment" };
+    replies[tool_name] = execFileSync(${JSON.stringify(hook)}, ["hook", "--runtime", "claude-code", "--event", "PreToolUse"], {
+      env: { ...process.env, HIDE_STATE_DIR: ${JSON.stringify(stack.daemon.stateDir)} },
+      input: JSON.stringify({ session_id: request.session, tool_name, tool_input }),
+      encoding: "utf8", timeout: 10000, maxBuffer: 65536,
+    });
+  }
+  fs.writeFileSync(${JSON.stringify(replies)}, JSON.stringify(replies));
+}
+`);
+  fs.writeFileSync(path.join(root, "provider.config"), [stack.herdr.bin, completed, process.execPath, driver, ""].join("\n"));
+  const invoke = async (pane: string, state?: "working" | "idle") => {
+    fs.writeFileSync(command, JSON.stringify({ pane, session: sessionOf(stack.herdr, pane), state }));
+    fs.rmSync(completed, { force: true });
+    // Native send-text succeeds with empty stdout, unlike the JSON queries
+    // HerdrFixture.run reads. Keep this one bounded send on its private env.
+    execFileSync(stack.herdr.bin, ["pane", "send-text", pane, "!"], { env: stack.herdr.env, timeout: 10_000 });
+    await expect.poll(() => fs.existsSync(completed) ? fs.readFileSync(completed, "utf8").trim() : null,
+      { message: `owned question command completed in ${pane}`, timeout: 20_000 }).toBe("0");
+  };
+  return {
+    hooks: async (pane) => {
+      await invoke(pane);
+      return JSON.parse(fs.readFileSync(replies, "utf8")) as QuestionHookReplies;
+    },
+    state: async (pane, state) => {
+      await invoke(pane, state);
+      await expect.poll(() => {
+        const listed = stack.herdr.run(["agent", "list"]) as { result: { agents: { pane_id: string; agent_status: string }[] } };
+        return listed.result.agents.find((agent) => agent.pane_id === pane)?.agent_status;
+      }, { message: `native question fixture state ${state}`, timeout: 10_000 }).toMatch(state === "working" ? /^working$/ : /^(idle|done)$/);
+    },
+  };
 }

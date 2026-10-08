@@ -209,6 +209,124 @@ impl Runtime {
         })
     }
 
+    pub(crate) fn factory_question_caller(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        session: &str,
+        runtime: &str,
+        terminal_id: &str,
+    ) -> Result<crate::factory::QuestionCaller, String> {
+        // Factory starts use factory_delivery's core-node authority. A
+        // foreign pane cannot be one of those accepted workers, and must
+        // not open an SSH API channel under this short question budget.
+        if device != self.node.as_str() {
+            return Err("factory_guard_local_only".into());
+        }
+        let crate::workspace_control::Caller::Pane(pane) =
+            crate::workspace_control::Caller::parse(caller)
+        else {
+            return Err("agent_pane_required".into());
+        };
+        let context = self
+            .workspace_control_query(device, caller, Query::Info)
+            .map_err(|_| "factory_guard_context_changed")?
+            .context;
+        if context != *expected
+            || !crate::delivery::valid_key(session)
+            || !crate::delivery::valid_key(terminal_id)
+        {
+            return Err("factory_guard_context_changed".into());
+        }
+        let observation = self
+            .delivery_observations
+            .get(pane)
+            .ok_or("factory_guard_native_unavailable")?;
+        let kind = match runtime {
+            "claude-code" => "claude",
+            "codex" => "codex",
+            _ => return Err("factory_guard_runtime_invalid".into()),
+        };
+        let actor = &observation.actor;
+        actor.require_native_identity()?;
+        if actor.device_id != device
+            || actor.kind != kind
+            || crate::wire::session_digest(session) != actor.session
+        {
+            return Err("factory_guard_native_changed".into());
+        }
+        Ok(crate::factory::QuestionCaller {
+            actor: actor.clone(),
+            context,
+            raw_pane: observation.raw_pane_id.clone(),
+            terminal_id: terminal_id.to_owned(),
+            connector: self
+                .delivery_connector(device)
+                .ok_or("factory_guard_disconnected")?,
+        })
+    }
+
+    /// Join the accepted spawn to the independently re-read execution.
+    /// An ended ledger record can still be the current cancelled/revived
+    /// worker; its native identity, not its ended bit, decides that join.
+    pub(crate) fn factory_question_current(
+        &self,
+        caller: &crate::factory::QuestionCaller,
+        worker: &hide_factory::model::WorkerRef,
+    ) -> Result<(), String> {
+        let actor = &caller.actor;
+        // Context and connection are re-read without invoking a transport.
+        let context = self
+            .workspace_control_query(&actor.device_id, &actor.pane_id, Query::Info)
+            .map_err(|_| "factory_guard_context_changed")?
+            .context;
+        let native = self
+            .delivery_observations
+            .get(&actor.pane_id)
+            .ok_or("factory_guard_native_changed")?;
+        let connector = self
+            .delivery_connector(&actor.device_id)
+            .ok_or("factory_guard_disconnected")?;
+        if context != caller.context
+            || !native.actor.same_identity(actor)
+            || native.actor.kind != actor.kind
+            || native.actor.name != actor.name
+            || native.raw_pane_id != caller.raw_pane
+            || !std::sync::Arc::ptr_eq(&connector, &caller.connector)
+        {
+            return Err("factory_guard_native_changed".into());
+        }
+        let ledger = self.delivery_state()?;
+        let record = worker
+            .agent
+            .as_deref()
+            .and_then(|id| ledger.agents.iter().find(|a| a.id == id))
+            .ok_or("factory_guard_spawn_unavailable")?;
+        let parent = record
+            .parent
+            .as_deref()
+            .and_then(|id| ledger.agents.iter().find(|a| a.id == id))
+            .ok_or("factory_guard_spawn_unavailable")?;
+        let native_context = self.coordination_context(&actor.device_id)?;
+        if worker.pane.as_deref() != Some(actor.pane_id.as_str())
+            || worker.runtime.as_str() != actor.kind
+            || !record.actor.same_identity(actor)
+            || record.actor.kind != actor.kind
+            || record.pane != actor.pane_id
+            || record.native_machine != native_context.machine
+            || record.host_scope != native_context.host_scope
+            || !parent.actor.same_identity(&crate::delivery::Actor::factory(
+                &worker.factory,
+                &actor.device_id,
+            ))
+            || !parent.actor.code_owned()
+        {
+            return Err("factory_guard_spawn_changed".into());
+        }
+        Ok(())
+    }
+
     /// The agents above `pane` in the spawn lineage, nearest first, from
     /// the ledger in memory; at most [`LINEAGE_LIMIT`] steps.
     fn factory_lineage(&self, pane: &str) -> crate::factory::Lineage {
@@ -507,6 +625,153 @@ mod tests {
             },
             ended: false,
         }
+    }
+
+    #[test]
+    fn a_question_requires_the_current_spawn_session_even_when_its_ledger_record_ended() {
+        let root = tempfile::tempdir().unwrap();
+        let herdr = crate::fake_herdr::FakeHerdr::start("question-worker", |method, _| {
+            panic!("in-memory authority checks must not call {method}")
+        });
+        let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let mut runtime = runtime.lock().unwrap();
+        let observed =
+            crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, "native-1", &herdr);
+        let context = crate::runtime::delivery::tests::authority(&observed.actor).context;
+        let native = runtime
+            .coordination_context(crate::node::TEST_NODE)
+            .unwrap();
+        let mut accepted = agent("accepted-worker", "recipient", Some("factory-parent"));
+        accepted.actor = observed.actor.clone();
+        accepted.host_scope = native.host_scope;
+        accepted.native_machine = native.machine;
+        accepted.ended = true;
+        runtime.delivery_ledger = Ok(Arc::new(Ledger {
+            agents: vec![agent("factory-parent", "factory:f-1", None), accepted],
+            ..Ledger::default()
+        }));
+        let worker = hide_factory::model::WorkerRef {
+            factory: "f-1".into(),
+            agent: Some("accepted-worker".into()),
+            name: "worker".into(),
+            pane: Some("recipient".into()),
+            runtime: hide_factory::model::Runtime::Codex,
+            worktree: "/checkouts/fixture".into(),
+            branch: "task".into(),
+            started_at: 1,
+            asleep: false,
+        };
+        let caller = runtime
+            .factory_question_caller(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                "native-1",
+                "codex",
+                "terminal-1",
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.factory_question_current(&caller, &worker),
+            Ok(()),
+            "cancel/revive may retain this accepted native execution with an ended registration"
+        );
+        let descendant = hide_factory::model::WorkerRef {
+            pane: Some("sender".into()),
+            ..worker.clone()
+        };
+        assert!(
+            runtime
+                .factory_question_current(&caller, &descendant)
+                .is_err()
+        );
+        let missing = hide_factory::model::WorkerRef {
+            agent: Some("not-registered".into()),
+            ..worker.clone()
+        };
+        assert!(runtime.factory_question_current(&caller, &missing).is_err());
+
+        crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, "native-2", &herdr);
+        assert!(
+            runtime.factory_question_current(&caller, &worker).is_err(),
+            "reused pane is a different execution"
+        );
+        assert!(
+            runtime
+                .factory_question_caller(
+                    crate::node::TEST_NODE,
+                    "recipient",
+                    &context,
+                    "native-1",
+                    "codex",
+                    "terminal-1",
+                )
+                .is_err(),
+            "the old hook's native generation cannot attest the new execution"
+        );
+        let replaced = runtime
+            .factory_question_caller(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                "native-2",
+                "codex",
+                "terminal-1",
+            )
+            .unwrap();
+        assert!(
+            runtime
+                .factory_question_current(&replaced, &worker)
+                .is_err(),
+            "an ended ledger by itself proves nothing about the replacement"
+        );
+    }
+
+    #[test]
+    fn foreign_checkout_and_changed_connection_question_callers_are_unproven() {
+        let root = tempfile::tempdir().unwrap();
+        let herdr = crate::fake_herdr::FakeHerdr::start("question-authority", |method, _| {
+            panic!("refused callers must not open a native request: {method}")
+        });
+        let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let mut runtime = runtime.lock().unwrap();
+        let observed =
+            crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, "native-1", &herdr);
+        let context = crate::runtime::delivery::tests::authority(&observed.actor).context;
+        assert!(matches!(runtime.factory_question_caller(
+            "foreign-device", "recipient", &context, "native-1", "codex", "terminal-1",
+        ), Err(reason) if reason == "factory_guard_local_only"));
+        let checkout = crate::workspace_control::checkout_caller_id("cap", "/checkouts/fixture");
+        assert!(matches!(runtime.factory_question_caller(
+            crate::node::TEST_NODE, &checkout, &context, "native-1", "codex", "terminal-1",
+        ), Err(reason) if reason == "agent_pane_required"));
+        let caller = runtime
+            .factory_question_caller(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                "native-1",
+                "codex",
+                "terminal-1",
+            )
+            .unwrap();
+        crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, "native-1", &herdr);
+        let worker = hide_factory::model::WorkerRef {
+            factory: "f-1".into(),
+            agent: Some("accepted-worker".into()),
+            name: "worker".into(),
+            pane: Some("recipient".into()),
+            runtime: hide_factory::model::Runtime::Codex,
+            worktree: "/checkouts/fixture".into(),
+            branch: "task".into(),
+            started_at: 1,
+            asleep: false,
+        };
+        assert_eq!(
+            runtime.factory_question_current(&caller, &worker),
+            Err("factory_guard_native_changed".into()),
+            "the same native id on a replaced connection cannot reuse its proof"
+        );
     }
 
     #[test]

@@ -448,7 +448,7 @@ Runtime holds an immutable ledger projection; one bounded writer queue and separ
 The existing pane input path adds only timestamp assignments (the last input, from a key, paste, phone write or agent-find key; a submission is stamped only by a phone reply or a prompt hook of the pane's own session); the observation adds the time the pane entered `working`; watch snapshots publish start, warning and end transitions.
 The daemon exposes typed `hide request`, `inbox` and `watch` commands through the existing caller-bound Workspace boundary without requiring a renderer.
 The doorbell decides from hide-owned facts only (`doorbell::judge` over the pane's observation, never a screen read) and writes only to a pane at rest, and prompt-hook stdout flush precedes durable intake confirmation.
-The observation carries what the pane's session read says it waits for in Herdr's current state (`doorbell::Turn`), taken from the label overlay the coordinator computes before it observes the payload; an agent whose read reports turns is held while a plan waits (`awaiting_operator`) or while no read settled the current state (`session_unread`).
+The observation carries what the pane's session read says it waits for in Herdr's current state (`doorbell::Turn`), taken from the label overlay the coordinator computes before it observes the payload; an agent whose read reports turns is held while a native question or plan waits (`awaiting_operator`) or while no read settled the current state (`session_unread`).
 Herdr's readiness is three-valued at the wire boundary (`wire::Readiness`): only a launch in progress or an explicit not-ready refuses, and the unreported readiness of an agent started by hand is decided by those facts; a refusal after the verdict is retried on a capped backoff off the lock ([delivery.md](delivery.md#safe-intake-and-manual-fallback)).
 Pending delivery becomes undelivered after 60 minutes; watch warnings use 20-minute inactivity and first-warning time plus 60 minutes, with persistent counts and activity reset.
 The helper's metadata-only session activity uses the same native ownership proof as the local reader.
@@ -627,7 +627,8 @@ Pre-migration byte fixtures pin Claude Code and Codex commands and complete inst
 
 Each row explicitly declares six Factory capabilities as available, unavailable or unconfirmed: direct questions and their refusal dialect, user turns, turn end and final answer, startup guidance, resume and next-prompt letters.
 These declarations activate no new guard, transcript reader or Factory policy.
-`hide-session::turns::UserTurnFact` carries a turn kind and optional structured content only when records supply it; current readers leave that content absent.
+`hide-session::turns::UserTurnFact` carries a turn kind and optional bounded structured content when Claude Code or Codex native records supply it.
+Missing content remains absent; a failed or incomplete read certifies no structured fact for the current Herdr state.
 The content constructor bounds text to 8 KiB, choices to eight and each choice to 256 bytes before copying, preserves UTF-8 boundaries and marks any truncation.
 
 A device report with an unknown adapter id contributes no Settings row rather than a row with an empty feature table.
@@ -1024,12 +1025,17 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   For this Mac it runs in process.
   For a device the same function runs in `hided node serve` behind the `label_transcript` call (since protocol 12, with the adapter's facts since 14); the events come to this Mac in memory only and are never stored, and the analysis runs on this Mac's provider login.
   A device whose helper is not connected keeps its panes' labels and is retried every fifteen seconds; a helper too old to know the call leaves the provider name, and the device's kit status already offers the reinstall that replaces it.
-- **What the last turn waits for.** The same read folds each agent's turn records into an agent-neutral turn tracker (`hide-session/src/turns.rs`) for an agent whose session reports them (`Agent::reports_turns`, today Codex: `task_started` with its mode, a plan item, `task_complete`, `turn_aborted`, a person's message), which answers whether the last turn waits for the operator to approve a plan (PRD codex-plan-approval-hold).
+- **What the last turn waits for.** The same read folds Claude and Codex native turn records into an agent-neutral turn tracker (`hide-session/src/turns.rs`), answering whether an unanswered native question or completed plan waits for the operator.
+  Native tool-call ids correlate question results; ordinary prose never supplies structured question content.
+  The tracker bounds native call identities to 256 bytes and eight calls per turn, and a capacity breach fails the read explicitly.
+  Optional `UserTurnContent` keeps at most 8 KiB of text and eight 256-byte choices, preserving UTF-8 boundaries and marking cuts.
+  A native wait-lifecycle record beyond the separate 256 KiB physical-line admission cap fails the read rather than being discarded as unrelated tool output; its content is not certified as absent or answered.
   The tracker rides on the read's request and answer beside the checkpoint, so an incremental read continues the turn it was in, a read from the start or a rescan starts over, and a record replayed from the anchor is not folded twice.
   The record keeps the tracker and the Herdr `state_change_seq` the read was asked under (`PaneRecord::turns`, `turns_seq`, set only once the backlog is read), and the overlay answers the wait (`LabelOverlay::waiting`) only for that state and the proven session, so a fact read for an earlier state never stands for a newer one.
+  A failed reread invalidates that proof and publishes no structured fact, while retaining the bounded tracker/checkpoint for a later successful continuation and the existing unavailable-read retry interval.
   A restart resumes without a read only when the wait was read for the stored state; a record from before turns were read is read once, from its anchor, where the turn's mode is not seen and the wait stays not known until Herdr's next state.
   A device helper answers the same field; one that predates it answers without it, which reads as not known.
-  The coordinator takes the overlay before delivery observes the payload, and the doorbell holds on a wait or on not knowing (`docs/delivery.md`, A menu Herdr reads as a stop); the sidebar draws the wait as an approval (`docs/status-model.md`).
+  The coordinator takes the overlay before delivery observes the payload, and the doorbell holds on a wait or on not knowing (`docs/delivery.md`, A menu Herdr reads as a stop); the sidebar draws the typed question or approval and carries `user_turn` only for the proven current session/state (`docs/status-model.md`).
 - **Who sent a request.** Herdr's input calls name no sender, so the core keeps when the operator submitted to a pane through Hide (PRD overview-request-view D-19): a keyboard chunk of at most 64 bytes holding a carriage return outside a bracketed paste and not after `ESC` (`Event::Key`, which covers this Mac's and a device's panes), and a phone reply Herdr accepted (`pane_input_submitted`, which hided dispatches after `pane.send_input`).
   An Enter at a prompt Herdr reports `blocked` is not one; an Enter at a plan waiting for approval is, since Codex writes the next turn's message from it.
   Only the moment and whether the agent was running are kept, in memory, at most 32 per pane and 512 panes (`labels/input.rs`), behind a lock of its own that the runtime takes inside its mutex and the workers take alone.
@@ -1070,6 +1076,10 @@ The Software Factory's engine runs on its own thread, `herdr-core-factory`, besi
 The engine is the `hide-factory` crate, which does not know the runtime or Herdr; the host in `herdr-core/src/factory.rs` gives it a clock, the project's git and `gh`, the verify runner, and a worker port, and `runtime/factory.rs` holds the few places that take `Mutex<Runtime>` to read owned data or hand the core a request.
 No file, SQLite, network or subprocess work happens under the runtime lock, and a command reaches the engine through a bounded queue instead of a call into the runtime.
 `hided` routes `hide factory` over the pane-capability socket and refuses a device caller.
+The readonly `factory_question_guard` frame shares pane authentication but has no command role, lazy initialization or publication: one absolute deadline covers admission, pane proof, fresh native identity and an already-open engine's current Task worker lookup.
+The lookup joins the Task's accepted worker registration to the current native session and rechecks runtime context/connection before denying; cwd, display names and lineage never establish this authority.
+Its queue is the existing 32-slot Factory queue, and an expired request has no effect.
+Foreign callers fail open before an SSH native read because Factory worker starts currently belong only to the core's own node.
 `Core::drop` stops the Factory host first, so its verify runs and external calls end with the daemon.
 [factory.md](factory.md) owns the engine, the store, the roles and the read model.
 

@@ -175,6 +175,7 @@ mod tests {
             expected_reply: None,
             detail: None,
             message: None,
+            user_turn: None,
             status_word_visible: true,
             changed_at_unix_ms: None,
             last_activity: "0000000000001".to_owned(),

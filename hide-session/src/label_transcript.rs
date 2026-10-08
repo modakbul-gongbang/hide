@@ -169,6 +169,14 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             SessionError::SessionFileMissing => "session_file_missing".to_owned(),
             _ => "label_session_read_failed".to_owned(),
         })?;
+    for reason in [
+        crate::SkipReason::UserTurnCapacity,
+        crate::SkipReason::UserTurnInvalid,
+    ] {
+        if parsed.skipped_reasons.contains_key(&reason) {
+            return Err(reason.as_str().to_owned());
+        }
+    }
     let after = confirm_label_session(request.agent, &path, reported_id)
         .map_err(|error| error.to_string())?;
     if after.owner != before.owner
@@ -205,9 +213,15 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         };
         for (offset, mark) in &parsed.turn_marks {
             turns.fold(*offset, mark);
+            if turns.capacity_exceeded() {
+                break;
+            }
         }
         turns
     });
+    if turns.as_ref().is_some_and(TurnTracker::capacity_exceeded) {
+        return Err("user_turn_capacity".to_owned());
+    }
     let mut pr_sightings = parsed.pr_sightings.clone();
     let mut subagents = BTreeMap::new();
     let mut subagents_pending = false;
