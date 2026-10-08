@@ -9,6 +9,7 @@ use anyhow::{Context, Result, ensure};
 use fixture::{Fixture, quote, wait_for};
 use herdr_core::delivery::ledger::State;
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 fn context(stdout: &str) -> Result<String> {
@@ -256,6 +257,209 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
         Ok(())
     })();
     // Teardown is an assertion, and it never hides the first journey failure.
+    let cleanup = fixture.stop();
+    journey?;
+    cleanup
+}
+
+/// The pane of the named agent in a Herdr answer, wherever the answer nests it.
+fn agent_pane(value: &Value, name: &str) -> Option<(String, bool)> {
+    match value {
+        Value::Object(map) => {
+            if map.get("name").and_then(Value::as_str) == Some(name)
+                && let Some(pane) = map.get("pane_id").and_then(Value::as_str)
+            {
+                let reported = map
+                    .get("agent_session")
+                    .is_some_and(|session| !session.is_null());
+                return Some((pane.to_owned(), reported));
+            }
+            map.values().find_map(|value| agent_pane(value, name))
+        }
+        Value::Array(rows) => rows.iter().find_map(|value| agent_pane(value, name)),
+        _ => None,
+    }
+}
+
+/// Every string stored under `key`, wherever the answer nests it.
+fn strings_under(value: &Value, key: &str, found: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (name, value) in map {
+                match value.as_str() {
+                    Some(text) if name == key => found.push(text.to_owned()),
+                    _ => strings_under(value, key, found),
+                }
+            }
+        }
+        Value::Array(rows) => rows.iter().for_each(|row| strings_under(row, key, found)),
+        _ => {}
+    }
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let project = fixture.commit_remote_project()?;
+        let remote_hide = fixture.remote.environment.home.join("bin/hide");
+        let spawn = format!(
+            "{} agent spawn --parent here --machine remote --name remote-worker --intent spawn-remote-1 --kind claude --repo {} --branch remote-worker",
+            quote(&fixture.hide),
+            quote(&project)
+        );
+        // The fixture provider reports no native session of its own, which a
+        // real provider's hook does as soon as it starts. Report it for the
+        // pane Hide starts so the spawn can finish.
+        let finished = AtomicBool::new(false);
+        let (local, remote) = (&mut fixture.local, &fixture.remote);
+        let first = std::thread::scope(|scope| {
+            let reporter = scope.spawn(|| -> Result<()> {
+                let mut seen = false;
+                while !finished.load(Ordering::Relaxed) {
+                    let agents = remote.run(&["agent", "list"])?;
+                    if let Some((pane, reported)) = agent_pane(&agents, "remote-worker")
+                        && !reported
+                        && !seen
+                    {
+                        remote.report_session(&pane, "fixture-spawned-session")?;
+                        seen = true;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Ok(())
+            });
+            let output = local.run_in_pane(&spawn);
+            finished.store(true, Ordering::Relaxed);
+            let reported = reporter
+                .join()
+                .map_err(|_| anyhow::anyhow!("reporter panicked"))?;
+            let output = output?;
+            reported?;
+            Ok::<_, anyhow::Error>(output)
+        })?;
+        ensure!(
+            first.status == 0,
+            "remote spawn refused: {} {}",
+            first.stdout,
+            first.stderr
+        );
+
+        let ledger = fixture.ledger()?;
+        let spawn_record = ledger
+            .spawns
+            .iter()
+            .find(|record| record.intent == "spawn-remote-1")
+            .context("spawn receipt")?;
+        ensure!(
+            spawn_record.machine.as_deref() == Some("remote"),
+            "receipt does not name the device"
+        );
+        let child_id = spawn_record
+            .child
+            .clone()
+            .context("completed spawn child")?;
+        let child = ledger
+            .agents
+            .iter()
+            .find(|record| record.id == child_id)
+            .context("child registration")?;
+        let parent = ledger
+            .agents
+            .iter()
+            .find(|record| record.id == spawn_record.parent)
+            .context("caller registration")?;
+        ensure!(
+            child.machine == "remote" && child.parent.as_deref() == Some(parent.id.as_str()),
+            "child is not the device's agent under the caller: {child:?}"
+        );
+        let device_agents = fixture.remote.run(&["agent", "list"])?;
+        ensure!(
+            agent_pane(&device_agents, "remote-worker").is_some_and(|(pane, _)| pane == child.pane),
+            "the child's pane is not the device Herdr's agent pane"
+        );
+        ensure!(
+            agent_pane(&fixture.local.run(&["agent", "list"])?, "remote-worker").is_none(),
+            "the agent was also started on the caller's own Herdr"
+        );
+        ensure!(
+            ledger
+                .watches
+                .iter()
+                .any(|watch| watch.target.device_id == "remote"
+                    && watch.target.name == "remote-worker"
+                    && watch.parent.name == parent.name),
+            "the caller has no watch on the device's agent"
+        );
+
+        // The device's Herdr holds the lineage: the child is its own pane there
+        // and its token names this machine as the parent's.
+        let snapshot = fixture.remote.run(&["api", "snapshot"])?;
+        let mut machines = Vec::new();
+        strings_under(&snapshot, "parent_machine", &mut machines);
+        ensure!(
+            machines
+                .iter()
+                .any(|machine| *machine == parent.native_machine),
+            "device lineage token does not name the caller's machine: {machines:?} vs {}",
+            parent.native_machine
+        );
+
+        // The same command returns the same agent and makes nothing twice.
+        let again = fixture.local.run_in_pane(&spawn)?;
+        ensure!(
+            again.status == 0,
+            "repeat spawn refused: {} {}",
+            again.stdout,
+            again.stderr
+        );
+        let after = fixture.ledger()?;
+        ensure!(
+            after.spawns.len() == ledger.spawns.len()
+                && after.agents.len() == ledger.agents.len()
+                && after.watches.len() == ledger.watches.len(),
+            "the same intent made something twice"
+        );
+
+        // Another machine under the same intent is a different spawn.
+        let moved = fixture
+            .local
+            .run_in_pane(&spawn.replace("--machine remote ", ""))?;
+        ensure!(
+            moved.status != 0 && moved.stdout.contains("intent_conflict"),
+            "the same intent on another machine was not refused: {} {}",
+            moved.stdout,
+            moved.stderr
+        );
+
+        // The child's report reaches its caller over the device's bridge.
+        let (pane, _) = agent_pane(&fixture.remote.run(&["agent", "list"])?, "remote-worker")
+            .context("spawned agent pane")?;
+        let report = fixture
+            .remote
+            .run_in(
+                &pane,
+                &format!(
+                    "{} request send local-parent --intent spawn-report --kind report --body {}",
+                    quote(&remote_hide),
+                    quote("DELIVERY_SPAWNED_REPORT")
+                ),
+            )?
+            .json()?;
+        let report_id = report["id"]
+            .as_str()
+            .context("report letter ID")?
+            .to_owned();
+        let received = fixture
+            .local
+            .run_in_pane(&hook(&fixture.hooks, "fixture-local-session"))?;
+        ensure!(
+            context(&received.stdout)?.contains(&report_id),
+            "the caller did not receive the spawned agent's report"
+        );
+        Ok(())
+    })();
     let cleanup = fixture.stop();
     journey?;
     cleanup
