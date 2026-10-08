@@ -174,7 +174,13 @@ fn persisted_dormant(path: &Path, id: &crate::agent_sleep::SleepId) -> serde_jso
 fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmation() {
     use crate::agent_sleep::DormantPhase;
     let folder = tempfile::tempdir().unwrap();
-    let cwd = folder.path().to_str().unwrap().to_owned();
+    let cwd = folder
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
     let (mut runtime, _) = live_tab_order_runtime(&cwd);
     let mut initial = session(Some(4));
     for pane in &mut initial.panes {
@@ -183,6 +189,7 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
     initial.agents[0].cwd = Some(cwd.clone());
     runtime.ingest_session(Ok(initial));
     let id = dormant_intent(&mut runtime);
+    assert_eq!(runtime.snapshot.ui_state.agent_sleep.dormant[&id].cwd, cwd);
     let path = runtime.state_path.clone();
     let saved_path = path.clone();
     let saved_id = id.clone();
