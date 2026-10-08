@@ -154,7 +154,8 @@ function view(options: {
       moving: count("moving"),
       done_today: cards.filter((value) => value.column === "done" && now - value.since < DAY).length,
     },
-    my_turn: cards.filter((value) => value.needs_person).length,
+    // `counted` sets both numbers from the scene's inbox.
+    my_turn: 0,
     columns,
     cancelled: options.cancelled,
     graph: { nodes: cards.filter((value) => linked.has(value.task)).map((value) => value.task), edges: options.reduced, unrelated: cards.filter((value) => !linked.has(value.task)).map((value) => value.task) },
@@ -198,6 +199,21 @@ function inboxItem(item: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" |
     observer_reason: null,
     overridable: false,
     ...item,
+  };
+}
+
+/**
+ * The summary's 내 차례 and notice numbers, each Factory's and the total, from
+ * its inbox, the way `hide-factory/src/summary.rs` counts them: every item but
+ * a notice is the person's turn.
+ */
+export function counted(factories: FactoryView[], inbox: InboxItem[]): FactorySummary {
+  const turn = (factory: string | null, notice: boolean) => inbox.filter((item) => (factory === null || item.factory === factory) && (item.group === "notice") === notice).length;
+  return {
+    my_turn: turn(null, false),
+    notices: turn(null, true),
+    factories: factories.map((view) => ({ ...view, my_turn: turn(view.id, false), notices: turn(view.id, true) })),
+    inbox,
   };
 }
 
@@ -250,8 +266,7 @@ function observerScene(base: FactorySceneFixture, now: number, variant: Observer
     item({ group: "notice", kind: "notice", factory: sasu.id, task: taskId(88), display_id: issue(88), title: "gate 결과 요약 보기", project: "sasu", question: "n-88", text: "오늘 AI 판단 100번을 다 써서 남은 결정은 나에게 옵니다.", choices: ["ok"], notice: "daily_limit" }, 20 * MINUTE),
   ];
   const inbox = [...answers, ...merge, ...stops, ...notices].map((row, rank) => ({ ...row, rank }));
-  const turn = inbox.length - notices.length;
-  const summary: FactorySummary = { my_turn: turn, notices: notices.length, factories: [herdr, sasu], inbox };
+  const summary = counted([herdr, sasu], inbox);
   const detail = (task: string): TaskDetail | null => {
     if (task === t435.task) {
       const at = now - 12 * MINUTE;
@@ -472,8 +487,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
     inboxItem({ group: "notice", kind: "notice", factory: herdr.id, task: taskId(398), display_id: issue(398), title: "main 깨짐 → revert 됨", project: "herdr-ide", text: "main이 깨져 마지막 머지를 되돌렸습니다." }, now, 25 * MINUTE),
     inboxItem({ group: "notice", kind: "notice", factory: herdr.id, task: taskId(415), display_id: issue(415), title: `${issue(412)}와 같은 정렬을 다르게 푸는 중`, project: "herdr-ide", text: "두 Task가 같은 정렬 상태를 서로 다르게 바꾸고 있습니다." }, now, 10 * MINUTE),
   ].map((item, rank) => ({ ...item, rank }));
-  const notices = inbox.filter((item) => item.group === "notice").length;
-  const summary: FactorySummary = { my_turn: inbox.length - notices, notices, factories: [herdr, sasu], inbox };
+  const summary = counted([herdr, sasu], inbox);
 
   const detail = (task: string): TaskDetail | null => {
     const found = [...herdr.columns, ...sasu.columns].flatMap((column) => column.cards).find((value) => value.task === task) ?? [...herdr.cancelled, ...sasu.cancelled].find((value) => value.task === task);

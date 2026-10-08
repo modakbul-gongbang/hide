@@ -16,7 +16,7 @@ import { FACTORY_TABS, FACTORY_ENTRY, useUiStore, type FactoryTab } from "../ui"
 import { Sidebar } from "../sidebar";
 import { clientI18n } from "../i18n/translator";
 import { useShellStore } from "../store";
-import { factoryScene, OBSERVER_STATES, type ObserverVariant } from "./factorySceneData";
+import { counted, factoryScene, OBSERVER_STATES, type ObserverVariant } from "./factorySceneData";
 import { REFERENCE_FOLDS, sidebarScene, type SceneContent } from "./sceneData";
 
 /** What one Factory scene document shows; every value comes from its query string. */
@@ -77,7 +77,7 @@ export function FactoryScene({ theme, tab, task, content, state, language, obser
             const ref = command.task;
             setSummary((current) => {
               const inbox = current.inbox.filter((item) => `${item.factory}/${item.task}` !== ref || ("question" in command && command.question !== null && item.question !== command.question));
-              return { ...current, inbox, my_turn: inbox.filter((item) => item.group !== "notice").length };
+              return counted(current.factories, inbox);
             });
           }
           useShellStore.setState((state) => ({ factory: state.factory ? { ...state.factory, actions: [...state.factory.actions, { request_id: requestId, answer }] } : state.factory }));
