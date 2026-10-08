@@ -60,10 +60,10 @@ class MeasurementResults(unittest.TestCase):
             runtime = Runtime.__new__(Runtime)
             runtime.owner = owner
             screens = iter(["❯ ", "Sign in to continue"])
-            runtime.screen = lambda pane: next(screens)
-            runtime.agent = lambda pane: {"agent_status": "idle"}
+            runtime.screen = lambda pane, **kwargs: next(screens)
+            runtime.agent = lambda pane, **kwargs: {"agent_status": "idle"}
             submitted = []
-            runtime.command = lambda args: submitted.append(args)
+            runtime.command = lambda args, **kwargs: submitted.append(args)
             recipe = {"kind": "claude", "scenes": {"rest": {"send": "", "arrived": "❯", "draft": "", "no_match": "", "unsafe": ""}}}
             evidence = Path(name) / "login.json"
             with self.assertRaises(AuthenticationRequired):
