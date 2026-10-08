@@ -91,6 +91,15 @@ impl Change {
     }
 }
 
+/// The pane's record as it is on disk, failing rather than answering zeros
+/// when it cannot be read: Windows refuses a read for an instant while a
+/// replacement lands, and a reader that took that for an empty record would
+/// report counts nobody made.
+pub fn try_read(home: &Path, pane_id: &str) -> io::Result<PaneCounters> {
+    let raw = fs::read(record_path(home, pane_id))?;
+    serde_json::from_slice(&raw).map_err(io::Error::from)
+}
+
 pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
     let path = record_path(home, pane_id);
     fs::read_to_string(&path)

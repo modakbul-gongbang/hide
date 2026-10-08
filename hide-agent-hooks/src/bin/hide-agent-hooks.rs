@@ -494,11 +494,12 @@ fn report_latest(
     counters: counters::PaneCounters,
 ) -> Result<(), hide_herdr_client::ApiError> {
     report::report(socket_path, pane_id, counters)?;
-    let now = counters::read(home, pane_id);
-    if now == counters {
-        return Ok(());
+    // Only a record actually read can be newer; one that cannot be read now
+    // is left to the event that is writing it, which reports it itself.
+    match counters::try_read(home, pane_id) {
+        Ok(now) if now != counters => report::report(socket_path, pane_id, now),
+        _ => Ok(()),
     }
-    report::report(socket_path, pane_id, now)
 }
 
 fn memory_output_before_deadline(
