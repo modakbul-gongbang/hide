@@ -38,6 +38,7 @@ import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
+import {sessionScreens} from './pen-screens-sessions.mjs';
 
 const LOCAL_TOKEN = /^\$--[A-Za-z0-9_-]+$/;
 const THEMED_PROPS = ['fill', 'stroke'];
@@ -143,7 +144,7 @@ function themedXref(id, masterId, name, overrides = {}, descendants = {}) {
 // this document's text() helper needs them too, so they are read live from the
 // library itself rather than duplicated as a literal, keeping the same
 // never-drifts guarantee pen-tokens.mjs gives the generated set.
-const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono'];
+const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono', '--color-selected-wash'];
 
 export const ALIAS = 'hideui';
 export const LIBRARY_PATH = './hide-ui.lib.pen';
@@ -169,6 +170,10 @@ function screenSheet(id, name, spec, lightBuild, darkBuild) {
     themeFrame(`${id}-light`, 'Light', 'Light', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start', padding: '$--spacing-lg', fill: '$--background', cornerRadius: '$--radius-md', width: 'fit_content'}, lightBuild('l')),
     themeFrame(`${id}-dark`, 'Dark', 'Dark', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start', padding: '$--spacing-lg', fill: '$--background', cornerRadius: '$--radius-md', width: 'fit_content'}, darkBuild('d')),
   ]);
+}
+
+function sessionDesign(tokens) {
+  return sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton});
 }
 
 // -- simple, frequently-reused controls: themedXref restates every default color --
@@ -397,59 +402,6 @@ function screenDeviceChip(id, name) {
   ]);
 }
 
-function screenLineageSummary(tokens, id, {status, branch, pr, device, more}) {
-  const marks = {
-    working: ['●', '$--agent-working'], done: ['✓', '$--success'], question: ['?', '$--warning'], seen: ['○', '$--muted-foreground'],
-  };
-  const [symbol, fill] = marks[status];
-  return frame(id, 'Other checkout lineage', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs', 0, 40]}, [
-    screenStatusMark(tokens, `${id}-m`, symbol, fill),
-    text(`${id}-b`, branch, {size: '$--text-caption', fill: '$--subtle-foreground'}),
-    ...(pr ? [text(`${id}-pr`, pr, {size: '$--text-caption', fill: '$--muted-foreground', mono: true})] : []),
-    ...(device ? [screenDeviceChip(`${id}-d`, device)] : []),
-    ...(more ? [text(`${id}-more`, `+${more}`, {size: '$--text-caption', fill: '$--muted-foreground', mono: true})] : []),
-  ]);
-}
-
-function screenLineageDetails(tokens, suffix) {
-  const children = [
-    {status: 'working', title: '레이아웃 재구조화', branch: 'web-view-overlay', age: '4m'},
-    {status: 'done', title: '패널 디자인 검토', branch: 'web-side-panel', age: '13m'},
-    {status: 'done', title: '원격 분리', branch: 'mailbox-decouple', device: 'mini', age: '1h'},
-  ];
-  const popover = frame(`main-lineage-pop-${suffix}`, 'Children list', {width: num(tokens, '--size-agent-children-popover'), layout: 'vertical', fill: '$--popover', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', padding: ['$--spacing-xxs', 0]}, [
-    ...children.map((child, index) => frame(`main-lineage-pop${index}-${suffix}`, 'Child', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], ...(index === 0 ? {fill: '$--accent'} : {})}, [
-      screenStatusMark(tokens, `main-lineage-pop${index}-m-${suffix}`, child.status === 'working' ? '●' : '✓', child.status === 'working' ? '$--agent-working' : '$--success'),
-      frame(`main-lineage-pop${index}-txt-${suffix}`, 'Text', {layout: 'vertical', gap: 0}, [
-        text(`main-lineage-pop${index}-t-${suffix}`, child.title, {size: '$--text-caption'}),
-        frame(`main-lineage-pop${index}-sub-${suffix}`, 'Sub', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-          text(`main-lineage-pop${index}-s-${suffix}`, child.status === 'working' ? 'Working' : 'Done', {size: '$--text-caption', fill: '$--muted-foreground'}),
-          text(`main-lineage-pop${index}-b-${suffix}`, child.branch, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-          ...(child.device ? [screenDeviceChip(`main-lineage-pop${index}-d-${suffix}`, child.device)] : []),
-        ]),
-      ]),
-      frame(`main-lineage-pop${index}-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      text(`main-lineage-pop${index}-a-${suffix}`, child.age, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-    ])),
-    frame(`main-lineage-pop-rule-${suffix}`, 'Rule', {width: 'fill_container', height: 1, fill: '$--border'}, []),
-    text(`main-lineage-pop-open-${suffix}`, '하위 에이전트 펼치기', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-  ]);
-  const chip = (child, index) => frame(`main-lineage-chip${index}-${suffix}`, 'Child chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: 20, cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
-    screenStatusMark(tokens, `main-lineage-chip${index}-m-${suffix}`, child.status === 'working' ? '●' : '✓', child.status === 'working' ? '$--agent-working' : '$--success'),
-    text(`main-lineage-chip${index}-b-${suffix}`, child.branch, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
-    ...(child.device ? [screenDeviceChip(`main-lineage-chip${index}-d-${suffix}`, child.device)] : []),
-  ]);
-  const pane = frame(`main-lineage-pane-${suffix}`, 'Pane header lineage', {width: 640, layout: 'vertical', cornerRadius: '$--radius-sm', clip: true, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
-    frame(`main-lineage-pane-h-${suffix}`, 'Pane header', {width: 640, height: num(tokens, '--size-pane-header'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--secondary'}, [
-      screenStatusMark(tokens, `main-lineage-pane-m-${suffix}`, '○', '$--agent-working'),
-      text(`main-lineage-pane-t-${suffix}`, '카드 상태 시트 설계', {size: '$--text-caption'}),
-    ]),
-    frame(`main-lineage-pane-c-${suffix}`, 'Children', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], fill: '$--secondary'}, children.map(chip)),
-    frame(`main-lineage-pane-b-${suffix}`, 'Body', {height: 64, fill: '$--card'}, []),
-  ]);
-  return frame(`main-lineage-details-${suffix}`, 'Lineage detail states', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [popover, pane]);
-}
-
 // The weekly usage chip at the sidebar's foot (web/src/components/weekly-usage.tsx):
 // the master draws Claude Code's mark, so only another provider's mark is named.
 function screenUsageChip(id, {provider, value}) {
@@ -457,14 +409,13 @@ function screenUsageChip(id, {provider, value}) {
   return themedXref(id, 'usage-chip', `Usage ${provider}`, {}, {...mark, 'usage-chip-percent': {content: value}});
 }
 
-// The Agents/Projects sidebar App.tsx/sidebar.tsx always shows beside a
+// The single sidebar App.tsx/sidebar.tsx always shows beside a
 // screen's own content; every sheet that draws a whole screen (Main,
 // Workspace) includes it so a reader sees the whole thing, not just its
 // own feature in isolation. It is --size-sidebar-ideal wide, as sidebar.tsx
 // draws it, so its footer holds the one-device window's device button, the usage
 // chips and the Settings gear side by side. Its top is the device's Home row,
-// marked while `overview` is the screen beside it, over the Projects | Agents
-// strip (PRD home-device-rail D-09, D-10).
+// marked while `overview` is the screen beside it (session-first-ui B1-B10).
 function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
   return frame(`${id}-${suffix}`, 'Sidebar', {width: num(tokens, '--size-sidebar-ideal'), layout: 'vertical', gap: '$--spacing-md', fill: '$--sidebar', padding: '$--spacing-md', cornerRadius: '$--radius-md'}, [
     frame(`${id}-overview-${suffix}`, 'Overview', {
@@ -476,21 +427,20 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
       text(`${id}-overviewn-${suffix}`, '2 asking · ⌘⇧O', {fill: '$--muted-foreground'}),
     ]),
-    frame(`${id}-tabs-${suffix}`, 'Tabs', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
-      text(`${id}-projectstab-${suffix}`, 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      text(`${id}-agentstab-${suffix}`, 'Agents', {size: '$--text-caption'}),
+    frame(`${id}-home-${suffix}`, 'Home', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+      icon(`${id}-homeicon-${suffix}`, 'house', {size: num(tokens, '--size-checkout-icon'), fill: '$--muted-foreground'}),
+      text(`${id}-hometitle-${suffix}`, 'Home', {size: '$--text-caption'}),
       frame(`${id}-tabsgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
       screenIconButton(`${id}-search-${suffix}`, 'search'),
     ]),
-    text(`${id}-seen-${suffix}`, 'Seen · 2', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
-    // Agents' rows name their project and checkout on a fixed context line.
+    text(`${id}-seen-${suffix}`, 'Projects · Recent activity', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
+    // Root rows keep direct children behind their shared badge.
     ...agents.flatMap((agent, index) => [
       screenSidebarAgentRow(`${id}-agent${index}-${suffix}`, {
         title: agent.title, symbol: agent.symbol ?? '●', color: agent.statusColor ?? '$--agent-working', age: agent.age ?? '3m', place: agent.place ?? 'herdr-ide › main',
-        device: agent.device, badge: agent.badge, fold: agent.fold,
+        device: agent.device, badge: agent.badge, fold: 'none',
         width: num(tokens, '--size-sidebar-ideal') - 2 * num(tokens, '--spacing-md'),
       }),
-      ...(agent.summaries ?? []).map((summary, summaryIndex) => screenLineageSummary(tokens, `${id}-agent${index}-summary${summaryIndex}-${suffix}`, summary)),
     ]),
     frame(`${id}-footer-${suffix}`, 'Footer', {width: 'fill_container', gap: '$--spacing-xs', alignItems: 'center'}, [
       themedXref(`${id}-device-${suffix}`, 'Nyvom', 'Devices', {width: 20, height: 20}, {ZIZFR: {icon: 'laptop', fill: '$--muted-foreground'}}),
@@ -619,10 +569,9 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, 
 // operator's turn, and on the chosen tab its bar as a thin line along its foot.
 const HERDR_TILES = [
   {id: 'agents', label: 'Agents', value: '11', badge: '2', bar: [['$--warning', 2], ['$--success', 2], ['$--agent-working', 2], ['$--muted-foreground', 5]]},
-  {id: 'requests', label: '요청', value: '5', badge: '2', bar: [['$--warning', 2], ['$--destructive', 1], ['$--success', 1], ['$--primary', 1]]},
   {id: 'issues', label: 'Issues', value: '22', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
   {id: 'prs', label: 'PRs', value: '9', badge: '4', bar: [['$--warning', 4], ['$--agent-working', 1], ['$--destructive', 4]]},
-  {id: 'sessions', label: 'Sessions', value: '14', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
+  {id: 'sessions', label: '대화 기록', value: '14', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
 ];
 function lensTabs(tokens, id, view) {
   const control = num(tokens, '--size-control-sm');
@@ -1299,9 +1248,9 @@ const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩
   {mark: 'done', title: '경험담 초안 윤문', line: 'AI 티 윤문 완료, 빠진 문장 3곳 확인 대기', tone: 'news', age: '3m'},
 ]};
 
-const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, RequestView.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its 요청 · Tasks · Agents · Projects tabs the count of rows to answer on 요청 and of agents waiting on the operator on Agents. 요청, which every way in opens, is the Project Overview’s request view over every project, each row with its project’s name; Agents’ view is the Project Overview’s graph over every project with the project’s name above each project’s band. Every project’s issues share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card an issue with its project beside its id (a Local issue as L-N): 시작 on a backlog card under the pointer, the operator’s-turn cards in the warning border, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
+const MAIN_SPEC = 'web/src/MainScreen.tsx and AgentSessions.tsx (session-first-ui B11-B19): Overview opens Agents, followed by Tasks and Projects. Requests is removed. The Sessions panel is first in Tools, scoped to the selected project or Home, and groups core-projected rows into My Turn, Review/Merge, Progress, Resting and Today Resolved. The approved v6 two-line rows retain live issue, PR, CI, direct-child and checkout facts while working. Resting and Today Resolved start collapsed.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, agentGraph.ts, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents, PRD agents-graph-view). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리, then one row of lens tabs Agents · 요청 · Issues · PRs · Sessions with the view’s control at its right end: each tab its name, its number and the yellow count of the operator’s turn; the chosen tab carries its bar as a thin line along its foot. Every entry opens Agents. 요청 (PRD overview-request-view, RequestView.tsx, requestList.ts): one row per agent grouped 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중 and 쉬는 중 (folded); a row is the status mark, the kind mark and the title, then on the right the descendants (자식 N · 일하는 중 M, 질문 K in warning), the PR chip with CI and +N, the issue chip, the checkout and the time; under it 나 › and the request on one line, its front cut and its end kept, then the result line (warning on a row to answer) with its open chips; an expanded row adds the request as written, the agent’s last words, its pull requests (예전 PR #N 머지됨 for one settled before), its descendants with 열기, and 패널 열기 ⌘↵. With no agent the view is one line and New agent; with nothing to do it is 할 일 없음 above the folded 쉬는 중. The Agents tab opens one graph (PRD agents-graph-view): a checkout is a box with its head (the glyph in its PR’s colour and the branch, the purpose, then the issue chip, the PR chip with its CI mark and 변경 요청, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title and age; a step in with a corner arrow for a delegation inside the checkout; a tucked badge such as ✓2 for folded children; only an asking row has a second line, its question in warning). The front checkout’s box carries the selection outline, main’s box is first, and boxes stand in columns by how deep their delegation runs. A delegation into another checkout is a rounded orthogonal line from the parent row’s right port to the child row’s left port, coloured by the child: blue with dashes while it works, orange when it asks, pale blue while it waits on children, grey otherwise. The worktrees with no agent, the ones to clean up and the resting ones fold into one line each. The tab row’s right end carries the filter: the status chips 내 차례 · 일하는 중 · 쉬는 중, a search field and, only with two devices in view, the device choice. Below the graph the box states (primary, a worktree with its chips, a merged box, an asking row, a row with a tucked badge, the selected box) and the filter that matches nothing, one line with 필터 해제. The Issues tab opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The tab row’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도. The PRs tab opens the project’s pull requests grouped 내 차례, 에이전트가 고치는 중, CI 실패 · 맡은 에이전트 없음 and 최근 머지 (folded) (PRD overview-lenses-prs): a row is ▸, the state glyph, the number, the title, the issue cell (a dotted circle when empty, the 이슈 잇기 icon under the pointer), 확인, the agents’ marks, the branch, CI, the review word and the time, whose fixed slot holds GitHub and ⋯, ▷ 맡기기 or 정리 under the pointer; an unfolded row shows the branch’s agents and GitHub, Workspace and 이슈 잇기. 이슈 잇기 on a GitHub issue asks once, 그만두기 first, before it writes Closes #N into the body.';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, OverviewLenses.tsx, TaskBoards.tsx and projectBoard.ts: project Overview opens Agents, followed by Issues, PRs and Conversation history. Requests is removed and its saved selection opens Agents. Conversation history retains the former Sessions history. The Agents graph, issue boards, issue panels, PR lists, their filters, actions and ownership remain unchanged. Live task decisions are in the Sessions tool, whose approved v6 composition is in Screen / Main.';
 
 // -- Screen / Main ------------------------------------------------------------
 
@@ -1314,7 +1263,6 @@ const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, agentGraph.ts
 // project, and the Dependencies mode with an arrow that crosses projects.
 function buildMain(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain} = issueBoardParts(tokens);
-  const {requestGroup, requestRow} = requestParts(tokens);
   const width = 4 * column + 3 * num(tokens, '--spacing-md');
   // `key` tells the Board's header from the Dependencies one, in each theme.
   function header(key, mode) {
@@ -1332,7 +1280,7 @@ function buildMain(tokens) {
         {glyph: 'git-merge', label: '19 merged', fill: '$--pr-merged'},
       ]),
       frame(`main-rule-${key}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-      viewRow(`main-row-${key}`, viewTabs(`main-tabs-${key}`, ['Agents', '요청', 'Tasks', 'Projects'], mode ? 2 : 1, 3, 2), mode, width),
+      viewRow(`main-row-${key}`, viewTabs(`main-tabs-${key}`, ['Agents', 'Tasks', 'Projects'], mode ? 1 : 0, 3, 2), mode, width),
     ]);
   }
   function build(suffix) {
@@ -1345,6 +1293,11 @@ function buildMain(tokens) {
         {status: 'done', branch: 'mailbox-decouple', device: 'mini'},
       ]},
     ], {overview: true});
+    const originalAgents = buildProjectOverview(tokens).children[suffix === 'l' ? 2 : 3].children[0].children[0];
+    const cloneAgent = node => ({...node, id: `main-${node.id}`, ...(node.children ? {children: node.children.map(cloneAgent)} : {})});
+    const agents = cloneAgent(originalAgents);
+    agents.name = 'Overview · Agents';
+    agents.children[0] = header(`agents-${suffix}`, null);
     const card = (id, value) => taskCard(`main-${id}-${suffix}`, value);
     const board = frame(`main-list-${suffix}`, 'Overview · Tasks › Board', {width, layout: 'vertical', gap: '$--spacing-md'}, [
       header(suffix, 'board'),
@@ -1381,139 +1334,9 @@ function buildMain(tokens) {
         card('d4', {...ISSUE_186, project: 'herdr-ide', word: '리뷰'}),
       ]),
     ]);
-    // 요청, the tab beside Agents (PRD overview-request-view B1, B3): each row
-    // carries its project's name.
-    const rows = requestRowsOf('herdr-ide');
-    const r = (key, spec) => requestRow(`main-rq-${key}-${suffix}`, spec, width);
-    const requests = frame(`main-requests-${suffix}`, 'Overview · 요청', {width, layout: 'vertical', gap: '$--spacing-md'}, [
-      header(`r${suffix}`, null),
-      requestGroup(`main-rqg1-${suffix}`, '답할 것', 2, [...r('answer', rows.answer), ...r('sasu', {mark: 'ask', title: 'judge 백엔드 전환', project: 'sasu', request: 'judge를 codex로도 돌리게', result: 'claude를 기본으로 둘까요?', place: '14-judge-backend', age: '4m', issue: gh(14)})]),
-      requestGroup(`main-rqg2-${suffix}`, '결과 볼 것', 1, r('result', rows.result)),
-      requestGroup(`main-rqg3-${suffix}`, '일하는 중', 1, r('working', rows.working)),
-      requestGroup(`main-rqg4-${suffix}`, '쉬는 중', 7, [], {folded: true}),
-    ]);
-    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [screenLineageDetails(tokens, suffix), requests, board, dependencies])];
+    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [agents, sessionDesign(tokens).panel(suffix), board, dependencies])];
   }
   return screenSheet('screen-main', 'Screen / Main', MAIN_SPEC, build, build);
-}
-
-// -- the request view (RequestView.tsx over requestList.ts) ----------------------
-
-// A group head and its rows (PRD overview-request-view B3-B6, B13), authored
-// on local tokens like the PR row, since no library master draws a request
-// row. A row is the status mark, the agent's kind mark and its title (with its
-// project on Home), then on the right the descendants, the PR chip with `+N`,
-// the issue chip, the checkout and the time; under it `나 ›` and the request
-// on one line, its front cut and its end kept, then the result line with its
-// open chips. An expanded row adds the request as written, the agent's last
-// words, its pull requests, its descendants and 패널 열기.
-function requestParts(tokens) {
-  const {taskId, prChip, caption, spacer} = issueBoardParts(tokens);
-  const small = num(tokens, '--size-control-sm');
-  const mark = num(tokens, '--size-agent-mark');
-  const chipMax = num(tokens, '--size-pane-child-chip-max');
-
-  function requestGroup(id, label, count, rows, {folded = false} = {}) {
-    return frame(id, label, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
-      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: num(tokens, '--size-control')}, [
-        text(`${id}-label`, `${label} ${count}${folded ? ' · 펼치기' : ''}`, {size: '$--text-caption', weight: '500', fill: '$--subtle-foreground'}),
-        ...(label === '쉬는 중' ? [icon(`${id}-fold`, folded ? 'chevron-right' : 'chevron-down', {size: num(tokens, '--size-icon-sm'), fill: '$--subtle-foreground'})] : []),
-      ]),
-      ...rows,
-    ]);
-  }
-
-  function openChip(id, label) {
-    return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
-      icon(`${id}-g`, 'link', {size: num(tokens, '--size-icon-sm'), fill: '$--subtle-foreground'}),
-      caption(`${id}-t`, label, '$--subtle-foreground', true),
-    ]);
-  }
-
-  // `width` is the row's; the request line is cut to it the way the web cuts it:
-  // the end keeps up to 40% from a word boundary, the front is cut with an ellipsis.
-  function requestRow(id, row, width) {
-    const [symbol, color] = AGENT_MARK[row.mark];
-    const lineWidth = width - 2 * num(tokens, '--spacing-sm') - 24;
-    const words = row.request.split(' ');
-    let tail = '';
-    for (let index = words.length - 1; index > 0; index -= 1) {
-      const candidate = words.slice(index).join(' ');
-      if (textWidth(candidate, 11) > lineWidth * 0.4) break;
-      tail = candidate;
-    }
-    const whole = textWidth(row.request, 11) <= lineWidth;
-    const head = whole || !tail ? row.request : row.request.slice(0, row.request.length - tail.length).trimEnd();
-    const right = [
-      ...(row.children ? [caption(`${id}-kids`, row.children, '$--muted-foreground', true), ...(row.asking ? [caption(`${id}-ask`, `· 질문 ${row.asking}`, '$--warning', true)] : [])] : []),
-      ...(row.pr ? [prChip(`${id}-pr`, row.pr), ...(row.more ? [caption(`${id}-more`, `+${row.more}`, '$--muted-foreground', true)] : [])] : []),
-      ...(row.issue ? [taskId(`${id}-issue`, row.issue)] : []),
-      caption(`${id}-place`, fitText(row.place, chipMax, 11, true), '$--muted-foreground', true),
-      caption(`${id}-age`, row.age, '$--muted-foreground', true),
-    ];
-    const lines = frame(id, row.title, {layout: 'vertical', gap: '$--spacing-xxs', width, padding: ['$--spacing-xs', '$--spacing-sm'], cornerRadius: '$--radius-xs', ...(row.hover ? {fill: '$--accent'} : {})}, [
-      frame(`${id}-top`, 'Title line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
-        screenStatusMark(tokens, `${id}-mark`, symbol, color),
-        frame(`${id}-p`, 'Provider artwork', {width: mark, height: mark, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${row.provider ?? 'claude'}.png`, mode: 'fit'}}, []),
-        text(`${id}-t`, row.title, {size: '$--text-body'}),
-        ...(row.project ? [caption(`${id}-proj`, `· ${row.project}`)] : []),
-        spacer(`${id}-sp`),
-        ...right,
-      ]),
-      frame(`${id}-req`, 'Request line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
-        caption(`${id}-who`, `${row.sender ?? '나'} ›`, '$--subtle-foreground'),
-        text(`${id}-rh`, whole ? head : fitText(head, lineWidth - textWidth(tail, 11) - 6, 11), {size: '$--text-caption'}),
-        ...(whole || !tail ? [] : [text(`${id}-rt`, tail, {size: '$--text-caption'})]),
-        ...(row.later ? [screenBadge(`${id}-later`, `이후 ${row.later}`)] : []),
-      ]),
-      ...(row.result || row.opens ? [frame(`${id}-res`, 'Result line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
-        text(`${id}-rs`, fitText(row.result ?? '', lineWidth - 90 * (row.opens?.length ?? 0), 11), {size: '$--text-caption', fill: row.mark === 'ask' ? '$--warning' : row.fix ? '$--destructive' : '$--muted-foreground'}),
-        spacer(`${id}-rsp`),
-        ...(row.opens ?? []).map((label, index) => openChip(`${id}-o${index}`, label)),
-      ])] : []),
-    ]);
-    if (!row.expanded) return [lines];
-    const detail = row.expanded;
-    return [lines, frame(`${id}-x`, 'Expanded', {layout: 'vertical', gap: '$--spacing-sm', width, padding: [0, '$--spacing-sm', '$--spacing-sm', num(tokens, '--spacing-sm') + 2 * mark]}, [
-      caption(`${id}-xwho`, `${row.sender ?? '나'} ›`, '$--subtle-foreground'),
-      ...detail.request.map((line, index) => text(`${id}-xr${index}`, line || ' ', {size: '$--text-caption'})),
-      ...detail.reply.map((line, index) => caption(`${id}-xa${index}`, line)),
-      ...(detail.pulls ?? []).map((pull, index) => frame(`${id}-xp${index}`, `PR #${pull.number}`, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        pull.live ? prChip(`${id}-xpc${index}`, pull) : caption(`${id}-xpo${index}`, `예전 PR #${pull.number} 머지됨`),
-        text(`${id}-xpt${index}`, pull.title, {size: '$--text-caption'}),
-      ])),
-      ...(detail.children ?? []).map((child, index) => frame(`${id}-xc${index}`, child.title, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: 'fill_container'}, [
-        screenStatusMark(tokens, `${id}-xcm${index}`, AGENT_MARK[child.mark][0], AGENT_MARK[child.mark][1]),
-        text(`${id}-xct${index}`, child.title, {size: '$--text-caption'}),
-        caption(`${id}-xcv${index}`, child.verb, '$--subtle-foreground'),
-        caption(`${id}-xcl${index}`, child.line),
-        spacer(`${id}-xcsp${index}`),
-        caption(`${id}-xco${index}`, '열기', '$--foreground'),
-      ])),
-      frame(`${id}-xopen`, 'Open', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
-        screenButton(`${id}-xob`, '패널 열기', {variant: 'secondary', height: small, icon: 'square-arrow-out-up-right'}),
-        caption(`${id}-xok`, '⌘↵'),
-      ]),
-    ])];
-  }
-
-  return {requestGroup, requestRow};
-}
-
-// The rows both request views draw: a question, a failed PR, a PR to review,
-// a finished turn, a working agent, a parent waiting on its child, and the
-// folded resting group.
-const LONG_REQUEST = 'Overview 요청 보기에서 긴 요청을 한 줄로 보여 주세요 · request-row-….md 를 참고하고 · #336 리뷰도 함께 · 끝쪽 단어는 남겨 둘 것 · 이미지 1';
-function requestRowsOf(project = null) {
-  return {
-    answer: {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', project, request: '#192 hided가 SIGTERM에서 AI 자식부터 정리하게 해 줘', result: '기존 stdin 종료 경로도 남길까요?', place: '192-hided-sigterm-handler', age: '12m', issue: gh(192)},
-    fix: {mark: 'seen', title: '탭 그룹 회귀 수정', project, request: 'CI 실패한 거 고쳐 줘', result: 'e2e 두 개를 고쳤습니다', fix: true, place: 'prd/agent-tab-groups', age: '8m', pr: {number: 217, tone: 'open', checks: 'failed'}, more: 1},
-    review: {mark: 'seen', title: 'Herdr 서버 시작 구현', project, request: '#191 데스크톱 호스트가 Herdr 서버를 띄우게', result: 'PR 올림 · CI 통과', place: '191-desktop-starts-herdr', age: '20m', pr: {number: 222, tone: 'open', checks: 'passing'}, issue: gh(191)},
-    stopped: {mark: 'seen', title: '설정 화면 스위치 추가', project, request: 'Settings에 에이전트 요약 스위치 넣어 줘', result: '테스트 환경이 없어 멈췄어요', place: 'prd/agent-summary-switch', age: '6m'},
-    result: {mark: 'done', title: '설치 키트 항목 추가', project, request: 'Codex를 pane마다 실행하는 키트 항목 추가해 줘', result: '키트 항목을 추가했고 테스트가 통과했습니다', place: 'prd/codex-per-pane', age: '3m', opens: ['report', 'kit.rs']},
-    working: {mark: 'work', title: '요청 보기 웹 화면 구현', project, request: LONG_REQUEST, result: '요청 보기 행을 그리는 중', place: 'prd/overview-request-view', age: '1m', later: 'ci-lead'},
-    waiting: {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', project, request: '#192 SIGTERM 정리 맡겨서 끝까지 봐 줘', sender: '나', result: '리뷰어 결과를 기다리는 중', place: 'main', age: '25m', children: '자식 2 · 일하는 중 1', asking: 1},
-  };
 }
 
 // -- the PRs view (PullRequestsView.tsx over projectBoard.ts) --------------------
@@ -1603,7 +1426,6 @@ const CODEX_REST = {mark: 'seen', title: '체크아웃 기능 구현 및 정리'
 function buildProjectOverview(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, preview, issuePanel} = issueBoardParts(tokens);
   const {prGroup, prRow} = prParts(tokens);
-  const {requestGroup, requestRow} = requestParts(tokens);
   const graph = graphParts(tokens);
   const {g} = graph;
   const columns = 3;
@@ -1840,43 +1662,7 @@ function buildProjectOverview(tokens) {
         actions: [screenButton(`ov-prcd-no-${suffix}`, '그만두기', {variant: 'secondary'}), screenButton(`ov-prcd-yes-${suffix}`, '본문에 쓰기')],
       }),
     ]);
-    // The request view (PRD overview-request-view
-    // B1-B8, B13, B52): the groups in their order with 쉬는 중 folded, a
-    // working row's long request cut front and end, a finished row expanded,
-    // then the empty view and the view with nothing to do.
-    const rows = requestRowsOf();
-    const r = (key, spec) => requestRow(`ov-rq-${key}-${suffix}`, spec, boardWidth);
-    const requests = frame(`ov-requests-${suffix}`, 'Project Overview · 요청', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      overviewHeader(tokens, 'ov-rqhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'requests', width: boardWidth}),
-      requestGroup(`ov-rqg1-${suffix}`, '답할 것', 1, r('answer', rows.answer)),
-      requestGroup(`ov-rqg2-${suffix}`, '고칠 것', 1, r('fix', rows.fix)),
-      requestGroup(`ov-rqg3-${suffix}`, '리뷰·머지', 1, r('review', rows.review)),
-      requestGroup(`ov-rqg35-${suffix}`, '멈춤', 1, r('stopped', rows.stopped)),
-      requestGroup(`ov-rqg4-${suffix}`, '결과 볼 것', 1, r('result', {...rows.result, hover: true, expanded: {
-        request: ['Codex를 pane마다 실행하는 키트 항목 추가해 줘', '', 'Settings › Devices 줄에서 끄고 켤 수 있게'],
-        reply: ['키트 항목을 추가했고 테스트가 통과했습니다.', '보고서는 https://example.com/report 에 있습니다.'],
-      }})),
-      requestGroup(`ov-rqg5-${suffix}`, '일하는 중', 1, r('working', rows.working)),
-      requestGroup(`ov-rqg6-${suffix}`, '기다리는 중', 1, r('waiting', {...rows.waiting, expanded: {
-        request: ['#192 SIGTERM 정리 맡겨서 끝까지 봐 줘'],
-        reply: ['리뷰어 결과를 기다리는 중'],
-        pulls: [{number: 221, tone: 'draft', checks: 'pending', title: 'hided: stop AI children on SIGTERM before exit', live: true}, {number: 208, title: 'hided: graceful stop scaffolding', live: false}],
-        children: [{mark: 'ask', title: 'SIGTERM 처리와 자식 정리', verb: '답할 것', line: '기존 stdin 종료 경로도 남길까요?'}, {mark: 'work', title: '리뷰: 종료 경로 회귀', verb: '일하는 중', line: '테스트를 돌리는 중'}],
-      }})),
-      requestGroup(`ov-rqg7-${suffix}`, '쉬는 중', 4, [], {folded: true}),
-    ]);
-    const requestStates = frame(`ov-rqstates-${suffix}`, 'Project Overview · 요청 › 빈 상태', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      frame(`ov-rqempty-${suffix}`, '에이전트 없음', {layout: 'vertical', gap: '$--spacing-sm', alignItems: 'center', width: boardWidth, padding: '$--spacing-xl'}, [
-        text(`ov-rqempty-t-${suffix}`, '실행 중인 에이전트가 없습니다', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        screenButton(`ov-rqempty-b-${suffix}`, 'New agent', {variant: 'secondary', height: num(tokens, '--size-control'), icon: 'square-terminal'}),
-      ]),
-      frame(`ov-rqnone-${suffix}`, '할 일 없음', {layout: 'vertical', gap: '$--spacing-xs', width: boardWidth}, [
-        text(`ov-rqnone-t-${suffix}`, '할 일 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        requestGroup(`ov-rqnone-g-${suffix}`, '쉬는 중', 6, [], {folded: true}),
-      ]),
-    ]);
     return [
-      frame(`ov-requestside-${suffix}`, '요청', {layout: 'vertical', gap: '$--spacing-xl'}, [requests, requestStates]),
       frame(`ov-agentside-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [agents, boxStates, filterFrame]),
       frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, states, dependencies]),
       frame(`ov-panelside-${suffix}`, 'Issue panel', {layout: 'vertical', gap: '$--spacing-xl'}, [github, localPanel, editing, failed]),
@@ -3366,6 +3152,11 @@ function buildWorkspace(tokens) {
     return {...node, ...(node.children ? {children: node.children.map(expand)} : {})};
   }
   const result = expand(sheet);
+  for (const [name, suffix] of [['Light', 'l'], ['Dark', 'd']]) {
+    const section = result.children.find(node => node.name === name);
+    if (!section) throw new Error(`Workspace lacks ${name} section`);
+    section.children.push(sessionDesign(tokens).headerBoard(suffix));
+  }
   for (const state of buildWorkspaceSupplemental()) {
     const parent = nodes(result).find(node => node.id === state.parent);
     if (!parent) throw new Error(`Workspace supplemental parent ${state.parent} is missing`);
@@ -3399,7 +3190,7 @@ function buildWorkspaceSupplemental() {
 
 // -- Screen / Project Sessions --------------------------------------------------
 
-// The Overview on its Sessions tab: the same header as the Issues board, then
+// The Overview on its Conversation history tab: the same header as the Issues board, then
 // the Project's session list and the read-only detail beside it.
 function buildSessions(tokens) {
   function build(suffix) {
@@ -3434,7 +3225,7 @@ function buildSessions(tokens) {
     const main = frame(`ss-main-${suffix}`, 'Project Sessions', {width:1136,height:928,layout:'vertical',gap:'$--spacing-md'}, [header,frame(`ss-row-${suffix}`, 'Row', {layout:'horizontal',gap:'$--spacing-lg'}, [list,detail])]);
     return [frame(`ss-wrap-${suffix}`, 'Sessions with sidebar', {width:1440,layout:'horizontal',gap:'$--spacing-md',alignItems:'start'}, [screenSidebar(tokens,'ss-sidebar',suffix,[]),main])];
   }
-  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/ProjectOverview.tsx on its Sessions tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, with grouped Human/Assistant snippets, exact-message jumps and local copied-history retention/rebuild controls. Pending, failed and changed-source states preserve metadata results.', build, build);
+  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/ProjectOverview.tsx on its Conversation history tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, with grouped Human/Assistant snippets, exact-message jumps and local copied-history retention/rebuild controls. Pending, failed and changed-source states preserve metadata results.', build, build);
 }
 
 // -- Screen / Settings ----------------------------------------------------------
@@ -4128,14 +3919,7 @@ function buildProjectsSidebar(tokens) {
   // An opened checkout's agent row: its marks under the checkout name, one
   // lineage step further per level, the context already said by the rows above.
   function agentRow(id, {status, depth = 0, ...options}) {
-    return screenSidebarAgentRow(id, {symbol: SYMBOL[status], color: STATUS[status], inset: nameColumn + depth * indent, width: row, ...options});
-  }
-
-  function foldedAgent(id, options, summaries) {
-    return frame(id, 'Folded agent with other checkouts', {layout: 'vertical', width: row}, [
-      agentRow(`${id}-row`, options),
-      ...summaries.map((summary, index) => screenLineageSummary(tokens, `${id}-summary${index}`, summary)),
-    ]);
+    return screenSidebarAgentRow(id, {fold: 'none', symbol: SYMBOL[status], color: STATUS[status], inset: nameColumn + depth * indent, width: row, ...options});
   }
 
   // An opened checkout and its agent rows, on one small group fill.
@@ -4242,16 +4026,6 @@ function buildProjectsSidebar(tokens) {
 
   const ruleLine = id => frame(id, 'Rule', {width, height: 1, fill: '$--border'}, []);
 
-  // Projects | Agents, under the header line of every device that can be read.
-  function tabStrip(p, {agents = false} = {}) {
-    return frame(`${p}-strip`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, xs], gap: xs, alignItems: 'center'}, [
-      ...['Projects', 'Agents'].map((label, i) => frame(`${p}-tab${i}`, label, {width: 'fill_container', height: num(tokens, '--size-control-sm'), layout: 'horizontal', gap: xs, alignItems: 'center', justifyContent: 'center', cornerRadius: '$--radius-sm', ...((agents ? i === 1 : i === 0) ? {fill: '$--secondary'} : {})}, [
-        text(`${p}-t${i}`, label, {size: '$--text-caption'}),
-        text(`${p}-k${i}`, i ? '⌘⇧A' : '⌘⇧P', {size: '$--text-micro', fill: MUTED, mono: true}),
-      ])),
-    ]);
-  }
-
   function sharedOverviewRow(p, count = 0) {
     return frame(`${p}-overview`, 'Overview', {width, height: num(tokens, '--size-tab-strip'), layout: 'horizontal', gap: sm, padding: [0, '$--spacing-md'], alignItems: 'center'}, [
       icon(`${p}-overview-g`, 'layout-dashboard', {size: 16, fill: SUBTLE}),
@@ -4259,15 +4033,6 @@ function buildProjectsSidebar(tokens) {
       ...(count ? [text(`${p}-overview-n`, `${count} asking`, {size: '$--text-caption', fill: '$--warning'})] : []),
       text(`${p}-overview-k`, '⌘⇧O', {size: '$--text-micro', fill: MUTED, mono: true}),
     ]);
-  }
-
-  // `Needs You N · Done N · Working N` above the Agents list; a zero count is left out.
-  function stateCounts(p, counts) {
-    const WORDS = {needs_you: 'Needs You', done: 'Done', working: 'Working'};
-    return frame(`${p}-cnt`, 'State counts', {width, layout: 'horizontal', gap: xs, padding: [sm, '$--spacing-md', 0, '$--spacing-md']}, counts.flatMap(([state, count], i) => [
-      ...(i > 0 ? [text(`${p}-cd${i}`, '·', {size: '$--text-caption', fill: MUTED})] : []),
-      text(`${p}-c${i}`, `${WORDS[state]} ${count}`, {size: '$--text-caption', fill: BADGE_FILL[state]}),
-    ]));
   }
 
   // Usage chips and the Settings gear.
@@ -4312,19 +4077,18 @@ function buildProjectsSidebar(tokens) {
     ]);
   }
 
-  // One device's sidebar: the header line over Projects | Agents, then the Projects tab's Needs You and Done groups, its Home
+  // One device's sidebar: the header line over Projects | Agents, then the sidebar's Needs You and Done groups, its Home
   // and projects, or the Agents tab's counts and sections; a fixed `height` is the window's, and the list takes what is left.
-  function deviceSidebar(key, s, {name, tag, icons = ['plus', 'search'], menu = false, needs, done, home, agentsTab = false, counts, rows = [], height}) {
+  function deviceSidebar(key, s, {name, tag, icons = ['plus', 'search'], menu = false, needs, done, home, rows = [], height}) {
     const p = `psb-${key}`;
     const id = `${p}-${s}`;
     return frame(`${p}-${s}`, 'Sidebar', {width, ...(height ? {height} : {}), layout: 'vertical', fill: '$--sidebar', clip: true}, [
       headerLine(id, {name, tag, icons, menu}),
-      ruleLine(`${id}-r0`), sharedOverviewRow(id, counts?.find(([state]) => state === "needs_you")?.[1] ?? needs?.total ?? 0), tabStrip(id, {agents: agentsTab}), ruleLine(`${id}-r1`),
-      ...(counts ? [stateCounts(id, counts)] : []),
+      ruleLine(`${id}-r0`), sharedOverviewRow(id, needs?.total ?? 0), ruleLine(`${id}-r1`),
       ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(needs.p, 'Needs You', needs.rows, needs.total))] : []),
       ...(done ? [frame(`${id}-done`, 'Done', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(done.p, 'Done', done.rows, done.total))] : []),
       ...(home ? [homeBlock(id, home)] : []),
-      frame(`${id}-list`, agentsTab ? 'Agents list' : 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, xs], clip: Boolean(height)}, rows),
+      frame(`${id}-list`, 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, xs], clip: Boolean(height)}, rows),
       footer(id),
     ]);
   }
@@ -4343,23 +4107,16 @@ function buildProjectsSidebar(tokens) {
         projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, purpose: '사이드바 가독성 개선', expanded: true}),
-          // An unfolded parent: its chevron waits in the slot, its children follow.
-          agentRow(`psb-a1-${s}`, {title: '사이드바 가독성 개선', status: 'working', age: '1m', fold: 'unfolded'}),
-          agentRow(`psb-a1c1-${s}`, {title: '컴포넌트 구…', status: 'working', provider: 'codex', age: '42s', depth: 1, branch: 'feat/ui'}),
-          agentRow(`psb-a1c2-${s}`, {title: '한글 가독성 확인', status: 'seen', age: '38s', depth: 1}),
-          // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
-          foldedAgent(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'folded'}, [
-            {status: 'working', branch: 'agent-sleep', pr: '#183'},
-            {status: 'done', branch: 'mailbox-decouple', device: 'mini'},
-          ]),
+          agentRow(`psb-a1-${s}`, {title: '사이드바 가독성 개선', status: 'working', age: '1m', badge: '↳2', fold: 'none'}),
+          agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'none'}),
           agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
         ]),
         checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
         checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
         checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…'}),
         checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
-        checkoutRow(`psb-c6-${s}`, {name: 'fix/registered-projects-only', age: '1d'}),
-        checkoutRow(`psb-c7-${s}`, {name: 'legacy-shell', kind: 'missing'}),
+        fold(`psb-no-agents-${s}`, 'No agents 1', 'checkout'),
+        fold(`psb-cleanup-${s}`, 'Cleanup 1', 'checkout'),
         fold(`psb-f-herdr-${s}`, 'Inactive 14', 'checkout'),
         projectRow(`psb-p-sasu-${s}`, {name: 'sasu', marks: {working: 1, done: 1, idle: 1}, expanded: false}),
         fold(`psb-f-proj-${s}`, 'Inactive projects 3', 'project'),
@@ -4371,19 +4128,6 @@ function buildProjectsSidebar(tokens) {
       homeRow(`${id(key)}-row`, {count: '6 projects', hover}),
       agentRow(`${id(key)}-a0`, {...AGENTS.blog, place: undefined, line: undefined, inset: 30}),
     ]);
-
-    // Agents tab: this device's own agents by state with the three counts above, and no device chip on any row.
-    const agentsTab = deviceSidebar('agents', s, {
-      name: 'This Mac', icons: ['search'], height: WIN_H, agentsTab: true, counts: [['needs_you', 2], ['done', 1], ['working', 3]],
-      rows: [
-        section(`psb-in-s0-${s}`, 'Needs You · 2'),
-        agentRow(`psb-in-a0-${s}`, {...AGENTS.deploy, inset: sm}), agentRow(`psb-in-a1-${s}`, {...AGENTS.blog, inset: sm}),
-        section(`psb-in-s1-${s}`, 'Done · 1'), agentRow(`psb-in-a3-${s}`, {...AGENTS.ci, inset: sm}),
-        section(`psb-in-s2-${s}`, 'Working · 3'),
-        agentRow(`psb-in-a4-${s}`, {...AGENTS.readable, inset: sm, selected: true}), agentRow(`psb-in-a6-${s}`, {...AGENTS.principle, inset: sm}),
-        section(`psb-in-s3-${s}`, 'Seen · 2'), agentRow(`psb-in-a7-${s}`, {...AGENTS.research, inset: sm}), agentRow(`psb-in-a8-${s}`, {...AGENTS.sasu, inset: sm}),
-      ],
-    });
 
     // A remote device in front: its own Home and Projects, tagged Remote; its
     // twelve Needs You draw the five most recent and fold the rest.
@@ -4452,12 +4196,11 @@ function buildProjectsSidebar(tokens) {
     const paired = (key, selected, sidebar, options) => frame(id(`pair-${key}`), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id(key), selected, options), sidebar]);
     return [frame(id('wrap'), 'Wrap', {layout: 'vertical', gap: '$--spacing-xl'}, [
       frame(id('row-rest'), 'This Mac in front', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
-        labeled('rest', 'This Mac in front · rail, Projects | Agents, Needs You, Done, Home, Projects', [frame(id('pair-rest'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('rest'), 'mac'), rest])]),
+        labeled('rest', 'This Mac in front · Needs You, Done, Home, Projects', [frame(id('pair-rest'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('rest'), 'mac'), rest])]),
         labeled('home', 'Home row · rest and under the pointer', [homeCut('home0', false), homeCut('home1', true)]),
         hoverState(s), menuStates(s),
       ]),
       frame(id('row-states'), 'Rail states', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [
-        labeled('agents', 'Agents tab · this device only, the three counts above, no chip', [paired('agents', 'mac', agentsTab)]),
         labeled('remote', 'mini in front · 9+ pill, Needs You past its cap', [paired('remote', 'mini', remote)]),
         labeled('off', 'mini not connected · dimmed glyph and x, no mark', [paired('off', 'mini', off, {miniOff: true})]),
         labeled('one', 'One device · the rail shows with This Mac alone', [frame(id('pair-one'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('one'), 'mac', {tiles: [['mac', {selected: true, done: true}]]}), one])]),
@@ -4557,7 +4300,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You and Done groups first, each drawing its five (Needs You) or three (Done) most recent agents and folding the rest behind a More N row, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the main checkout of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10): one sidebar follows the selected device, with bounded Needs You and Done groups, Home and default-open project checkouts. Only roots and orphans draw as agent rows. A root badge opens its direct-child popover, and All opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------
@@ -5046,7 +4789,7 @@ function buildOverview(tokens) {
     const themeIndex = suffix === 'l' ? 2 : 3;
     const original = project
       ? buildProjectOverview(tokens).children[themeIndex].children[0].children[0]
-      : buildMain(tokens).children[themeIndex].children[1].children.find(node => node.name === 'Overview · 요청');
+      : buildMain(tokens).children[themeIndex].children[1].children.find(node => node.name === 'Overview · Agents');
     const copy = node => ({...node, id: `${id}-${node.id}`, ...(typeof node.width === 'number' ? {width: Math.min(node.width, contentWidth)} : {}), ...(node.children ? {children: node.children.map(copy)} : {})});
     const content = copy(original);
     content.width = contentWidth;
@@ -5056,7 +4799,6 @@ function buildOverview(tokens) {
         text(`${id}-entry-label`, 'Overview', {size: '$--text-body'}),
         ...(state !== 'zero' ? [text(`${id}-asking`, '2 asking', {size: '$--text-caption', fill: '$--warning'})] : []),
         text(`${id}-entry-key`, '⌘⇧O', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-        screenToggleGroup(`${id}-sidebar-tabs`, ['Projects · ⌘⇧P', 'Agents · ⌘⇧A'], index % 2),
       ]),
       frame(`${id}-toolbar`, 'Workspace toolbar icons', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
         frame(`${id}-overview-control`, 'Overview', {layout: 'horizontal', gap: '$--spacing-xxs'}, [screenIconButton(`${id}-overview`, 'layout-dashboard'), ...(state !== 'zero' ? [frame(`${id}-dot`, 'Needs You dot', {width: num(tokens, '--size-tab-status-dot'), height: num(tokens, '--size-tab-status-dot'), fill: '$--warning', cornerRadius: '$--radius-lg'}, [])] : [])]),

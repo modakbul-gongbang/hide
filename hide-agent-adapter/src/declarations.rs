@@ -153,16 +153,18 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         executables: &["opencode"],
         skill_location: SkillLocation::Shared,
         skill_os: Os::UNIX,
-        hook: HookInstall::None,
+        hook: HookInstall::Plugin(PluginDialect::OpenCode),
         herdr: HerdrIntegration {
             name: "opencode",
             folder: &[".config", "opencode"],
         },
         default_on: false,
-        prompt_hook: None,
-        spawn_guard: None,
-        subagent_counts: None,
-        memory: None,
+        prompt_hook: Some(HookDialect::OpenCode),
+        spawn_guard: Some(HookDialect::OpenCode),
+        subagent_counts: Some(HookDialect::OpenCode),
+        memory: Some(HookDialect::OpenCode),
+        // A bell's Enter in OpenCode's session picker opens another session
+        // (measured 2026-10-07); letters reach it on its next prompt instead.
         bell: false,
         session: Some(SessionFormat::OpenCode),
         sleep: None,
@@ -177,12 +179,15 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         install_url: "https://opencode.ai/docs/",
         logo_id: "opencode",
         factory: FactoryCapabilities {
-            direct_ask: Unconfirmed,
+            direct_ask: Available(DirectAsk {
+                tools: &["question"],
+                denial: HookDialect::OpenCode,
+            }),
             user_turn: Unconfirmed,
             turn_end_and_answer: Unconfirmed,
-            startup_guidance: Unavailable,
+            startup_guidance: Available(HookInstall::Plugin(PluginDialect::OpenCode)),
             resume: Unconfirmed,
-            next_prompt_letters: Unavailable,
+            next_prompt_letters: Available(HookDialect::OpenCode),
         },
     },
     AgentAdapter {

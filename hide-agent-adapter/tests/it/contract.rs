@@ -152,6 +152,19 @@ fn generated_web_contract_and_logo_document_sources_are_current() {
 }
 
 #[test]
+fn the_factory_question_guard_names_each_agent_with_a_refusable_question_tool_by_its_herdr_kind() {
+    use hide_agent_adapter::direct_ask_kind;
+    assert_eq!(direct_ask_kind("claude-code"), Some("claude"));
+    assert_eq!(direct_ask_kind("codex"), Some("codex"));
+    assert_eq!(direct_ask_kind("opencode"), Some("opencode"));
+    // The hook passes its canonical id; an alias or an agent with no refusable
+    // tool is not a runtime the guard answers for.
+    for runtime in ["claude", "grok", "cursor", "pi", "omp", ""] {
+        assert_eq!(direct_ask_kind(runtime), None, "{runtime}");
+    }
+}
+
+#[test]
 fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_unsafe_values() {
     use hide_agent_adapter::LaunchDialect;
     for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {

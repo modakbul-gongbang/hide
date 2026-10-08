@@ -77,7 +77,11 @@
       "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "resting",
+        "tag": "idle"
+      }
     },
     {
       "attention": false,
@@ -111,7 +115,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -145,7 +153,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -179,7 +191,11 @@
       "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "resting",
+        "tag": "idle"
+      }
     },
     {
       "attention": false,
@@ -213,7 +229,11 @@
       "descendant_asking": 1,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -254,7 +274,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -288,7 +312,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": true,
@@ -329,7 +357,11 @@
       "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "resting",
+        "tag": "idle"
+      }
     },
     {
       "attention": false,
@@ -363,7 +395,11 @@
       "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "resting",
+        "tag": "idle"
+      }
     },
     {
       "attention": false,
@@ -397,7 +433,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -431,7 +471,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -465,7 +509,11 @@
       "descendant_asking": 0,
       "verb": "working",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "in_progress",
+        "tag": "working"
+      }
     },
     {
       "attention": false,
@@ -499,7 +547,11 @@
       "descendant_asking": 0,
       "verb": "idle",
       "request_todo": false,
-      "request_since": null
+      "request_since": null,
+      "session": {
+        "group": "resting",
+        "tag": "idle"
+      }
     }
   ]
 }

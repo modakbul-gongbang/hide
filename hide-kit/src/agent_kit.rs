@@ -1,5 +1,6 @@
 //! What the kit does for each agent the operator switched on: the skill stub
-//! and, for an agent with a guidance hook, that hook (issue #517).
+//! and, for an agent with a guidance hook, that hook (issue #517), and for
+//! OpenCode, Hide's plugin.
 //!
 //! It follows the rules every other part follows (`crate` docs): what
 //! another tool wrote is never touched, a piece that failed does not stop
@@ -18,6 +19,7 @@ use std::path::Path;
 
 use hide_agent_hooks::codex_trust::{HookEntry, learn_herdr_entries};
 use hide_agent_hooks::guidance::GuidanceAgent;
+use hide_agent_hooks::opencode::{self, PluginObserved};
 use hide_agent_hooks::{HookStatus, InstallFailure};
 
 use crate::agents::{
@@ -185,6 +187,126 @@ fn remove_guidance(target: &KitTarget, agent: GuidanceAgent) -> RemoveOutcome {
         Err(failure) => RemoveOutcome::Failed {
             reason: failure.message(),
         },
+    }
+}
+
+// --- OpenCode's plugin ----------------------------------------------------------
+
+fn remove_plugin(target: &KitTarget) -> RemoveOutcome {
+    match opencode::remove(&target.home) {
+        Ok(true) => RemoveOutcome::Removed,
+        Ok(false) => RemoveOutcome::Absent,
+        Err(reason) => RemoveOutcome::Failed { reason },
+    }
+}
+
+/// The plugin piece of an agent that is on and installed here.
+fn plugin_state(
+    target: &KitTarget,
+    adapter: &AgentAdapter,
+    recorded: bool,
+) -> (ComponentState, Option<String>) {
+    if let Err(why) = opencode::supported_here() {
+        return (
+            ComponentState::Absent,
+            Some(format!(
+                "{}'s plugin is not written here: {why}",
+                adapter.label
+            )),
+        );
+    }
+    let helper = helper(target);
+    let observed = opencode::observe(&target.home, &helper);
+    if !matches!(
+        observed,
+        PluginObserved::Current | PluginObserved::ConfigAbsent | PluginObserved::Foreign
+    ) && !helper.is_file()
+    {
+        return (
+            ComponentState::Failed,
+            Some(format!(
+                "this build has no hook helper at {}",
+                helper.display()
+            )),
+        );
+    }
+    match observed {
+        PluginObserved::Current => (ComponentState::Installed, None),
+        PluginObserved::Stale(reason) => (ComponentState::Outdated, Some(reason)),
+        PluginObserved::Edited => (
+            ComponentState::Outdated,
+            Some(
+                "the plugin was edited after Hide wrote it; Reinstall puts Hide's back".to_owned(),
+            ),
+        ),
+        PluginObserved::Missing if recorded => (
+            ComponentState::Removed,
+            Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
+        ),
+        PluginObserved::Missing => (ComponentState::NotInstalled, None),
+        PluginObserved::ConfigAbsent => (
+            ComponentState::Absent,
+            Some(format!(
+                "{} has not created {} yet; the plugin is put in once it has",
+                adapter.label,
+                opencode::config_directory(&target.home).display()
+            )),
+        ),
+        PluginObserved::Foreign => (
+            ComponentState::Absent,
+            Some(format!(
+                "a plugin named {} that Hide did not write is already there; Hide left it alone",
+                opencode::PLUGIN_FILE_NAME
+            )),
+        ),
+        PluginObserved::Unreadable(reason) => (ComponentState::Failed, Some(reason)),
+    }
+}
+
+fn plugin_piece(
+    target: &KitTarget,
+    adapter: &AgentAdapter,
+    record: &Record,
+    on: bool,
+    detection: &Detection,
+    failures: Option<&AgentFailures>,
+) -> PieceReport {
+    let location = Some(opencode::plugin_path(&target.home).display().to_string());
+    let failure = failures.and_then(|failures| failures.hook.get(adapter.id).cloned());
+    let (state, reason) = if !on {
+        // Hide's unedited plugin still there after the switch-off: the removal
+        // failed or never ran, and the row must not read Off over it. An edited
+        // one is the operator's and stays by design.
+        let left = failure.or_else(|| {
+            (record.agent_choice(adapter.id) == Some(false)
+                && matches!(
+                    opencode::observe(&target.home, &helper(target)),
+                    PluginObserved::Current | PluginObserved::Stale(_)
+                ))
+            .then(|| {
+                "Hide's plugin is still in place; switch the agent on and off again to remove it"
+                    .to_owned()
+            })
+        });
+        match left {
+            Some(reason) => (ComponentState::Failed, Some(reason)),
+            None => (ComponentState::Off, None),
+        }
+    } else if !detection.installed(adapter) {
+        return PieceReport {
+            state: ComponentState::Absent,
+            reason: Some(not_found(adapter)),
+            location: None,
+        };
+    } else if let Some(reason) = failure {
+        (ComponentState::Failed, Some(reason))
+    } else {
+        plugin_state(target, adapter, record.contains_piece(&hook_code(adapter)))
+    };
+    PieceReport {
+        state,
+        reason,
+        location,
     }
 }
 
@@ -405,6 +527,9 @@ fn report_agent(
         }
         HookSupport::Guidance(agent) => Some(guidance_piece(
             target, adapter, agent, record, on, detection, failures,
+        )),
+        HookSupport::Plugin => Some(plugin_piece(
+            target, adapter, record, on, detection, failures,
         )),
     };
     let herdr = Some(herdr_piece(
@@ -725,6 +850,54 @@ pub(crate) fn apply(
         }
     }
 
+    // OpenCode's plugin: a file of Hide's own, kept like the skill stub.
+    for adapter in ADAPTERS {
+        if adapter.hook != HookSupport::Plugin {
+            continue;
+        }
+        let code = hook_code(adapter);
+        if !enabled(record, scope, adapter) {
+            if scope.agent_off.contains(adapter.id) {
+                match opencode::remove(&target.home) {
+                    Ok(_) => changed |= record.forget_piece(&code),
+                    Err(reason) => {
+                        failures.hook.insert(adapter.id, reason);
+                    }
+                }
+            }
+            continue;
+        }
+        // An agent whose program is gone keeps the plugin Hide wrote: only the
+        // operator's switch takes it out (D-20, D-26).
+        if !detection.installed(adapter) || opencode::supported_here().is_err() {
+            continue;
+        }
+        let helper = helper(target);
+        let observed = opencode::observe(&target.home, &helper);
+        let recorded = record.contains_piece(&code);
+        let restore = scope.agent_on.contains(adapter.id);
+        let install_now = helper.is_file()
+            && match &observed {
+                PluginObserved::Stale(_) => true,
+                // The operator's edit is theirs until Reinstall.
+                PluginObserved::Edited => restore,
+                PluginObserved::Missing => restore || (!recorded && record_readable),
+                _ => false,
+            };
+        if install_now && let Err(reason) = opencode::install(&target.home, &helper) {
+            failures.hook.insert(adapter.id, reason);
+            continue;
+        }
+        let current = if install_now {
+            opencode::observe(&target.home, &helper) == PluginObserved::Current
+        } else {
+            observed == PluginObserved::Current
+        };
+        if current && record_readable {
+            changed |= record.insert_piece(&code);
+        }
+    }
+
     // Skill folders, shared by every agent that reads one.
     for dir in SkillDir::ALL {
         let readers = || {
@@ -988,15 +1161,16 @@ fn learn_herdr_hooks(record: &mut Record, adapter: &AgentAdapter, files: HookFil
 }
 
 /// Takes every Hide piece off a machine: each guidance hook's marked
-/// entries and each skill stub that is Hide's.
+/// entries, OpenCode's unedited plugin and each skill stub that is Hide's.
 pub(crate) fn remove(target: &KitTarget) -> Vec<(String, RemoveOutcome)> {
     let mut outcomes = Vec::new();
     for adapter in ADAPTERS {
-        if let HookSupport::Guidance(agent) = adapter.hook {
-            outcomes.push((
-                format!("hook:{}", adapter.id),
-                remove_guidance(target, agent),
-            ));
+        match adapter.hook {
+            HookSupport::Guidance(agent) => {
+                outcomes.push((hook_code(adapter), remove_guidance(target, agent)));
+            }
+            HookSupport::Plugin => outcomes.push((hook_code(adapter), remove_plugin(target))),
+            HookSupport::Part(_) | HookSupport::None => {}
         }
     }
     for dir in SkillDir::ALL {

@@ -144,7 +144,10 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     remote_workspace.device_id = "mini".to_owned();
     let session = RemoteSessionSnapshot {
         workspaces: vec![remote_workspace],
-        agents: Vec::new(),
+        agents: project_agents(serde_json::from_value(serde_json::json!({
+            "agents": [{"pane_id": pane_id, "agent": "codex", "agent_status": "done", "state_change_seq": 1,
+                "cwd": "/tmp/herdr-remote-terminal"}]
+        })).unwrap()).agents,
         active_tab_ids: [(checkout_id.to_owned(), active_tab_id.to_owned())]
             .into_iter()
             .collect(),
@@ -206,7 +209,24 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
             .transport_state,
         "idle"
     );
-    assert!(!runtime.ingest_remote_session("mini", Ok(session)));
+    assert!(!runtime.ingest_remote_session("mini", Ok(session.clone())));
+    assert!(runtime.resolve_session(
+        pane_id,
+        crate::agent_state::sessions::ResolveSource::Operator
+    ));
+    assert!(
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .agents[0]
+            .resolved
+            .is_some()
+    );
+    assert!(
+        !runtime.ingest_remote_session("mini", Ok(session)),
+        "an identical remote fetch retains resolution without publishing another snapshot"
+    );
 
     let focus_local = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,

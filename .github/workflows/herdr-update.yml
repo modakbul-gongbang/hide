@@ -101,6 +101,12 @@ jobs:
         if: steps.existing.outputs.proceed == 'true'
         run: zsh scripts/check-herdr-pin-single-source.sh
 
+      # The suite runs Hide's OpenCode plugin under Node (`hide-agent-hooks/tests/it/opencode_plugin.rs`).
+      - uses: actions/setup-node@v4
+        if: steps.existing.outputs.proceed == 'true'
+        with:
+          node-version: 22
+
       - name: Run the Rust suite against the candidate
         if: steps.existing.outputs.proceed == 'true'
         run: bash scripts/verify-cargo.sh test

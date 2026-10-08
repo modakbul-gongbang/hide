@@ -1,4 +1,5 @@
 import { commandsCatalogs, commandsEnglish } from "./resources/commands";
+import { agentSessionsCatalogs, agentSessionsEnglish } from "./resources/agentSessions";
 import { boardCatalogs, boardEnglish } from "./resources/board";
 import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
@@ -30,6 +31,7 @@ import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
 import type { Catalogs } from "./schema";
 
 export const english = {
+  ...agentSessionsEnglish,
   ...shellEnglish,
   ...editorSearchEnglish,
   ...documentsEnglish,
@@ -66,6 +68,7 @@ export type MessageKey = keyof typeof english;
 export const catalogs = {
   en: english,
   ko: {
+    ...agentSessionsCatalogs.ko,
     ...shellCatalogs.ko,
     ...editorSearchCatalogs.ko,
     ...documentsCatalogs.ko,
@@ -97,6 +100,7 @@ export const catalogs = {
     ...factoryCatalogs.ko,
   },
   "zh-CN": {
+    ...agentSessionsCatalogs["zh-CN"],
     ...shellCatalogs["zh-CN"],
     ...editorSearchCatalogs["zh-CN"],
     ...documentsCatalogs["zh-CN"],
@@ -128,6 +132,7 @@ export const catalogs = {
     ...factoryCatalogs["zh-CN"],
   },
   ja: {
+    ...agentSessionsCatalogs.ja,
     ...shellCatalogs.ja,
     ...editorSearchCatalogs.ja,
     ...documentsCatalogs.ja,

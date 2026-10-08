@@ -117,13 +117,10 @@ test("Enter answers the top item, the arrows open another, and the badge stays t
     expect(after.my_turn).toBe(1);
     expect(after.inbox.map((item) => `${after.factories[0]!.id}/${item.task}/${item.question}`)).not.toContain(firstKey);
 
-    // The agents' request view has one line back to the Factory while 내 차례 has items (B13).
+    // Factory remains directly reachable from the shared sidebar.
     await page.locator("[data-home-destination]").click();
-    const main = page.locator("[data-main-screen]");
-    await main.locator('[data-main-tab="requests"]').click();
-    const line = main.locator("[data-requests-factory-line]");
-    await expect(line).toHaveAttribute("data-requests-factory-line", "1");
-    await line.getByRole("button").click();
+    await expect(page.locator("[data-factory-badge]")).toHaveText("1");
+    await openFactory(page);
     await expect(page.locator('[data-factory-screen="ready"]')).toBeVisible();
   });
 });

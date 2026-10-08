@@ -29,7 +29,7 @@ export const OFFLINE_DEVICE = "build-box";
 
 /** The fold choices the core would keep in its ui state. */
 export type SceneFolds = {
-  expandedCheckouts: string[];
+  collapsedCheckouts: string[];
   collapsedWorkspaces: string[];
   /** Parents whose descendants are unfolded; every other parent is folded, the core's default. */
   expandedAgents: string[];
@@ -41,7 +41,7 @@ export type SceneFolds = {
 
 /** The folds `Screen / Projects Sidebar` draws: main's agents open, a1 unfolded, sasu folded. */
 export const REFERENCE_FOLDS: SceneFolds = {
-  expandedCheckouts: ["herdr-ide:main"],
+  collapsedCheckouts: [],
   collapsedWorkspaces: ["sasu"],
   expandedAgents: ["a1"],
   inactiveCheckoutsOpen: [],
@@ -318,7 +318,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     ui_state: {
       left_sidebar_visible: true,
       collapsed_workspace_ids: folds.collapsedWorkspaces,
-      expanded_checkout_ids: folds.expandedCheckouts,
+      session_collapsed_checkout_ids: folds.collapsedCheckouts,
       workspace_registrations: world?.registrations ?? workspaces.map((row) => registrationOf(row, "local")),
     },
     ...(world ? { status: { remote: world.remote } } : {}),
@@ -437,7 +437,7 @@ function toggled(list: string[], id: string): string[] {
  */
 export function applyEvent(folds: SceneFolds, event: { kind: string; payload: Record<string, unknown> }): SceneFolds | null {
   const { kind, payload } = event;
-  if (kind === "checkout_agents_toggle") return { ...folds, expandedCheckouts: toggled(folds.expandedCheckouts, String(payload.checkout_id)) };
+  if (kind === "checkout_agents_toggle") return { ...folds, collapsedCheckouts: toggled(folds.collapsedCheckouts, String(payload.checkout_id)) };
   if (kind === "project_checkouts_fold") {
     const id = String(payload.workspace_id);
     const expanded = typeof payload.expanded === "boolean" ? payload.expanded : folds.collapsedWorkspaces.includes(id);

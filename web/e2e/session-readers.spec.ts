@@ -22,8 +22,8 @@ test("Pi native title and durable sleep wake the exact conversation in a fresh p
     reportPiWriter(herdr, sourcePane, session);
     daemon = await startHided(herdr, "pi-reader", herdr.env.HOME);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const row = page.locator(`[data-agent-list] [data-pane="${sourcePane}"]`);
+    await page.locator("[data-checkout]").first().click();
+    const row = page.locator(`nav[data-sidebar] [data-pane="${sourcePane}"]`);
     await expect(row).toContainText(PI_TITLE, { timeout: 30_000 });
     await screenshot(page, "pi-native-title");
     await row.click();
@@ -47,7 +47,7 @@ test("Pi native title and durable sleep wake the exact conversation in a fresh p
     await expect.poll(() => fs.readFileSync(path.join(herdr.root, "pi-launches.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[])).toContainEqual(["--session", PI_ID]);
     reportPiWriter(herdr, fresh, session);
     await expect(sleeping).toHaveCount(0, { timeout: 30_000 });
-    await expect(page.locator(`[data-agent-list] [data-pane="${fresh}"]`)).toContainText(PI_TITLE);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${fresh}"]`)).toContainText(PI_TITLE);
     expect(fs.readFileSync(session, "utf8")).toBe(prior);
     await screenshot(page, "pi-exact-wake");
   } finally {

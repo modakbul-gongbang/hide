@@ -132,13 +132,10 @@ fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() 
     };
     let shown = |runtime: &Runtime| {
         let workspace = &runtime.snapshot.navigator.workspaces[0];
-        (
-            workspace.checkouts[0].landed,
-            workspace.inactive_checkouts.checkout_ids.clone(),
-        )
+        workspace.checkouts[0].landed
     };
     in_base(&mut runtime, true);
-    assert_eq!(shown(&runtime), (false, Vec::<String>::new()));
+    assert!(!shown(&runtime));
 
     let summary = |paths: &[&str]| {
         std::collections::BTreeMap::from([(
@@ -150,7 +147,7 @@ fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() 
         )])
     };
     assert!(runtime.ingest_link_summaries(summary(&["/repo/task"])));
-    assert_eq!(shown(&runtime), (true, vec!["c".to_owned()]));
+    assert!(shown(&runtime));
     let wire = serde_json::to_value(runtime.snapshot()).unwrap();
     assert_eq!(
         wire["navigator"]["workspaces"][0]["checkouts"][0]["landed"],
@@ -164,7 +161,7 @@ fn a_checkout_in_its_base_is_landed_only_when_the_record_says_its_work_landed() 
     );
 
     in_base(&mut runtime, false);
-    assert_eq!(shown(&runtime), (false, Vec::<String>::new()));
+    assert!(!shown(&runtime));
 }
 
 fn claude_session(home: &Path, id: &str, printed_at: u64) {

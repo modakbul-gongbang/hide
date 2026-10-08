@@ -135,7 +135,6 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       await page.goto("about:blank");
       await page.goto(`${next.origin}/#token=${next.token}`);
       await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 20_000 });
-      await page.locator('[data-sidebar-mode="projects"]').click();
       return sent;
     };
     /**
@@ -161,6 +160,15 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       fs.writeFileSync(file, JSON.stringify({ ...state, right_panel_visible: true, right_panel_section: "explorer", expanded_inactive_checkout_project_paths: [toPage(path.join(herdr.root, "charlie"))] }));
     });
     let sent = await attach(daemon);
+    // B7 defaults each agentless fold closed. Wait for both catalog answers
+    // before opening them; an immediate .all() can miss a later project.
+    for (const name of ["alpha", "bravo"]) {
+      const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: new RegExp(`^${name}$`) }) });
+      const fold = project.locator("[data-empty-worktrees]");
+      await expect(fold).toHaveAttribute("aria-expanded", "false");
+      await fold.click();
+      await expect(fold).toHaveAttribute("aria-expanded", "true");
+    }
     await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });
     await expect(row("feature/bravo")).toHaveAttribute("data-checkout-kind", "pr_draft", { timeout: 30_000 });
     await expect(glyph(41)).not.toHaveClass(/text-muted-foreground/);

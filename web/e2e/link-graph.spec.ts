@@ -139,7 +139,6 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await overview.locator('[data-lens-tile-button="prs"]').click();
@@ -237,7 +236,6 @@ test("a Pi archive resume keeps its selected source and uses the current control
     const gh = fakeGh(herdr.root);
     daemon = await startHided(herdr, "pi-archive", herdr.env.HOME, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await overview.locator('[data-lens-tile-button="prs"]').click();

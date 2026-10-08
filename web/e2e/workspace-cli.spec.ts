@@ -67,7 +67,6 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     daemon = await startHided(herdr, "workspace-cli");
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const betaRow = page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first();
     await betaRow.click();
     await expect(betaRow).toHaveAttribute("aria-current", "true");

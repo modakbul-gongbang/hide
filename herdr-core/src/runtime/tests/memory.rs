@@ -75,6 +75,23 @@ fn a_catalog_change_refreshes_an_already_visible_sessions_panel() {
 }
 
 #[test]
+fn the_agent_sessions_tool_does_not_activate_the_memory_reader() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let project = runtime.snapshot.navigator.workspaces[0].clone();
+    runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::AgentSessions;
+    runtime.snapshot.sessions.unavailable_reason = Some("Memory has not been opened".to_owned());
+
+    assert!(!runtime.refresh_sessions_after_catalog_change(true));
+    assert_eq!(
+        runtime.snapshot.sessions.unavailable_reason.as_deref(),
+        Some("Memory has not been opened")
+    );
+}
+
+#[test]
 fn reopening_an_archive_tab_replaces_its_cached_memory_detail() {
     let mut runtime = runtime();
     let detail = |revision: u64, body: &str| ArchiveDetailSnapshot {

@@ -43,6 +43,19 @@ impl Runtime {
         self.judge_device_pane_children(target, &mut session);
         self.agent_scope_cache
             .restore_projects(&mut session.workspaces);
+        let agents = session
+            .agents
+            .iter()
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect();
+        for workspace in &mut session.workspaces {
+            crate::project_context::refresh_session_folds(
+                workspace,
+                &agents,
+                &self.snapshot.ui_state,
+                session.focused_checkout_id.as_deref(),
+            );
+        }
         session
     }
 
@@ -56,8 +69,8 @@ impl Runtime {
             .device_kit_declined(target)
             .is_some_and(|declined| declined.installed_nothing());
         let kit = self.kit_state(target);
-        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
-            crate::agent_hooks::device_hook_status(declined, &kit, runtime)
+        let status_of = |dialect: hide_agent_adapter::HookDialect| {
+            crate::agent_hooks::device_hook_status(declined, &kit, dialect)
         };
         let agents = &session.agents;
         let tokens = &session.pane_hook_tokens;

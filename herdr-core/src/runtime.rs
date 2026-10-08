@@ -39,6 +39,7 @@ mod rename;
 mod request_view;
 mod session;
 pub(crate) mod session_search;
+mod session_state;
 mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
@@ -1088,6 +1089,13 @@ pub struct Runtime {
     unresolved_machine_lineage: HashSet<String>,
     file_roots: Option<crate::files::FileRoots>,
     state_path: PathBuf,
+    pending_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    failed_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    delivery_holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
+    session_day_zone: Result<jiff::tz::TimeZone, jiff::Error>,
+    session_next_day_unix_ms: u64,
+    #[cfg(test)]
+    pane_header_derivations: usize,
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
@@ -1399,6 +1407,10 @@ pub struct Runtime {
     memory_enable_after_hook_update: bool,
     memory_poll_in_flight: bool,
     memory_next_poll_unix_ms: u64,
+    /// Memory receipts the label reads found, waiting for the one thread that
+    /// checks and records them (`runtime/memory.rs`, `record_memory_receipts`).
+    memory_receipts_pending: Vec<crate::labels::worker::SightedMemoryReceipt>,
+    memory_receipts_in_flight: bool,
     editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
@@ -2026,8 +2038,17 @@ impl Runtime {
             memory_enable_after_hook_update: false,
             memory_poll_in_flight: false,
             memory_next_poll_unix_ms: 0,
+            memory_receipts_pending: Vec::new(),
+            memory_receipts_in_flight: false,
             editor_tab_history: Vec::new(),
             worker_context: None,
+            pending_session_resolutions: BTreeMap::new(),
+            failed_session_resolutions: BTreeMap::new(),
+            delivery_holds: BTreeMap::new(),
+            session_day_zone: jiff::tz::TimeZone::try_system(),
+            session_next_day_unix_ms: 0,
+            #[cfg(test)]
+            pane_header_derivations: 0,
             state_save_pending: false,
             state_save_active: false,
             state_save_worker: None,

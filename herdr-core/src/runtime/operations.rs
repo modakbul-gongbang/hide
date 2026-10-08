@@ -354,6 +354,7 @@ impl Runtime {
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);
         changed |= self.tick_device_hosts(now_unix_ms);
+        changed |= self.tick_session_day(now_unix_ms);
         changed |= self.reattach_resized_observers(now_unix_ms);
         // A close ahead in a tab's line ends on paths of its own; its turn
         // passes on here at the latest.
