@@ -11,6 +11,7 @@ publish = false
 anyhow = "=1.0.104"
 base64 = "=0.23.1"
 cap-std = "=4.0.3"
+futures-util = "=0.3.34"
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-host = { path = "../hide-host" }
 hide-kit = { path = "../hide-kit" }
