@@ -1284,11 +1284,14 @@ pub(crate) mod tests {
             observe(&mut guard, "claude", 2, "recipient-native", None),
             Turn::NotReported
         );
-        assert_eq!(
-            observe(&mut guard, " Codex", 2, "recipient-native", Some(&overlay)),
-            Turn::Unread,
-            "the kind as the bell target reads it"
-        );
+        // Adapter D-08/B5: every spelling of one agent reads the same turn.
+        for kind in [" Codex", "CODEX", "cOdEx"] {
+            assert_eq!(
+                observe(&mut guard, kind, 2, "recipient-native", Some(&overlay)),
+                Turn::Read(Waiting::PlanApproval),
+                "the normalized kind as the bell target and session reader read it"
+            );
+        }
     }
 
     /// B5: Herdr can read Codex done before its session file records the end
