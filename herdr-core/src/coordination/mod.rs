@@ -411,7 +411,8 @@ pub(crate) fn apply(
                 .find(|record| &record.parent == parent && &record.intent == intent)
             {
                 if record.name != *name
-                    || record.kind != *kind
+                    || hide_agent_adapter::canonical_kind(&record.kind)
+                        != hide_agent_adapter::canonical_kind(kind)
                     || record.repo != *repo
                     || record.branch != *branch
                     || record.requested_path != *path
@@ -506,7 +507,8 @@ pub(crate) fn apply(
                 || record.origin != spawn.mode.origin(&spawn.parent)
                 || spawn.pane.as_ref() != Some(&record.pane)
                 || record.name != spawn.name
-                || record.actor.kind != spawn.kind
+                || hide_agent_adapter::canonical_kind(&record.actor.kind)
+                    != hide_agent_adapter::canonical_kind(&spawn.kind)
                 || record.project != spawn.path
             {
                 return Err("child_identity_changed".into());
@@ -1157,6 +1159,106 @@ mod tests {
         child.actor.device_id = device.into();
         child.project = Some("/fixture/topic".into());
         (ledger, actor, parent_id, id, child)
+    }
+
+    #[test]
+    fn both_spawn_modes_bind_and_replay_known_agent_spellings() {
+        // B5/D-08 applies to native observations and retries of the same intent.
+        for mode in [SpawnMode::Delegation, SpawnMode::Handoff] {
+            for (requested, reported) in [
+                ("CODEX", "codex"),
+                ("codex", " Codex"),
+                ("claude_code", "CLAUDE"),
+            ] {
+                let (mut ledger, caller, parent, spawn, mut child) =
+                    pending_spawn_mode(mode, "local");
+                ledger.spawns[0].kind = requested.into();
+                child.actor.kind = reported.into();
+                let bound = apply(
+                    &mut ledger,
+                    &caller,
+                    &Mutation::BindChild {
+                        id: spawn.clone(),
+                        record: child,
+                    },
+                    3,
+                )
+                .unwrap();
+                let registered = ledger
+                    .agents
+                    .iter()
+                    .find(|record| Some(record.id.as_str()) == bound["child"].as_str())
+                    .unwrap();
+                assert_eq!(registered.actor.kind, reported);
+                assert_eq!(registered.parent, mode.responsibility(&parent));
+                assert_eq!(registered.origin, mode.origin(&parent));
+                let mut retry = command("once");
+                if let Command::Spawn { kind, parent, .. } = &mut retry {
+                    *kind = reported.into();
+                    if mode == SpawnMode::Handoff {
+                        *parent = None;
+                    }
+                }
+                let replay = apply(
+                    &mut ledger,
+                    &caller,
+                    &Mutation::Reserve {
+                        parent,
+                        command: retry,
+                    },
+                    4,
+                )
+                .unwrap();
+                assert_eq!(replay["id"], spawn);
+                assert_eq!(replay["kind"], requested);
+                assert_eq!(ledger.spawns.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_binding_keeps_other_agents_and_unknown_spellings_distinct() {
+        for mode in [SpawnMode::Delegation, SpawnMode::Handoff] {
+            for (requested, reported) in [("codex", "claude"), ("future", "FUTURE")] {
+                let (mut ledger, caller, parent, spawn, mut child) =
+                    pending_spawn_mode(mode, "local");
+                ledger.spawns[0].kind = requested.into();
+                child.actor.kind = reported.into();
+                assert_eq!(
+                    apply(
+                        &mut ledger,
+                        &caller,
+                        &Mutation::BindChild {
+                            id: spawn,
+                            record: child,
+                        },
+                        3
+                    ),
+                    Err("child_identity_changed".into())
+                );
+                assert_eq!(ledger.agents.len(), 1);
+                assert!(ledger.spawns[0].child.is_none());
+                let mut retry = command("once");
+                if let Command::Spawn { kind, parent, .. } = &mut retry {
+                    *kind = reported.into();
+                    if mode == SpawnMode::Handoff {
+                        *parent = None;
+                    }
+                }
+                assert_eq!(
+                    apply(
+                        &mut ledger,
+                        &caller,
+                        &Mutation::Reserve {
+                            parent,
+                            command: retry
+                        },
+                        4
+                    ),
+                    Err("intent_conflict".into())
+                );
+            }
+        }
     }
 
     #[test]

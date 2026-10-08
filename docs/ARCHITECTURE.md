@@ -609,6 +609,7 @@ Prompt intake, spawn refusal, subagent counts, Memory and bell eligibility are i
 The common lookup trims borrowed input and compares ids and aliases without case, allocation, I/O, a lock or a cache.
 Every start normalizes a known kind to its Herdr name at the shared wire boundary; captured unknown kinds retain their original bytes and gain no capability.
 Lifecycle identity checks normalize known kinds while keeping their existing unknown-kind comparisons, and bell identity keeps unknown spellings exact along with pane, name, native session, readiness and sequence checks.
+Delegated and handed-off starts use the same known-kind identity for live detection, native readiness, child binding and same-intent replay, preserving captured spellings and every other ownership and receipt check.
 Herdr target names are references to the pinned Herdr contract, never a second protocol vocabulary.
 
 The leaf selects dialects but does not implement them.
