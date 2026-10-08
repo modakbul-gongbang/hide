@@ -28,7 +28,8 @@
 # the shell registers the device with consent (device-front.mjs), brings
 # its fixture workspace to the front, and types into the device's one
 # pane. The device is an isolated account the caller set up: its SSH alias
-# in MEASURE_DEVICE_SSH_CONFIG (copied into the private HOME), its Herdr
+# in MEASURE_DEVICE_SSH_CONFIG and its recorded host key in
+# MEASURE_DEVICE_KNOWN_HOSTS (both copied into the private HOME), its Herdr
 # socket in MEASURE_DEVICE_SOCKET, MEASURE_DEVICE_HERDR the command that
 # runs its Herdr from here, and MEASURE_DEVICE_HELPER_ROOT and
 # MEASURE_DEVICE_CLI_DIR the consent folders inside that account.
@@ -253,6 +254,8 @@ if [[ "$scenario" == device ]]; then
   mkdir -p "$MEASURE_PRIVATE/home/.ssh"
   cp "$MEASURE_DEVICE_SSH_CONFIG" "$MEASURE_PRIVATE/home/.ssh/config"
   chmod 600 "$MEASURE_PRIVATE/home/.ssh/config"
+  # Hide checks the device's host key against ~/.ssh/known_hosts only.
+  [[ -z "${MEASURE_DEVICE_KNOWN_HOSTS:-}" ]] || cp "$MEASURE_DEVICE_KNOWN_HOSTS" "$MEASURE_PRIVATE/home/.ssh/known_hosts"
   hided_env=(HIDE_HOST_HELPER_ROOT="$MEASURE_DEVICE_HELPER_ROOT" HIDE_HOST_CLI_DIR="$MEASURE_DEVICE_CLI_DIR")
   device_herdr() { eval "$MEASURE_DEVICE_HERDR" '"$@"'; }
   device_pane="$(device_herdr api snapshot | python3 "$measure_dir/pane-id.py")"

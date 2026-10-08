@@ -5,7 +5,8 @@
 // `focus_device`). usage: device-front.mjs register|front
 // Reads MEASURE_HIDED_PORT, MEASURE_HIDED_TOKEN, MEASURE_DEVICE_ID,
 // MEASURE_DEVICE_ALIAS and MEASURE_DEVICE_SOCKET; `front` returns once the
-// device is connected and in front.
+// device is connected, in front and its helper ready, within
+// MEASURE_DEVICE_READY_SECONDS (900: the first install uploads the build).
 const port = process.env.MEASURE_HIDED_PORT;
 const token = process.env.MEASURE_HIDED_TOKEN;
 const device = process.env.MEASURE_DEVICE_ID;
@@ -60,8 +61,11 @@ if (mode === "register") {
         workspace_id: workspace.id, checkout_id: checkout.id, focus_device: true,
       } });
     }
-    return rest?.navigator?.focused_device_id === device;
-  }, 180_000);
+    // In front, and the device's node (its helper) installed and running:
+    // its terminals ride that link.
+    const host = (rest?.navigator?.devices ?? []).find((row) => row.id === device)?.host;
+    return rest?.navigator?.focused_device_id === device && host?.state === "ready";
+  }, Number(process.env.MEASURE_DEVICE_READY_SECONDS ?? 900) * 1000);
   console.log("front");
 } else {
   throw new Error("usage: device-front.mjs register|front");
