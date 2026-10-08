@@ -19,7 +19,8 @@
 # the measured pane and four splits in one tab, five attached panes: idle
 # resources for MEASURE_IDLE_SECONDS (60), the screen key echo idle
 # (key-echo.mjs), then every pane printing a line per 8 ms while resources
-# are sampled for MEASURE_DRIVEN_SECONDS (120) and the key echo runs again,
+# are sampled for MEASURE_DRIVEN_SECONDS (120), then the key echo again on
+# the measured pane while the other four keep printing,
 # then MEASURE_KEY_COUNT (0: skipped) distinct keys counted back from the
 # pane (key-count.mjs), then the window closed while the panes print for
 # MEASURE_WINDOWLESS_SECONDS (60) and reopened.
@@ -83,7 +84,7 @@ cleanup() {
   if $server_started; then
     kill_owned "${server_pid:-}"
     [[ -n "${server_pid:-}" ]] && wait "$server_pid" 2>/dev/null
-    rm -f "$HERDR_SOCKET_PATH" "${HERDR_SOCKET_PATH%.sock}-client.sock" "$HERDR_SOCKET_PATH.hide-label-generator.lock"
+    rm -f "$HERDR_SOCKET_PATH" "$HERDR_SOCKET_PATH.agent" "${HERDR_SOCKET_PATH%.sock}-client.sock" "$HERDR_SOCKET_PATH.hide-label-generator.lock"
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
   rmdir "$MEASURE_SOCKET_DIR"
@@ -374,10 +375,13 @@ if [[ "$scenario" == keys ]]; then
   # One line per 8 ms for the given seconds, beside the cat that echoes keys.
   printf '%s\n' 'import sys, time' 'end = time.monotonic() + float(sys.argv[1]); i = 0' \
     'while time.monotonic() < end:' "    print(f'drive {i:05d}', flush=True); i += 1; time.sleep(0.008)" > "$MEASURE_RUN_DIR/drive.py"
+  # A pane's printer runs in the background of its shell, where Ctrl+C does
+  # not reach it; it carries its pane id so only that one is ended.
   reset_pane() {
+    pkill -f "$MEASURE_RUN_DIR/drive\.py [0-9]+ $1\$" || true
     "$HERDR_BIN_PATH" pane send-keys "$1" ctrl+c >/dev/null
     sleep 0.3
-    "$HERDR_BIN_PATH" pane run "$1" "printf '\033c'; stty -echo -icanon; ${2:+/usr/bin/python3 $MEASURE_RUN_DIR/drive.py $2 & }cat" >/dev/null
+    "$HERDR_BIN_PATH" pane run "$1" "printf '\033c'; stty -echo -icanon; ${2:+/usr/bin/python3 $MEASURE_RUN_DIR/drive.py $2 $1 & }cat" >/dev/null
   }
   drive_all() { for pane in "${all_panes[@]}"; do reset_pane "$pane" "$1"; done; sleep 1; }
   quiet_all() { for pane in "${all_panes[@]}"; do reset_pane "$pane"; done; sleep 0.5; }
@@ -390,14 +394,24 @@ if [[ "$scenario" == keys ]]; then
   note "keys: screen key echo, idle (50 samples)"
   MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-idle.json"
   note "keys: driven, $driven_seconds s at one line per 8 ms per pane"
-  drive_all $((driven_seconds + 30))
+  drive_all $((driven_seconds + 120))
   export MEASURE_RESOURCE_SECONDS="$driven_seconds"
   spawn_owned resources-driven python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid"
   resource_pid=$owned_pid
   unset MEASURE_RESOURCE_SECONDS
-  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-driven.json"
-  wait "$resource_pid"
+  python3 "$measure_dir/diag-counts.py" "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/driven-diagnostics-before.json"
+  MEASURE_WS_COUNT_SECONDS="$driven_seconds" spawn_owned ws-driven node "$measure_dir/ws-count.mjs"
+  ws_pid=$owned_pid
+  wait "$resource_pid" "$ws_pid"
   cp "$MEASURE_RUN_DIR/logs/resources-driven.log" "$MEASURE_RUN_DIR/resources-driven.json"
+  cp "$MEASURE_RUN_DIR/logs/ws-driven.log" "$MEASURE_RUN_DIR/ws-driven.json"
+  python3 "$measure_dir/diag-counts.py" "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/driven-diagnostics-after.json"
+  # The echoed marker has to arrive whole, so the measured pane goes back
+  # to a plain cat while the other four keep printing.
+  reset_pane "$MEASURE_PANE_ID"
+  sleep 0.5
+  note "keys: screen key echo, driven (50 samples, the other four panes printing)"
+  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-driven.json"
   quiet_all
   if (( ${MEASURE_KEY_COUNT:-0} > 0 )); then
     note "keys: $MEASURE_KEY_COUNT distinct keys counted back from the pane"
@@ -406,6 +420,9 @@ if [[ "$scenario" == keys ]]; then
     quiet_all
   fi
   note "keys: windowless, $windowless_seconds s with every pane printing"
+  MEASURE_WS_COUNT_SECONDS=$((windowless_seconds + 30)) spawn_owned ws-reopen node "$measure_dir/ws-count.mjs"
+  ws_pid=$owned_pid
+  sleep 1
   printf 'about:blank' | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
   sleep 2
   drive_all $((windowless_seconds + 10))
@@ -415,25 +432,10 @@ if [[ "$scenario" == keys ]]; then
   sleep 5
   node -e "
 import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); const panes = JSON.parse(process.argv[1]); console.log(JSON.stringify(await p.evaluate('(' + JSON.stringify(panes) + ').map((id) => ({pane: id, text_chars: window.__hideProbe.paneText(id).trim().length}))'))); p.close(); })" "$(printf '%s\n' "${all_panes[@]}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" > "$MEASURE_RUN_DIR/reopen-panes.json"
-  python3 - "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/reopen-diagnostics.json" <<'PYJSON'
-import collections, json, sys
-counts = collections.Counter()
-try:
-    lines = open(sys.argv[1]).read().splitlines()
-except FileNotFoundError:
-    lines = []
-for line in lines:
-    try:
-        record = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    record = record.get("event", record)
-    kind = str(record.get("kind", ""))
-    if kind.startswith("terminal.") or "redraw" in kind or "resume" in kind:
-        counts[kind] += 1
-print(json.dumps(dict(sorted(counts.items()))))
-PYJSON
-  cat "$MEASURE_RUN_DIR/reopen-panes.json" "$MEASURE_RUN_DIR/reopen-diagnostics.json"
+  python3 "$measure_dir/diag-counts.py" "$MEASURE_PRIVATE/hide-state/Logs/core.jsonl" > "$MEASURE_RUN_DIR/reopen-diagnostics.json"
+  wait "$ws_pid"
+  cp "$MEASURE_RUN_DIR/logs/ws-reopen.log" "$MEASURE_RUN_DIR/ws-reopen.json"
+  cat "$MEASURE_RUN_DIR/reopen-panes.json" "$MEASURE_RUN_DIR/reopen-diagnostics.json" "$MEASURE_RUN_DIR/ws-driven.json" "$MEASURE_RUN_DIR/ws-reopen.json"
   for name in idle driven; do
     python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/key-echo-$name.json" > "$MEASURE_RUN_DIR/key-echo-$name-summary.json"
   done

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Lost and reordered keys (PRD core-host-node-terminal D-08): types
-// MEASURE_KEY_COUNT distinct markers (10,000 by default) into the web
-// shell's terminal through the shell's own key path, then reads the pane's
-// content back from its isolated Herdr and counts the markers that never
-// arrived and the ones that arrived out of order. It does not stop at the
-// first loss: every count is reported.
+// MEASURE_KEY_COUNT keys (10,000 by default) into the web shell's terminal
+// through the shell's own key path, one CDP `Input.dispatchKeyEvent` per
+// key as key-echo.mjs does, then reads the pane's content back from its
+// isolated Herdr and counts the keys that never arrived and the ones that
+// arrived out of order. It does not stop at the first loss: every count is
+// reported.
 //
-// Each marker is one key event (`mNNNNN` and a space, a carriage return
-// every 100th), sent as CDP `Input.insertText`, which reaches xterm as one
-// input and the shell as one `key` frame, in order. The pane runs
+// The keys spell distinct markers (`mNNNNN` and a space, Enter after every
+// 100th), so a lost or moved key also breaks a marker. The pane runs
 // `stty -echo -icanon; cat`, so what Herdr holds is what the pane received.
 // MEASURE_PANE_READ is the shell command that prints the pane's logical
 // lines (default: `$HERDR_BIN_PATH pane read $MEASURE_PANE_ID --source
@@ -31,6 +31,16 @@ const readCommand =
   `"${process.env.HERDR_BIN_PATH}" pane read "${paneId}" --source recent-unwrapped --lines 4000`;
 
 const marker = (index) => `m${String(index).padStart(5, "0")}`;
+// The typed keys, in order: markers until `count` keys, Enter after every
+// 100th marker, and `#` as the last key, which a read of the pane shows
+// (a trailing Enter would read as nothing).
+const typed = [];
+for (let index = 0; typed.length < count; index += 1) {
+  for (const character of marker(index)) typed.push(character);
+  typed.push((index + 1) % perLine === 0 ? "\r" : " ");
+}
+typed.length = count;
+typed[count - 1] = "#";
 const readPane = () => {
   const read = spawnSync("/bin/sh", ["-c", readCommand], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
   if (read.status !== 0) throw new Error(`pane read failed (${read.status}): ${read.stderr}`);
@@ -49,53 +59,86 @@ if (/m\d{5}/.test(readPane())) throw new Error("the pane already shows markers; 
 
 const load_before = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
 const started = performance.now();
-for (let index = 0; index < count; index += 1) {
-  const text = `${marker(index)}${(index + 1) % perLine === 0 || index + 1 === count ? "\r" : " "}`;
-  await page.send("Input.insertText", { text });
+for (const character of typed) {
+  if (character === "\r") {
+    await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+  } else {
+    await page.send("Input.dispatchKeyEvent", { type: "keyDown", text: character, unmodifiedText: character, key: character });
+  }
   if (intervalMs > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs));
 }
 const typed_ms = performance.now() - started;
 page.close();
 
 // Wait for the last marker to land, then read once more after a quiet spell.
-const last = marker(count - 1);
+const sent = typed.join("").replaceAll("\r", "\n");
+const lastMarker = sent.match(/m\d{5}/g).pop();
 const deadline = Date.now() + 60_000;
 let content = readPane();
-while (!content.includes(last) && Date.now() < deadline) {
+while (!(content.includes(lastMarker) && content.trimEnd().endsWith("#")) && Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, 500));
   content = readPane();
 }
 await new Promise((resolve) => setTimeout(resolve, 2000));
 content = readPane();
 
-const seen = [...content.matchAll(/m(\d{5})/g)].map((match) => Number(match[1]));
-const firstSeen = new Map();
-let duplicated = 0;
-for (const [position, index] of seen.entries()) {
-  if (firstSeen.has(index)) duplicated += 1;
-  else firstSeen.set(index, position);
-}
-const missing = [];
-for (let index = 0; index < count; index += 1) if (!firstSeen.has(index)) missing.push(index);
-// A marker is out of order when a later one was seen before it: count the
-// adjacent inversions in what arrived.
-let reordered = 0;
-const order = seen.filter((index, position) => firstSeen.get(index) === position);
-for (let position = 1; position < order.length; position += 1) if (order[position] < order[position - 1]) reordered += 1;
-const unexpected = seen.filter((index) => index >= count).length;
+// What the pane received: from the first marker on, its logical lines.
+const start = content.indexOf(marker(0));
+const received = start < 0 ? "" : content.slice(start).replace(/\s+$/, "");
+const exact = received === sent;
+// Keys: the longest common subsequence of sent and received keys is what
+// arrived in order; the rest of the sent keys were lost or moved, the rest
+// of the received ones moved or never typed.
+const lcs = (a, b) => {
+  let previous = new Uint32Array(b.length + 1);
+  let current = new Uint32Array(b.length + 1);
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = a[i - 1] === b[j - 1] ? previous[j - 1] + 1 : Math.max(previous[j], current[j - 1]);
+    }
+    [previous, current] = [current, previous];
+  }
+  return previous[b.length];
+};
+const inOrder = exact ? sent.length : lcs(sent, received);
+const counts = (text) => {
+  const all = new Map();
+  for (const character of text) all.set(character, (all.get(character) ?? 0) + 1);
+  return all;
+};
+// A key that arrived but out of order is in both multisets yet not in the
+// common subsequence; a lost key is missing from the received multiset.
+const sentCounts = counts(sent);
+const receivedCounts = counts(received);
+let arrived = 0;
+for (const [character, number] of sentCounts) arrived += Math.min(number, receivedCounts.get(character) ?? 0);
+const lostKeys = sent.length - arrived;
+const reorderedKeys = arrived - inOrder;
+const unexpectedKeys = received.length - arrived;
+// Markers, for a reader: which ones are missing or out of place.
+let firstDifference = 0;
+while (firstDifference < sent.length && sent[firstDifference] === received[firstDifference]) firstDifference += 1;
+const around = (text) => JSON.stringify(text.slice(Math.max(0, firstDifference - 16), firstDifference + 16));
+const seen = [...received.matchAll(/m(\d{5})/g)].map((match) => Number(match[1]));
+const markerCount = sent.match(/m\d{5}/g).length;
+const seenSet = new Set(seen);
+const missingMarkers = [];
+for (let index = 0; index < markerCount; index += 1) if (!seenSet.has(index)) missingMarkers.push(index);
 console.log(JSON.stringify({
-  method: "one CDP Input.insertText per marker into the measured pane's terminal; pane runs stty -echo -icanon; cat; content read back from the pane's own isolated Herdr; missing = markers never seen; reordered = adjacent inversions among first sightings",
+  method: "one CDP Input.dispatchKeyEvent per key into the measured pane's terminal; pane runs stty -echo -icanon; cat; content read back from the pane's own isolated Herdr from the first marker on; lost = sent keys absent from what arrived; reordered = arrived keys outside the longest in-order common subsequence; unexpected = arrived keys never typed",
   pane_id: paneId,
   screen_pane_id: screenPane,
-  typed: count,
+  keys_typed: sent.length,
   interval_ms: intervalMs,
   typed_ms: Math.round(typed_ms),
-  seen: firstSeen.size,
-  missing: missing.length,
-  missing_first: missing.slice(0, 20),
-  reordered,
-  duplicated,
-  unexpected,
+  exact,
+  keys_lost: lostKeys,
+  keys_reordered: reorderedKeys,
+  keys_unexpected: unexpectedKeys,
+  first_difference: exact ? null : { key: firstDifference, sent: around(sent), received: around(received) },
+  markers: markerCount,
+  markers_missing: missingMarkers.length,
+  markers_missing_first: missingMarkers.slice(0, 20),
   load_before,
   load_after: spawnSync("uptime", { encoding: "utf8" }).stdout.trim(),
 }, null, 2));
