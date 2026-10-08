@@ -496,7 +496,7 @@ fn report_latest(
     report::report(socket_path, pane_id, counters)?;
     // Only a record actually read can be newer; one that cannot be read now
     // is left to the event that is writing it, which reports it itself.
-    match counters::try_read(home, pane_id) {
+    match counters::read_settled(home, pane_id) {
         Ok(now) if now != counters => report::report(socket_path, pane_id, now),
         _ => Ok(()),
     }

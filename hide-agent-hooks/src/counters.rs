@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -91,11 +91,11 @@ impl Change {
     }
 }
 
-/// The pane's record as it is on disk, failing rather than answering zeros
-/// when it cannot be read: Windows refuses a read for an instant while a
-/// replacement lands, and a reader that took that for an empty record would
-/// report counts nobody made.
-pub fn try_read(home: &Path, pane_id: &str) -> io::Result<PaneCounters> {
+/// The pane's record as the last finished change left it, read under the
+/// shared side of the lock, so a change being written is never read half
+/// way; a record that cannot be read fails rather than answering zeros.
+pub fn read_settled(home: &Path, pane_id: &str) -> io::Result<PaneCounters> {
+    let _held = hold(home, hide_platform::fs::lock::Mode::Shared)?;
     let raw = fs::read(record_path(home, pane_id))?;
     serde_json::from_slice(&raw).map_err(io::Error::from)
 }
@@ -110,7 +110,10 @@ pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
 
 /// Applies one [`Change`] under the pane's lock and returns the new counts.
 /// The record is read, changed and written while the lock is held, so two
-/// events of one pane never both start from the same count.
+/// events of one pane never both start from the same count. The write is
+/// not synced: a count describes running sessions and is rebuilt by their
+/// next events, so it does not have to survive a crash, and a sync inside
+/// the lock would make parallel subagent starts wait out the lock.
 pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCounters> {
     if change == Change::None {
         return Ok(read(home, pane_id));
@@ -119,25 +122,7 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
     if let Some(parent) = path.parent() {
         hide_platform::fs::private::create_dir_all(parent)?;
     }
-    // One lock file beside the records, not the record itself: Windows locks
-    // a byte range against every other handle, so a record locked by one
-    // handle could not be rewritten through another. It is the account's
-    // own, so no other account can hold it and stall every count.
-    let lock = hide_platform::fs::private::open_or_create_file(&lock_path(home))?;
-    let held = match hide_platform::fs::lock::lock_file(
-        lock,
-        hide_platform::fs::lock::Mode::Exclusive,
-        LOCK_WAIT,
-        &|| false,
-    )? {
-        hide_platform::fs::lock::Waited::Locked(held) => held,
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "another hook event held the pane counts",
-            ));
-        }
-    };
+    let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
     let mut counters = read(home, pane_id);
     match change {
         Change::Reset => counters = PaneCounters::default(),
@@ -149,15 +134,30 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
         Change::Settled { running } => counters.working = running,
         Change::None => {}
     }
-    // Replaced in one step, so a reader outside the lock (the report that
-    // checks whether another event moved the count) never sees half a file.
-    hide_platform::fs::atomic::write_file(
-        &path,
-        &serde_json::to_vec(&counters)?,
-        hide_platform::fs::Access::Private,
-    )?;
+    let mut record = hide_platform::fs::private::open_or_create_file(&path)?;
+    record.set_len(0)?;
+    record.write_all(&serde_json::to_vec(&counters)?)?;
+    drop(record);
     drop(held);
     Ok(counters)
+}
+
+/// One lock file beside the records, not the record itself: Windows locks a
+/// byte range against every other handle, so a record locked by one handle
+/// could not be rewritten through another. It is the account's own, so no
+/// other account can hold it and stall every count.
+fn hold(
+    home: &Path,
+    mode: hide_platform::fs::lock::Mode,
+) -> io::Result<hide_platform::fs::lock::Lock> {
+    let lock = hide_platform::fs::private::open_or_create_file(&lock_path(home))?;
+    match hide_platform::fs::lock::lock_file(lock, mode, LOCK_WAIT, &|| false)? {
+        hide_platform::fs::lock::Waited::Locked(held) => Ok(held),
+        _ => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "another hook event held the pane counts",
+        )),
+    }
 }
 
 /// The lock every count update holds. It sits beside the records' folder,
