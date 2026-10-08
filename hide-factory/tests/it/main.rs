@@ -6,3 +6,4 @@
 mod engine;
 mod github;
 mod local_git;
+mod observer;

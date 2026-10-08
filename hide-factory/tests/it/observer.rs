@@ -2,6 +2,7 @@
 //! worker candidates and a Factory's pause, through the engine's commands
 //! and ticks over the fake world (factory-observer PRD).
 
+#[path = "support/mod.rs"]
 mod support;
 
 use hide_factory::adapters::{PreMerge, WorkerStatus};
