@@ -1137,6 +1137,10 @@ pub struct Runtime {
     /// Each pane's attach state as its node last reported it, which the
     /// terminal projection shows.
     terminal_states: HashMap<String, hide_node_link::terminal::PaneTerminalState>,
+    /// Panes a node was asked to attach and not yet told to forget, whether
+    /// or not its first report has arrived: a pane retired before then is
+    /// forgotten at its node too.
+    terminal_attach_requested: HashSet<String>,
     /// What the nodes were last told is on screen, asleep and closing, so
     /// only a change is sent.
     terminal_intents: terminal::TerminalIntents,
@@ -1880,6 +1884,7 @@ impl Runtime {
             remote_tab_creations_in_flight: HashSet::new(),
             terminals: Arc::new(terminal::NoTerminals),
             terminal_states: HashMap::new(),
+            terminal_attach_requested: HashSet::new(),
             terminal_intents: terminal::TerminalIntents::default(),
             next_remote_file_generation: 0,
             attachment: None,

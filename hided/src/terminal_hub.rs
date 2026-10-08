@@ -74,8 +74,9 @@ struct PaneRing {
     /// The highest sequence trimmed from this pane's ring: a cursor below
     /// it cannot be resumed from the ring.
     trimmed_through: u64,
-    /// A client dropped output of this pane that no full frame has
-    /// replaced yet; a client resuming cannot tell whether it was the one.
+    /// A client was withheld output of this pane, dropped or not drawn,
+    /// that no full frame has replaced yet; a client resuming cannot tell
+    /// whether it was the one, since its cursor moved past what it missed.
     unrepaired_drop: bool,
     /// When a redraw was last asked for and not answered yet.
     redraw_asked: Option<Instant>,
@@ -162,8 +163,8 @@ impl TerminalHub {
             Resume::Fresh => {}
             Resume::After(cursor) => resume_from(&mut state, &mut client, cursor),
             Resume::Redraw => {
-                for pane in state.panes.keys() {
-                    await_full(&mut client, pane, "resume_without_cursor");
+                for (pane, ring) in &mut state.panes {
+                    await_full(&mut client, ring, pane, "resume_without_cursor");
                 }
             }
         }
@@ -217,15 +218,15 @@ fn resume_from(state: &mut HubState, client: &mut Client, cursor: u64) {
     if cursor > state.sequence {
         // A cursor from another hub (the daemon restarted): every pane it
         // shows is drawn again.
-        for pane in state.panes.keys() {
-            await_full(client, pane, "resume_unknown_cursor");
+        for (pane, ring) in &mut state.panes {
+            await_full(client, ring, pane, "resume_unknown_cursor");
         }
         return;
     }
     let mut missed = Vec::new();
-    for (pane, ring) in &state.panes {
+    for (pane, ring) in &mut state.panes {
         if ring.trimmed_through > cursor || ring.unrepaired_drop {
-            await_full(client, pane, "resume_gap");
+            await_full(client, ring, pane, "resume_gap");
             continue;
         }
         missed.extend(
@@ -281,7 +282,11 @@ fn drop_oversized(state: &mut HubState, pane: &str, bytes: usize, full: bool) {
     }));
 }
 
-fn await_full(client: &mut Client, pane: &Arc<str>, cause: &str) {
+/// The client gets nothing more of `pane` until its next full frame. What it
+/// is not sent meanwhile its cursor still passes, so until that frame no
+/// resuming client can trust the pane's ring.
+fn await_full(client: &mut Client, ring: &mut PaneRing, pane: &Arc<str>, cause: &str) {
+    ring.unrepaired_drop = true;
     client.awaiting_full.insert(Arc::clone(pane));
     client.redraw.insert(Arc::clone(pane));
     herdr_core::diagnostic!(json!({
@@ -292,13 +297,31 @@ fn await_full(client: &mut Client, pane: &Arc<str>, cause: &str) {
     }));
 }
 
+/// A chunk as a frame carries it, written out directly: the pane id as a
+/// JSON string and the bytes in base64, which needs no escaping.
+fn chunk_json(pane: &str, bytes: &[u8]) -> Box<str> {
+    let pane = serde_json::to_string(pane).expect("a string serializes");
+    let encoded_len = bytes.len().div_ceil(3) * 4;
+    let mut json = String::with_capacity(pane.len() + encoded_len + 32);
+    json.push_str(r#"{"pane_id":"#);
+    json.push_str(&pane);
+    json.push_str(r#","bytes_base64":""#);
+    base64::engine::general_purpose::STANDARD.encode_string(bytes, &mut json);
+    json.push_str(r#""}"#);
+    json.into_boxed_str()
+}
+
 impl OutputSink for TerminalHub {
     fn output(&self, pane: &str, bytes: &[u8], full: bool) {
-        let mut state = lock(&self.state);
         if bytes.len() > MAX_CHUNK_BYTES {
-            drop_oversized(&mut state, pane, bytes.len(), full);
+            drop_oversized(&mut lock(&self.state), pane, bytes.len(), full);
             return;
         }
+        // Encoded before the lock, so a large frame holds up no other
+        // pane's output and no client's turn; the sequence the lock hands
+        // out keeps the order the node handed the chunks over in.
+        let json = chunk_json(pane, bytes);
+        let mut state = lock(&self.state);
         state.sequence += 1;
         let sequence = state.sequence;
         let (pane, ring) = match state.panes.get_key_value(pane) {
@@ -312,12 +335,6 @@ impl OutputSink for TerminalHub {
                 (Arc::clone(&key), state.panes.entry(key).or_default())
             }
         };
-        let json = json!({
-            "pane_id": pane.as_ref(),
-            "bytes_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
-        })
-        .to_string()
-        .into_boxed_str();
         let chunk = Arc::new(Chunk {
             sequence,
             pane: Arc::clone(&pane),
@@ -369,7 +386,6 @@ impl OutputSink for TerminalHub {
                 let dropped = *unsent;
                 *unsent = 0;
                 client.queue.retain(|queued| queued.pane != pane);
-                ring.unrepaired_drop = true;
                 herdr_core::diagnostic!(json!({
                     "component": "terminal_hub",
                     "kind": "terminal.output_overflow",
@@ -377,7 +393,7 @@ impl OutputSink for TerminalHub {
                     "bytes": dropped + chunk.size(),
                     "cap": MAX_UNSENT_OUTPUT_BYTES,
                 }));
-                await_full(client, &pane, "overflow");
+                await_full(client, ring, &pane, "overflow");
                 client.wake.notify_one();
                 continue;
             }
@@ -550,6 +566,43 @@ mod tests {
             ]
         );
         assert_eq!(cursor, 4);
+    }
+
+    /// B11: a client that resumed with a pane still owed a full frame, was
+    /// sent another pane's output past what it was not sent, and dropped
+    /// before the full frame came, resumes owing it still: its cursor passed
+    /// output it never drew.
+    #[test]
+    fn a_client_that_leaves_before_its_redraw_comes_back_still_owed_it() {
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"P", true);
+        hub.output("w1:p2", b"Q", true);
+        let first = hub.connect(Resume::Redraw);
+        let _ = first.take();
+        // p1's output waits for its full frame; p2's full frame answers its
+        // redraw and is sent, moving the cursor past p1's.
+        hub.output("w1:p1", b"x", false);
+        hub.output("w1:p2", b"q", true);
+        let (frame, _) = first.take();
+        let (chunks, cursor) = frame_chunks(&frame.unwrap());
+        assert_eq!(chunks, [("w1:p2".to_owned(), b"q".to_vec())]);
+        drop(first);
+        let resumed = hub.connect(Resume::After(cursor));
+        hub.output("w1:p1", b"y", false);
+        let (frame, _) = resumed.take();
+        assert!(
+            frame.is_none_or(|frame| frame_chunks(&frame)
+                .0
+                .iter()
+                .all(|(pane, _)| pane != "w1:p1")),
+            "p1 drew onto a screen that never got its earlier output"
+        );
+        hub.output("w1:p1", b"whole", true);
+        let (frame, _) = resumed.take();
+        assert_eq!(
+            frame_chunks(&frame.unwrap()).0,
+            [("w1:p1".to_owned(), b"whole".to_vec())]
+        );
     }
 
     #[test]

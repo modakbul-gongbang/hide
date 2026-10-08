@@ -528,6 +528,8 @@ impl Runtime {
                     let prefix = remote_pane_id_prefix(device_id);
                     self.terminal_states
                         .retain(|pane_id, _| !pane_id.starts_with(&prefix));
+                    self.terminal_attach_requested
+                        .retain(|pane_id| !pane_id.starts_with(&prefix));
                     self.reconcile_remote_terminal_selection();
                 }
                 self.settle_device_saves(device_id);

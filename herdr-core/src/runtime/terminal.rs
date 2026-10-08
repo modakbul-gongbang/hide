@@ -21,6 +21,8 @@ pub(super) struct TerminalIntents {
     shown: Vec<String>,
     asleep: HashSet<String>,
     closing: HashSet<String>,
+    /// The keyboard's pane the nodes were last told.
+    focus: Option<String>,
 }
 
 /// The routes a runtime has before its core gives it the nodes': no node
@@ -279,11 +281,13 @@ impl Runtime {
         let gone = self
             .terminal_states
             .keys()
+            .chain(&self.terminal_attach_requested)
             .filter(|pane_id| !keep(pane_id) && !self.input_requests.awaits_layout(pane_id))
             .cloned()
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
         for pane_id in gone {
             self.terminal_states.remove(&pane_id);
+            self.terminal_attach_requested.remove(&pane_id);
             self.terminals
                 .control(TerminalControl::Forget { pane: pane_id });
         }
@@ -1480,6 +1484,7 @@ impl Runtime {
             .terminal_sizes
             .get(pane_id)
             .map(|&(rows, cols)| GridSize { rows, cols });
+        self.terminal_attach_requested.insert(pane_id.to_owned());
         self.terminals.control(TerminalControl::Attach {
             pane: pane_id.to_owned(),
             size,
@@ -1577,6 +1582,28 @@ impl Runtime {
         changed
     }
 
+    /// The pane a key goes to without moving the keyboard: the terminal's,
+    /// while the keyboard is in a terminal at all.
+    fn terminal_keyboard_pane(&self) -> Option<&str> {
+        (self.snapshot.focused.surface == Surface::Terminal)
+            .then_some(self.snapshot.terminal.pane_id.as_deref())
+            .flatten()
+    }
+
+    /// Tells the nodes where the keyboard is when it moved since they were
+    /// last told, by a key or not: a Herdr focus move, a close focusing a
+    /// neighbour, the editor taking the keyboard. A node then reads the next
+    /// key into another pane as moving the keyboard back (B1), however long
+    /// the operator kept typing there.
+    pub(crate) fn sync_terminal_focus(&mut self) {
+        let focus = self.terminal_keyboard_pane().map(str::to_owned);
+        if focus != self.terminal_intents.focus {
+            self.terminal_intents.focus = focus.clone();
+            self.terminals
+                .control(TerminalControl::Focus { pane: focus });
+        }
+    }
+
     /// What the nodes reported about their panes since the last batch.
     /// Returns whether the snapshot changed.
     pub fn ingest_terminal_reports(&mut self, reports: Vec<TerminalReport>) -> bool {
@@ -1645,11 +1672,13 @@ impl Runtime {
                 if !self.pane_still_terminal(&pane) {
                     return false;
                 }
-                self.note_delivery_key_at(&pane, at_unix_ms);
+                // The time comes from a screen's or a device's clock: one
+                // ahead of this one would read as a draft typed forever.
+                self.note_delivery_key_at(&pane, at_unix_ms.min(unix_milliseconds()));
                 if submitted {
                     self.record_operator_submit(&pane);
                 }
-                if focus && self.snapshot.terminal.pane_id.as_deref() != Some(pane.as_str()) {
+                if focus && self.terminal_keyboard_pane() != Some(pane.as_str()) {
                     self.snapshot.focused.surface = Surface::Terminal;
                     self.snapshot.focused.pane_id = Some(pane.clone());
                     self.snapshot.terminal.pane_id = Some(pane.clone());

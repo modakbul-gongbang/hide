@@ -6,7 +6,9 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{Sender, TryRecvError, channel};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{SendError, Sender, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -116,6 +118,43 @@ impl Write for ObserverStdin {
     }
 }
 
+/// Input a control session's writer holds unwritten at most: the cap D-18
+/// sets on one pane's unsent keys, which a device's link keeps too. A write
+/// into an empty queue is always taken, so no single paste is refused for
+/// its size here.
+pub(super) const MAX_UNWRITTEN_INPUT_BYTES: usize = hide_node_link::terminal::MAX_UNSENT_KEY_BYTES;
+/// What a wheel or a resize counts against that cap.
+const CONTROL_LINE_COST: usize = 64;
+
+/// Told whether a write reached the session's pipe, once: by the writer
+/// after the write, or as not written when the writer ends first.
+pub(super) struct Written(Option<Box<dyn FnOnce(bool) + Send>>);
+
+impl Written {
+    pub(super) fn new(done: impl FnOnce(bool) + Send + 'static) -> Self {
+        Self(Some(Box::new(done)))
+    }
+
+    fn finish(mut self, written: bool) {
+        if let Some(done) = self.0.take() {
+            done(written);
+        }
+    }
+
+    /// The write never reached the writer; its sender says so itself.
+    fn disarm(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Written {
+    fn drop(&mut self) {
+        if let Some(done) = self.0.take() {
+            done(false);
+        }
+    }
+}
+
 pub(super) enum WriterCommand {
     Scroll {
         lines: i32,
@@ -123,10 +162,65 @@ pub(super) enum WriterCommand {
         row: Option<u16>,
         modifiers: u8,
     },
-    Line(String),
+    Line {
+        line: String,
+        /// What it counts against [`MAX_UNWRITTEN_INPUT_BYTES`].
+        cost: usize,
+        written: Option<Written>,
+    },
     Release {
         acknowledged: Sender<()>,
     },
+}
+
+impl WriterCommand {
+    fn line(line: String, cost: usize) -> Self {
+        Self::Line {
+            line,
+            cost,
+            written: None,
+        }
+    }
+
+    fn cost(&self) -> usize {
+        match self {
+            Self::Scroll { .. } => CONTROL_LINE_COST,
+            Self::Line { cost, .. } => *cost,
+            Self::Release { .. } => 0,
+        }
+    }
+}
+
+/// Why a session took no input.
+#[derive(Debug)]
+pub(super) enum WriteRefused {
+    /// The writer holds its cap of input its pipe has not taken: the
+    /// session's other end stopped reading. Everything sent until the
+    /// writer drains is refused too, so the pane never gets the tail of a
+    /// refused paste.
+    Full,
+    Failed(String),
+}
+
+impl WriteRefused {
+    pub(super) fn message(&self, pane: &str) -> String {
+        match self {
+            Self::Full => format!(
+                "Pane {pane} is not taking input; {} KiB already wait unwritten, so this input was not sent",
+                MAX_UNWRITTEN_INPUT_BYTES / 1024
+            ),
+            Self::Failed(message) => message.clone(),
+        }
+    }
+}
+
+/// The writer's backlog, shared by the session that adds to it and the
+/// writer thread that drains it.
+#[derive(Default)]
+struct Unwritten {
+    bytes: AtomicUsize,
+    /// The cap was crossed and the backlog has not drained since.
+    overflowed: AtomicBool,
 }
 
 /// A session the node holds for a pane.
@@ -134,6 +228,7 @@ pub(super) struct Session {
     pub(super) generation: u64,
     pub(super) mode: Mode,
     writer: Option<Sender<WriterCommand>>,
+    unwritten: Arc<Unwritten>,
     /// An observer's kept stdin, closed with the session.
     _observer_stdin: Option<Box<dyn Write + Send>>,
     cleanup: Cleanup,
@@ -156,10 +251,17 @@ impl Session {
             writer,
             cleanup,
         } = parts;
+        let unwritten = Arc::new(Unwritten::default());
         let (writer, observer_stdin) = match (mode, writer) {
-            (Mode::Control, Some(stdin)) => {
-                (Some(spawn_writer(pane_id, stdin, on_write_failure)?), None)
-            }
+            (Mode::Control, Some(stdin)) => (
+                Some(spawn_writer(
+                    pane_id,
+                    stdin,
+                    Arc::clone(&unwritten),
+                    on_write_failure,
+                )?),
+                None,
+            ),
             (Mode::Control, None) => {
                 run_cleanup(cleanup, pane_id);
                 return Err("terminal control stream has no writer".to_owned());
@@ -171,6 +273,7 @@ impl Session {
                 generation,
                 mode,
                 writer,
+                unwritten,
                 _observer_stdin: observer_stdin,
                 cleanup,
                 pane_id: pane_id.to_owned(),
@@ -179,24 +282,62 @@ impl Session {
         ))
     }
 
-    fn send(&self, command: WriterCommand) -> Result<(), String> {
+    /// Hands `command` to the writer within its cap. Only the service, under
+    /// its lock, sends, so the check and the count cannot interleave.
+    fn send(&self, command: WriterCommand) -> Result<(), WriteRefused> {
         let Some(writer) = self.writer.as_ref() else {
-            return Err(format!(
+            return Err(WriteRefused::Failed(format!(
                 "Pane {} is read-only because another client owns terminal control",
                 self.pane_id
-            ));
+            )));
         };
-        writer
-            .send(command)
-            .map_err(|_| "terminal control input channel is closed".to_owned())
+        let cost = command.cost();
+        let waiting = self.unwritten.bytes.load(Ordering::Acquire);
+        if waiting == 0 {
+            self.unwritten.overflowed.store(false, Ordering::Release);
+        }
+        if self.unwritten.overflowed.load(Ordering::Acquire)
+            || (waiting > 0 && waiting + cost > MAX_UNWRITTEN_INPUT_BYTES)
+        {
+            self.unwritten.overflowed.store(true, Ordering::Release);
+            return Err(WriteRefused::Full);
+        }
+        self.unwritten.bytes.fetch_add(cost, Ordering::AcqRel);
+        writer.send(command).map_err(|SendError(command)| {
+            self.unwritten.bytes.fetch_sub(cost, Ordering::AcqRel);
+            // The caller hears this answer; a callback from here would run
+            // under the service's lock.
+            if let WriterCommand::Line {
+                written: Some(written),
+                ..
+            } = command
+            {
+                written.disarm();
+            }
+            WriteRefused::Failed("terminal control input channel is closed".to_owned())
+        })
     }
 
-    pub(super) fn write(&self, bytes: &[u8]) -> Result<(), String> {
-        self.send(WriterCommand::Line(protocol::input_line(bytes)))
+    pub(super) fn write(&self, bytes: &[u8]) -> Result<(), WriteRefused> {
+        self.send(WriterCommand::line(
+            protocol::input_line(bytes),
+            bytes.len(),
+        ))
     }
 
-    pub(super) fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
-        self.send(WriterCommand::Line(protocol::resize_line(rows, cols)?))
+    /// [`Session::write`], telling `written` once the bytes reached the
+    /// session's pipe or could not; an `Err` answer tells it nothing.
+    pub(super) fn write_then(&self, bytes: &[u8], written: Written) -> Result<(), WriteRefused> {
+        self.send(WriterCommand::Line {
+            line: protocol::input_line(bytes),
+            cost: bytes.len(),
+            written: Some(written),
+        })
+    }
+
+    pub(super) fn resize(&self, rows: u16, cols: u16) -> Result<(), WriteRefused> {
+        let line = protocol::resize_line(rows, cols).map_err(WriteRefused::Failed)?;
+        self.send(WriterCommand::line(line, CONTROL_LINE_COST))
     }
 
     pub(super) fn scroll(
@@ -205,7 +346,7 @@ impl Session {
         column: Option<u16>,
         row: Option<u16>,
         modifiers: u8,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteRefused> {
         self.send(WriterCommand::Scroll {
             lines,
             column,
@@ -218,6 +359,7 @@ impl Session {
 fn spawn_writer(
     pane_id: &str,
     mut stdin: Box<dyn Write + Send>,
+    unwritten: Arc<Unwritten>,
     on_failure: Box<dyn Fn(String) + Send>,
 ) -> Result<Sender<WriterCommand>, String> {
     let (sender, receiver) = channel::<WriterCommand>();
@@ -233,7 +375,10 @@ fn spawn_writer(
                         Err(_) => return,
                     },
                 };
-                let (line, acknowledgement) = match command {
+                // What this turn writes leaves the backlog once it is written
+                // or has failed.
+                let mut cost = command.cost();
+                let (line, acknowledgement, written) = match command {
                     WriterCommand::Scroll {
                         mut lines,
                         mut column,
@@ -253,6 +398,7 @@ fn spawn_writer(
                                     row: next_row,
                                     modifiers: next_modifiers,
                                 }) => {
+                                    cost += CONTROL_LINE_COST;
                                     lines = lines.saturating_add(next);
                                     column = next_column;
                                     row = next_row;
@@ -270,19 +416,28 @@ fn spawn_writer(
                             }
                         }
                         match protocol::scroll_line(lines, column, row, modifiers) {
-                            Some(line) => (line, None),
-                            None if disconnected => return,
-                            None => continue,
+                            Some(line) => (line, None, None),
+                            None => {
+                                unwritten.bytes.fetch_sub(cost, Ordering::AcqRel);
+                                if disconnected {
+                                    return;
+                                }
+                                continue;
+                            }
                         }
                     }
-                    WriterCommand::Line(line) => (line, None),
+                    WriterCommand::Line { line, written, .. } => (line, None, written),
                     WriterCommand::Release { acknowledged } => {
-                        (protocol::release_line(), Some(acknowledged))
+                        (protocol::release_line(), Some(acknowledged), None)
                     }
                 };
                 let result = stdin
                     .write_all(line.as_bytes())
                     .and_then(|()| stdin.flush());
+                unwritten.bytes.fetch_sub(cost, Ordering::AcqRel);
+                if let Some(written) = written {
+                    written.finish(result.is_ok());
+                }
                 if let Some(acknowledgement) = acknowledgement {
                     // A release is the session letting go; a child that
                     // already left has nothing to be told and no failure
@@ -457,6 +612,7 @@ mod tests {
                 pending: Vec::new(),
                 flushed,
             }),
+            Arc::default(),
             Box::new(|_| {}),
         )
         .unwrap();
@@ -501,12 +657,94 @@ mod tests {
         received.recv_timeout(Duration::from_secs(1)).unwrap();
         writer.send(wheel(2, 25)).unwrap();
         writer
-            .send(WriterCommand::Line(protocol::input_line(b"x")))
+            .send(WriterCommand::line(protocol::input_line(b"x"), 1))
             .unwrap();
         let scroll = received.recv_timeout(Duration::from_secs(1)).unwrap();
         let input = received.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(scroll[0]["type"], "terminal.scroll");
         assert_eq!(input[0]["type"], "terminal.input");
+    }
+
+    /// A pipe end whose reader stopped: every write waits until the test
+    /// lets the reader go on.
+    struct Stalled {
+        go: Arc<(Mutex<bool>, std::sync::Condvar)>,
+        taken: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for Stalled {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let (going, resumed) = &*self.go;
+            let mut going = going.lock().unwrap();
+            while !*going {
+                going = resumed.wait(going).unwrap();
+            }
+            self.taken.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Principle 15 on the local path: a session whose reader stopped holds
+    /// at most its cap of input, refuses the rest until it drains, and tells
+    /// a paste it was written only once the pipe took it.
+    #[test]
+    fn a_stalled_session_holds_at_most_its_cap_and_says_written_only_after_the_write() {
+        let go = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let taken = Arc::new(Mutex::new(Vec::new()));
+        let (session, _reader) = Session::start(
+            "fixture:p1",
+            1,
+            Mode::Control,
+            SessionParts {
+                reader: Box::new(std::io::empty()),
+                writer: Some(Box::new(Stalled {
+                    go: Arc::clone(&go),
+                    taken: Arc::clone(&taken),
+                })),
+                cleanup: Cleanup::None,
+            },
+            Box::new(|_| {}),
+        )
+        .unwrap();
+        let (told, written) = channel();
+        session
+            .write_then(b"paste", Written::new(move |ok| told.send(ok).unwrap()))
+            .unwrap();
+        // The pipe has not taken the paste, so nobody hears it was written.
+        assert!(written.recv_timeout(Duration::from_millis(100)).is_err());
+        let key = [b'k'; 1024];
+        let mut accepted = 0;
+        let refused = loop {
+            match session.write(&key) {
+                Ok(()) => accepted += 1,
+                Err(refused) => break refused,
+            }
+            assert!(
+                accepted <= MAX_UNWRITTEN_INPUT_BYTES / key.len(),
+                "never refused"
+            );
+        };
+        assert!(matches!(refused, WriteRefused::Full));
+        assert!(session.unwritten.bytes.load(Ordering::Acquire) <= MAX_UNWRITTEN_INPUT_BYTES);
+        // Refused until the backlog drains, however small the input.
+        assert!(matches!(session.write(b"x"), Err(WriteRefused::Full)));
+        *go.0.lock().unwrap() = true;
+        go.1.notify_all();
+        assert!(written.recv_timeout(Duration::from_secs(5)).unwrap());
+        let started = std::time::Instant::now();
+        while session.unwritten.bytes.load(Ordering::Acquire) > 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the backlog never drained"
+            );
+            thread::yield_now();
+        }
+        session.write(b"after").unwrap();
+        drop(session);
     }
 
     #[test]
@@ -525,15 +763,16 @@ mod tests {
         let writer = spawn_writer(
             "fixture:p1",
             Box::new(Broken),
+            Arc::default(),
             Box::new(move |message| {
                 let _ = failed.lock().unwrap().send(message);
             }),
         )
         .unwrap();
         writer
-            .send(WriterCommand::Line(protocol::input_line(b"x")))
+            .send(WriterCommand::line(protocol::input_line(b"x"), 1))
             .unwrap();
-        let _ = writer.send(WriterCommand::Line(protocol::input_line(b"y")));
+        let _ = writer.send(WriterCommand::line(protocol::input_line(b"y"), 1));
         failures
             .recv_timeout(Duration::from_secs(1))
             .expect("the failure is reported");

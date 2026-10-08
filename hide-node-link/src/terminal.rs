@@ -81,6 +81,13 @@ pub enum TerminalControl {
     /// The panes of the tabs on screen. A failed attach is retried on its
     /// own only while its pane is shown.
     Shown { panes: Vec<String> },
+    /// The pane the core's keyboard is in, or none of this node's: a screen
+    /// key into any other pane moves the keyboard there, however the
+    /// keyboard left it (B1).
+    Focus {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane: Option<String>,
+    },
     /// A wheel for a controlled pane.
     Scroll {
         pane: String,
@@ -378,6 +385,7 @@ impl TerminalControl {
             | Self::AttachmentHold { pane, .. }
             | Self::WatchFrame { pane } => Some(pane),
             Self::Shown { .. }
+            | Self::Focus { .. }
             | Self::RequestOpen { .. }
             | Self::RequestResolve { .. }
             | Self::RequestDiscard { .. }

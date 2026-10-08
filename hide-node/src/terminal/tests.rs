@@ -667,6 +667,38 @@ fn a_paste_is_written_before_the_keys_typed_behind_it() {
     });
 }
 
+/// B1 at the node: once the core says the keyboard left a pane, however it
+/// left, the next key into that pane is reported as moving it back at once;
+/// a key into the pane the keyboard is in moves nothing.
+#[test]
+fn a_key_into_a_pane_the_keyboard_left_without_a_key_moves_it_back() {
+    let harness = harness(RetryPolicy::Automatic);
+    let _first = harness.controlling("w1:p1");
+    let _second = harness.controlling("w1:p2");
+    let moved_to = |harness: &Harness, wanted: &str| {
+        harness.report_where(|report| {
+            matches!(report, TerminalReport::Input { pane, focus: true, .. } if pane == wanted)
+        });
+    };
+    harness.key("w1:p1", b"a");
+    moved_to(&harness, "w1:p1");
+    harness.key("w1:p1", b"b");
+    assert!(
+        !harness
+            .reports
+            .recv_timeout(Duration::from_millis(100))
+            .is_ok_and(|report| matches!(report, TerminalReport::Input { focus: true, .. })),
+        "a key into the keyboard's pane moved it"
+    );
+    // Herdr moved the keyboard to p2 on its own; the screen still types
+    // into p1.
+    harness.service.control(TerminalControl::Focus {
+        pane: Some("w1:p2".into()),
+    });
+    harness.key("w1:p1", b"c");
+    moved_to(&harness, "w1:p1");
+}
+
 #[test]
 fn a_failed_attach_is_retried_while_shown_and_reported_with_its_reason() {
     let harness = harness(RetryPolicy::Automatic);
@@ -765,9 +797,32 @@ fn a_node_keeps_at_most_its_cap_of_panes_attached() {
         harness.attach(&format!("p{index}"), Some(SIZE));
         sessions.push(harness.opened());
     }
+    harness.service.control(TerminalControl::Shown {
+        panes: vec!["over".into()],
+    });
     harness.attach("over", Some(SIZE));
     let state = harness.state("over", "unavailable");
     assert_eq!(state.exit_category.as_deref(), Some("attach_limit"));
+    assert_eq!(state.retry_decision, "manual");
+    // B18: the refused pane waits to be shown again; the retry clock never
+    // tries it, so keys typed into it are refused rather than held for a
+    // retry that would discard them.
+    assert!(
+        harness.service.shared.lock().panes["over"]
+            .recovery
+            .is_none()
+    );
+    let later = Instant::now() + Duration::from_secs(60);
+    harness
+        .service
+        .shared
+        .run(|inner, shared| inner.tick(shared, later));
+    assert_eq!(
+        harness.service.shared.lock().panes["over"]
+            .lifecycle
+            .attempt,
+        state.attempt
+    );
     // Another pane leaving makes room; the refused one attaches when it is
     // asked for again.
     harness
@@ -775,6 +830,30 @@ fn a_node_keeps_at_most_its_cap_of_panes_attached() {
         .control(TerminalControl::Forget { pane: "p0".into() });
     harness.attach("over", Some(SIZE));
     assert_eq!(harness.opened().pane, "over");
+}
+
+/// A screen naming pane after pane leaves this node at most its cap of
+/// panes it never attached, with the refusal reported, and a key into a
+/// pane the node was never told of records no fact; a pane the core then
+/// attaches still attaches.
+#[test]
+fn panes_a_screen_names_and_the_node_never_heard_of_stay_bounded() {
+    let harness = harness(RetryPolicy::Automatic);
+    for index in 0..10 * MAX_UNATTACHED_PANES {
+        harness.service.view(&format!("junk{index}"), SIZE, true);
+    }
+    assert_eq!(
+        harness.service.shared.lock().panes.len(),
+        MAX_UNATTACHED_PANES
+    );
+    harness.report_where(|report| {
+        matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.pane_limit")
+    });
+    for index in 0..1_000 {
+        harness.key(&format!("ghost{index}"), b"x");
+    }
+    assert!(harness.service.shared.lock().facts.is_empty());
+    let _opened = harness.controlling("w1:p1");
 }
 
 #[test]
@@ -803,6 +882,73 @@ fn a_key_flood_into_an_unknown_pane_is_reported_once_a_window() {
         (1..=windows).contains(&refused),
         "{refused} refusals in {windows} windows"
     );
+}
+
+/// A frame reaches the screens' sink with the service's lock released: a
+/// control sent while the sink still encodes a frame goes through at once.
+#[test]
+fn a_frame_on_its_way_to_the_screens_holds_up_no_control() {
+    /// Holds the first output it is given until the test lets it go.
+    struct HeldOutput {
+        first: Mutex<bool>,
+        entered: Mutex<Sender<()>>,
+        go: Mutex<Receiver<()>>,
+    }
+    impl OutputSink for HeldOutput {
+        fn output(&self, _: &str, _: &[u8], _: bool) {
+            if std::mem::replace(&mut *self.first.lock().unwrap(), false) {
+                self.entered.lock().unwrap().send(()).unwrap();
+                let _ = self.go.lock().unwrap().recv_timeout(WAIT);
+            }
+        }
+        fn forget(&self, _: &str) {}
+    }
+    let (entered_tx, entered) = channel();
+    let (go_tx, go) = channel();
+    let (opened_tx, opened) = channel();
+    let (reports_tx, _reports) = channel();
+    let service = Arc::new(
+        Service::start(
+            Box::new(FakeAttacher {
+                opened: Mutex::new(opened_tx),
+                refuse: Mutex::new(None),
+            }),
+            Arc::new(HeldOutput {
+                first: Mutex::new(true),
+                entered: Mutex::new(entered_tx),
+                go: Mutex::new(go),
+            }),
+            Arc::new(Reports(Mutex::new(reports_tx))),
+            RetryPolicy::Automatic,
+        )
+        .unwrap(),
+    );
+    service.control(TerminalControl::Attach {
+        pane: "w1:p1".into(),
+        size: Some(SIZE),
+        manual: false,
+    });
+    let first: Opened = opened.recv_timeout(WAIT).unwrap();
+    first.frame(SIZE, true, b"whole screen");
+    entered
+        .recv_timeout(WAIT)
+        .expect("the frame reached the sink");
+    let (done_tx, done) = channel();
+    let control = {
+        let service = Arc::clone(&service);
+        thread::spawn(move || {
+            service.control(TerminalControl::Attach {
+                pane: "w1:p2".into(),
+                size: Some(SIZE),
+                manual: false,
+            });
+            done_tx.send(()).unwrap();
+        })
+    };
+    let went_through = done.recv_timeout(Duration::from_secs(2)).is_ok();
+    go_tx.send(()).unwrap();
+    control.join().unwrap();
+    assert!(went_through, "a control waited for the screens' sink");
 }
 
 /// Two threads' reports reach the core in the order their work ran in the

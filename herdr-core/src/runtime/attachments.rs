@@ -481,8 +481,9 @@ impl Runtime {
         // The paste is composer text the operator has not sent, and an Enter
         // held behind it does not send it either.
         self.note_delivery_key(&pane_id);
-        // The node dropped its hold with the write.
-        self.attachment = None;
+        // The node dropped its hold with the write; the release lets the
+        // router forget where the paste went.
+        self.clear_attachment();
         self.sync_async_operations();
         true
     }
@@ -964,6 +965,13 @@ mod tests {
         );
         assert!(written(&mut runtime, ID));
         assert!(runtime.attachment.is_none());
+        // A written paste is released too, so the router forgets which node
+        // held it rather than keep one route per paste.
+        assert!(
+            terminals
+                .take()
+                .contains(&TerminalControl::AttachmentRelease { intent: ID.into() })
+        );
     }
 
     #[test]

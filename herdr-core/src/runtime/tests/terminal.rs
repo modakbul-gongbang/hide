@@ -556,6 +556,77 @@ fn retiring_a_pane_clears_every_pane_keyed_terminal_state() {
     );
 }
 
+/// B1: the keyboard can leave a pane without a key (Herdr's own focus move,
+/// a close focusing a neighbour, the editor taking it). The nodes hear where
+/// it went, so the operator's next key into the old pane moves it back.
+#[test]
+fn the_nodes_hear_where_the_keyboard_went_without_a_key() {
+    let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
+    let typed = |pane: &str| TerminalReport::Input {
+        pane: pane.into(),
+        at_unix_ms: 1,
+        submitted: false,
+        focus: true,
+    };
+    let focus_told = |terminals: &RecordedTerminals| {
+        terminals
+            .take()
+            .into_iter()
+            .filter_map(|control| match control {
+                TerminalControl::Focus { pane } => Some(pane),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(runtime.ingest_terminal_reports(vec![typed("w1:p1")]));
+    runtime.snapshot_delta_payload(0);
+    assert_eq!(focus_told(&terminals), [Some("w1:p1".to_owned())]);
+    // Herdr moved the keyboard on its own; the screen kept typing in p1.
+    runtime.snapshot.terminal.pane_id = Some("w1:p2".into());
+    runtime.snapshot_delta_payload(0);
+    assert_eq!(focus_told(&terminals), [Some("w1:p2".to_owned())]);
+    assert!(runtime.ingest_terminal_reports(vec![typed("w1:p1")]));
+    assert_eq!(runtime.snapshot.terminal.pane_id.as_deref(), Some("w1:p1"));
+    // The editor took the keyboard: no pane has it, and a key into the
+    // terminal it left brings it back.
+    runtime.snapshot_delta_payload(0);
+    terminals.take();
+    runtime.snapshot.focused.surface = Surface::RightPanel;
+    runtime.snapshot_delta_payload(0);
+    assert_eq!(focus_told(&terminals), [None]);
+    assert!(runtime.ingest_terminal_reports(vec![typed("w1:p1")]));
+    assert_eq!(runtime.snapshot.focused.surface, Surface::Terminal);
+    // Nothing moved: nothing is told again.
+    runtime.snapshot_delta_payload(0);
+    terminals.take();
+    runtime.snapshot_delta_payload(0);
+    assert!(focus_told(&terminals).is_empty());
+}
+
+/// A pane retired between the core's attach and its node's first report is
+/// still forgotten at its node: otherwise the node keeps its session, counts
+/// it against its cap and feeds its output to the screens.
+#[test]
+fn a_pane_retired_before_its_first_report_is_forgotten_at_its_node() {
+    let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
+    let pane = "w-early:p1";
+    assert!(runtime.request_terminal_control(pane));
+    assert!(matches!(
+        terminals.take().as_slice(),
+        [TerminalControl::Attach { pane: attached, .. }] if attached == pane
+    ));
+    runtime.retain_terminal_pane_state(|known| known != pane);
+    assert_eq!(
+        terminals.take(),
+        [TerminalControl::Forget { pane: pane.into() }]
+    );
+    // Forgotten once: a later pass asks nothing more.
+    runtime.retain_terminal_pane_state(|known| known != pane);
+    assert!(terminals.take().is_empty());
+}
+
 /// AC8, R7, SC5. Attaching every tab the operator ever visited left a
 /// child process and a server-side render alive for each one. Only the tab
 /// on screen and the four before it keep their panes attached; the rest

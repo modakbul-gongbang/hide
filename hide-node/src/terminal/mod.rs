@@ -16,9 +16,11 @@
 //!
 //! One lock guards the service. A key, a frame and a control each take it
 //! for a few map lookups; nothing under it waits on a process, a socket or
-//! the core. Output and reports are handed to their sinks under it, so a
-//! pane's bytes and its states keep their order, and each sink must return
-//! at once and never call back.
+//! the core. Reports are handed to their sink under it, so a pane's states
+//! keep their order. Output is decided under it and handed to its sink
+//! after it, in the order it was decided ([`Deliveries`]), so encoding a
+//! large frame for the screens holds up no key or control. Each sink must
+//! return at once and never call back.
 
 pub mod device;
 mod input;
@@ -26,7 +28,7 @@ pub mod protocol;
 pub mod router;
 pub mod session;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -48,8 +50,8 @@ pub use self::session::{Attacher, Cleanup, LocalAttacher, SessionParts};
 /// Where a node's frames go: the screen-side hub on this machine, or the
 /// link up from a device.
 pub trait OutputSink: Send + Sync {
-    /// One pane's bytes, in order. Called under the service's lock: it must
-    /// return at once and never call the service.
+    /// One pane's bytes, in order. Called with the service's lock released,
+    /// one call at a time per service: it must never call the service.
     fn output(&self, pane: &str, bytes: &[u8], full: bool);
     /// The pane's output so far is no longer anyone's: it was released or is
     /// gone.
@@ -62,6 +64,10 @@ pub use hide_node_link::terminal::ReportSink;
 /// attached again at it: longer than the gap between a window drag's
 /// resizes.
 const OBSERVER_RESIZE_QUIET: Duration = Duration::from_millis(150);
+
+/// Panes a node tracks that were never asked to attach, each named by a
+/// screen's view; past it a view of a pane the node does not know is refused.
+const MAX_UNATTACHED_PANES: usize = 2 * MAX_ATTACHED_PANES;
 
 /// Seconds between a failed control attach and its next attempt.
 const RETRY_SECONDS: [u64; 4] = [5, 10, 20, 30];
@@ -194,6 +200,9 @@ struct SpawnRequest {
 struct Attachment {
     pane: String,
     hold: AttachmentHold,
+    /// The paste and what was held behind it are in the session's writer;
+    /// keys typed now follow them there.
+    delivering: bool,
 }
 
 #[derive(Default)]
@@ -201,12 +210,15 @@ struct Inner {
     panes: HashMap<String, Pane>,
     requests: Requests,
     facts: HashMap<String, InputFacts>,
-    /// The pane the core last heard a screen key for.
+    /// The pane the core's keyboard is in, as the core last said or as the
+    /// last screen key moved it.
     focus_pane: Option<String>,
     shown: HashSet<String>,
     attachment: Option<Attachment>,
     next_generation: u64,
     reports: Vec<TerminalReport>,
+    /// Output decided by the work under the lock now, handed over after it.
+    deliveries: Vec<Delivery>,
     spawns: Vec<SpawnRequest>,
     /// Something may now be due earlier than the clock's current wait.
     wake_clock: bool,
@@ -221,8 +233,38 @@ struct Clock {
     version: u64,
 }
 
+/// What the service hands its output sink, decided under its lock.
+enum Delivery {
+    Output {
+        pane: String,
+        bytes: Vec<u8>,
+        full: bool,
+    },
+    Forget {
+        pane: String,
+    },
+}
+
+/// Output decided under the service's lock and not yet handed to the sink.
+/// Each batch is queued before the lock is released, so the queue holds
+/// output in the order it was decided; one thread at a time hands it over,
+/// and the thread that decided a batch returns only once its batch was
+/// handed, so a reader is slowed by its own frames as before and the queue
+/// holds at most one batch per thread.
+#[derive(Default)]
+struct Deliveries {
+    queue: VecDeque<Delivery>,
+    /// Deliveries queued, and handed to the sink, since the service started.
+    queued: u64,
+    handed: u64,
+    /// A thread is handing the queue over.
+    handing: bool,
+}
+
 struct Shared {
     inner: Mutex<Inner>,
+    deliveries: Mutex<Deliveries>,
+    handed: Condvar,
     wake: Condvar,
     clock: Mutex<Clock>,
     attacher: Box<dyn Attacher>,
@@ -255,6 +297,8 @@ impl Service {
     ) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             inner: Mutex::default(),
+            deliveries: Mutex::default(),
+            handed: Condvar::new(),
             wake: Condvar::new(),
             clock: Mutex::default(),
             attacher,
@@ -320,7 +364,21 @@ impl TerminalNode for Service {
     }
 
     fn view(&self, pane: &str, size: GridSize, new_view: bool) {
+        let now = Instant::now();
         self.shared.run(|inner, _| {
+            // A screen names the panes it draws, and nothing but the cap
+            // keeps a client from naming panes no node has.
+            if !inner.panes.contains_key(pane) && inner.unattached() >= MAX_UNATTACHED_PANES {
+                inner.refuse(
+                    pane,
+                    "terminal.pane_limit",
+                    format!(
+                        "This machine already tracks {MAX_UNATTACHED_PANES} panes that were never attached; Pane {pane} was not drawn"
+                    ),
+                    now,
+                );
+                return;
+            }
             let entry = inner.panes.entry(pane.to_owned()).or_default();
             let changed = entry.view.replace(size) != Some(size);
             if changed || new_view {
@@ -342,6 +400,49 @@ impl Shared {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn deliveries_lock(&self) -> MutexGuard<'_, Deliveries> {
+        self.deliveries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Hands the queued output to the sink up to and including the batch
+    /// that ends at `through`, unless another thread is already doing so,
+    /// in which case this waits for it.
+    fn hand_over(&self, through: u64) {
+        let mut deliveries = self.deliveries_lock();
+        loop {
+            if deliveries.handed >= through {
+                return;
+            }
+            if deliveries.handing {
+                deliveries = self
+                    .handed
+                    .wait(deliveries)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                continue;
+            }
+            deliveries.handing = true;
+            while deliveries.handed < through {
+                let Some(delivery) = deliveries.queue.pop_front() else {
+                    break;
+                };
+                drop(deliveries);
+                match delivery {
+                    Delivery::Output { pane, bytes, full } => {
+                        self.outputs.output(&pane, &bytes, full)
+                    }
+                    Delivery::Forget { pane } => self.outputs.forget(&pane),
+                }
+                deliveries = self.deliveries_lock();
+                deliveries.handed += 1;
+            }
+            deliveries.handing = false;
+            self.handed.notify_all();
+            return;
+        }
+    }
+
     fn clock_lock(&self) -> MutexGuard<'_, Clock> {
         self.clock
             .lock()
@@ -354,18 +455,28 @@ impl Shared {
     /// starts its attaches and wakes the clock when a deadline may have
     /// moved, with the lock released.
     fn run<T>(self: &Arc<Self>, work: impl FnOnce(&mut Inner, &Arc<Shared>) -> T) -> T {
-        let (value, spawns, wake) = {
+        let (value, spawns, wake, batch) = {
             let mut inner = self.lock();
             let value = work(&mut inner, self);
             for report in inner.reports.drain(..) {
                 self.reports.report(report);
             }
+            let batch = (!inner.deliveries.is_empty()).then(|| {
+                let mut deliveries = self.deliveries_lock();
+                deliveries.queued += inner.deliveries.len() as u64;
+                deliveries.queue.extend(inner.deliveries.drain(..));
+                deliveries.queued
+            });
             (
                 value,
                 std::mem::take(&mut inner.spawns),
                 std::mem::take(&mut inner.wake_clock),
+                batch,
             )
         };
+        if let Some(batch) = batch {
+            self.hand_over(batch);
+        }
         for spawn in spawns {
             self.spawn(spawn);
         }
@@ -476,8 +587,25 @@ impl Inner {
             .count()
     }
 
+    /// Panes known only from a view or a control, never asked to attach.
+    fn unattached(&self) -> usize {
+        self.panes
+            .values()
+            .filter(|pane| pane.session.is_none() && pane.lifecycle.state == "idle")
+            .count()
+    }
+
     fn report(&mut self, report: TerminalReport) {
         self.reports.push(report);
+    }
+
+    /// Output for the sink, handed over once the lock is released.
+    fn output(&mut self, pane: &str, bytes: Vec<u8>, full: bool) {
+        self.deliveries.push(Delivery::Output {
+            pane: pane.to_owned(),
+            bytes,
+            full,
+        });
     }
 
     fn note(&mut self, pane: &str, kind: &str, message: String) {
@@ -556,13 +684,13 @@ impl Inner {
                 }
                 self.request_control(shared, &pane, now);
             }
-            TerminalControl::Release { pane, message } => self.release(shared, &pane, message),
+            TerminalControl::Release { pane, message } => self.release(&pane, message),
             TerminalControl::Forget { pane } => {
                 if let Some(mut entry) = self.panes.remove(&pane) {
                     entry.hold.discard(&pane, "pane_gone");
                 }
                 self.facts.remove(&pane);
-                shared.outputs.forget(&pane);
+                self.deliveries.push(Delivery::Forget { pane });
             }
             TerminalControl::Closing { pane, closing } => {
                 if let Some(entry) = self.panes.get_mut(&pane) {
@@ -576,6 +704,7 @@ impl Inner {
                 self.shown = panes.into_iter().collect();
                 self.wake_clock = true;
             }
+            TerminalControl::Focus { pane } => self.focus_pane = pane,
             TerminalControl::Scroll {
                 pane,
                 lines,
@@ -588,9 +717,9 @@ impl Inner {
                     .get(&pane)
                     .and_then(|entry| entry.session.as_ref())
                 {
-                    Some(session) if session.mode == Mode::Control => {
-                        session.scroll(lines, column, row, modifiers)
-                    }
+                    Some(session) if session.mode == Mode::Control => session
+                        .scroll(lines, column, row, modifiers)
+                        .map_err(|refused| refused.message(&pane)),
                     _ => Err(format!(
                         "Pane {pane} has no terminal control session to scroll"
                     )),
@@ -639,6 +768,7 @@ impl Inner {
                         queued: Vec::new(),
                         cancelling: false,
                     },
+                    delivering: false,
                 });
             }
             TerminalControl::AttachmentRefuse { intent } => {
@@ -655,7 +785,7 @@ impl Inner {
                 intent,
                 generation,
                 paste,
-            } => self.deliver_attachment(&intent, generation, &paste),
+            } => self.deliver_attachment(shared, &intent, generation, &paste),
             TerminalControl::AttachmentRelease { intent } => {
                 if self
                     .attachment
@@ -671,31 +801,75 @@ impl Inner {
         }
     }
 
-    fn deliver_attachment(&mut self, intent: &str, generation: u64, paste: &str) {
-        let Some(attachment) = self
-            .attachment
-            .as_ref()
-            .filter(|attachment| attachment.hold.intent == intent)
-        else {
-            self.report(TerminalReport::AttachmentDelivered {
+    /// Hands the paste and what was typed behind it to the pane's writer.
+    /// The core hears it was written once the session's pipe took it
+    /// ([`Inner::attachment_written`]), never when it was only queued.
+    fn deliver_attachment(
+        &mut self,
+        shared: &Arc<Shared>,
+        intent: &str,
+        generation: u64,
+        paste: &str,
+    ) {
+        let not_written = |inner: &mut Self| {
+            inner.report(TerminalReport::AttachmentDelivered {
                 intent: intent.to_owned(),
                 written: false,
             });
-            return;
         };
-        let pane = attachment.pane.clone();
-        let written = protocol::decode_base64(paste).is_ok_and(|mut bytes| {
-            bytes.extend_from_slice(&attachment.hold.queued);
-            self.panes
-                .get(&pane)
-                .and_then(|entry| entry.session.as_ref())
-                .filter(|session| session.generation == generation)
-                .is_some_and(|session| session.write(&bytes).is_ok())
-        });
-        // A paste that could not be written keeps what was typed behind it
-        // for the retry.
-        if written {
-            self.attachment = None;
+        let Some(attachment) = self
+            .attachment
+            .as_ref()
+            .filter(|attachment| attachment.hold.intent == intent && !attachment.delivering)
+        else {
+            return not_written(self);
+        };
+        let Ok(mut bytes) = protocol::decode_base64(paste) else {
+            return not_written(self);
+        };
+        bytes.extend_from_slice(&attachment.hold.queued);
+        let Some(session) = self
+            .panes
+            .get(&attachment.pane)
+            .and_then(|entry| entry.session.as_ref())
+            .filter(|session| session.generation == generation)
+        else {
+            // A paste that could not be handed over keeps what was typed
+            // behind it for the retry.
+            return not_written(self);
+        };
+        let told = Arc::downgrade(shared);
+        let told_intent = intent.to_owned();
+        let handed = session.write_then(
+            &bytes,
+            session::Written::new(move |written| {
+                if let Some(shared) = told.upgrade() {
+                    shared.run(|inner, _| inner.attachment_written(&told_intent, written));
+                }
+            }),
+        );
+        match handed {
+            Ok(()) => {
+                let attachment = self.attachment.as_mut().expect("matched above");
+                attachment.hold.queued.clear();
+                attachment.delivering = true;
+            }
+            Err(_) => not_written(self),
+        }
+    }
+
+    /// The pane's writer took the paste, or its session ended first.
+    fn attachment_written(&mut self, intent: &str, written: bool) {
+        if let Some(attachment) = self
+            .attachment
+            .as_mut()
+            .filter(|attachment| attachment.hold.intent == intent)
+        {
+            if written {
+                self.attachment = None;
+            } else {
+                attachment.delivering = false;
+            }
         }
         self.report(TerminalReport::AttachmentDelivered {
             intent: intent.to_owned(),
@@ -707,6 +881,17 @@ impl Inner {
     /// this pane on the screen; a key held for a creation reaches its new
     /// pane without moving the keyboard.
     fn write_key(&mut self, pane: &str, chunk: HeldChunk, focus: bool, now: Instant) {
+        if !self.panes.contains_key(pane) && !self.requests.names(pane) {
+            // A pane this node was never told of takes no key and records no
+            // fact: a screen could name any number of them.
+            self.refuse(
+                pane,
+                "terminal.unavailable",
+                format!("Pane {pane} has no terminal session; use Reconnect to try again"),
+                now,
+            );
+            return;
+        }
         let submitted = input::submits(&chunk.bytes);
         let asleep = self.panes.get(pane).is_some_and(|entry| entry.asleep);
         if asleep {
@@ -725,7 +910,7 @@ impl Inner {
         if let Some(attachment) = self
             .attachment
             .as_mut()
-            .filter(|attachment| attachment.pane == pane)
+            .filter(|attachment| attachment.pane == pane && !attachment.delivering)
         {
             let intent = attachment.hold.intent.clone();
             let outcome = if attachment.hold.cancelling {
@@ -837,8 +1022,17 @@ impl Inner {
                 return;
             }
         };
-        if let Err(message) = result {
-            self.error(pane, "terminal.write_failed", message);
+        match result {
+            Ok(()) => {}
+            Err(session::WriteRefused::Full) => self.refuse(
+                pane,
+                "terminal.input_overflow",
+                session::WriteRefused::Full.message(pane),
+                now,
+            ),
+            Err(session::WriteRefused::Failed(message)) => {
+                self.error(pane, "terminal.write_failed", message)
+            }
         }
     }
 
@@ -1096,7 +1290,11 @@ impl Inner {
             exit_category: Some(category.to_owned()),
             retry_decision: "manual",
         };
-        if category != "attach_limit" {
+        if category == "attach_limit" {
+            // A pane over the cap attaches when it is shown again, never on
+            // the retry clock the start already armed.
+            entry.recovery = None;
+        } else {
             self.schedule_recovery(
                 shared,
                 pane,
@@ -1184,16 +1382,20 @@ impl Inner {
         let entry = self.panes.get_mut(pane).expect("checked above");
         if mode == Mode::Control
             && let Some(size) = entry.size
-            && let Err(message) = session.resize(size.rows, size.cols)
+            && let Err(refused) = session.resize(size.rows, size.cols)
         {
-            self.error(pane, "terminal.resize_after_attach_failed", message);
+            self.error(
+                pane,
+                "terminal.resize_after_attach_failed",
+                refused.message(pane),
+            );
         }
         let entry = self.panes.get_mut(pane).expect("checked above");
         let held = entry.hold.take(pane, now);
         if !held.is_empty() {
             if mode == Mode::Control {
-                if let Err(message) = session.write(&held) {
-                    self.error(pane, "terminal.write_failed", message);
+                if let Err(refused) = session.write(&held) {
+                    self.error(pane, "terminal.write_failed", refused.message(pane));
                 }
             } else {
                 crate::diagnostic!(json!({
@@ -1295,7 +1497,7 @@ impl Inner {
             "\r\n[Terminal {} session for {pane} failed: {message}]\r\n",
             mode.as_str()
         );
-        shared.outputs.output(pane, notice.as_bytes(), false);
+        self.output(pane, notice.into_bytes(), false);
         self.error(
             pane,
             if category == "reader_start_failed" {
@@ -1328,7 +1530,7 @@ impl Inner {
                     pane,
                     generation,
                     mode,
-                    &bytes,
+                    bytes,
                     GridSize {
                         rows: height,
                         cols: width,
@@ -1353,7 +1555,7 @@ impl Inner {
         pane: &str,
         generation: u64,
         mode: Mode,
-        bytes: &[u8],
+        bytes: Vec<u8>,
         arrived: GridSize,
         full: bool,
     ) -> Option<bool> {
@@ -1417,10 +1619,10 @@ impl Inner {
         if reset {
             let mut drawn = Vec::with_capacity(bytes.len() + 2);
             drawn.extend_from_slice(b"\x1bc");
-            drawn.extend_from_slice(bytes);
-            shared.outputs.output(pane, &drawn, true);
+            drawn.extend_from_slice(&bytes);
+            self.output(pane, drawn, true);
         } else {
-            shared.outputs.output(pane, bytes, false);
+            self.output(pane, bytes, false);
         }
         if first {
             self.report(TerminalReport::FirstFrame {
@@ -1539,7 +1741,7 @@ impl Inner {
         self.schedule_recovery(shared, pane, message.clone(), now);
         self.sync(pane);
         let notice = format!("\r\n[{message}]\r\n");
-        shared.outputs.output(pane, notice.as_bytes(), false);
+        self.output(pane, notice.into_bytes(), false);
         crate::diagnostic!(json!({
             "component": "terminal_session",
             "kind": "terminal.session_ended",
@@ -1576,7 +1778,7 @@ impl Inner {
         }));
     }
 
-    fn release(&mut self, shared: &Arc<Shared>, pane: &str, message: String) {
+    fn release(&mut self, pane: &str, message: String) {
         let Some(entry) = self.panes.get_mut(pane) else {
             return;
         };
@@ -1598,7 +1800,9 @@ impl Inner {
             retry_decision: "on_next_visit",
         };
         self.sync(pane);
-        shared.outputs.forget(pane);
+        self.deliveries.push(Delivery::Forget {
+            pane: pane.to_owned(),
+        });
         crate::diagnostic!(json!({
             "component": "terminal_session",
             "kind": "terminal.session_released",
@@ -1633,7 +1837,9 @@ impl Inner {
             "rows": size.rows, "cols": size.cols,
         }));
         let result = match entry.session.as_ref() {
-            Some(session) if session.mode == Mode::Control => session.resize(size.rows, size.cols),
+            Some(session) if session.mode == Mode::Control => session
+                .resize(size.rows, size.cols)
+                .map_err(|refused| refused.message(pane)),
             // An observer cannot resize; it attaches again at the new grid
             // once the size settles.
             Some(_) if previous != Some(size) => {
@@ -1668,8 +1874,8 @@ impl Inner {
                     .as_ref()
                     .expect("mode read from it")
                     .resize(size.rows, size.cols);
-                if let Err(message) = result {
-                    self.error(pane, "terminal.resize_failed", message);
+                if let Err(refused) = result {
+                    self.error(pane, "terminal.resize_failed", refused.message(pane));
                 }
             }
             (Some(Mode::Observe), _) => self.reattach_observer(shared, pane, cause),

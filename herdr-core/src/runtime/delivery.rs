@@ -1332,6 +1332,32 @@ pub(crate) mod tests {
         );
     }
 
+    /// A key's time comes from another clock: one far ahead of the core's
+    /// counts as typed now, so the submit after it ends the draft instead
+    /// of the pane holding every letter forever.
+    #[test]
+    fn a_key_from_a_clock_ahead_counts_as_typed_now() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        guard.ingest_terminal_reports(vec![key_report("recipient", u64::MAX, false)]);
+        let typed = guard.delivery_observations["recipient"].last_input_at_unix_ms;
+        assert!(typed <= unix_milliseconds(), "{typed}");
+        guard
+            .delivery_observations
+            .get_mut("recipient")
+            .unwrap()
+            .last_submit_at_unix_ms = unix_milliseconds();
+        assert_eq!(
+            crate::delivery::doorbell::judge(
+                &guard.delivery_observations["recipient"],
+                unix_milliseconds() + 120_000
+            ),
+            Ok(())
+        );
+    }
+
     #[test]
     fn a_phone_write_is_input_and_only_a_reply_is_a_submit() {
         let root = tempfile::tempdir().unwrap();

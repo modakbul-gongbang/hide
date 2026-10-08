@@ -68,6 +68,8 @@ struct Routes {
     devices: HashMap<String, Arc<dyn TerminalNode>>,
     /// The panes on screen, as the core last said, by the core's ids.
     shown: Vec<String>,
+    /// The pane the core's keyboard is in, as it last said, by its id.
+    focus: Option<String>,
     /// Which device a paste's held input is on; a paste on this machine
     /// has none.
     intents: HashMap<String, Option<String>>,
@@ -290,6 +292,17 @@ impl Router {
             .collect();
         node.control(TerminalControl::Shown { panes });
     }
+
+    /// Tells a device whether the core's keyboard is in one of its panes.
+    fn focus_to(routes: &Routes, device: &str, node: &dyn TerminalNode) {
+        let pane = routes
+            .focus
+            .as_deref()
+            .and_then(Self::device_of)
+            .filter(|(owner, _)| *owner == device)
+            .map(|(_, source)| source.to_owned());
+        node.control(TerminalControl::Focus { pane });
+    }
 }
 
 impl TerminalNode for Router {
@@ -308,6 +321,20 @@ impl TerminalNode for Router {
                 }
                 drop(routes);
                 self.local.control(TerminalControl::Shown { panes: local });
+                return;
+            }
+            TerminalControl::Focus { pane } => {
+                let mut routes = lock(&self.routes);
+                routes.focus = pane.clone();
+                let local = pane
+                    .as_ref()
+                    .filter(|pane| Self::device_of(pane).is_none())
+                    .cloned();
+                for (device, node) in &routes.devices {
+                    Self::focus_to(&routes, device, node.as_ref());
+                }
+                drop(routes);
+                self.local.control(TerminalControl::Focus { pane: local });
                 return;
             }
             TerminalControl::RequestOpen { .. }
@@ -456,6 +483,7 @@ impl TerminalRoutes for Router {
         // same rule its lines are.
         let replaced = routes.devices.insert(device.to_owned(), Arc::clone(&node));
         Self::shown_to(&routes, device, node.as_ref());
+        Self::focus_to(&routes, device, node.as_ref());
         drop(routes);
         // The replaced link's writer ends once it is dropped, outside the
         // routing lock.
@@ -639,9 +667,12 @@ mod tests {
         router.install_device("mini", Arc::clone(&mini) as Arc<dyn TerminalNode>);
         assert_eq!(
             mini.controls.lock().unwrap().as_slice(),
-            [TerminalControl::Shown {
-                panes: vec!["w2:p3".into()]
-            }]
+            [
+                TerminalControl::Shown {
+                    panes: vec!["w2:p3".into()]
+                },
+                TerminalControl::Focus { pane: None }
+            ]
         );
         router.key(
             KeyTarget::Pane("remote:mini:pane:w2:p3".into()),
@@ -733,19 +764,84 @@ mod tests {
         router.control(TerminalControl::AttachmentRelease {
             intent: "paste-1".into(),
         });
+        // What it was told on connecting comes first.
         let controls = mini.controls.lock().unwrap();
         assert!(
-            matches!(&controls[1], TerminalControl::AttachmentHold { pane, .. } if pane == "w2:p3")
+            matches!(&controls[2], TerminalControl::AttachmentHold { pane, .. } if pane == "w2:p3")
         );
         assert!(matches!(
-            &controls[2],
+            &controls[3],
             TerminalControl::AttachmentDeliver { .. }
         ));
         assert!(matches!(
-            &controls[3],
+            &controls[4],
             TerminalControl::AttachmentRelease { .. }
         ));
         assert!(local.controls.lock().unwrap().is_empty());
+    }
+
+    /// The keyboard's pane reaches the node that holds it by that node's own
+    /// id, every other node hears none, and a device that connects later
+    /// hears it too.
+    #[test]
+    fn the_keyboard_pane_reaches_only_the_node_that_holds_it() {
+        let (router, local, _hub, _reports) = router();
+        let mini = Arc::new(Recorder::default());
+        router.install_device("mini", Arc::clone(&mini) as Arc<dyn TerminalNode>);
+        router.control(TerminalControl::Focus {
+            pane: Some("remote:mini:pane:w2:p3".into()),
+        });
+        assert_eq!(
+            local.controls.lock().unwrap().last(),
+            Some(&TerminalControl::Focus { pane: None })
+        );
+        assert_eq!(
+            mini.controls.lock().unwrap().last(),
+            Some(&TerminalControl::Focus {
+                pane: Some("w2:p3".into())
+            })
+        );
+        let studio = Arc::new(Recorder::default());
+        router.install_device("studio", Arc::clone(&studio) as Arc<dyn TerminalNode>);
+        assert!(
+            studio
+                .controls
+                .lock()
+                .unwrap()
+                .contains(&TerminalControl::Focus { pane: None })
+        );
+        router.control(TerminalControl::Focus {
+            pane: Some("w1:p1".into()),
+        });
+        assert_eq!(
+            local.controls.lock().unwrap().last(),
+            Some(&TerminalControl::Focus {
+                pane: Some("w1:p1".into())
+            })
+        );
+    }
+
+    /// Every paste the core holds is released when it ends, written or
+    /// not, so a thousand pastes leave no route behind.
+    #[test]
+    fn released_pastes_leave_no_route_behind() {
+        let (router, _local, _hub, _reports) = router();
+        let mini = Arc::new(Recorder::default());
+        router.install_device("mini", Arc::clone(&mini) as Arc<dyn TerminalNode>);
+        for index in 0..1_000 {
+            let intent = format!("paste-{index}");
+            let pane = if index % 2 == 0 {
+                "w1:p1"
+            } else {
+                "remote:mini:pane:w2:p3"
+            };
+            router.control(TerminalControl::AttachmentHold {
+                pane: pane.into(),
+                intent: intent.clone(),
+            });
+            router.control(TerminalControl::AttachmentRelease { intent });
+        }
+        assert!(lock(&router.routes).intents.is_empty());
     }
 
     /// A device's node is another machine's program: output for a pane the

@@ -89,6 +89,9 @@ impl Runtime {
         // A front Workspace moved by Herdr or by a device's own focus, not by
         // an event, is followed here, before anything is stamped.
         self.sync_workspace_view();
+        // What a screen is about to be shown as the keyboard's pane is what
+        // the nodes compare its next key with.
+        self.sync_terminal_focus();
         self.note_snapshot_sent();
         if !self
             .delta
