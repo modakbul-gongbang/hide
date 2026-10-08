@@ -205,7 +205,7 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
 }
 
 fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {
-    if input.letters.is_empty() {
+    if input.letters.is_empty() || !delivery::valid_letter_ids(&input.letters) {
         return json!({});
     }
     let intake = Intake {

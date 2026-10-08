@@ -127,6 +127,16 @@ fn confirm_confirms_exactly_the_letters_the_plugin_saw_stored() {
         machine.run("confirm", &json!({"letters": []}), true),
         json!({})
     );
+    // An id that would read as an option, or more than a hook's five, asks nothing.
+    for letters in [
+        json!(["--hook"]),
+        json!(["l1", "l2", "l3", "l4", "l5", "l6"]),
+    ] {
+        assert_eq!(
+            machine.run("confirm", &json!({ "letters": letters }), true),
+            json!({})
+        );
+    }
     assert!(machine.calls().is_empty());
 }
 

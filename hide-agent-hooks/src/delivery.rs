@@ -98,13 +98,7 @@ pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failur
     }
     let answer = run_cli(&arguments, pull_deadline)?;
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
-    if intake.context.len() > CONTEXT_LIMIT
-        || intake.ids.len() > 5
-        || intake
-            .ids
-            .iter()
-            .any(|id| id.is_empty() || id.len() > 256 || id.chars().any(char::is_control))
-    {
+    if intake.context.len() > CONTEXT_LIMIT || !valid_letter_ids(&intake.ids) {
         return Err("format".into());
     }
     // A count-only answer carries a context line and nothing to confirm.
@@ -113,6 +107,18 @@ pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failur
     } else {
         Ok(Some(intake))
     }
+}
+
+/// Whether `ids` may travel to `hide inbox --confirm` as its arguments: at
+/// most one hook's five letters, each a letter id rather than an option.
+pub fn valid_letter_ids(ids: &[String]) -> bool {
+    ids.len() <= 5
+        && ids.iter().all(|id| {
+            !id.is_empty()
+                && id.len() <= 256
+                && !id.starts_with('-')
+                && !id.chars().any(char::is_control)
+        })
 }
 
 pub fn confirm(intake: &Intake, deadline: Instant) -> Result<(), Failure> {

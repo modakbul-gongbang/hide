@@ -118,12 +118,14 @@ impl PluginFile {
         // A JSON string is a JavaScript string literal, whatever the path holds.
         let literal = serde_json::to_string(&helper.display().to_string())
             .expect("a string always serializes");
-        let body = self.template.replacen(HELPER_PLACEHOLDER, &literal, 1);
+        // The constants go in first, so a placeholder's spelling inside the
+        // helper's path is left as the path's.
         self.constants
             .iter()
-            .fold(body, |body, (placeholder, value)| {
+            .fold(self.template.to_owned(), |body, (placeholder, value)| {
                 body.replacen(placeholder, value, 1)
             })
+            .replacen(HELPER_PLACEHOLDER, &literal, 1)
     }
 
     /// The exact bytes Hide writes for `helper`.
