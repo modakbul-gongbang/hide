@@ -226,27 +226,27 @@ class Runtime:
         self.wait(lambda: "LIVE_CHECK_READY>" in self.screen(pane), 10)
         # Exercise the real checkout/capability boundary in its actual shell;
         # no synthetic native-session declaration or copied operator capability.
-        registered = False
+        name = recipe["id"] + "-" + scene + "-bootstrap"
+        reference = None
         for attempt in range(20):
-            code, output = self.pane_command(pane, [str(self.hide), "workspace", "info"],
-                                             recipe["id"] + "-" + scene + f"-registration-{attempt}")
-            if code == 0 and json.loads(output).get("ok") is True:
-                registered = True
+            attempt_name = name + f"-{attempt}"
+            code, output = self.pane_command(pane, [str(self.hide), "workspace", "bootstrap"], attempt_name)
+            answer = json.loads(output)
+            # A successful bootstrap contains a private reference, not run
+            # evidence. Keep it in memory and remove its transport output.
+            (self.run / (attempt_name + ".out")).unlink()
+            if code == 0 and answer.get("ok") is True:
+                reference = Path(answer.get("reference", ""))
+                if not beneath(reference, self.state / "pane-capabilities"):
+                    raise ProtectionError("private_pane_bootstrap_refused")
                 break
             if self.owner.cancelled.wait(0.1):
                 raise ProcessError("run_cancelled")
-        if not registered:
+        if reference is None:
             raise ProcessError("private_checkout_not_registered")
         # Real candidate attestation of this owned pane, not a copied native
         # identity or an operator credential. Keep the reference in memory.
-        name = recipe["id"] + "-" + scene + "-bootstrap"
-        code, output = self.pane_command(pane, [str(self.hide), "workspace", "bootstrap"], name)
-        answer = json.loads(output)
-        reference = Path(answer.get("reference", ""))
-        if code or not answer.get("ok") or not beneath(reference, self.state / "pane-capabilities"):
-            raise ProtectionError("private_pane_bootstrap_refused")
         self.pane_credentials[pane] = reference
-        (self.run / (name + ".out")).unlink()
         if self.sandbox:
             self.sandbox.allow_reference(reference)
         # An issued reference is inherited by the measured CLI and its normal
@@ -262,7 +262,14 @@ class Runtime:
         # Claim this exact persistent reference while the attested shell still
         # owns the pane. Unclaimed references expire before a legal long scene.
         code, output = self.pane_command(pane, [str(self.hide), "workspace", "info"], name + "-claim")
-        if (code or json.loads(output).get("ok") is not True
+        answer = json.loads(output)
+        # hided validates the capability before its renderer gate, and the
+        # CLI claims the reference even when Info has no renderer to answer.
+        # That explicit refusal is expected in this headless measurement.
+        accepted = ((code == 0 and answer.get("ok") is True)
+                    or (code != 0 and answer.get("ok") is False
+                        and answer.get("reason") == "renderer_unavailable"))
+        if (not accepted
                 or not reference.with_suffix(".claimed").is_file()):
             raise ProtectionError("private_pane_reference_not_claimed")
         return workspace, pane, cwd

@@ -144,7 +144,7 @@ Confirm the cheapest suitable model for the logged-in account and pass `--model 
 Fetch the pinned binary with `scripts/fetch-herdr-runtime.sh` first, and build this worktree's `hided` and `hide` with `bash scripts/verify-cargo.sh build -p hided`.
 The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
 
-The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and checks their registration through the candidate `hide workspace info` from their actual shells.
+The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
 It never opens a renderer or controls the installed app.
 Native agents keep the operator HOME for existing login.
 Supported per-command config roots use bounded private copies of existing authentication, with source/version provenance in each provider row.
@@ -203,6 +203,8 @@ Delivery is verified only by a fresh marker sent through the private hided mailb
 The controller generates the marker after the earlier prompt and holds it only in memory; it writes no helper or marker receipt for the agent to read.
 The native sandbox denies other-process argument inspection and private mailbox storage access; its exact candidate capability and claim files remain available for ordinary `hide inbox`.
 The owned pane claims and verifies its exact persistent reference before the native CLI starts, preventing unclaimed-reference expiry during a long scene.
+The Info request used for that claim may return the explicit `renderer_unavailable` refusal in this headless run; the daemon validates the capability first, and the CLI must still complete the claim and leave its claim file.
+Other refusals and missing claim files fail the measurement.
 Typed text, hook installation, a tool's output and transport arrival alone are insufficient.
 Unknown native conversation formats, permission holds and unavailable integration remain unknown delivery.
 No unavailable CLI or unauthenticated account is a safety PASS; the table retains its login instruction without attempting login.
