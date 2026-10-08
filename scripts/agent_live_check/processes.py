@@ -543,7 +543,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                         failed = True
                         sys.stderr.write("guardian_signal_failure:owned_signal_failures:" +
                                          json.dumps(errors, separators=(",", ":")) + "\n")
-                    if not group_exists(group) and not any(p.group != group for p in remaining.values()):
+                    if not group_exists(group) and not remaining:
                         confirmed = True
                         break
                     if time.monotonic() >= end:
