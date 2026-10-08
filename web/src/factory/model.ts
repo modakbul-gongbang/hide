@@ -43,7 +43,7 @@ export const ENV_HOLDS = ["disk_floor", "disk_full", "memory_critical"] as const
 export type EnvHold = (typeof ENV_HOLDS)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_stop_reason`. */
-export const STOP_REASONS = ["no_report", "stalled", "verify_failed", "new_task_cap", "environment_repeated", "worker_start", "publish_refused"] as const;
+export const STOP_REASONS = ["no_report", "stalled", "verify_failed", "new_task_cap", "environment_repeated", "worker_start", "publish_refused", "worker_gone"] as const;
 export type StopReason = (typeof STOP_REASONS)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_gate`, why a merge waits for a person. */
@@ -51,8 +51,24 @@ export const GATES = ["review_directly", "approved_scope_change", "breaking_chan
 export type Gate = (typeof GATES)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_result_code`, what sending an item's suggestion does. */
-export const RESULT_CODES = ["wake_worker", "apply_or_merge", "ready", "split", "drafting", "new_task_cap_choice", "run_action", "acknowledge", "merge", "restart_worker"] as const;
+export const RESULT_CODES = ["wake_worker", "apply_or_merge", "ready", "split", "drafting", "new_task_cap_choice", "run_action", "acknowledge", "merge", "restart_worker", "resume_worker"] as const;
 export type ResultCode = (typeof RESULT_CODES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_notice`, what a notice says. */
+export const NOTICES = ["ai_answered", "ai_card_fixed", "ai_new_task", "ai_risk_merge", "daily_limit"] as const;
+export type Notice = (typeof NOTICES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_decision_kind`, how the Observer sorted a request. */
+export const DECISION_KINDS = ["A", "B", "C", "D", "E"] as const;
+export type DecisionKind = (typeof DECISION_KINDS)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_pause_reason`, why a Task is paused. */
+export const PAUSE_REASONS = ["person", "pane_closed"] as const;
+export type PauseReason = (typeof PAUSE_REASONS)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_observer_mode`, who answers a Factory's decisions. */
+export const OBSERVER_MODES = ["manual", "assist", "autonomous"] as const;
+export type ObserverMode = (typeof OBSERVER_MODES)[number];
 
 /** The inbox groups, in the order the engine ranks them. */
 export const INBOX_GROUPS = ["answer", "merge", "stopped", "notice"] as const;
@@ -61,6 +77,8 @@ export type InboxGroup = (typeof INBOX_GROUPS)[number];
 export type FactorySummary = {
   /** The one person-facing number: open inbox items across Factories. */
   my_turn: number;
+  /** Notices to acknowledge across Factories; not part of `my_turn`. */
+  notices: number;
   factories: FactoryView[];
   inbox: InboxItem[];
 };
@@ -88,7 +106,22 @@ export type FactoryView = {
   main_broken: boolean;
   auto_merge_available: boolean;
   merge_mode: string;
+  /** The whole Factory is paused (D-48). */
+  paused: boolean;
+  notices: number;
+  observer_mode: ObserverMode;
+  /** Factory AI judgments made today, local time, against `observer_limit`. */
+  observer_today: number;
+  observer_limit: number;
+  /** The Factory AI's agent, model and effort; null follows Hide AI's own choice. */
+  factory_ai: FactoryAi | null;
+  /** Worker candidates, the first the default. */
+  workers: WorkerCandidate[];
+  macos_notifications: boolean;
 };
+
+export type FactoryAi = { provider: string; model?: string | null; effort?: string | null };
+export type WorkerCandidate = { agent: string; model?: string | null; effort?: string | null; description: string };
 
 export type ColumnView = { column: Column; label: string; cards: CardView[] };
 
@@ -126,12 +159,15 @@ export type CardView = {
   external: string[];
   revive_until: UnixMs | null;
   worker_pane: string | null;
+  /** The running worker's agent name. */
+  worker_label: string | null;
+  pause_reason: PauseReason | null;
 };
 
 export type InboxItem = {
   group: InboxGroup;
-  /** A question kind, `merge` or `stopped`. */
-  kind: QuestionKind | "merge" | "stopped";
+  /** A question kind, `merge`, `stopped`, or `paused` for a worker whose pane was closed. */
+  kind: QuestionKind | "merge" | "stopped" | "paused";
   rank: number;
   factory: string;
   task: string;
@@ -156,11 +192,20 @@ export type InboxItem = {
   gates: Gate[];
   /** Why a stopped item stopped. */
   stop: StopReason | null;
+  /** What a notice says. */
+  notice: Notice | null;
+  /** The question a notice is about; 다른 답 answers that one. */
+  refers_to: string | null;
+  /** How the Observer sorted this request, and its one-line reason. */
+  decision_kind: DecisionKind | null;
+  observer_reason: string | null;
+  /** Whether Factory AI's answer can still be changed. */
+  overridable: boolean;
 };
 
 export type Attachment = { path: string; sha256: string; version: number; original: string };
 export type PullRequest = { number: number; url: string; head: string; by_factory: boolean; open: boolean };
-export type DecisionRecord = { text: string; by: string; at: UnixMs };
+export type DecisionRecord = { text: string; by: string; at: UnixMs; kind?: DecisionKind | null; reason?: string | null };
 export type Answer = { text: string; chose: string | null; relayed_by: string; at: UnixMs };
 export type Question = {
   id: string;
@@ -215,7 +260,24 @@ export type TaskDetail = {
   worker_name: string | null;
   worktree: string | null;
   branch: string | null;
+  /** Which candidate runs the worker, and why Factory AI picked it. */
+  worker: WorkerLine | null;
+  /** Factory AI's one-line reading of a stopped worker. */
+  diagnosis: string | null;
+  auto_restarts: number;
+  /** Since when the running worker rests without a report. */
+  resting_since: UnixMs | null;
+  /** The pinned candidate's number, 1 first; null lets Factory AI pick. */
+  pinned_worker: number | null;
+  /** The candidate the review picked, 1 first, and why. */
+  ai_picked_worker: number | null;
+  ai_pick_reason: string | null;
+  /** When the engine woke the resting worker, and asked Factory AI why it rests. */
+  woke_at: UnixMs | null;
+  diagnosed_at: UnixMs | null;
 };
+
+export type WorkerLine = { agent: string; label: string; model: string | null; effort: string | null; picked: string | null; pick_reason: string | null };
 
 /** The engine's answer to one screen request: `ok`, or a refusal's `reason`, `next_action` and `detail`. */
 export type ActionAnswer = { request_id: string; answer: { ok: boolean; reason?: string; next_action?: string } & Record<string, unknown> };

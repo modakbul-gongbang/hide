@@ -23,7 +23,7 @@ import type { CardView, FactorySummary, FactoryView, InboxItem, TaskDetail, Task
 const NOW = Date.now();
 
 function card(task: string, state: TaskState, patch: Partial<CardView> = {}): CardView {
-  return { task, display_id: task, column: null, title: `${task} 제목`, summary: "작업 요약", issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 1, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch };
+  return { task, display_id: task, column: null, title: `${task} 제목`, summary: "작업 요약", issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 1, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, worker_label: null, pause_reason: null, ...patch };
 }
 
 function factory(patch: Partial<FactoryView> = {}): FactoryView {
@@ -32,14 +32,14 @@ function factory(patch: Partial<FactoryView> = {}): FactoryView {
     flow: { before: 0, stuck: 0, moving: 1, done_today: 0 }, my_turn: 1,
     columns: [{ column: "moving", label: "running", cards: [card("T-1", "running", { column: "moving" })] }],
     cancelled: [], graph: { nodes: ["T-1"], edges: [], unrelated: ["T-1"] }, dependencies: [],
-    outside_read_at: NOW - 600_000, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "manual", ...patch,
+    outside_read_at: NOW - 600_000, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "manual", paused: false, notices: 0, observer_mode: "assist", observer_today: 0, observer_limit: 100, factory_ai: null, workers: [{ agent: "claude", description: "" }], macos_notifications: false, ...patch,
   };
 }
 
 const MERGE: InboxItem = {
   group: "merge", kind: "merge", rank: 0, factory: "f1", task: "T-1", display_id: "#12", title: "T-1 제목", project: "fixture", question: null,
   text: "병합할까요?", suggestion: "merge", result: "", default_action: null, choices: ["merge", "request-changes", "cancel"], deadline: null, remaining: null, remaining_hours: null, waiting_since: NOW, waiting_days: 0,
-  result_code: "merge", unblocks: [], gates: ["manual_mode"], stop: null,
+  result_code: "merge", unblocks: [], gates: ["manual_mode"], stop: null, notice: null, refers_to: null, decision_kind: null, observer_reason: null, overridable: false,
 };
 
 let root: Root | null = null;
@@ -71,22 +71,22 @@ afterEach(async () => {
 });
 
 it("turns the outside read the warning colour after three failed reads, and keeps it plain while reads succeed (B20)", async () => {
-  const { container } = await mount({ my_turn: 0, factories: [factory({ stale: true })], inbox: [] });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory({ stale: true })], inbox: [] });
   const read = container.querySelector("[data-factory-outside-read]")!;
   expect(read.getAttribute("data-factory-outside-read")).toBe("stale");
   expect(read.className).toContain("text-warning");
-  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, factories: [factory()], inbox: [] }, actions: [] } }));
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, actions: [] } }));
   expect(container.querySelector("[data-factory-outside-read]")!.getAttribute("data-factory-outside-read")).toBe("fresh");
 });
 
 it("keeps a refused answer's item in place with its next action in the screen's language (B10, B24)", async () => {
-  const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+  const { container, events } = await mount({ my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
   await act(async () => send.click());
   const sent = events.at(-1) as unknown as { kind: string; payload: { request_id: string; command: { verb: string; task: string } } };
   expect(sent.kind).toBe("factory_action");
   expect(sent.payload.command).toEqual({ verb: "merge", task: "f1/T-1" });
-  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: false, reason: "main_dirty", next_action: "Commit or stash the changes in the main checkout, then merge" } }] } }));
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: false, reason: "main_dirty", next_action: "Commit or stash the changes in the main checkout, then merge" } }] } }));
   const refused = container.querySelector("[data-factory-refused]")!;
   expect(refused.getAttribute("data-factory-refused")).toBe("main_dirty");
   expect(refused.textContent).toBe(english["factory.refusal.main_dirty"]);
@@ -97,6 +97,7 @@ function detail(state: TaskState, allowed: string[]): TaskDetail {
   return {
     card: card("T-1", state), factory: "f1", project: "/fixture", goal: "목표", criteria: [], out_of_scope: [], before: [], after: [], attachments: [], pr: null,
     verification: "1/3", attempts: [], decisions: [], questions: [], discoveries: [], gates: [], gate_codes: [], allowed, stop: null, stop_code: null, merge_sha: null, worker_name: null, worktree: null, branch: null,
+    worker: null, diagnosis: null, auto_restarts: 0, resting_since: null, pinned_worker: null, ai_picked_worker: null, ai_pick_reason: null, woke_at: null, diagnosed_at: null,
   };
 }
 
@@ -107,14 +108,14 @@ it.each([
   ["stopped", ["retry", "cancel"], "retry cancel"],
   ["verifying", ["cancel"], "cancel"],
 ] as const)("draws only the %s state's actions the engine allows (B19)", async (state, allowed, drawn) => {
-  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const { container, events } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail(state, [...allowed]) } }));
   expect(container.querySelector("[data-factory-actions]")!.getAttribute("data-factory-actions")).toBe(drawn);
   expect(events.some((event) => (event as unknown as { kind: string }).kind === "factory_task_open")).toBe(true);
 });
 
 it("draws no action for a blocked Task, which takes only an answer (B19)", async () => {
-  const { container } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail("blocked", []) } }));
   expect(container.querySelector("[data-factory-task-state]")).not.toBeNull();
   expect(container.querySelector("[data-factory-actions]")).toBeNull();
@@ -135,11 +136,11 @@ async function answerConfig(summary: FactorySummary, events: Parameters<Dispatch
 
 it("keeps Close disabled while the Running column holds a Task in any of its states, as the engine refuses then (B22)", async () => {
   const waiting = factory({ columns: [{ column: "moving", label: "running", cards: [card("T-1", "merge_waiting", { column: "moving" })] }] });
-  const summary = { my_turn: 0, factories: [waiting], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [waiting], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
   expect(container.querySelector<HTMLButtonElement>("[data-factory-close]")!.disabled).toBe(true);
-  const done = { my_turn: 0, factories: [factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done" })] }] })], inbox: [] };
+  const done = { my_turn: 0, notices: 0, factories: [factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done" })] }] })], inbox: [] };
   await answerConfig(done, events);
   expect(container.querySelector<HTMLButtonElement>("[data-factory-close]")!.disabled).toBe(false);
 });
@@ -147,12 +148,12 @@ it("keeps Close disabled while the Running column holds a Task in any of its sta
 it("takes an answer that comes after the wait ran out, since the engine may still finish the work (B10)", async () => {
   vi.useFakeTimers();
   try {
-    const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+    const { container, events } = await mount({ my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] });
     await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
     const sent = events.at(-1) as unknown as { payload: { request_id: string } };
     await act(async () => vi.advanceTimersByTime(REQUEST_ANSWER_TIMEOUT_MS + 1));
     expect(container.querySelector("[data-factory-refused]")!.getAttribute("data-factory-refused")).toBe("no_answer");
-    await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
+    await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
     expect(container.querySelector("[data-factory-refused]")).toBeNull();
     expect(container.querySelector("[data-factory-send]")!.getAttribute("data-factory-send")).toBe("taken");
   } finally {
@@ -162,7 +163,7 @@ it("takes an answer that comes after the wait ran out, since the engine may stil
 
 it("says what acknowledging a notice does, though a notice has no suggestion (B9)", async () => {
   const notice: InboxItem = { ...MERGE, group: "notice", kind: "notice", question: "q-9", text: "무관한 발견", suggestion: "", choices: ["ok"], result_code: "acknowledge", gates: [] };
-  const { container } = await mount({ my_turn: 1, factories: [factory()], inbox: [notice] });
+  const { container } = await mount({ my_turn: 1, notices: 0, factories: [factory()], inbox: [notice] });
   expect(container.querySelector("[data-factory-result]")!.getAttribute("data-factory-result")).toBe("acknowledge");
   expect(container.querySelector("[data-factory-result]")!.textContent).toBe(english["factory.result.acknowledge"]);
 });
@@ -191,7 +192,7 @@ function press(target: Element, init: KeyboardEventInit) {
 }
 
 it("sends the picked answer on Enter, but leaves Enter on 자세히 to open the Task and Enter mid-composition alone (B9)", async () => {
-  const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+  const { container, events } = await mount({ my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] });
   const details = container.querySelector<HTMLButtonElement>("[data-factory-details]")!;
   await act(async () => press(details, { key: "Enter" }));
   expect(sentVerbs(events)).toEqual([]);
@@ -203,7 +204,7 @@ it("sends the picked answer on Enter, but leaves Enter on 자세히 to open the 
 });
 
 it("sends a setting once though Enter and leaving the field both commit, and shows the saved value again when the engine refuses it (B22)", async () => {
-  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
@@ -222,7 +223,7 @@ it("sends a setting once though Enter and leaving the field both commit, and sho
 
 it("treats a Factory whose cards are all archived as empty, not as a filter that matches nothing (B15)", async () => {
   const archived = factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done", archived: true, folded: true })] }] });
-  const { container } = await mount({ my_turn: 0, factories: [archived], inbox: [] }, { tab: "board" });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [archived], inbox: [] }, { tab: "board" });
   expect(container.querySelector("[data-factory-board-empty='intake']")).not.toBeNull();
 });
 
@@ -249,7 +250,7 @@ function lastAction(events: Parameters<DispatchFn>[0][]) {
 }
 
 it("keeps a check's instruction until the engine takes it, then reads the config again, since a check answers with no config (B22)", async () => {
-  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!;
@@ -269,7 +270,7 @@ it("keeps a check's instruction until the engine takes it, then reads the config
 });
 
 it("puts an emptied number back to the saved value instead of sending 0 (B22)", async () => {
-  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='question_deadline_hours']")!;
@@ -280,14 +281,14 @@ it("puts an emptied number back to the saved value instead of sending 0 (B22)", 
 });
 
 it("keeps a change request's comment while the engine refuses it, and closes the form once taken (B19)", async () => {
-  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const { container, events } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail("merge_waiting", ["merge", "request-changes", "cancel"]) } }));
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-action='request-changes']")!.click());
   await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-comment]")!, "테스트를 더 써 주세요"));
   await act(async () => container.querySelector("[data-factory-comment]")!.closest("form")!.requestSubmit());
   const sent = lastAction(events);
   expect(sent.payload.command).toMatchObject({ verb: "request_changes", comment: "테스트를 더 써 주세요" });
-  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: sent.payload.request_id, answer: { ok: false, reason: "factory_busy", next_action: "Try again in a moment" } }] } }));
   expect(container.querySelector<HTMLInputElement>("[data-factory-comment]")!.value).toBe("테스트를 더 써 주세요");
   await act(async () => container.querySelector("[data-factory-comment]")!.closest("form")!.requestSubmit());
@@ -297,24 +298,24 @@ it("keeps a change request's comment while the engine refuses it, and closes the
 });
 
 it("says a Task is gone when its Factory has left the summary, instead of loading forever", async () => {
-  const { container } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "gone", task: "T-1" } });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "gone", task: "T-1" } });
   expect(container.querySelector("[data-factory-task-missing]")).not.toBeNull();
   expect(container.querySelector("[data-factory-task-loading]")).toBeNull();
 });
 
 it("does not send a taken answer again while its item is still on screen (B10)", async () => {
-  const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
+  const { container, events } = await mount({ my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
   await act(async () => send.click());
   const sent = lastAction(events);
-  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, notices: 0, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: true } }] } }));
   expect(container.querySelector<HTMLButtonElement>("[data-factory-send]")!.disabled).toBe(true);
   await act(async () => press(container.querySelector("[data-factory-choice='1']")!, { key: "Enter" }));
   expect(sentVerbs(events)).toEqual(["merge"]);
 });
 
 it("holds Add while a check is on its way, and keeps a refused check's text through a later write of another setting (B22)", async () => {
-  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
   await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!, "README"));
@@ -332,7 +333,7 @@ it("holds Add while a check is on its way, and keeps a refused check's text thro
 });
 
 it("puts a number the field cannot take back to the saved value instead of leaving it as if saved (B22)", async () => {
-  const summary = { my_turn: 0, factories: [factory()], inbox: [] };
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
@@ -342,17 +343,17 @@ it("puts a number the field cannot take back to the saved value instead of leavi
 });
 
 it("leaves an open priority form alone when another action on the page is taken (B19)", async () => {
-  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const { container, events } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: detail("waiting", ["priority", "cancel"]) } }));
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-action='priority']")!.click());
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-action='cancel']")!.click());
   const cancel = lastAction(events);
-  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, factories: [factory()], inbox: [] }, actions: [{ request_id: cancel.payload.request_id, answer: { ok: true } }] } }));
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, actions: [{ request_id: cancel.payload.request_id, answer: { ok: true } }] } }));
   expect(container.querySelector("[data-factory-priority]")).not.toBeNull();
 });
 
 it("shows a done Task's criteria met, names what the verification count counts, and cues a shortened decision (B19)", async () => {
-  const { container } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   const done = { ...detail("done", []), verification: "0/3", criteria: ["README가 최신"], decisions: [{ at: NOW, by: "engine", text: "is al [cut 15 bytes] -> 머지 결정" }] } as unknown as TaskDetail;
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: done } }));
   expect(container.querySelector("[data-factory-criterion]")!.getAttribute("data-factory-criterion")).toBe("met");
@@ -372,7 +373,7 @@ it("keeps the graph in columns and logs why when the layout worker cannot start 
   useShellStore.setState({ diagnostics: [] });
   // jsdom has no CSS.escape; the ids here need no escaping.
   vi.stubGlobal("CSS", { escape: (value: string) => value });
-  const { container } = await mount({ my_turn: 0, factories: [graphed], inbox: [] }, { tab: "graph" });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [graphed], inbox: [] }, { tab: "graph" });
   await act(async () => {
     await vi.waitFor(() => expect(useShellStore.getState().diagnostics.some((line) => line.includes("dependency graph stays in columns"))).toBe(true));
   });
@@ -389,7 +390,7 @@ it.each([
   ["stopped", { ...MERGE, group: "answer", kind: "new_task_cap", question: "q1", suggestion: "raise cap", stop: "verify_failed" }, { verb: "retry", task: "f1/T-1" }],
 ] as const)("sends the %s card's canonical command once, preserves a refusal and allows retry", async (state, item, expected) => {
   const task = card("T-1", state, { column: "stuck", waiting_group: "person", needs_person: true, stop: state === "stopped" ? "verify_failed" : null });
-  const summary = { my_turn: 1, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [{ ...item, choices: [...item.choices], gates: [...item.gates], unblocks: [...item.unblocks] } as InboxItem] };
+  const summary = { my_turn: 1, notices: 0, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [{ ...item, choices: [...item.choices], gates: [...item.gates], unblocks: [...item.unblocks] } as InboxItem] };
   if (state === "merge_waiting" || item.kind === "stopped") summary.inbox.unshift({ ...MERGE, kind: "action", question: "older-question", suggestion: "approve", gates: [] });
   const { container, events } = await mount(summary, { tab: "board" });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-card-send]")!;
@@ -414,7 +415,7 @@ it.each([
 it("opens the corresponding inbox item for another answer and keeps issue/PR controls separate from card navigation", async () => {
   const task = card("T-1", "blocked", { column: "stuck", waiting_group: "person", needs_person: true, issue: "#12", issue_url: "https://example.invalid/issues/12", pr: { number: 34, url: "https://example.invalid/pull/34", head: "change", by_factory: true, open: true } });
   const item: InboxItem = { ...MERGE, group: "answer", kind: "blocking", question: "q1", suggestion: "WS", choices: ["REST"] };
-  const { container } = await mount({ my_turn: 1, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [item] }, { tab: "board" });
+  const { container } = await mount({ my_turn: 1, notices: 0, factories: [factory({ columns: [{ column: "stuck", label: "", cards: [task] }] })], inbox: [item] }, { tab: "board" });
   expect(container.querySelector("[data-factory-card] a")!.getAttribute("href")).toBe(task.issue_url);
   expect(container.querySelectorAll("button button").length).toBe(0);
   const other = [...container.querySelectorAll<HTMLButtonElement>("[data-factory-card] button")].find((button) => button.textContent === english["factory.card.otherAnswer"])!;
@@ -430,7 +431,7 @@ it("opens a local issue through its catalog identity without opening the Factory
   ] } } as unknown as SnapshotRest;
   useShellStore.setState({ rest });
   const task = card("T-1", "running", { issue: "L-7" });
-  const { container } = await mount({ my_turn: 0, factories: [factory({ columns: [{ column: "moving", label: "", cards: [task] }] })], inbox: [] }, { tab: "board" });
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory({ columns: [{ column: "moving", label: "", cards: [task] }] })], inbox: [] }, { tab: "board" });
   useUiStore.setState({ overviewProjectId: "project" });
   const issue = [...container.querySelectorAll<HTMLButtonElement>("[data-factory-card] button")].find((button) => button.textContent === "L-7")!;
   await act(async () => issue.click());

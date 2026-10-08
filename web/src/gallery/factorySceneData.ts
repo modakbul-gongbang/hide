@@ -75,6 +75,8 @@ function card(spec: CardSpec, now: number): CardView {
     external: spec.external ?? [],
     revive_until: spec.reviveDays === undefined ? null : now + spec.reviveDays * DAY,
     worker_pane: spec.worker ?? null,
+    worker_label: spec.worker ? (spec.runtime === "claude" ? "Claude Code" : "Codex") : null,
+    pause_reason: null,
   };
 }
 
@@ -161,6 +163,14 @@ function view(options: {
     main_broken: false,
     auto_merge_available: options.verification !== "none",
     merge_mode: options.verification !== "none" ? "auto" : "manual",
+    paused: false,
+    notices: 0,
+    observer_mode: "assist",
+    observer_today: 37,
+    observer_limit: 100,
+    factory_ai: null,
+    workers: [{ agent: "codex", model: "gpt-6.1-sol", effort: "high", description: "대부분의 Task" }],
+    macos_notifications: false,
   };
 }
 
@@ -181,6 +191,11 @@ function inboxItem(item: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" |
     unblocks: [],
     gates: [],
     stop: null,
+    notice: null,
+    refers_to: null,
+    decision_kind: null,
+    observer_reason: null,
+    overridable: false,
     ...item,
   };
 }
@@ -332,7 +347,8 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
     inboxItem({ group: "notice", kind: "notice", factory: herdr.id, task: taskId(398), display_id: issue(398), title: "main 깨짐 → revert 됨", project: "herdr-ide", text: "main이 깨져 마지막 머지를 되돌렸습니다." }, now, 25 * MINUTE),
     inboxItem({ group: "notice", kind: "notice", factory: herdr.id, task: taskId(415), display_id: issue(415), title: `${issue(412)}와 같은 정렬을 다르게 푸는 중`, project: "herdr-ide", text: "두 Task가 같은 정렬 상태를 서로 다르게 바꾸고 있습니다." }, now, 10 * MINUTE),
   ].map((item, rank) => ({ ...item, rank }));
-  const summary: FactorySummary = { my_turn: inbox.length, factories: [herdr, sasu], inbox };
+  const notices = inbox.filter((item) => item.group === "notice").length;
+  const summary: FactorySummary = { my_turn: inbox.length - notices, notices, factories: [herdr, sasu], inbox };
 
   const detail = (task: string): TaskDetail | null => {
     const found = [...herdr.columns, ...sasu.columns].flatMap((column) => column.cards).find((value) => value.task === task) ?? [...herdr.cancelled, ...sasu.cancelled].find((value) => value.task === task);
@@ -373,6 +389,15 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
       worker_name: found.worker_pane ? `${found.task}-worker` : null,
       worktree: found.worker_pane ? `/work/herdr-ide.worktrees/${found.task}` : null,
       branch: running ? "412-board-sort" : null,
+      worker: null,
+      diagnosis: null,
+      auto_restarts: 0,
+      resting_since: null,
+      pinned_worker: null,
+      ai_picked_worker: null,
+      ai_pick_reason: null,
+      woke_at: null,
+      diagnosed_at: null,
     };
   };
 

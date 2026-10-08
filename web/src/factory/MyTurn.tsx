@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowRightIcon, BanIcon, BellIcon, CheckIcon, CircleAlertIcon, CirclePauseIcon, CornerDownLeftIcon, GitMergeIcon, LoaderCircleIcon, MessageSquareIcon } from "lucide-react";
+import { ArrowRightIcon, BanIcon, BellIcon, CheckIcon, CircleAlertIcon, CirclePauseIcon, CornerDownLeftIcon, GitMergeIcon, LoaderCircleIcon, MessageSquareIcon, SparklesIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed, useRemaining } from "../components/elapsed";
 import { Button } from "../components/ui/button";
@@ -8,18 +8,19 @@ import { Kbd } from "../components/ui/kbd";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
 import { useOverviewCount } from "../Overview";
+import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
-import { ACTION_LABEL, GROUP_LABEL, KIND_LABEL, itemWhy, refusalText, resultText } from "./labels";
-import type { FactorySummary, InboxItem } from "./model";
+import { ACTION_LABEL, DECISION_KIND_LABEL, GROUP_LABEL, KIND_LABEL, MODE_LABEL, decisionWhy, itemWhy, noticeText, refusalText, resultText } from "./labels";
+import type { FactorySummary, FactoryView, InboxItem } from "./model";
 import { useFactoryRequest, type RequestState } from "./request";
 import { inboxKey, shownFactories, shownInbox } from "./view";
 
 /** A choice in an expanded item: a suggestion, a listed choice, a merge or stop verb, or the person's own words. */
 type Choice = { value: string; own: boolean };
 
-/** The verbs a merge or stop item lists; a question's choices are words the engine answers with. */
-const VERB_ITEMS = new Set(["merge", "stopped"]);
+/** The verbs a merge, stop or paused item lists; a question's choices are words the engine answers with. */
+const VERB_ITEMS = new Set(["merge", "stopped", "paused"]);
 
 /** An item's choices in the engine's order, the suggestion first; a question also takes the person's own words. */
 export function itemChoices(item: InboxItem): Choice[] {
@@ -34,6 +35,7 @@ export function choiceCommand(item: InboxItem, choice: Choice, text: string): Fa
   if (VERB_ITEMS.has(item.kind)) {
     if (choice.value === "merge") return { verb: "merge", task };
     if (choice.value === "retry") return { verb: "retry", task };
+    if (choice.value === "resume") return { verb: "resume", task };
     if (choice.value === "cancel") return { verb: "cancel", task };
     if (choice.value === "request-changes") return text.trim() ? { verb: "request_changes", task, comment: text.trim() } : null;
     return null;
@@ -83,7 +85,10 @@ export function MyTurn({ summary, factory, actions }: { summary: FactorySummary;
       move(event.key === "ArrowDown" ? 1 : -1);
     }
   };
-  const tasks = shownFactories(summary, factory).reduce((sum, view) => sum + view.columns.reduce((count, column) => count + column.cards.length, 0) + view.cancelled.length, 0);
+  const shown = shownFactories(summary, factory);
+  const tasks = shown.reduce((sum, view) => sum + view.columns.reduce((count, column) => count + column.cards.length, 0) + view.cancelled.length, 0);
+  const views = new Map(summary.factories.map((view) => [view.id, view]));
+  const notices = items.filter((item) => item.group === "notice").length;
   return (
     <div className="flex min-h-full flex-col px-lg" data-factory-turn="true">
       <div ref={list} role="list" aria-label={t("factory.tab.turn")} className="flex flex-1 flex-col gap-xxs pb-lg" onKeyDown={onKeyDown}>
@@ -96,17 +101,21 @@ export function MyTurn({ summary, factory, actions }: { summary: FactorySummary;
           const key = keys[at]!;
           const head = at === 0 || items[at - 1]!.group !== item.group;
           const count = items.filter((other) => other.group === item.group).length;
+          const view = views.get(item.factory) ?? null;
           return (
             <div key={key} role="listitem" className="flex flex-col">
-              {head ? (
+              {/* Notices are only read, so they sit under a rule and stay out of the count (D-43). */}
+              {head && item.group === "notice" ? (
+                <NoticesHead count={notices} factories={shown.filter((other) => items.some((notice) => notice.group === "notice" && notice.factory === other.id))} actions={actions} />
+              ) : head ? (
                 <h2 className="pt-md pb-xs text-caption text-subtle-foreground" data-factory-group={item.group}>
                   {t(GROUP_LABEL[item.group])} {count}
                 </h2>
               ) : null}
               {key === openKey ? (
-                <OpenItem item={item} actions={actions} />
+                <OpenItem item={item} view={view} actions={actions} />
               ) : (
-                <ClosedItem item={item} onOpen={() => setOpen(key)} />
+                <ClosedItem item={item} view={view} onOpen={() => setOpen(key)} />
               )}
             </div>
           );
@@ -118,8 +127,45 @@ export function MyTurn({ summary, factory, actions }: { summary: FactorySummary;
 }
 
 function KindIcon({ item, className }: { item: InboxItem; className?: string }) {
-  const Icon = item.kind === "merge" ? GitMergeIcon : item.group === "stopped" ? CirclePauseIcon : item.group === "notice" ? BellIcon : MessageSquareIcon;
+  const Icon =
+    item.kind === "merge" ? GitMergeIcon
+    : item.kind === "paused" ? CirclePauseIcon
+    : item.group === "stopped" ? CircleAlertIcon
+    : item.notice !== null && item.notice !== "daily_limit" ? SparklesIcon
+    : item.group === "notice" ? BellIcon
+    : MessageSquareIcon;
   return <Icon aria-hidden="true" className={cn("size-(--size-icon) shrink-0", className)} />;
+}
+
+/** The notices' head: how many, that they are only read, and one action that clears them all (D-43). */
+function NoticesHead({ count, factories, actions }: { count: number; factories: FactoryView[]; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const [asked, setAsked] = useState<string[]>([]);
+  // One request per Factory; the first refusal stays in place with the engine's next action.
+  const refused = useShellStore((s) => asked.map((id) => s.factory?.actions.find((row) => row.request_id === id)?.answer).find((answer) => answer !== undefined && !answer.ok) ?? null);
+  return (
+    <div className="mt-md flex flex-col border-t border-border pt-sm" data-factory-group="notice">
+      <div className="flex min-w-0 items-center gap-sm px-md pb-xs text-caption text-subtle-foreground">
+        <h2>
+          {t(GROUP_LABEL.notice)} {count}
+        </h2>
+        <span className="min-w-0 truncate text-muted-foreground">{t("factory.turn.noticesHint")}</span>
+        <span className="flex-1" />
+        <Button variant="ghost" size="sm" data-factory-ack-all="true" onClick={() => setAsked(factories.map((view) => actions.factoryAction({ verb: "ack_notices", project: view.project })))}>
+          {t("factory.turn.ackAll")}
+        </Button>
+      </div>
+      {refused ? <Refusal state={{ phase: "refused", answer: refused }} /> : null}
+    </div>
+  );
+}
+
+/** What a notice is about beside its line: the decision's kind, or the Factory's mode that let the AI act. */
+function noticeWhy(item: InboxItem, view: FactoryView | null, t: ReturnType<typeof useInterfaceTranslation>["t"]): string {
+  if (item.notice === "daily_limit") return t("factory.notice.dailyLimitWhy");
+  const kind = item.decision_kind ? t(DECISION_KIND_LABEL[item.decision_kind]) : null;
+  const mode = view && item.notice !== "ai_answered" ? t(MODE_LABEL[view.observer_mode]) : null;
+  return [kind, mode].filter((part) => part !== null).join(" · ");
 }
 
 /** The item's time cue: days a blocking question has waited, the time left before its deadline, else how long it has waited. */
@@ -145,8 +191,28 @@ function Place({ item }: { item: InboxItem }) {
   );
 }
 
-function ClosedItem({ item, onOpen }: { item: InboxItem; onOpen: () => void }) {
+function ClosedItem({ item, view, onOpen }: { item: InboxItem; view: FactoryView | null; onOpen: () => void }) {
   const { t } = useInterfaceTranslation();
+  if (item.group === "notice") {
+    return (
+      <button
+        type="button"
+        className="flex min-w-0 items-center gap-sm rounded-sm px-md py-xs text-left outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label={noticeText(item, t)}
+        data-factory-item={inboxKey(item)}
+        data-factory-item-open="false"
+        data-factory-notice={item.notice ?? "notice"}
+        onClick={onOpen}
+      >
+        <KindIcon item={item} className="text-subtle-foreground" />
+        <span className="min-w-0 shrink truncate text-body">{noticeText(item, t)}</span>
+        <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{noticeWhy(item, view, t)}</span>
+        {item.overridable ? <span className="shrink-0 text-caption text-foreground">{t("factory.turn.override")}</span> : null}
+        <Place item={item} />
+        <TimeCue item={item} />
+      </button>
+    );
+  }
   return (
     <button
       type="button"
@@ -165,8 +231,9 @@ function ClosedItem({ item, onOpen }: { item: InboxItem; onOpen: () => void }) {
   );
 }
 
-function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
+function OpenItem({ item, view, actions }: { item: InboxItem; view: FactoryView | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  if (item.group === "notice") return <OpenNotice item={item} view={view} actions={actions} />;
   const choices = itemChoices(item);
   const [picked, setPicked] = useState(0);
   const [text, setText] = useState("");
@@ -203,7 +270,7 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
   const label = choice ? choiceLabel(item, choice, text, t) : "";
   return (
     <div
-      className={cn("flex flex-col gap-sm rounded-md border px-md py-sm", item.group === "notice" ? "border-border" : "border-warning")}
+      className="flex flex-col gap-sm rounded-md border border-warning px-md py-sm"
       data-factory-item={inboxKey(item)}
       data-factory-item-open="true"
       onKeyDown={onKeyDown}
@@ -216,6 +283,12 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
             <span className="text-muted-foreground">{t(KIND_LABEL[item.kind])} · </span>
             {itemWhy(item, t)}
           </span>
+          {item.decision_kind ? (
+            <span className="text-body text-subtle-foreground [overflow-wrap:anywhere]" data-factory-decision-kind={item.decision_kind}>
+              {decisionWhy(item.decision_kind, view?.observer_mode ?? null, t)}
+              {item.observer_reason ? ` ${item.observer_reason}` : null}
+            </span>
+          ) : null}
         </div>
         <Place item={item} />
         <TimeCue item={item} />
@@ -246,8 +319,9 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
         ) : null}
         {/* What the engine's own pick does: its suggestion, or with none (a notice) its first choice. */}
         {choice && choice.value === (item.suggestion || choices[0]?.value) ? (
-          <span className="min-w-0 text-caption text-subtle-foreground [overflow-wrap:anywhere]" data-factory-result={item.result_code}>
-            {resultText(item, t)}
+          <span className="min-w-0 text-caption text-subtle-foreground [overflow-wrap:anywhere]" data-factory-result={view?.paused && item.group === "answer" ? "paused" : item.result_code}>
+            {/* A paused Factory keeps the answer and hands it over on resume (D-48). */}
+            {view?.paused && item.group === "answer" ? t("factory.turn.pausedSend") : resultText(item, t)}
           </span>
         ) : null}
       </div>
@@ -260,6 +334,76 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
           <ArrowRightIcon />
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * An open notice: ⏎ marks it read, 다른 답 replaces the answer Factory AI
+ * gave while its Task is not finished (D-19), and 보기 opens the Task.
+ */
+function OpenNotice({ item, view, actions }: { item: InboxItem; view: FactoryView | null; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const request = useFactoryRequest(actions);
+  const [text, setText] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (text !== null) field.current?.focus();
+  }, [text !== null]);
+  const task = taskRef(item.factory, item.task);
+  const busy = request.state.phase === "sending" || request.state.phase === "taken";
+  const command: FactoryCommand | null = text === null ? { verb: "answer", task, question: item.question, choice: "ok", text: null } : text.trim() && item.refers_to ? { verb: "answer", task, question: item.refers_to, choice: null, text: text.trim(), change: true } : null;
+  const send = () => {
+    if (command && !busy) request.send(command);
+  };
+  return (
+    <div
+      className="flex flex-col gap-sm rounded-md border border-border px-md py-sm"
+      data-factory-item={inboxKey(item)}
+      data-factory-item-open="true"
+      data-factory-notice={item.notice ?? "notice"}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.target instanceof HTMLButtonElement && !event.target.hasAttribute("data-factory-send")) return;
+        event.preventDefault();
+        send();
+      }}
+    >
+      <div className="flex min-w-0 items-start gap-sm">
+        <KindIcon item={item} className="mt-xxs text-subtle-foreground" />
+        <div className="flex min-w-0 flex-1 flex-col gap-xxs">
+          <span className="text-body font-semibold [overflow-wrap:anywhere]">{noticeText(item, t)}</span>
+          <span className="text-body text-subtle-foreground [overflow-wrap:anywhere]">
+            {[item.title, noticeWhy(item, view, t)].filter((part) => part !== "").join(" · ")}
+            {item.observer_reason ? ` · ${item.observer_reason}` : null}
+          </span>
+        </div>
+        <Place item={item} />
+        <TimeCue item={item} />
+      </div>
+      {text !== null ? (
+        <Input ref={field} value={text} onChange={(event) => setText(event.target.value)} placeholder={t("factory.turn.overridePlaceholder")} aria-label={t("factory.turn.overridePlaceholder")} className="ml-(--size-icon) w-auto" data-factory-override-text="true" />
+      ) : null}
+      <div className="flex min-w-0 flex-wrap items-center gap-sm pl-(--size-icon)">
+        <Button data-factory-send={request.state.phase} disabled={!command || busy} aria-busy={request.state.phase === "sending"} onClick={send}>
+          {request.state.phase === "sending" ? <LoaderCircleIcon className="animate-spin" /> : <CornerDownLeftIcon />}
+          {request.state.phase === "sending" ? t("factory.turn.sending") : text === null ? t("factory.action.acknowledge") : t("factory.turn.overrideSend")}
+        </Button>
+        <span className="min-w-0 text-caption text-subtle-foreground" data-factory-result={text === null ? item.result_code : "override"}>
+          {text === null ? t("factory.result.acknowledge") : t("factory.turn.overrideResult")}
+        </span>
+        <span className="flex-1" />
+        {item.overridable && text === null ? (
+          <Button variant="outline" size="sm" data-factory-override="true" onClick={() => setText("")}>
+            {t("factory.turn.override")}
+          </Button>
+        ) : null}
+        <Button variant="ghost" size="sm" data-factory-details="true" onClick={() => useUiStore.getState().setFactoryPlace({ task: { factory: item.factory, task: item.task } })}>
+          {t("factory.turn.view")}
+          <ArrowRightIcon />
+        </Button>
+      </div>
+      <Refusal state={request.state} />
     </div>
   );
 }
