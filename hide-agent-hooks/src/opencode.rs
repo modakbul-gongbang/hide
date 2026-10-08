@@ -38,9 +38,10 @@ const HELPER_PLACEHOLDER: &str = "__HIDE_HELPER__";
 /// The line of the template that names the helper.
 const HELPER_LINE_START: &str = "const HELPER = ";
 
-/// OpenCode's global configuration folder: `$XDG_CONFIG_HOME/opencode`, which
-/// OpenCode reads as `~/.config/opencode` on every system; Herdr's integration
-/// installs its own plugin beside Hide's there.
+/// OpenCode's global configuration folder as Herdr's integration finds it,
+/// `~/.config/opencode` on every system, so Hide's plugin sits beside Herdr's.
+/// OpenCode itself reads `$XDG_CONFIG_HOME/opencode` when that is set; such a
+/// machine loads neither plugin from here (known limitation, shared with Herdr).
 pub fn config_directory(home: &Path) -> PathBuf {
     home.join(".config").join("opencode")
 }
@@ -162,15 +163,6 @@ pub fn observe(home: &Path, helper: &Path) -> PluginObserved {
         ),
         _ => "the plugin is not this build's".to_owned(),
     })
-}
-
-/// The helper the plugin Hide wrote names, when there is one; the device rows
-/// compare it with the helper they would install.
-pub fn installed_helper_path(home: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(plugin_path(home)).ok()?;
-    let (first, body) = text.split_once('\n')?;
-    marker(first)?;
-    helper_of(body)
 }
 
 /// Writes this build's plugin. A file Hide did not write is never replaced, and

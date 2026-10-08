@@ -1,4 +1,4 @@
-// hide-opencode-plugin@1 sha256=11834417eb66e3fe8f4a759624f7f017e0f0af0daab5112190c90e5f94b60c0e
+// hide-opencode-plugin@1 sha256=b904bf3490c7b14195aa10199640fbba2bf8051544d44fd1d8dbbc7668220f03
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -18,6 +18,8 @@ const CONFIRM_BUDGET_MS = 2000;
 const COUNT_BUDGET_MS = 2000;
 const LOOKUP_BUDGET_MS = 300;
 const OUTPUT_LIMIT = 64 * 1024;
+// Far inside the helper's 256 KiB input, so a pasted log never costs a prompt its letters.
+const PROMPT_TEXT_LIMIT = 32 * 1024;
 const RUNNING_LIMIT = 8;
 const SESSION_LIMIT = 512;
 const PENDING_LIMIT = 16;
@@ -105,6 +107,13 @@ function partId(state) {
   return `prt_${hex}${random}`;
 }
 
+/** The start of a prompt, enough for Memory's retrieval, cut where JSON can still carry it. */
+function clip(text) {
+  if (text.length <= PROMPT_TEXT_LIMIT) return text;
+  const end = PROMPT_TEXT_LIMIT - (/[\uD800-\uDBFF]/.test(text[PROMPT_TEXT_LIMIT - 1]) ? 1 : 0);
+  return text.slice(0, end);
+}
+
 function withBudget(promise, budgetMs) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), budgetMs);
@@ -121,19 +130,41 @@ function withBudget(promise, budgetMs) {
   });
 }
 
-function remember(map, key, value) {
-  if (map.size >= SESSION_LIMIT && !map.has(key)) return false;
-  map.set(key, value);
-  return true;
+/**
+ * Records `key` as the newest entry of `map`, a Map or a Set of at most SESSION_LIMIT sessions. At the limit the
+ * oldest entry the first matching rule of `evictable` accepts goes, so a long-lived OpenCode keeps tracking its
+ * newest sessions; when none may go the new one is not recorded and the loss reaches the diagnostic through the
+ * next helper call.
+ */
+function remember(state, map, key, value, evictable = [() => true]) {
+  map.delete(key);
+  if (map.size >= SESSION_LIMIT) {
+    const entries = [...map.entries()];
+    const oldest = evictable.map((rule) => entries.find(([, entry]) => rule(entry))).find(Boolean);
+    if (!oldest) {
+      state.lost += 1;
+      return;
+    }
+    map.delete(oldest[0]);
+  }
+  if (map instanceof Set) map.add(key);
+  else map.set(key, value);
 }
 
-/** Whether `sessionID` is a root session: known from `session.created`, else asked once. */
+/** A finished child's line goes before a root's, and a root's only when no child's is left. */
+const PARENT_EVICTION = [(parent) => parent !== null, () => true];
+
+/** Whether `sessionID` is a root session: known from `session.created`, else asked once. A prompted root becomes the newest entry. */
 async function rootSession(state, client, sessionID) {
-  if (state.parents.has(sessionID)) return state.parents.get(sessionID) === null;
+  if (state.parents.has(sessionID)) {
+    const parent = state.parents.get(sessionID);
+    remember(state, state.parents, sessionID, parent, PARENT_EVICTION);
+    return parent === null;
+  }
   const answer = await withBudget(client.session.get({ path: { id: sessionID } }), LOOKUP_BUDGET_MS);
   const info = answer?.data;
   if (!info || info.id !== sessionID) return false;
-  remember(state.parents, sessionID, info.parentID ?? null);
+  remember(state, state.parents, sessionID, info.parentID ?? null, PARENT_EVICTION);
   return !info.parentID;
 }
 
@@ -160,8 +191,12 @@ function publishCounts(state, force) {
   }
   const key = `${working}/${done}`;
   if (!force && key === state.published) return state.counting;
+  // Only a report Herdr took counts as published: a failed one is sent again with the next change, prompt or rest.
   state.published = key;
-  state.counting = state.counting.then(() => helper(state, "subagents", { working, done }, COUNT_BUDGET_MS));
+  state.counting = state.counting.then(async () => {
+    const answer = await helper(state, "subagents", { working, done }, COUNT_BUDGET_MS);
+    if (answer?.reported !== true && state.published === key) state.published = null;
+  });
   return state.counting;
 }
 
@@ -173,7 +208,8 @@ async function sweep(state, client) {
   const running = answer?.data;
   if (!running || typeof running !== "object") return;
   for (const [child, status] of busy) {
-    if (running[child]?.type !== "busy") status.busy = false;
+    const now = running[child]?.type;
+    if (now !== "busy" && now !== "retry") status.busy = false;
   }
   await publishCounts(state, false);
 }
@@ -184,8 +220,9 @@ function onEvent(state, client, event) {
   if (type === "session.created") {
     const info = properties.info;
     if (!info?.id) return;
-    remember(state.parents, info.id, info.parentID ?? null);
-    if (info.parentID) remember(state.children, info.id, { busy: false, ran: false });
+    remember(state, state.parents, info.id, info.parentID ?? null, PARENT_EVICTION);
+    // A child still running is never forgotten: it would leave the working count while it works.
+    if (info.parentID) remember(state, state.children, info.id, { busy: false, ran: false }, [(child) => !child.busy]);
     return;
   }
   if (type === "session.status") {
@@ -198,7 +235,8 @@ function onEvent(state, client, event) {
       child.ran ||= busy;
       void publishCounts(state, false);
     } else if (sessionID === state.root && kind === "idle") {
-      void sweep(state, client);
+      // Each turn's end reports again, as Claude Code's Stop does, so a Herdr that lost the pane's counts gets them back.
+      void sweep(state, client).then(() => publishCounts(state, true));
     }
     return;
   }
@@ -225,21 +263,22 @@ async function onPrompt(state, client, directory, input, output) {
   // A session's first prompt this plugin sees carries the start guidance and the session-start Memory, as
   // Claude Code's SessionStart does for a new or resumed session; event order cannot hide it.
   const first = !state.guided.has(sessionID);
-  if (state.root !== sessionID) {
-    state.root = sessionID;
-    void publishCounts(state, true);
-  }
-  const prompt = typed
-    .filter((part) => part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("\n");
+  state.root = sessionID;
+  void publishCounts(state, true);
+  const prompt = clip(
+    typed
+      .filter((part) => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("\n"),
+  );
   const answer = await helper(state, "prompt", { session_id: sessionID, prompt, cwd: directory, first }, Math.max(0, deadline - Date.now()));
   const sections = [];
   if (first) {
     const guidance = await withBudget(state.guidance, Math.max(0, deadline - Date.now()));
     if (typeof guidance?.context === "string" && guidance.context) sections.push(guidance.context);
     // Guidance still on its way is given to the next prompt instead.
-    if (state.started && state.guided.size < SESSION_LIMIT) state.guided.add(sessionID);
+    // A prompt whose helper answered nothing has no session-start Memory yet: the next one asks again.
+    if (state.started && answer !== null) remember(state, state.guided, sessionID);
   }
   if (typeof answer?.context === "string" && answer.context) sections.push(answer.context);
   if (sections.length === 0) return;
@@ -268,7 +307,8 @@ async function onTool(state, sessionID, directory, input, output) {
     const workdir = output.args.workdir;
     request = { session_id: sessionID, tool, command, cwd: typeof workdir === "string" && workdir ? workdir : directory };
   } else if (tool === "question") {
-    request = { session_id: sessionID, tool };
+    // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
+    request = { session_id: rootOf(state, sessionID) ?? sessionID, tool };
   } else {
     return null;
   }

@@ -95,10 +95,6 @@ fn install_writes_beside_herdrs_plugin_and_leaves_it_byte_for_byte() {
     );
     // Installing twice converges and writes nothing.
     assert_eq!(install(fixture.home(), &fixture.helper), Ok(false));
-    assert_eq!(
-        installed_helper_path(fixture.home()).as_deref(),
-        fixture.helper.to_str()
-    );
 }
 
 #[cfg(unix)]
