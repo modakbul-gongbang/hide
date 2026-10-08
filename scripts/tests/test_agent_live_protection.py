@@ -458,7 +458,7 @@ class ProcessProtection(unittest.TestCase):
                 elif state == "corrupt":
                     receipt.write_text("{")
                 elif state == "nested":
-                    receipt.write_text("[" * 2048 + "]" * 2048)
+                    receipt.write_text("[" * 32768 + "]" * 32768)
                 elif state == "unconfirmed":
                     receipt.write_text(json.dumps({**valid, "confirmed": False}))
                 elif state == "invalid_samples":
