@@ -17,6 +17,10 @@ use serde_json::{Value, json};
 mod private_herdr;
 use private_herdr::PrivateHerdr;
 
+/// The diagnostic sink is one slot per process, so two daemons alive at once
+/// would write into each other's log; each test holds this for its whole run.
+static ONE_DAEMON: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 const BODY: &str = "report the operator never saw";
 
 fn env(root: &Path, herdr: Option<&PrivateHerdr>) -> Env {
@@ -80,6 +84,12 @@ fn seed_undelivered_letter(state: &Path) {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
 }
 
+/// Writes a store file the daemon will read, readable by this account only.
+fn write_private(path: &Path, value: &Value) {
+    std::fs::write(path, value.to_string()).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
 /// The one `human.channels_failed` row for the seeded letter, once the
 /// daemon's first delivery pass wrote it. The deadline only ends a daemon
 /// that never reports, and then the whole log is the report.
@@ -111,6 +121,7 @@ async fn channels_failed(state: &Path) -> Value {
 
 #[tokio::test]
 async fn without_a_herdr_socket_the_record_names_both_skipped_channels() {
+    let _alone = ONE_DAEMON.lock().await;
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("home")).unwrap();
     seed_undelivered_letter(&root.path().join("state"));
@@ -129,6 +140,7 @@ async fn without_a_herdr_socket_the_record_names_both_skipped_channels() {
 #[tokio::test]
 #[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
 async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
+    let _alone = ONE_DAEMON.lock().await;
     let bin = std::path::PathBuf::from(
         std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
     );
@@ -155,4 +167,87 @@ async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
     );
     running.stop();
     herdr.stop().expect("the private Herdr server exits");
+}
+
+/// A stand-in push service on loopback (a debug build accepts that endpoint):
+/// it answers 201 to the first request and reports the request line.
+fn fake_push_service() -> (String, std::sync::mpsc::Receiver<String>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://127.0.0.1:{}/push/1",
+        listener.local_addr().unwrap().port()
+    );
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut reader = BufReader::new(stream);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).unwrap();
+        let _ = sent.send(request_line);
+        let _ = reader
+            .get_mut()
+            .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    (endpoint, received)
+}
+
+#[tokio::test]
+async fn a_reachable_phone_still_gets_the_notice_and_nothing_is_recorded_as_failed() {
+    let _alone = ONE_DAEMON.lock().await;
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
+
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("home")).unwrap();
+    let state = root.path().join("state");
+    seed_undelivered_letter(&state);
+    // Push mode always, one paired phone with a subscription: the phone's
+    // key is a fresh P-256 point, as a browser's would be.
+    let rng = ring::rand::SystemRandom::new();
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+    let key =
+        EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng).unwrap();
+    let (endpoint, received) = fake_push_service();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    write_private(
+        &state.join("mobile.json"),
+        &json!({"enabled": true, "push_mode": "always"}),
+    );
+    write_private(
+        &state.join("phones.json"),
+        &json!({"phones": [{
+            "id": "phone-1", "name": "test phone", "credential_sha256": "0".repeat(64),
+            "paired_at_ms": now, "last_seen_ms": now, "notifications": "on",
+            "push": {
+                "endpoint": endpoint,
+                "p256dh": URL_SAFE_NO_PAD.encode(key.public_key().as_ref()),
+                "auth": URL_SAFE_NO_PAD.encode([7_u8; 16]),
+            },
+        }]}),
+    );
+    let running = hided::start_daemon(env(root.path(), None))
+        .await
+        .expect("hided starts");
+    // The delivery pass runs on a blocking thread; the hang guard only ends
+    // a daemon that never sends.
+    let request =
+        tokio::task::spawn_blocking(move || received.recv_timeout(Duration::from_secs(60)))
+            .await
+            .unwrap()
+            .expect("the phone's push service received the notice");
+    assert!(request.starts_with("POST /push/1 "), "{request}");
+    let log =
+        std::fs::read_to_string(root.path().join("state/Logs/core.jsonl")).unwrap_or_default();
+    assert!(
+        !log.contains("human.channels_failed"),
+        "a notice that reached a phone is not a failure: {log}"
+    );
+    running.stop();
 }
