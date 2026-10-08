@@ -662,9 +662,13 @@ impl Fixture {
         match self.snapshot() {
             Ok(snapshot) => format!(
                 "last_error={} remote={} devices={}",
-                snapshot.pointer("/status/last_error").unwrap_or(&Value::Null),
+                snapshot
+                    .pointer("/status/last_error")
+                    .unwrap_or(&Value::Null),
                 snapshot.pointer("/status/remote").unwrap_or(&Value::Null),
-                snapshot.pointer("/navigator/devices").unwrap_or(&Value::Null),
+                snapshot
+                    .pointer("/navigator/devices")
+                    .unwrap_or(&Value::Null),
             ),
             Err(error) => format!("snapshot unreadable: {error:#}"),
         }
