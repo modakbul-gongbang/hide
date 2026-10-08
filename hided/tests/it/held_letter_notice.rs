@@ -4,42 +4,65 @@
 //! what is left is Herdr, which is either absent or the pinned private
 //! server, and the daemon's diagnostic log names both reasons. The ledger is
 //! the test's own, so no notice reaches the operator.
+//!
+//! Each daemon is a child process: the diagnostic sink is one slot per
+//! process and the other modules of this binary start daemons of their own,
+//! so an in-process daemon's log would be taken by whichever started last.
 #![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use hided::env::Env;
 use serde_json::{Value, json};
 
 use crate::support::private_herdr::PrivateHerdr;
 
-/// The diagnostic sink is one slot per process, so two daemons alive at once
-/// would write into each other's log; each test holds this for its whole run.
-static ONE_DAEMON: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 const BODY: &str = "report the operator never saw";
 
-fn env(root: &Path, herdr: Option<&PrivateHerdr>) -> Env {
-    Env {
-        home: herdr.map_or_else(|| root.join("home"), |herdr| herdr.home.clone()),
-        herdr_socket_path: herdr.map(|herdr| herdr.socket.display().to_string()),
-        herdr_bin_path: herdr.map(|herdr| herdr.bin.clone()),
-        state_dir: root.join("state"),
-        legacy_state_dir: None,
-        keep_alive: true,
-        vite_origin: None,
-        bind: "127.0.0.1:0".parse().unwrap(),
-        idle_secs: 600,
-        build: None,
-        open_command: None,
-        host_helper_root: None,
-        host_cli_dir: None,
-        pane_id: None,
-        // A missing path: this test reaches no Tailscale.
-        tailscale_bin: Some(root.join("no-tailscale")),
-        search_path: None,
+/// A `hided` child with the test's own home and state folder, killed and
+/// reaped when this drops, whichever way the test ends.
+struct Daemon(Child);
+
+impl Daemon {
+    /// Starts it with every `HERDR_*` and `HIDE_*` of this process removed, so
+    /// it reaches neither the operator's Herdr nor its state; `herdr` is the
+    /// private server it should use, and none leaves it without a Herdr socket.
+    fn start(root: &Path, herdr: Option<&PrivateHerdr>) -> Self {
+        let home = herdr.map_or_else(|| root.join("home"), |herdr| herdr.home.clone());
+        std::fs::create_dir_all(&home).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_hided"));
+        for (key, _) in std::env::vars_os() {
+            let upper = key.to_string_lossy().to_uppercase();
+            if upper.starts_with("HERDR_") || upper.starts_with("HIDE_") {
+                command.env_remove(key);
+            }
+        }
+        command
+            .env("HOME", &home)
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CONFIG_HOME")
+            .env("HIDE_STATE_DIR", root.join("state"))
+            .env("HIDE_KEEP_ALIVE", "1")
+            // A missing path: this test reaches no Tailscale.
+            .env("HIDE_TAILSCALE_BIN", root.join("no-tailscale"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some(herdr) = herdr {
+            command
+                .env("HERDR_SOCKET_PATH", &herdr.socket)
+                .env("HERDR_BIN_PATH", &herdr.bin);
+        }
+        Self(command.spawn().expect("hided starts"))
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -121,26 +144,20 @@ async fn channels_failed(state: &Path) -> Value {
 
 #[tokio::test]
 async fn without_a_herdr_socket_the_record_names_both_skipped_channels() {
-    let _alone = ONE_DAEMON.lock().await;
     let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(root.path().join("home")).unwrap();
     seed_undelivered_letters(&root.path().join("state"), &["letter-7"]);
-    let running = hided::start_daemon(env(root.path(), None))
-        .await
-        .expect("hided starts");
+    let _daemon = Daemon::start(root.path(), None);
     let row = channels_failed(&root.path().join("state")).await;
     assert_eq!(row["component"], "delivery");
     assert_eq!(row["notice"], "letter_undelivered");
     assert_eq!(row["letter_id"], "letter-7");
     assert_eq!(row["push"], "mode_off");
     assert_eq!(row["herdr"], "no_socket");
-    running.stop();
 }
 
 #[tokio::test]
 #[ignore = "needs the pinned Herdr: set HIDE_E2E_HERDR_BIN and run with --ignored"]
 async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
-    let _alone = ONE_DAEMON.lock().await;
     let bin = std::path::PathBuf::from(
         std::env::var_os("HIDE_E2E_HERDR_BIN").expect("HIDE_E2E_HERDR_BIN names the pinned herdr"),
     );
@@ -151,9 +168,7 @@ async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
         .unwrap();
     let mut herdr = PrivateHerdr::start(bin, root.path());
     seed_undelivered_letters(&root.path().join("state"), &["letter-7"]);
-    let running = hided::start_daemon(env(root.path(), Some(&herdr)))
-        .await
-        .expect("hided starts");
+    let _daemon = Daemon::start(root.path(), Some(&herdr));
     let row = channels_failed(&root.path().join("state")).await;
     assert_eq!(row["notice"], "letter_undelivered");
     assert_eq!(row["letter_id"], "letter-7");
@@ -165,7 +180,6 @@ async fn the_pinned_herdr_is_tried_and_its_reason_is_recorded() {
         ["disabled", "no_foreground_client"].contains(&herdr_reason),
         "Herdr's own reason, not a skip: {row}"
     );
-    running.stop();
     herdr.stop().expect("the private Herdr server exits");
 }
 
@@ -218,13 +232,11 @@ fn fake_push_service() -> (String, std::sync::mpsc::Receiver<String>) {
 
 #[tokio::test]
 async fn a_reachable_phone_still_gets_the_notice_and_only_the_one_that_failed_is_recorded() {
-    let _alone = ONE_DAEMON.lock().await;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
 
     let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(root.path().join("home")).unwrap();
     let state = root.path().join("state");
     // Two letters are announced one after the other by the same pass: the
     // first reaches the phone (201) and the second does not (500). Seeing the
@@ -258,9 +270,7 @@ async fn a_reachable_phone_still_gets_the_notice_and_only_the_one_that_failed_is
             },
         }]}),
     );
-    let running = hided::start_daemon(env(root.path(), None))
-        .await
-        .expect("hided starts");
+    let _daemon = Daemon::start(root.path(), None);
     // The delivery pass runs on a blocking thread; the hang guard only ends
     // a daemon that never sends.
     let first = tokio::task::spawn_blocking(move || {
@@ -279,5 +289,4 @@ async fn a_reachable_phone_still_gets_the_notice_and_only_the_one_that_failed_is
     assert_eq!(row["letter_id"], "letter-8");
     assert_eq!(row["push"], "send_failed");
     assert_eq!(row["herdr"], "no_socket");
-    running.stop();
 }
