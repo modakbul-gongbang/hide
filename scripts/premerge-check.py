@@ -90,16 +90,25 @@ def gh_json(*args):
     return json.loads(result.stdout)
 
 
-def open_head(number):
-    """The head commit of an open, ready pull request into main."""
-    pull = gh_json("pr", "view", number, "--json", "state,isDraft,baseRefName,headRefOid")
+def open_pull(number):
+    """An open, ready pull request into main: its head commit and the issues it closes."""
+    pull = gh_json("pr", "view", number, "--json", "state,isDraft,baseRefName,headRefOid,closingIssuesReferences")
     if pull["state"] != "OPEN":
         raise Refused(f"#{number} is {pull['state'].lower()}, not open.")
     if pull["isDraft"]:
         raise Refused(f"#{number} is a draft; its lanes run once it is marked ready for review.")
     if pull["baseRefName"] != BASE:
         raise Refused(f"#{number} merges into {pull['baseRefName']}, not {BASE}.")
-    return pull["headRefOid"]
+    return pull["headRefOid"], pull["closingIssuesReferences"]
+
+
+def issue_note(number, closing):
+    """A reminder, never a refusal: Hide and GitHub relate a pull request to an
+    issue only through a closing keyword, and some pull requests finish none."""
+    if closing:
+        return None
+    return (f"note: #{number} closes no issue. If it finishes one, put `Closes #<issue>` on the body's Closes line "
+            "before merging (editing the body does not rerun `verify`); with no issue, merge as it is.")
 
 
 def require_verify_passed(runs):
@@ -205,7 +214,7 @@ def main(argv):
     # A terminated check still ends its process group and removes its worktree.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(2))
     try:
-        head = open_head(number)
+        head, closing = open_pull(number)
         verify = require_verify_passed(gh_json(
             "api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={head}&event=pull_request&per_page=100",
             "--jq", ".workflow_runs"))
@@ -222,6 +231,9 @@ def main(argv):
     except Undecided as reason:
         print(f"undecided: {reason}", file=sys.stderr)
         return 2
+    note = issue_note(number, closing)
+    if note:
+        print(note)
     print(f"#{number} may merge now: gh pr merge {number} --merge --match-head-commit {head}")
     return 0
 
