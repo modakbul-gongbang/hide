@@ -193,14 +193,20 @@ async function baseline(root, args) {
       return {...frame, png: `png/${frame.referenceNode ?? frame.node}.png`, height: size.height / PIXEL_RATIO};
     });
     const head = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf8'}).trim();
-    const dirty = execFileSync('git', ['status', '--porcelain', '--', path.relative(root, from)], {cwd: root, encoding: 'utf8'}).trim() !== '';
+    const relativeSource = path.relative(root, from);
+    const inRepository = relativeSource !== '..' && !relativeSource.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeSource);
+    // An approved proposal may belong to another checkout. Its bytes are
+    // sealed below; this checkout cannot attest to that file's Git state.
+    const dirty = inRepository
+      ? execFileSync('git', ['status', '--porcelain', '--', relativeSource], {cwd: root, encoding: 'utf8'}).trim() !== ''
+      : null;
     const manifest = {
       schema: SCHEMA,
       name,
       createdAt: new Date().toISOString(),
       target: options.target,
       approval: {kind: options.approval, reference: options.reference.trim()},
-      source: {file: path.relative(root, from), gitHead: head, uncommittedChanges: dirty, sha256: sha256(from)},
+      source: {file: inRepository ? relativeSource : from, gitHead: inRepository ? head : null, uncommittedChanges: dirty, sha256: sha256(from)},
       pen: version,
       document: path.basename(from),
       pixelRatio: PIXEL_RATIO,

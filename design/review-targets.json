@@ -1,4 +1,45 @@
 {
+  "session-panel": {
+    "description": "The approved v6 Sessions panel: project scope, one row per task, live facts and resolved sessions.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-main",
+    "scene": "session-panel",
+    "selector": "[data-session-panel]",
+    "measurement": "web/e2e/session-panel-geometry.mjs",
+    "frames": [
+      {"node":"sfu-panel-l","referenceNode":"YIiB2","theme":"light","width":481,"scale":1,"content":"reference","state":"rest"},
+      {"node":"sfu-panel-d","referenceNode":"YIiB2","theme":"dark","width":481,"scale":1,"content":"reference","state":"rest"}
+    ],
+    "conditions": {"themes":["light","dark"],"widths":[480,360],"contents":["reference","long"]},
+    "states": {"rest":"Project Sessions at rest.","children":"Direct children opened from the row badge.","resolved":"Today's resolved sessions expanded."},
+    "rules": {"noOverlap":true,"noSidewaysOverflow":true},
+    "judgment": [
+      "The approved reference is Dark; Light must retain its hierarchy using the existing theme tokens.",
+      "Do the two-line rows, task tags, live issue/PR facts and front-checkout bar match v6?",
+      "Are long Korean titles and branch names recognizable at the narrow width without hiding controls?"
+    ]
+  },
+  "pane-header": {
+    "description": "The approved v9 pane identity, task and connection bands, and shared direct-child badge.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-workspace",
+    "scene": "pane-header",
+    "selector": "[data-gallery-scene=\"pane-header\"]",
+    "measurement": "web/e2e/pane-header-geometry.mjs",
+    "frames": [
+      {"node":"sfu-ph-board-l","referenceNode":"MYW3i","theme":"light","width":1240,"scale":1,"content":"reference","state":"rest"},
+      {"node":"sfu-ph-board-d","referenceNode":"MYW3i","theme":"dark","width":1240,"scale":1,"content":"reference","state":"rest"}
+    ],
+    "conditions": {"themes":["light","dark"],"widths":[1240],"contents":["reference","long"]},
+    "states": {"rest":"Connection and direct-child states.","children":"The header badge's shared direct-child popover."},
+    "rules": {"noOverlap":true,"noSidewaysOverflow":true},
+    "judgment": [
+      "The approved reference is Dark; Light must retain its hierarchy using the existing theme tokens.",
+      "Does the identity stay quiet while the highest-priority band carries the one actionable state?",
+      "Does the header child badge replace the former child row and relationship sheet?",
+      "The reference footer's beside-open shortcut is excluded by D-40."
+    ]
+  },
   "projects-sidebar": {
     "description": "The sidebar's Projects tab: project, checkout and agent rows.",
     "file": "design/hide-screens.pen",

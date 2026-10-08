@@ -85,7 +85,7 @@ export function pen(args, {cwd, input = '', timeoutMs = 60_000, action = 'Pen co
         if (/Authentication required|Not authenticated/i.test(output)) reject(new PenError('Pen is not logged in.', 'Run: pen login', output));
         else if (/Cannot run pen/.test(output)) reject(new PenError('Pen CLI is not installed.', installHint(), output));
         else reject(new Error(`Pen failed (${signal ?? code}).\n${output}`));
-      } else resolve(stdout);
+      } else resolve(`${stdout}${stderr}`);
     });
   });
   // A command owner joins this task before exiting on cancellation. The
