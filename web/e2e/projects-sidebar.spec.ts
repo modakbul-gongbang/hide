@@ -376,7 +376,9 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await projectRow.click();
-    await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
+    // B1: this checkout now contains only the delegated child. It keeps its
+    // checkout identity but has no operator session rows to disclose.
+    await expect(featureToggle).toHaveCount(0);
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
     await expect(parentRow.locator("[data-descendant-badge]")).toBeVisible();
     await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);

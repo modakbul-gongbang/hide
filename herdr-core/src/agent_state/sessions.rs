@@ -122,6 +122,11 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Row {
     }
 }
 
+pub(super) fn mergeable(pull: &crate::request_view::AgentPullRequestSnapshot) -> bool {
+    pull.checks == PullRequestChecks::Passing
+        && matches!(pull.review, None | Some(ReviewDecision::Approved))
+}
+
 pub(crate) fn tag(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Tag {
     match verb {
         RequestVerb::Answer if agent.blocked => Tag::Approval,
@@ -134,12 +139,7 @@ pub(crate) fn tag(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Tag {
                 .flat_map(|request| &request.pull_requests)
                 .filter(|pull| pull.live && pull.duty && !pull.badge.is_settled())
                 .peekable();
-            if duties.peek().is_some()
-                && duties.all(|pull| {
-                    pull.checks == PullRequestChecks::Passing
-                        && matches!(pull.review, None | Some(ReviewDecision::Approved))
-                })
-            {
+            if duties.peek().is_some() && duties.all(mergeable) {
                 Tag::Merge
             } else {
                 Tag::Review

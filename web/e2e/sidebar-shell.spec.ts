@@ -90,6 +90,9 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
     // The direct commands focus this one list or open the Agents graph.
+    // B9 opens the modal over a Workspace; Home already displays Overview.
+    await list.locator("[data-checkout]").first().click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await page.keyboard.press(chord("sidebar_agents"));

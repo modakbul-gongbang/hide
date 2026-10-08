@@ -27,6 +27,8 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
   const numbered = useUiStore((s) => s.hint === "tabs");
   const owner = useKeyboardOwner();
   const entries = agentEntries(checkout);
+  const paneLayouts = useShellStore((s) => s.rest?.pane_layouts);
+  const remoteSessions = useShellStore((s) => s.rest?.status?.remote);
   const node = useShellStore((s) => localDeviceId(s.rest));
   const device = deviceId ?? node;
   const remote = device !== node;
@@ -36,6 +38,15 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
   }), [checkout]);
   const layout = remote ? remoteLayout : saved;
   if (!layout) return <AreaEmpty state="agent-layout-missing" text={t("panes.agent.waiting")} />;
+  const visiblePaneIds = areasOf(layout.root).flatMap(area => {
+    const tabId = layout.canvases[area.id] ?? area.active;
+    const geometry = remote
+      ? remoteSessions?.find(row => row.target_id === device)?.session?.pane_layouts.find(row => row.tab_id === tabId)
+      : paneLayouts?.find(row => row.tab_id === tabId);
+    if (!geometry) return [];
+    if (geometry.zoomed) return [geometry.focused_pane_id];
+    return checkout.tabs.find(tab => tab.id === tabId)?.panes.map(pane => pane.id) ?? [];
+  });
   const numbers = numbered ? numberedTabs(checkout, layout) : null;
   const workspace = { device_id: device, path: checkout.path };
   const label = (id: string) => entries.find((entry) => entry.source_id === id)?.label ?? id;
@@ -61,7 +72,7 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
       return entry ? <AgentTab number={numbers ? numberOf(numbers, item.id) : null} entry={entry} checkout={checkout} renaming={renaming === item.id} onCancelRename={() => setRenaming(null)} interaction={interaction} actions={actions} /> : null;
     },
     body: (item, area) => <>
-      {area.id === layout.active_area ? <><RelationStatus actions={actions} /><FindBar actions={actions} /></> : null}
+      {area.id === layout.active_area ? <><RelationStatus actions={actions} visiblePaneIds={visiblePaneIds} /><FindBar actions={actions} /></> : null}
       {remote ? remoteBody : <PaneCanvas key={item.id} tab={checkout.tabs.find((tab) => tab.id === item.id) ?? null} actions={actions} />}
     </>,
     empty: (area) => <AreaEmpty state="no-agent-tab" text={t("panes.agent.noTab")}><Button variant="secondary" onClick={() => actions.createTab(area.id)} data-empty-new-tab="true">{t("panes.area.newTab")}</Button></AreaEmpty>,

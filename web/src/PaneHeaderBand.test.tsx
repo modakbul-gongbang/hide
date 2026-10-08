@@ -85,11 +85,11 @@ it("opens the displayed repository even when another project has the same PR num
   const {actions, unmount} = await mount();
   const url = "https://github.com/acme/other/pull/7";
   try {
-    useShellStore.setState({rest: {navigator: {focused_device_id: "local", devices: [{id: "local", kind: "local"}], workspaces: [
+    await act(async () => useShellStore.setState({rest: {navigator: {focused_device_id: "local", devices: [{id: "local", kind: "local"}], workspaces: [
       {id: "here", device_id: "local", pull_requests: [{number: 7, url: "https://github.com/acme/here/pull/7"}], checkouts: []},
       {id: "other", device_id: "local", pull_requests: [{number: 7, url}], checkouts: []},
-    ] as unknown as Workspace[]}} as SnapshotRest});
-    actions.openSessionPullRequest({workspace_id: "here", number: 7, url});
+    ] as unknown as Workspace[]}} as SnapshotRest}));
+    await act(async () => actions.openSessionPullRequest({workspace_id: "here", number: 7, url}));
     expect(useUiStore.getState().overviewProjectId).toBe("other");
     expect(useUiStore.getState().overviewLens).toMatchObject({tab: "prs", prs: {panel: 7, focus: 7}});
     const open = vi.spyOn(window, "open").mockReturnValue(null);

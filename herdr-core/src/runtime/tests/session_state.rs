@@ -245,6 +245,29 @@ fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priori
             review: None
         })
     );
+    // An earlier approved duty must not steal the action from the PR that
+    // still needs a review, even though both checks are passing.
+    let links = &mut agent.request.as_mut().unwrap().pull_requests;
+    links[0].duty = true;
+    links[0].checks = crate::model::PullRequestChecks::Passing;
+    links[0].review = Some(crate::model::ReviewDecision::Approved);
+    links[1].review = Some(crate::model::ReviewDecision::ReviewRequired);
+    agent.state = crate::agent_state::turn::row_state(agent);
+    let review = header::of(&pane, Some(agent), None, &project, None)
+        .band
+        .unwrap();
+    assert_eq!(review.kind, "review");
+    assert!(matches!(
+        review.action,
+        Some(header::Action::Pr { number: 2, .. })
+    ));
+    assert_eq!(
+        review.facts,
+        Some(header::ReasonFacts::PullRequest {
+            checks: crate::model::PullRequestChecks::Passing,
+            review: Some(crate::model::ReviewDecision::ReviewRequired)
+        })
+    );
 }
 
 #[test]

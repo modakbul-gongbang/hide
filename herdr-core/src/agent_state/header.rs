@@ -84,7 +84,7 @@ pub(crate) fn of(
             use crate::model::PullRequestChecks;
             match tag {
                 Some(Tag::Fix) => pull.duty && pull.checks == PullRequestChecks::Failed,
-                Some(Tag::Review | Tag::Merge) => {
+                Some(Tag::Review) => {
                     pull.duty
                         && matches!(
                             pull.checks,
@@ -92,7 +92,9 @@ pub(crate) fn of(
                                 | PullRequestChecks::None
                                 | PullRequestChecks::Unknown
                         )
+                        && !super::sessions::mergeable(pull)
                 }
+                Some(Tag::Merge) => pull.duty && super::sessions::mergeable(pull),
                 _ => false,
             }
         })

@@ -183,14 +183,11 @@ pub(crate) fn refresh_inactive_groups(
 
     let mut inactive_projects = Vec::<InactiveProjectGroupSnapshot>::new();
     for workspace in &mut navigator.workspaces {
-        refresh_session_folds(workspace, &by_pane, ui_state, focused_checkout_id);
         let inactive_checkout_ids = workspace
             .checkouts
             .iter()
             .filter(|checkout| {
                 !checkout.is_primary
-                    && !workspace.session_folds.empty.contains(&checkout.id)
-                    && !workspace.session_folds.cleanup.contains(&checkout.id)
                     && checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
             })
             .map(|checkout| checkout.id.clone())
@@ -199,6 +196,11 @@ pub(crate) fn refresh_inactive_groups(
             expanded: expanded_checkout_projects.contains(workspace.path.as_str()),
             checkout_ids: inactive_checkout_ids,
         };
+        refresh_session_folds(workspace, &by_pane, ui_state, focused_checkout_id);
+        workspace
+            .inactive_checkouts
+            .checkout_ids
+            .retain(|id| !workspace.session_folds.cleanup.contains(id));
 
         // A pinned project is exempt from the device fold: the operator asked
         // to see it whatever its activity (D-04). Its own checkouts still
@@ -265,6 +267,10 @@ pub(crate) fn refresh_session_folds(
             .any(|agent| agent.resolved.is_none());
         if checkout.is_worktree
             && !checkout.is_primary
+            && !workspace
+                .inactive_checkouts
+                .checkout_ids
+                .contains(&checkout.id)
             && !live
             && !checkout.dirty
             && checkout
@@ -580,10 +586,10 @@ mod tests {
         assert_eq!(projects[0].last_activity_unix_ms, Some(3_000_000));
     }
 
-    /// Session B7. Agentless worktrees enter their own fold before the
-    /// legacy inactivity fold, irrespective of commit age or PR state.
+    /// Session B7 preserves existing inactive membership. Only the remaining
+    /// agentless worktrees enter the new fold, shown above Inactive.
     #[test]
-    fn agentless_worktrees_fold_before_legacy_inactivity_regardless_of_age() {
+    fn agentless_worktrees_preserve_legacy_inactivity_membership() {
         let now_ms = 20 * 24 * 60 * 60 * 1_000;
         let old_seconds = (now_ms - (7 * 24 + 1) * 60 * 60 * 1_000) / 1_000;
         let recent_seconds = (now_ms - (6 * 24 + 23) * 60 * 60 * 1_000) / 1_000;
@@ -614,14 +620,11 @@ mod tests {
 
         assert_eq!(
             navigator.workspaces[0].session_folds.empty,
-            [
-                "merged",
-                "untouched",
-                "stale",
-                "recent",
-                "unknown",
-                "closed"
-            ]
+            ["untouched", "recent", "unknown"]
+        );
+        assert_eq!(
+            navigator.workspaces[0].inactive_checkouts.checkout_ids,
+            ["merged", "stale", "closed"]
         );
         assert!(
             !navigator.workspaces[0]

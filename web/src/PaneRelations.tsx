@@ -54,16 +54,18 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
 
 /**
  * The relationship focus the operator asked for, while it is in flight or
- * after it failed (B15). It is drawn once in the Agent area rather than under
- * the pane it was asked from: the core moves the visible tab to the target in
- * the same event and keeps it there on a refusal, so the asking pane is often
- * no longer on screen when the answer comes.
+ * after it failed (B15). A visible source band owns this feedback; the Agent
+ * area keeps it reachable when the core has moved that source out of view.
  */
-export function RelationStatus({ actions }: { actions: Actions }) {
+export function RelationStatus({ actions, visiblePaneIds }: { actions: Actions; visiblePaneIds: readonly string[] }) {
   const { t } = useInterfaceTranslation();
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
+  const band = useShellStore((s) => s.rest?.terminal?.headers?.[relation?.sourcePaneId ?? ""]?.band);
   if (!relation) return null;
+  // A visible source band owns its move's feedback. Retain the existing
+  // fallback only when that band is no longer on screen or cannot show it.
+  if (visiblePaneIds.includes(relation.sourcePaneId) && band?.action?.kind === "child" && band.action.pane_id === relation.targetPaneId) return null;
   const state = relationState(relation, outcome, t);
   if (!state) return null;
   if (state.phase === "pending") {

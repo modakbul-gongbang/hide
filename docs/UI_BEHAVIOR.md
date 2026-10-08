@@ -985,7 +985,7 @@ The fold is the page's own and starts closed on a fresh load, so the list return
 A device's Projects list is its `Needs You · N` group, its `Done · N` group, then the Home row, then Pinned and the projects, and no row there names the device, since the whole list is that device's (with the rail rework of quick device-rail-badges).
 An agent row's title is its identity label at both densities: the rolling task, or the provider's name when no task exists; a Herdr agent name and a Herdr workspace label never become display copy.
 Every parent row wears its direct-child badge before the elapsed time.
-No agents folds worktrees with no unresolved operator session, excluding primary, front, dirty and unpushed checkouts; Cleanup gathers agent worktrees and missing folders at the bottom without assuming they have no live pane.
+No agents folds worktrees with no unresolved operator session, excluding primary, front, dirty, unpushed and already inactive checkouts; Cleanup gathers agent worktrees and missing folders at the bottom without assuming they have no live pane.
 
 ### Purpose, pinning, and PR chrome
 
