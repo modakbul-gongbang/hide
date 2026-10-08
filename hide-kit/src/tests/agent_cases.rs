@@ -40,26 +40,6 @@ fn install(fixture: &Fixture, program: &str, folder: &str) {
     set_up(fixture, folder);
 }
 
-/// A program the kit will run for its version. A script written a moment ago
-/// cannot be executed while another test thread's fork still holds the file
-/// open for writing (ETXTBSY), so this waits until it can be.
-fn version_program(path: &Path, body: &str) {
-    executable(path, body);
-    for _ in 0..20_000 {
-        let started = std::process::Command::new(path)
-            .arg("--executable-probe")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        match started {
-            Err(error) if error.raw_os_error() == Some(26) => std::thread::yield_now(),
-            _ => return,
-        }
-    }
-    panic!("{} stayed busy", path.display());
-}
-
 fn record(fixture: &Fixture) -> Value {
     serde_json::from_str(
         &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
@@ -587,12 +567,9 @@ fn a_report_from_a_build_that_predates_chosen_reads_as_no_choice() {
 /// search as in every other test.
 fn grok_login_shell(fixture: &Fixture) -> PathBuf {
     let shell = fixture.root.join("bin/login-shell");
-    version_program(
+    program(
         &shell,
-        &format!(
-            "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho x >> '{}'\necho 'Last login: today'\nPATH=\"$HOME/.grok/bin\"\nexport PATH\neval \"$2\"\n",
-            fixture.root.join("shell-asked").display()
-        ),
+        "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho x >> \"${HOME%/*}/shell-asked\"\necho 'Last login: today'\nPATH=\"$HOME/.grok/bin\"\nexport PATH\neval \"$2\"\n",
     );
     shell
 }

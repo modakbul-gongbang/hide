@@ -9,30 +9,37 @@
 #![cfg(unix)]
 
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use hide_platform::process::OwnedChild;
 
+use crate::programs;
+
 const PANE: &str = "w1:p2";
 
-/// A freshly copied executable pays a first-exec validation cost on macOS that
-/// would eat the guard's own budget, so each is run once under its own bound
-/// before the guard is measured against it.
-fn warm_first_exec(program: &Path) {
-    let mut command = Command::new(program);
-    command
-        .arg("--help")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = OwnedChild::spawn(&mut command).unwrap();
-    child
-        .capture_until(Instant::now() + Duration::from_secs(5), 1)
-        .expect("first-exec warming must finish within its own bound");
-}
+/// The stand-in `hide`: it answers `workspace bootstrap` the way the file
+/// `mode` beside the test's HOME says, and records every call there.
+const FAKE_HIDE: &str = r#"#!/bin/sh
+[ "$1" = --help ] && exit 0
+fixture="${HOME%/*}"
+echo "$@" >> "$fixture/hide-calls"
+case "$(/bin/cat "$fixture/mode")" in
+  registered) echo '{"ok":true,"reference":"/x"}' ;;
+  worker) echo '{"type":"workspace_result","ok":true,"result":{"deny":true}}' ;;
+  nonworker) echo '{"type":"workspace_result","ok":true,"result":{"deny":false}}' ;;
+  incomplete) echo '{"type":"workspace_result","ok":true,"result":{"deny":"true"}}' ;;
+  refused) echo '{"type":"workspace_result","ok":false,"reason":"factory_guard_native_changed"}' ;;
+  oversized) printf '%20000s' x ;;
+  unregistered) echo checkout_not_registered >&2; exit 2 ;;
+  down) echo hide_unavailable >&2; exit 2 ;;
+  mute) exit 2 ;;
+  bridge) echo bridge_unavailable >&2; exit 2 ;;
+  later) echo a_reason_a_later_build_adds >&2; exit 2 ;;
+  slow) echo $$ > "$fixture/cli-pid"; exec /bin/sleep 30 ;;
+esac
+"#;
 
 struct Machine {
     _dir: tempfile::TempDir,
@@ -52,7 +59,7 @@ struct Run {
 
 impl Machine {
     fn new(daemon: &str) -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = programs::folder();
         let root = dir.path().canonicalize().unwrap();
         let home = root.join("home");
         let bin = root.join("bin");
@@ -62,23 +69,9 @@ impl Machine {
         std::fs::create_dir_all(checkout.join(".git")).unwrap();
         std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/topic\n").unwrap();
         let hook = bin.join("hide-agent-hooks");
-        std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &hook).unwrap();
-        let fake = bin.join("hide");
-        std::fs::write(
-            &fake,
-            format!(
-                "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\necho \"$@\" >> '{calls}'\ncase \"$(/bin/cat '{mode}')\" in\n  registered) echo '{{\"ok\":true,\"reference\":\"/x\"}}' ;;\n  worker) echo '{{\"type\":\"workspace_result\",\"ok\":true,\"result\":{{\"deny\":true}}}}' ;;\n  nonworker) echo '{{\"type\":\"workspace_result\",\"ok\":true,\"result\":{{\"deny\":false}}}}' ;;\n  incomplete) echo '{{\"type\":\"workspace_result\",\"ok\":true,\"result\":{{\"deny\":\"true\"}}}}' ;;\n  refused) echo '{{\"type\":\"workspace_result\",\"ok\":false,\"reason\":\"factory_guard_native_changed\"}}' ;;\n  oversized) printf '%20000s' x ;;\n  unregistered) echo checkout_not_registered >&2; exit 2 ;;\n  down) echo hide_unavailable >&2; exit 2 ;;\n  mute) exit 2 ;;\n  bridge) echo bridge_unavailable >&2; exit 2 ;;\n  later) echo a_reason_a_later_build_adds >&2; exit 2 ;;\n  slow) echo $$ > '{pid}'; exec /bin/sleep 30 ;;\nesac\n",
-                calls = root.join("hide-calls").display(),
-                mode = root.join("mode").display(),
-                pid = root.join("cli-pid").display(),
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        programs::link(programs::hook(), &hook);
+        programs::link(&programs::stand_in(FAKE_HIDE), &bin.join("hide"));
         std::fs::write(root.join("mode"), daemon).unwrap();
-        warm_first_exec(&hook);
-        warm_first_exec(&fake);
-        std::fs::remove_file(root.join("hide-calls")).ok();
         Self {
             _dir: dir,
             root,
