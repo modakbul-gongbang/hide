@@ -61,7 +61,11 @@ BANNED = [
 # with it (PRD core-host-node D-10), never a fact of the machine it runs on.
 # Each entry is the number of machine touches the file has and why.
 STORES = {
-    "herdr-core/src/persistence.rs": (7, "the core's UI state file"),
+    "herdr-core/src/persistence.rs": (
+        10,
+        "the core's UI state file, including durable directory/write receipts "
+        "and explicit write-error variants before sleeping-session effects",
+    ),
     "herdr-core/src/workspace_views.rs": (6, "the core's saved View layouts"),
     "herdr-core/src/delivery/ledger.rs": (19, "the core's delivery ledger"),
     "herdr-core/src/labels/store.rs": (3, "the core's agent label store"),
