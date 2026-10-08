@@ -19,7 +19,7 @@ test.describe.configure({ timeout: 150_000 });
 const SESSION = "22222222-3333-4444-5555-666666666666";
 const HELPER = path.resolve("..", "target", "debug", "hide-agent-hooks");
 
-type ProcessInfo = { result: { process_info: { foreground_processes: { argv?: string[] | null }[] } } };
+type ProcessInfo = { result: { process_info: { foreground_processes?: { argv?: string[] | null }[] } } };
 
 /** Hide's hook entries as the kit writes them (`hide-agent-hooks/src/install.rs`), so this machine's files say the hook is installed. */
 function installHook(home: string): void {
@@ -58,8 +58,9 @@ async function start(page: Page, label: string): Promise<{ herdr: HerdrFixture; 
   return { herdr, daemon, pane, sent };
 }
 
+// Herdr leaves `foreground_processes` out of the answer while the pane's shell has not started a program yet.
 const processArgv = (herdr: HerdrFixture, pane: string) =>
-  (herdr.run(["pane", "process-info", "--pane", pane]) as ProcessInfo).result.process_info.foreground_processes.map((process) => process.argv?.join(" "));
+  ((herdr.run(["pane", "process-info", "--pane", pane]) as ProcessInfo).result.process_info.foreground_processes ?? []).map((process) => process.argv?.join(" "));
 
 test("a session started before the hook wears the chip, Not now keeps it, and Reopen continues the conversation and connects it", async ({ page }) => {
   const { herdr, daemon, pane, sent } = await start(page, "pane-connection");
@@ -109,6 +110,7 @@ test("a Reopen the core refuses leaves the pane as it was and the popover says w
     await setFixtureLifecycle(herdr, pane, "working");
     const view = page.locator(`[data-pane-view="${pane}"]`);
     await expect(view.locator("[data-pane-connection]")).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => processArgv(herdr, pane).length, { timeout: 20_000 }).toBeGreaterThan(0);
     const before = processArgv(herdr, pane);
 
     await view.locator("[data-pane-connection]").click();
