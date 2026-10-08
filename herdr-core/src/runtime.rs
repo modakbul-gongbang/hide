@@ -39,6 +39,7 @@ mod rename;
 mod request_view;
 mod session;
 pub(crate) mod session_search;
+mod session_state;
 mod snapshot_delta;
 mod ssh_hosts;
 mod tab_focus;
@@ -1086,6 +1087,11 @@ pub struct Runtime {
     unresolved_machine_lineage: HashSet<String>,
     file_roots: Option<crate::files::FileRoots>,
     state_path: PathBuf,
+    pending_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    failed_session_resolutions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    delivery_holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
+    session_day_zone: Result<jiff::tz::TimeZone, jiff::Error>,
+    session_next_day_unix_ms: u64,
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
@@ -2016,6 +2022,11 @@ impl Runtime {
             memory_next_poll_unix_ms: 0,
             editor_tab_history: Vec::new(),
             worker_context: None,
+            pending_session_resolutions: BTreeMap::new(),
+            failed_session_resolutions: BTreeMap::new(),
+            delivery_holds: BTreeMap::new(),
+            session_day_zone: jiff::tz::TimeZone::try_system(),
+            session_next_day_unix_ms: 0,
             state_save_pending: false,
             state_save_active: false,
             state_save_worker: None,

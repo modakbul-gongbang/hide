@@ -74,6 +74,8 @@ pub(crate) enum Hold {
     /// The letter was confirmed, cancelled, expired or reserved after the
     /// verdict.
     Letter,
+    /// Three reservations consumed and this pane is eligible for another bell.
+    Exhausted,
 }
 
 impl Hold {
@@ -95,6 +97,7 @@ impl Hold {
             Self::Moved => "sequence_moved",
             Self::Input => "input_after_verdict",
             Self::Letter => "letter_changed",
+            Self::Exhausted => "attempts_exhausted",
         }
     }
 }
@@ -246,14 +249,16 @@ impl Doorbell {
             .iter()
             .filter(|letter| {
                 letter.state == State::Pending
-                    && letter.attempts() < 3
                     && now.saturating_sub(letter.created_at_unix_ms) < super::DELIVERY_EXPIRY_MS
             })
-            .filter(|letter| targets.insert(letter.recipient.pane_id.clone()))
             .collect();
         let ids: HashSet<_> = pending.iter().map(|letter| letter.id.as_str()).collect();
         self.forget(&ledger.letters, &ids, now);
-        self.rung.retain(|pane, _| targets.contains(pane));
+        self.rung.retain(|pane, _| {
+            pending
+                .iter()
+                .any(|letter| &letter.recipient.pane_id == pane)
+        });
         let mut count = 0;
         for letter in pending {
             if stop.load(Ordering::Acquire) || count >= WORK_PER_PASS {
@@ -271,6 +276,15 @@ impl Doorbell {
                     continue;
                 }
             };
+            if letter.attempts() >= 3 {
+                self.hold(&letter.id, pane, Hold::Exhausted);
+                continue;
+            }
+            // Exhausted letters still expose a hold, but must not claim the
+            // recipient's one bell slot ahead of a newer pending letter.
+            if !targets.insert(pane.clone()) {
+                continue;
+            }
             let Some(connector) = owner
                 .lock()
                 .ok()
@@ -339,6 +353,13 @@ impl Doorbell {
                 }
             }
         }
+        let mut guard = owner.lock().unwrap_or_else(|error| error.into_inner());
+        guard.publish_delivery_holds(
+            self.held
+                .iter()
+                .map(|(id, hold)| (id.clone(), *hold))
+                .collect(),
+        );
     }
 
     /// Drops what the doorbell kept for letters that left the pass. A letter

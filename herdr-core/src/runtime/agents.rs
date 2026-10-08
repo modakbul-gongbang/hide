@@ -1107,11 +1107,32 @@ impl Runtime {
     /// moved or copied: the full collections stay authoritative for search,
     /// focus, and non-sidebar consumers.
     pub(super) fn refresh_inactive_groups(&mut self) -> bool {
-        crate::project_context::refresh_inactive_groups(
+        let mut changed = crate::project_context::refresh_inactive_groups(
             &mut self.snapshot.navigator,
             &self.snapshot.ui_state,
             unix_milliseconds(),
-        ) | self.refresh_agent_scopes()
+        );
+        for remote in &mut self.snapshot.status.remote {
+            if let Some(session) = &mut remote.session {
+                let agents = session
+                    .agents
+                    .iter()
+                    .map(|row| (row.pane_id.as_str(), row))
+                    .collect();
+                let focused = session.focused_checkout_id.as_deref();
+                for workspace in &mut session.workspaces {
+                    let before = workspace.session_folds.clone();
+                    crate::project_context::refresh_session_folds(
+                        workspace,
+                        &agents,
+                        &self.snapshot.ui_state,
+                        focused,
+                    );
+                    changed |= workspace.session_folds != before;
+                }
+            }
+        }
+        changed | self.refresh_agent_scopes()
     }
 
     /// Drops the conversation choice of every pane that is no longer an
@@ -1862,15 +1883,18 @@ impl Runtime {
     pub(super) fn write_ui_state(&mut self) -> Result<(), String> {
         let Some(context) = self.worker_context.clone() else {
             // Standalone runtimes have no shared mutex or worker context.
-            return persistence::save(
+            let state = self.ui_state_to_save();
+            let result = persistence::save(
                 &self.state_path,
-                &self.ui_state_to_save(),
+                &state,
                 &self
                     .terminal_sizes
                     .iter()
                     .map(|(id, size)| (id.clone(), *size))
                     .collect(),
             );
+            self.acknowledge_session_save(&state, result.is_ok());
+            return result;
         };
         self.state_save_pending = true;
         if self.state_save_active {
@@ -1903,12 +1927,20 @@ impl Runtime {
                     };
                     // The existing save function serializes and writes outside the
                     // runtime mutex. One pending flag coalesces newer UI state.
-                    if let Err(message) = persistence::save(&path, &state, &sizes) {
-                        runtime.lock().unwrap_or_else(|e| e.into_inner()).set_error(
-                            "ui_state.save_failed",
-                            message,
-                            true,
-                        );
+                    let result = persistence::save(&path, &state, &sizes);
+                    let mut guard = runtime.lock().unwrap_or_else(|e| e.into_inner());
+                    let resolving = state.resolved_sessions.iter().any(|(pane, record)| {
+                        guard.pending_session_resolutions.get(pane) == Some(record)
+                    });
+                    let changed = guard.acknowledge_session_save(&state, result.is_ok());
+                    if let Err(message) = result {
+                        if resolving {
+                            guard.push_diagnostic("session.resolve.save_failed", message);
+                        } else {
+                            guard.set_error("ui_state.save_failed", message, true);
+                        }
+                        context.notifier.notify();
+                    } else if changed {
                         context.notifier.notify();
                     }
                 }

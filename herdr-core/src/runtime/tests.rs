@@ -69,6 +69,8 @@ mod recent_panes;
 mod repository_clone;
 #[path = "tests/session_navigation.rs"]
 mod session_navigation;
+#[path = "tests/session_state.rs"]
+mod session_state;
 #[path = "tests/shortcut_import.rs"]
 mod shortcut_import;
 #[path = "tests/snapshot_delta.rs"]
@@ -711,6 +713,7 @@ fn workspace(
         pinned: false,
         is_home: false,
         inactive_checkouts: Default::default(),
+        session_folds: Default::default(),
         removal: Default::default(),
         disk: Default::default(),
         cleanup: None,

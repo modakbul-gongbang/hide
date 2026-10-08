@@ -347,6 +347,10 @@ pub mod phone {
         /// Whether opening the phone keeps this root notification. A read root
         /// question deliberately holds it even when the server clears its push.
         pub holds_notification: bool,
+        /// A delegated row reaches the operator only through core escalation.
+        pub escalated: bool,
+        /// The delivery notice is already responsible for this transition.
+        pub human_notice: bool,
     }
 
     impl PhoneAgent {
@@ -548,6 +552,9 @@ pub mod phone {
     ) {
         let roots = roots(agents);
         for agent in agents {
+            if agent.get("resolved").is_some_and(|value| !value.is_null()) {
+                continue;
+            }
             let pane_id = str_of(agent, "pane_id");
             if pane_id.is_empty() {
                 continue;
@@ -570,6 +577,13 @@ pub mod phone {
                 emphasized: matches!(str_of(agent, "group"), "needs_you" | "done"),
                 holds_notification: matches!(str_of(agent, "group"), "needs_you" | "done")
                     || matches!(str_of(agent, "demand"), "question" | "approval" | "error"),
+                escalated: agent
+                    .get("escalation")
+                    .is_some_and(|value| !value.is_null()),
+                human_notice: agent
+                    .pointer("/escalation/human_notice")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 agent_kind: str_of(agent, "agent_kind").to_owned(),
                 title: title.to_owned(),
                 place: places.get(pane_id).cloned(),

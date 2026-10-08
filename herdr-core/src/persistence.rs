@@ -15,6 +15,14 @@ const UI_STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StoredUiState {
+    #[serde(default)]
+    resolved_sessions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    #[serde(default)]
+    session_resolution_inputs: BTreeMap<String, u64>,
+    #[serde(default)]
+    session_collapsed_checkout_ids: Vec<String>,
+    #[serde(default)]
+    session_open_folds: Vec<String>,
     schema_version: u32,
     #[serde(default = "default_panel_visible")]
     left_sidebar_visible: bool,
@@ -266,6 +274,10 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
     };
     (
         UiStateSnapshot {
+            resolved_sessions: stored.resolved_sessions,
+            session_resolution_inputs: stored.session_resolution_inputs,
+            session_collapsed_checkout_ids: stored.session_collapsed_checkout_ids,
+            session_open_folds: stored.session_open_folds,
             left_sidebar_visible: stored.left_sidebar_visible,
             device_rail_visible: stored.device_rail_visible,
             right_panel_visible: stored.right_panel_visible,
@@ -355,6 +367,10 @@ pub fn save(
     fs::create_dir_all(parent)
         .map_err(|_| "UI state directory could not be prepared".to_owned())?;
     let stored = StoredUiState {
+        resolved_sessions: state.resolved_sessions.clone(),
+        session_resolution_inputs: state.session_resolution_inputs.clone(),
+        session_collapsed_checkout_ids: state.session_collapsed_checkout_ids.clone(),
+        session_open_folds: state.session_open_folds.clone(),
         schema_version: UI_STATE_SCHEMA_VERSION,
         left_sidebar_visible: state.left_sidebar_visible,
         device_rail_visible: state.device_rail_visible,

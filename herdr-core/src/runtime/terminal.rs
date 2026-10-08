@@ -324,6 +324,83 @@ impl Runtime {
         let pane = self.terminal_pane_snapshot(pane_id);
         self.snapshot.terminal.panes.push(pane);
     }
+    pub(super) fn refresh_pane_headers(&mut self) -> bool {
+        let mut headers = BTreeMap::new();
+        let devices = &self.snapshot.navigator.devices;
+        let local = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .map(|workspace| (workspace, None));
+        let remote = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .filter_map(|remote| remote.session.as_ref().map(|session| (remote, session)))
+            .flat_map(|(remote, session)| {
+                session.workspaces.iter().map(move |workspace| {
+                    (
+                        workspace,
+                        (remote.state != "connected").then_some(
+                            devices
+                                .iter()
+                                .find(|device| device.id == remote.target_id)
+                                .map_or(remote.target_id.as_str(), |device| device.label.as_str()),
+                        ),
+                    )
+                })
+            });
+        let agents: HashMap<_, _> = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|remote| remote.session.as_ref())
+                    .flat_map(|session| &session.agents),
+            )
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect();
+        let transports: HashMap<_, _> = self
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .map(|pane| (pane.pane_id.as_str(), pane))
+            .collect();
+        for (workspace, offline) in local.chain(remote) {
+            for pane in workspace
+                .checkouts
+                .iter()
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+            {
+                headers.insert(
+                    pane.id.clone(),
+                    crate::agent_state::header::of(
+                        pane,
+                        agents.get(pane.id.as_str()).copied(),
+                        transports.get(pane.id.as_str()).copied(),
+                        &workspace.id,
+                        offline,
+                    ),
+                );
+            }
+        }
+        if self.snapshot.terminal.headers == headers {
+            false
+        } else {
+            self.snapshot.terminal.headers = headers;
+            true
+        }
+    }
+
     pub(super) fn terminal_pane_snapshot(&self, pane_id: &str) -> TerminalPaneSnapshot {
         let lifecycle = self
             .terminal_session_lifecycles
@@ -372,8 +449,10 @@ impl Runtime {
             pane.scroll_held_elsewhere = self.panes_scroll_held.contains(pane_id);
             pane.grid_held = self.grid_held_panes.contains(pane_id);
         }
+        self.refresh_pane_headers();
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
+        self.refresh_pane_headers();
         let Some(pane_id) = self.snapshot.terminal.pane_id.as_deref() else {
             self.snapshot.terminal.closed = false;
             self.snapshot.terminal.exit_code = None;

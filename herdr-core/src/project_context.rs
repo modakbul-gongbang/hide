@@ -156,7 +156,13 @@ pub(crate) fn refresh_inactive_groups(
     let before_checkouts = navigator
         .workspaces
         .iter()
-        .map(|workspace| (workspace.id.clone(), workspace.inactive_checkouts.clone()))
+        .map(|workspace| {
+            (
+                workspace.id.clone(),
+                workspace.inactive_checkouts.clone(),
+                workspace.session_folds.clone(),
+            )
+        })
         .collect::<Vec<_>>();
     let by_pane: HashMap<_, _> = navigator
         .agents
@@ -177,11 +183,14 @@ pub(crate) fn refresh_inactive_groups(
 
     let mut inactive_projects = Vec::<InactiveProjectGroupSnapshot>::new();
     for workspace in &mut navigator.workspaces {
+        refresh_session_folds(workspace, &by_pane, ui_state, focused_checkout_id);
         let inactive_checkout_ids = workspace
             .checkouts
             .iter()
             .filter(|checkout| {
                 !checkout.is_primary
+                    && !workspace.session_folds.empty.contains(&checkout.id)
+                    && !workspace.session_folds.cleanup.contains(&checkout.id)
                     && checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
             })
             .map(|checkout| checkout.id.clone())
@@ -217,13 +226,63 @@ pub(crate) fn refresh_inactive_groups(
     navigator.inactive_projects = inactive_projects;
 
     navigator.inactive_projects != before_projects
-        || navigator
-            .workspaces
+        || navigator.workspaces.iter().zip(before_checkouts).any(
+            |(workspace, (id, group, session_folds))| {
+                workspace.id != id
+                    || workspace.inactive_checkouts != group
+                    || workspace.session_folds != session_folds
+            },
+        )
+}
+
+pub(crate) fn refresh_session_folds(
+    workspace: &mut WorkspaceSnapshot,
+    agents: &HashMap<&str, &SidebarAgentSnapshot>,
+    ui_state: &UiStateSnapshot,
+    focused_checkout_id: Option<&str>,
+) {
+    let mut folds = crate::model::SessionCheckoutFolds {
+        empty_open: ui_state.session_open_folds.contains(&workspace.id),
+        cleanup_open: ui_state
+            .session_open_folds
+            .contains(&format!("cleanup/{}", workspace.device_id)),
+        ..Default::default()
+    };
+    for checkout in &workspace.checkouts {
+        let subagent = std::path::Path::new(&checkout.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("worktree-agent-"));
+        if !checkout.exists || subagent {
+            folds.cleanup.push(checkout.id.clone());
+            continue;
+        }
+        let live = checkout
+            .tabs
             .iter()
-            .zip(before_checkouts)
-            .any(|(workspace, (id, group))| {
-                workspace.id != id || workspace.inactive_checkouts != group
-            })
+            .flat_map(|tab| &tab.panes)
+            .filter_map(|pane| agents.get(pane.id.as_str()))
+            .any(|agent| agent.resolved.is_none());
+        if checkout.is_worktree
+            && !checkout.is_primary
+            && !live
+            && !checkout.dirty
+            && checkout
+                .unpushed
+                .as_ref()
+                .is_none_or(|value| value.count == 0)
+            && focused_checkout_id != Some(checkout.id.as_str())
+        {
+            folds.empty.push(checkout.id.clone());
+            folds.open_prs += usize::from(
+                checkout
+                    .pull_request
+                    .as_ref()
+                    .is_some_and(|pr| !pr.badge.is_settled()),
+            );
+        }
+    }
+    workspace.session_folds = folds;
 }
 
 pub(crate) fn checkout_panes(
@@ -308,6 +367,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: InactiveCheckoutGroupSnapshot::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,

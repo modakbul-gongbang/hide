@@ -602,6 +602,7 @@ pub(crate) fn apply_registrations(
                 ..CheckoutSnapshot::default()
             }],
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,

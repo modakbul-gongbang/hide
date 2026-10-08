@@ -492,6 +492,7 @@ impl Runtime {
         }
         summaries.projects = projects;
         self.refresh_inactive_groups();
+        self.refresh_agent_scopes();
         true
     }
 

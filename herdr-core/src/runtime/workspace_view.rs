@@ -910,6 +910,9 @@ impl Runtime {
     /// panel the file already held while the panel is a projection.
     pub(super) fn ui_state_to_save(&self) -> UiStateSnapshot {
         let mut state = self.snapshot.ui_state.clone();
+        state
+            .resolved_sessions
+            .extend(self.pending_session_resolutions.clone());
         if let Some(store) = self.workspace_views.as_ref() {
             (state.right_panel_visible, state.right_panel_section) = store.saved_panel;
         }

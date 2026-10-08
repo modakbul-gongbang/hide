@@ -299,6 +299,7 @@ impl Runtime {
     /// own session, a phone reply, or the pane entering work proves the
     /// composer was sent.
     pub(crate) fn note_delivery_key(&mut self, pane_id: &str) {
+        self.reopen_resolved_session(pane_id);
         if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
             observation.last_input_at_unix_ms = unix_milliseconds();
         }
@@ -307,6 +308,7 @@ impl Runtime {
     /// The phone's reply is text hide sent and submitted in one write to an
     /// agent waiting on the operator, so it is a key and a submit.
     pub(crate) fn note_delivery_reply(&mut self, pane_id: &str) {
+        self.reopen_resolved_session(pane_id);
         if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
             let now = unix_milliseconds();
             observation.last_input_at_unix_ms = now;
@@ -321,6 +323,7 @@ impl Runtime {
     /// newer draft is still there, and the turn's own entry to `working`
     /// already covers whatever was typed before it.
     fn note_prompt_submitted(&mut self, pane_id: &str) {
+        self.reopen_resolved_session(pane_id);
         if let Some(observation) = self
             .delivery_observations
             .get_mut(pane_id)
@@ -521,6 +524,24 @@ impl Runtime {
     }
 
     pub(crate) fn publish_delivery(&mut self, ledger: Arc<Ledger>, transitions: bool) -> bool {
+        let delivered: Vec<_> = ledger
+            .letters
+            .iter()
+            .filter(|letter| {
+                letter.state == crate::delivery::ledger::State::Delivered
+                    && self.delivery_ledger.as_ref().ok().is_some_and(|previous| {
+                        previous
+                            .letters
+                            .iter()
+                            .any(|old| old.id == letter.id && old.state != letter.state)
+                    })
+            })
+            .map(|letter| letter.recipient.pane_id.clone())
+            .collect();
+        let mut reopened = false;
+        for pane in delivered {
+            reopened |= self.reopen_resolved_session(&pane);
+        }
         let before = self.delivery_ledger.as_ref().ok().map(|ledger| {
             ledger
                 .watches
@@ -547,7 +568,7 @@ impl Runtime {
         }
         self.delivery_ledger = Ok(ledger);
         self.feed_link_parents();
-        changed
+        changed | reopened | self.sync_session_state() | self.refresh_agent_scopes()
     }
 
     /// The Factory host publishes which Factories exist.
@@ -992,6 +1013,7 @@ pub(crate) mod tests {
                 ..Default::default()
             }],
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,

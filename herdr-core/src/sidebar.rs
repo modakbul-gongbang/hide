@@ -623,6 +623,10 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         state: Default::default(),
+        resolved: None,
+        resolved_today: false,
+        escalation: None,
+        raised_children: Vec::new(),
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))
@@ -671,6 +675,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_session: non_empty(agent.lineage_session.as_deref()).map(str::to_owned),
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
+        direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
         waiting_on_descendants: false,
         descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
@@ -913,6 +918,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,
@@ -1034,6 +1040,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: Default::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,

@@ -3978,7 +3978,8 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
 /// own toggle: a whole-state save, which an older or stale client sends with
 /// whatever it last saw, keeps them.
 #[test]
-fn expanded_checkouts_survive_a_ui_state_update_that_carries_them() {
+// Session-first-ui B7: new checkouts start open; only explicit collapses persist.
+fn session_checkout_folds_survive_legacy_ui_state_updates() {
     let mut runtime = runtime();
     let dispatch = |runtime: &mut Runtime, kind: &str, payload: serde_json::Value| {
         let event = serde_json::to_vec(&serde_json::json!({
@@ -3989,7 +3990,13 @@ fn expanded_checkouts_survive_a_ui_state_update_that_carries_them() {
         .unwrap();
         runtime.dispatch_json(&event)
     };
-    assert!(runtime.snapshot().ui_state.expanded_checkout_ids.is_empty());
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .session_collapsed_checkout_ids
+            .is_empty()
+    );
     assert!(dispatch(
         &mut runtime,
         "checkout_agents_toggle",
@@ -4011,7 +4018,7 @@ fn expanded_checkouts_survive_a_ui_state_update_that_carries_them() {
         serde_json::json!({"checkout_id": "checkout:web"})
     ));
     assert_eq!(
-        runtime.snapshot().ui_state.expanded_checkout_ids,
+        runtime.snapshot().ui_state.session_collapsed_checkout_ids,
         ["checkout:api", "checkout:web"]
     );
 
@@ -4039,7 +4046,7 @@ fn expanded_checkouts_survive_a_ui_state_update_that_carries_them() {
     ));
     let state = &runtime.snapshot().ui_state;
     assert_eq!(
-        state.expanded_checkout_ids,
+        state.session_collapsed_checkout_ids,
         ["checkout:api", "checkout:web"]
     );
     assert!(state.expanded_agent_pane_ids.is_empty());
@@ -4216,14 +4223,20 @@ fn checkout_row_admits_focus_and_disclosure_together_and_rejects_stale_targets()
         snapshot.navigator.focused_checkout_id.as_deref(),
         Some("first")
     );
-    assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first"]);
+    assert_eq!(
+        snapshot.ui_state.session_collapsed_checkout_ids,
+        Vec::<String>::new()
+    );
     activate(&mut runtime, "project", "second", true);
     let snapshot = runtime.snapshot();
     assert_eq!(
         snapshot.navigator.focused_checkout_id.as_deref(),
         Some("second")
     );
-    assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first", "second"]);
+    assert_eq!(
+        snapshot.ui_state.session_collapsed_checkout_ids,
+        Vec::<String>::new()
+    );
     // Repeating an explicit target converges; closing only removes this row.
     activate(&mut runtime, "project", "second", true);
     activate(&mut runtime, "project", "second", false);
@@ -4232,7 +4245,7 @@ fn checkout_row_admits_focus_and_disclosure_together_and_rejects_stale_targets()
         snapshot.navigator.focused_checkout_id.as_deref(),
         Some("second")
     );
-    assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first"]);
+    assert_eq!(snapshot.ui_state.session_collapsed_checkout_ids, ["second"]);
     for (project, checkout, expanded) in [
         ("missing", "first", Some(true)),
         ("project", "missing", Some(true)),
@@ -4253,7 +4266,7 @@ fn checkout_row_admits_focus_and_disclosure_together_and_rejects_stale_targets()
             snapshot.navigator.focused_checkout_id.as_deref(),
             Some("second")
         );
-        assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first"]);
+        assert_eq!(snapshot.ui_state.session_collapsed_checkout_ids, ["second"]);
         assert!(snapshot.status.last_error.is_none());
         assert!(
             snapshot

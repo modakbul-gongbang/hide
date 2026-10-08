@@ -93,6 +93,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let chip_kind = match demand {
         "error" => "error",
         "question" | "approval" => "warning",
+        _ if agent.escalation.is_some() => "warning",
         _ if activity == "working" => "working",
         _ if activity == "stopped" && agent.emphasized => "success",
         _ => "subtle",
@@ -109,7 +110,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     } else {
         chip_tone
     };
-    let line = agent
+    let mut line = agent
         .detail
         .as_deref()
         .map(str::trim)
@@ -138,6 +139,19 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                 },
             }
         });
+    if !asking && let Some(child) = agent.raised_children.first() {
+        line = Some(RowLine {
+            text: child.reason.as_ref().map_or_else(
+                || child.title.clone(),
+                |reason| format!("{} · {reason}", child.title),
+            ),
+            mode: "raised_child",
+            tone: Tone {
+                kind: "warning",
+                read: false,
+            },
+        });
+    }
     let bucket = if needs_you || group == "done" {
         "turn"
     } else if agent.waiting_on_descendants {
@@ -255,7 +269,9 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         verb,
         request_todo,
         descendant_asking: agent.descendant_counts.question + agent.descendant_counts.approval,
-        request_since: if request_todo {
+        request_since: if let Some(escalation) = &agent.escalation {
+            escalation.since_unix_ms
+        } else if request_todo {
             agent
                 .request
                 .as_ref()
@@ -523,6 +539,11 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         ownership_of(agent),
         waiting,
     );
+    let group = if agent.escalation.is_some() {
+        AgentGroup::NeedsYou
+    } else {
+        group
+    };
     agent.group = group.name().to_owned();
     agent.symbol = RowMark::of(agent).symbol().to_owned();
     // A row the operator still has to deal with is drawn bright; everything
@@ -718,7 +739,7 @@ pub mod push {
     fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
         let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
         for agent in projection.agents() {
-            if agent.root_pane_id == agent.pane_id {
+            if agent.root_pane_id == agent.pane_id || agent.escalated {
                 let place = agent
                     .place
                     .as_deref()
@@ -730,25 +751,15 @@ pub mod push {
                     String::new(),
                 ));
                 let raised = entry.0 == Effective::NeedsYou;
-                entry.0 = if raised {
+                entry.0 = if agent.human_notice {
+                    Effective::Other
+                } else if raised {
                     Effective::NeedsYou
                 } else {
                     Effective::from_group(&agent.group)
                 };
                 entry.1 = agent.title.clone();
                 entry.2 = place;
-            }
-        }
-        for agent in projection.agents() {
-            if agent.root_pane_id != agent.pane_id
-                && matches!(agent.demand.as_str(), "question" | "approval" | "error")
-            {
-                let entry = roots.entry(agent.root_key()).or_insert((
-                    Effective::Other,
-                    String::new(),
-                    String::new(),
-                ));
-                entry.0 = Effective::NeedsYou;
             }
         }
         roots

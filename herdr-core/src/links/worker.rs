@@ -922,7 +922,26 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     let mut summaries = BTreeMap::new();
     for project in state.projects.iter() {
         match store.summary(&project.key, &project.worktrees) {
-            Ok(summary) => {
+            Ok(mut summary) => {
+                summary.closed_session_prs = project
+                    .prs
+                    .iter()
+                    .filter(|pr| {
+                        pr.closed_at.is_none()
+                            && pr.merged_at.is_none()
+                            && summary.prs.contains_key(&pr.number)
+                            && !state
+                                .panes
+                                .iter()
+                                .filter(|pane| pane.device_id == project.device_id)
+                                .any(|pane| {
+                                    summary.sessions.get(&pane.session_id).is_some_and(|chips| {
+                                        chips.iter().any(|chip| chip.number == pr.number)
+                                    })
+                                })
+                    })
+                    .filter_map(|pr| u32::try_from(pr.number).ok())
+                    .collect();
                 summaries.insert(project.workspace_id.clone(), summary);
             }
             Err(code) => {

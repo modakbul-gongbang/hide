@@ -238,6 +238,11 @@ pub(super) struct FocusDevicePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct SessionFoldPayload {
+    pub(super) key: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct InactiveCheckoutsTogglePayload {
     pub(super) project_path: String,
 }
@@ -1244,6 +1249,7 @@ pub(super) enum Event {
     RenameTab(RenameTabPayload),
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
+    SessionFoldToggle(SessionFoldPayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
     ProjectCheckoutsFold(ProjectCheckoutsFoldPayload),
     CheckoutAgentsToggle(CheckoutAgentsTogglePayload),
@@ -1272,6 +1278,7 @@ pub(super) enum Event {
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
     PaneInputSent(PaneTargetPayload),
+    ResolveSession(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     PaneReopen(PaneTargetPayload),
@@ -1448,6 +1455,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "rename_tab" => decode!(RenameTabPayload, RenameTab),
         "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
+        "session_fold_toggle" => decode!(SessionFoldPayload, SessionFoldToggle),
         "inactive_checkouts_toggle" => {
             decode!(InactiveCheckoutsTogglePayload, InactiveCheckoutsToggle)
         }
@@ -1485,6 +1493,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
         "pane_input_sent" => decode!(PaneTargetPayload, PaneInputSent),
+        "resolve_session" => decode!(PaneTargetPayload, ResolveSession),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "pane_reopen" => decode!(PaneTargetPayload, PaneReopen),
@@ -1680,6 +1689,10 @@ impl Runtime {
             }
             // A phone key or reply is about to be written to the pane: a draft
             // may grow there, which the doorbell must not type over.
+            Event::ResolveSession(payload) => self.resolve_session(
+                &payload.pane_id,
+                crate::agent_state::sessions::ResolveSource::Operator,
+            ),
             Event::PaneInputSent(payload) => {
                 self.note_delivery_key(&payload.pane_id);
                 false
@@ -2063,9 +2076,9 @@ impl Runtime {
                     );
                 }
                 if let Some(expanded) = payload.expanded {
-                    let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;
+                    let ids = &mut self.snapshot.ui_state.session_collapsed_checkout_ids;
                     ids.retain(|id| id != &payload.checkout_id);
-                    if expanded {
+                    if !expanded {
                         ids.push(payload.checkout_id.clone());
                         ids.sort();
                     }
@@ -2254,13 +2267,25 @@ impl Runtime {
                 true
             }
             Event::CheckoutAgentsToggle(payload) => {
-                let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;
+                let ids = &mut self.snapshot.ui_state.session_collapsed_checkout_ids;
                 if ids.contains(&payload.checkout_id) {
                     ids.retain(|id| id != &payload.checkout_id);
                 } else {
                     ids.push(payload.checkout_id);
                     ids.sort();
                 }
+                self.persist_ui_state();
+                true
+            }
+            Event::SessionFoldToggle(payload) => {
+                let keys = &mut self.snapshot.ui_state.session_open_folds;
+                if keys.contains(&payload.key) {
+                    keys.retain(|key| key != &payload.key);
+                } else {
+                    keys.push(payload.key);
+                    keys.sort();
+                }
+                self.refresh_inactive_groups();
                 self.persist_ui_state();
                 true
             }
@@ -3521,6 +3546,10 @@ impl Runtime {
                         .and_then(RightPanelSection::parse)
                         .unwrap_or(current.right_panel_section),
                     sessions_mode_by_project: current.sessions_mode_by_project,
+                    resolved_sessions: current.resolved_sessions,
+                    session_resolution_inputs: current.session_resolution_inputs,
+                    session_collapsed_checkout_ids: current.session_collapsed_checkout_ids,
+                    session_open_folds: current.session_open_folds,
                     // The secretary belongs to `factory_secretary_set`.
                     factory_secretary_pane: current.factory_secretary_pane,
                     expanded_paths: payload.expanded_paths,
