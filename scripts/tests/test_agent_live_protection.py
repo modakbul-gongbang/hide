@@ -645,17 +645,23 @@ class NativeWriteProtection(unittest.TestCase):
                 path.mkdir(mode=0o700)
             history = home / "sessions"
             history.mkdir()
-            previous = history / "previous.json"
-            previous.write_bytes(b"operator-session")
+            previous = [history / name for name in ("previous.json", "another.json", "third.json")]
+            for path in previous:
+                path.write_bytes(b"operator-session")
             sandbox = WriteSandbox(run, sockets, home, [history])
             with OwnedProcesses() as owner:
                 sandbox.verify(owner, dict(os.environ), outside)
                 # A broad session allowance must never make older sessions
                 # writable. This is the /resume picker protection boundary.
-                program = "from pathlib import Path; Path(%r).write_bytes(b'changed')" % str(previous)
+                program = ("from pathlib import Path\n"
+                           f"for name in {[str(path) for path in previous]!r}:\n"
+                           " try: Path(name).write_bytes(b'changed')\n"
+                           " except PermissionError: pass\n"
+                           " else: raise SystemExit(31)\n")
                 code, _, _ = owner.run(sandbox.command([sys.executable, "-c", program]), env=dict(os.environ), check=False)
-                self.assertNotEqual(code, 0)
-                self.assertEqual(previous.read_bytes(), b"operator-session")
+                self.assertEqual(code, 0)
+                for path in previous:
+                    self.assertEqual(path.read_bytes(), b"operator-session")
                 fresh = history / "new-session.json"
                 program = "from pathlib import Path; Path(%r).write_bytes(b'new-run-session')" % str(fresh)
                 code, _, _ = owner.run(sandbox.command([sys.executable, "-c", program]), env=dict(os.environ), check=False)

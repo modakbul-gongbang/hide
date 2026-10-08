@@ -206,6 +206,7 @@ The excluded-boundary count includes explicitly listed roots inside an excluded 
 An addition or removal is reported only where the opposite inventory observed absence, so partial coverage cannot manufacture a change.
 Metadata changes outside the known file list are named and preserved without failing the run or attempting restoration.
 The native sandbox denies operator configuration writes and modification of preexisting histories.
+Existing history paths share one denial operation with exact literal alternatives, preserving new-history writes without compiling an operation per existing entry.
 Unexpected or concurrent changes to known configuration/trust files are preserved and fail the run; observing a diff never authorizes overwriting the operator.
 Only the test lane's exclusively owned disposable HOME permits attributed restoration.
 

@@ -62,10 +62,12 @@ class WriteSandbox:
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.sockets)})))",
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.run)})))",
                  f"(deny file-read* (subpath {quote(self.state)}))"]
-        for path in existing:
-            # A literal protects the existing inode, including directory mode
-            # and deletion. New child paths still use the session allowance.
-            rules.append(f"(deny file-write* (literal {quote(path)}))")
+        if existing:
+            # Alternatives in one operation preserve the same exact literal
+            # denials without compiling an operation per history entry.
+            # New child paths still use the session allowance.
+            rules.append("(deny file-write* " + " ".join(
+                f"(literal {quote(path)})" for path in existing) + ")")
         # Installed hook executables may live in .hide/kit. They remain
         # readable; only operator routing/credentials are concealed.
         for path in (operator_home / ".hide/state", operator_home / ".hide/hcoord",
