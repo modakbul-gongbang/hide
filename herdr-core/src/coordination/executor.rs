@@ -363,6 +363,7 @@ fn check_target(
     device: &str,
     kind: &str,
     repository: Option<&str>,
+    agent: bool,
 ) -> Result<(), String> {
     use crate::node_access::{LinkError, call_as};
     use hide_node_link::{cleanup::RepositoryDirs, protocol::Call};
@@ -392,6 +393,9 @@ fn check_target(
             Ok(None) => return Err("repository_unavailable".into()),
             Err(error) => return Err(unavailable(error).unwrap_or("repository_unavailable".into())),
         }
+    }
+    if !agent {
+        return Ok(());
     }
     match call_as::<bool>(
         link.as_ref(),
@@ -454,6 +458,13 @@ fn spawn(
         // judgment comes before the parent is registered or the intent
         // reserved, and a retry of an intent that already progressed or
         // completed is judged by what it already did.
+        // Another agent's id is judged before any device is probed, so a
+        // device's answer never reaches a caller with no authority over it.
+        if let Some(explicit) = parent.as_deref().filter(|parent| *parent != super::HERE)
+            && !resolve_actor(&ledger, explicit).is_some_and(|parent| parent.same_identity(actor))
+        {
+            return Err("parent_authority_required".into());
+        }
         let known_parent = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
             super::live_self(&ledger, actor)
                 .next()
@@ -470,13 +481,17 @@ fn spawn(
         if earlier.is_some_and(|record| record.machine != *machine) {
             return Err("intent_conflict".into());
         }
+        let started = earlier.is_some_and(|record| record.pane.is_some());
         if !earlier.is_some_and(|record| record.completed) {
             check_target(
                 client,
                 actor,
                 device,
                 kind,
-                (!earlier.is_some_and(|record| record.pane.is_some())).then_some(repo.as_str()),
+                // A retry whose pane exists needs the device only to be
+                // reachable: the repository and the agent were already used.
+                (!started).then_some(repo.as_str()),
+                !started,
             )?;
         }
     }
@@ -510,7 +525,8 @@ fn spawn(
                 native.pane_id.clone(),
                 actor.name.clone(),
                 None,
-                Some(repo.clone()),
+                // A device's path names no project of the caller's machine.
+                machine.is_none().then(|| repo.clone()),
             )?;
             mutate(
                 client,

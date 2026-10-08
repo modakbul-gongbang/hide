@@ -962,6 +962,9 @@ fn delivery_next_action(code: &str) -> &'static str {
         "agent_not_installed" => {
             "Install the agent CLI on the device so it is on the device's PATH, then run the command again"
         }
+        "intent_conflict" => {
+            "Use a new intent, or repeat the request this intent was first used for"
+        }
         _ => "Check the current agent pane and retry the same intent",
     }
 }
@@ -3276,6 +3279,31 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refusal that lists the devices the caller could have named answers
+    /// with that list; one without a list keeps the static advice.
+    #[test]
+    fn a_device_refusal_names_what_the_caller_can_do() {
+        let reason = "machine_unknown\u{1f}mini, studio".to_owned();
+        let (code, next) = refusal_answer(reason, delivery_next_action("machine_unknown"));
+        assert_eq!(code, "machine_unknown");
+        assert!(next.ends_with("--machine: mini, studio"), "{next}");
+        let (_, none) = refusal_answer(
+            "machine_unknown\u{1f}".to_owned(),
+            delivery_next_action("machine_unknown"),
+        );
+        assert!(none.contains("No other device is connected"), "{none}");
+        for code in [
+            "machine_unavailable",
+            "repository_unavailable",
+            "agent_not_installed",
+            "intent_conflict",
+        ] {
+            let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
+            assert_eq!(reason, code);
+            assert_ne!(next, delivery_next_action("other"), "{code}");
+        }
+    }
 
     /// A caller refused for lacking an agent pane is told where to run the
     /// command; every other delivery refusal keeps the retry advice.

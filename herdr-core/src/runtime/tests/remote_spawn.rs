@@ -57,7 +57,7 @@ fn agent_row(session: bool) -> Value {
 
 /// The device's Herdr: no worktree yet, one created on request, an agent that
 /// exists once it is started.
-fn device_herdr(started: Arc<AtomicBool>) -> FakeHerdr {
+fn device_herdr(started: Arc<AtomicBool>, identified: Arc<AtomicBool>) -> FakeHerdr {
     FakeHerdr::start("remote-spawn", move |method, _| match method {
         "worktree.list" => json!({"type": "worktree_list", "source": {
             "repo_key": "/srv/repo/.git", "repo_name": "repo",
@@ -84,7 +84,7 @@ fn device_herdr(started: Arc<AtomicBool>) -> FakeHerdr {
             json!({"type": "agent_started", "argv": [], "agent": agent_row(false)})
         }
         "agent.list" => json!({"type": "agent_list", "agents": if started.load(Ordering::SeqCst) {
-            vec![agent_row(true)]
+            vec![agent_row(identified.load(Ordering::SeqCst))]
         } else {
             Vec::new()
         }}),
@@ -99,6 +99,8 @@ struct Spawner {
     runtime: Arc<Mutex<Runtime>>,
     actor: Actor,
     node: Arc<Node>,
+    /// Whether the device's agent has reported its native session yet.
+    identified: Arc<AtomicBool>,
     herdr: FakeHerdr,
     path: PathBuf,
     _worker: Worker,
@@ -126,7 +128,8 @@ fn spawner() -> Spawner {
         .unwrap()
         .observe_delivery(crate::node::TEST_NODE, &payload, None, None);
     let started = Arc::new(AtomicBool::new(false));
-    let herdr = device_herdr(started);
+    let identified = Arc::new(AtomicBool::new(true));
+    let herdr = device_herdr(started, identified.clone());
     let node = Arc::new(Node {
         repository: AtomicBool::new(true),
         installed: AtomicBool::new(true),
@@ -225,6 +228,7 @@ fn spawner() -> Spawner {
         runtime,
         actor,
         node,
+        identified,
         herdr,
         path,
         _worker: worker,
@@ -405,4 +409,53 @@ fn the_callers_own_machine_is_no_machine() {
         None,
         "the reservation is the local one"
     );
+}
+
+/// B5: a spawn that stopped after it created the pane resumes on the same
+/// intent, needing only the device's Herdr, and makes nothing twice.
+#[test]
+fn a_spawn_that_stopped_after_its_pane_resumes_without_the_device_checks() {
+    let spawner = spawner();
+    spawner.identified.store(false, Ordering::SeqCst);
+    let error = spawner
+        .spawn(Some("here"), Some(DEVICE), "resume")
+        .expect_err("the agent never reported its session");
+    assert_eq!(error, "native_identity_unavailable");
+    let before = spawner.herdr.methods();
+    assert_eq!(count(&before, "worktree.create"), 1);
+    assert_eq!(count(&before, "agent.start"), 1);
+    // The repository and the agent were used by the first attempt; the retry
+    // does not ask the node about them again.
+    spawner.node.repository.store(false, Ordering::SeqCst);
+    spawner.node.installed.store(false, Ordering::SeqCst);
+    spawner.identified.store(true, Ordering::SeqCst);
+    let answer = spawner
+        .spawn(Some("here"), Some(DEVICE), "resume")
+        .expect("the retry finishes the same spawn");
+    let after = spawner.herdr.methods();
+    assert_eq!(count(&after, "worktree.create"), 1, "{after:?}");
+    assert_eq!(count(&after, "agent.start"), 1, "{after:?}");
+    assert_eq!(spawner.ledger().spawns.len(), 1);
+    assert_eq!(
+        spawner.ledger().spawns[0].child.as_deref(),
+        answer["id"].as_str()
+    );
+}
+
+fn count(methods: &[String], name: &str) -> usize {
+    methods.iter().filter(|method| *method == name).count()
+}
+
+/// Another agent's id as the parent is judged before any device is probed, so
+/// a device's answer never reaches a caller with no authority over it.
+#[test]
+fn an_unowned_parent_is_refused_before_the_device_is_asked() {
+    let spawner = spawner();
+    spawner.node.repository.store(false, Ordering::SeqCst);
+    let error = spawner
+        .spawn(Some("agent-999"), Some("ghost"), "not-mine")
+        .expect_err("refused");
+    assert_eq!(error, "parent_authority_required");
+    assert!(spawner.ledger().spawns.is_empty());
+    assert!(spawner.herdr.methods().is_empty());
 }

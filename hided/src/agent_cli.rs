@@ -164,9 +164,16 @@ pub fn run(env: &Env, command: Delivery) -> Result<(), String> {
             Err(code)
         }
         Err(code) => {
+            // A command that outlasts the wait may still be running; its
+            // intent makes the same command return the same result.
+            let message = if code == "request_timeout" {
+                "The request may still be running; run the same command again to get its result"
+            } else {
+                code.as_str()
+            };
             println!(
                 "{}",
-                serde_json::json!({"ok":false,"error":{"code":code,"message":code}})
+                serde_json::json!({"ok":false,"error":{"code":code,"message":message}})
             );
             Err(code)
         }

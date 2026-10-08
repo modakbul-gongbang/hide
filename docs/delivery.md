@@ -255,6 +255,9 @@ The agent is registered under the device, so the graph shows it under its parent
 Before the intent is reserved or anything is made, the spawn is refused with a stable code and a next action when the id is not a device (`machine_unknown`, naming the connected device ids the caller could have used), the device is not connected or its helper cannot answer (`machine_unavailable`), `--repo` holds no repository there (`repository_unavailable`) or the agent CLI is not on the device's `PATH` (`agent_not_installed`); the checks are the node link's `repository` and `agent_installed` calls, taken off the runtime lock.
 The device is part of the intent: the same intent on another device, or on none, returns `intent_conflict`, and a spawn that already completed answers from its receipt even while the device is away.
 A spawn on a device makes several calls over SSH, so the CLI waits up to 60 seconds for it; one that times out still finishes, and running the same command again returns the same agent (`spawn_busy` while the first still runs).
+The CLI then answers `request_timeout` and says the request may still be running.
+A retry of a spawn that already created its pane needs the device only to be reachable: the repository and agent checks ran in the first attempt and are not repeated.
+A parent other than the caller is refused with `parent_authority_required` before any device is asked.
 The receipt keeps the device as an optional field of the version 1 ledger, absent for every older record.
 The spawn guard is unchanged: a direct `herdr --machine …` start is still the operator's own responsibility.
 The ledger stays at version 1: older records without mode load as delegation, missing origin defaults to null and legacy `no_watch` data is ignored without changing existing watches.
