@@ -155,7 +155,11 @@ fn every_start_dialect_declares_model_and_effort_arguments_and_refuses_unsafe_va
     use hide_agent_adapter::LaunchDialect;
     for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {
         let options = row.start.unwrap().options();
-        assert!(!options.efforts.is_empty(), "{}: no declared effort", row.id);
+        assert!(
+            !options.efforts.is_empty(),
+            "{}: no declared effort",
+            row.id
+        );
         assert_eq!(options.arguments(None, None).unwrap(), Vec::<String>::new());
         assert!(options.arguments(Some("model; rm -rf /"), None).is_err());
         assert!(options.arguments(None, Some("ultra")).is_err());

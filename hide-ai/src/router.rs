@@ -603,8 +603,16 @@ impl AiRouter {
             && let Some(effort) = pick.effort.as_deref()
             && !pick.provider.efforts().contains(&effort)
         {
-            let error = AiError::Unsupported(format!("effort_not_declared:{}:{effort}", pick.provider));
-            self.finish(request, Some(pick.provider), &Err(error.clone()), started, 0, Measured::none());
+            let error =
+                AiError::Unsupported(format!("effort_not_declared:{}:{effort}", pick.provider));
+            self.finish(
+                request,
+                Some(pick.provider),
+                &Err(error.clone()),
+                started,
+                0,
+                Measured::none(),
+            );
             return Err(error);
         }
         let candidates = match &request.pick {

@@ -248,11 +248,7 @@ impl CodexAppServerBackend {
             turn_start["effort"] = json!(effort);
         }
         let turn = session
-            .request_raw(
-                "turn/start",
-                turn_start,
-                CONTROL_TIMEOUT,
-            )
+            .request_raw("turn/start", turn_start, CONTROL_TIMEOUT)
             .map_err(RequestFailure::after_submission)?;
         let turn_id = turn
             .pointer("/turn/id")

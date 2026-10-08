@@ -32,7 +32,9 @@ pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
         can_start: row.start.is_some(),
         can_resume: row.resume.is_some(),
         efforts: row.start.map_or(&[], |start| start.options().efforts),
-        can_pick_model: row.start.is_some_and(|start| !start.options().model.is_empty()),
+        can_pick_model: row
+            .start
+            .is_some_and(|start| !start.options().model.is_empty()),
         sidebar_mark: row.sidebar_mark,
     })
 }

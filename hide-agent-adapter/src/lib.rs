@@ -129,7 +129,11 @@ pub fn valid_model(model: &str) -> bool {
 impl LaunchOptions {
     /// The launch arguments for a model and an effort, refused with the
     /// reason when either is not something this CLI declares.
-    pub fn arguments(self, model: Option<&str>, effort: Option<&str>) -> Result<Vec<String>, String> {
+    pub fn arguments(
+        self,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<Vec<String>, String> {
         let mut arguments = Vec::new();
         if let Some(model) = model {
             if !valid_model(model) {

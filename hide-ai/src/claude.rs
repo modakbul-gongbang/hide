@@ -585,7 +585,10 @@ mod tests {
         let plain = ClaudeCliBackend::print_arguments("opus", None, "sys", &schema());
         assert!(!plain.iter().any(|arg| arg == "--effort"));
         let picked = ClaudeCliBackend::print_arguments("opus", Some("max"), "sys", &schema());
-        assert!(picked.windows(2).any(|pair| pair == ["--effort", "max"]), "{picked:?}");
+        assert!(
+            picked.windows(2).any(|pair| pair == ["--effort", "max"]),
+            "{picked:?}"
+        );
     }
 
     fn frame(extra: Value) -> Value {
