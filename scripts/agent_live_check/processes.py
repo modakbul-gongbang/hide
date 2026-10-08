@@ -176,15 +176,26 @@ class OwnedProcesses:
         self.deadline = time.monotonic() + RUN_SECONDS
 
     def spawn(self, argv, *, env, cwd=None, stdin=subprocess.DEVNULL,
-              stdout=subprocess.PIPE, stderr=subprocess.PIPE, _guarded=True):
+              stdout=subprocess.PIPE, stderr=subprocess.PIPE, _guarded=True, deadline=None):
+        launch_deadline = min(self.deadline, self.deadline if deadline is None else deadline)
+
+        def admit():
+            now = time.monotonic()
+            if self.cancelled.is_set() or now >= self.deadline:
+                raise ProcessError("run_cancelled_or_timed_out")
+            if now >= launch_deadline:
+                raise ProcessError("command_timeout")
+
+        admit()
         for child in list(self.children):
             if child.poll() is not None:
                 self.end(child)
+                admit()
         if len(self.children) >= MAX_CHILDREN:
             raise ProcessError("child_count_over_budget")
-        if self.cancelled.is_set() or time.monotonic() >= self.deadline:
-            raise ProcessError("run_cancelled_or_timed_out")
+        admit()
         reader = writer = None
+        diagnostic = ""
         command = argv
         if _guarded:
             if self.family is None:
@@ -200,7 +211,6 @@ class OwnedProcesses:
                     descriptor = os.open(directory / self.family, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                     os.close(descriptor)
             reader, writer = os.pipe()
-            diagnostic = ""
             if self.diagnostics is not None:
                 if self.sequence >= MAX_COMMANDS:
                     os.close(reader)
@@ -209,15 +219,18 @@ class OwnedProcesses:
                 self.sequence += 1
                 diagnostic = str(self.diagnostics / (str(self.sequence) + ".json"))
             command = [sys.executable, str(Path(__file__).resolve()),
-                       "--guard", str(reader), diagnostic, self.family, "--", *map(str, argv)]
+                       "--guard", str(reader), diagnostic, self.family, str(launch_deadline), "--", *map(str, argv)]
         try:
             # The only raw spawn. Only the guardian uses the unguarded branch.
             launch_env = {key: value for key, value in env.items() if key != "HIDE_LIVE_CHECK_OWNER"} if _guarded else env
+            admit()
             child = subprocess.Popen(command, env=launch_env, cwd=cwd, stdin=stdin,
                                      stdout=stdout, stderr=stderr,
                                      start_new_session=True,
                                      pass_fds=(() if reader is None else (reader,)))
         except BaseException:
+            if diagnostic:
+                self.sequence -= 1
             if writer is not None:
                 os.close(writer)
             raise
@@ -230,9 +243,9 @@ class OwnedProcesses:
         return child
 
     def run(self, argv, *, env, cwd=None, seconds=COMMAND_SECONDS, check=True):
-        child = self.spawn(argv, env=env, cwd=cwd)
+        end = min(self.deadline, time.monotonic() + min(COMMAND_SECONDS, seconds))
+        child = self.spawn(argv, env=env, cwd=cwd, deadline=end)
         output = [bytearray(), bytearray()]
-        end = min(self.deadline, time.monotonic() + seconds)
         try:
             with selectors.DefaultSelector() as selector:
                 for index, stream in enumerate((child.stdout, child.stderr)):
@@ -394,7 +407,8 @@ def group_exists(group):
         return False
 
 
-def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") -> int:
+def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
+          launch_deadline: float | None = None) -> int:
     cancelled = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, lambda *_: cancelled.set())
@@ -421,6 +435,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
     unattributed = {}
     omitted = False
     failed = False
+    launch_timed_out = False
     confirmed = False
     root_exited = False
     rss_samples = RssSamples()
@@ -536,7 +551,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
 
     try:
         child = owner.spawn(argv, env={**os.environ, "HIDE_LIVE_CHECK_OWNER": marker},
-                            stdin=None, stdout=None, stderr=None, _guarded=False)
+                            stdin=None, stdout=None, stderr=None, _guarded=False, deadline=launch_deadline)
         group = child.pid
         if group <= 1 or group == os.getpgrp() or os.getpgid(child.pid) != group:
             raise ProcessError("owned_group_unconfirmed")
@@ -559,8 +574,15 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                 raise ProcessError("guardian_run_timeout")
             cancelled.wait(POLL_SECONDS)
     except BaseException as error:
-        sys.stderr.write("guardian_failure:" + type(error).__name__ + ":" + str(error) + "\n")
-        failed = True
+        if (child is None and launch_deadline is not None and time.monotonic() >= launch_deadline
+                and isinstance(error, ProcessError) and str(error) in ("command_timeout", "run_cancelled_or_timed_out")):
+            # Nothing launched; this is the controller's expired operation,
+            # not a failed resource guardian. The empty cleanup is receipted.
+            launch_timed_out = True
+            sys.stderr.write("guardian_launch_timeout\n")
+        else:
+            sys.stderr.write("guardian_failure:" + type(error).__name__ + ":" + str(error) + "\n")
+            failed = True
     finally:
         try:
             if child is not None:
@@ -654,20 +676,21 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
             try:
                 with open(diagnostic, "x", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:
                     json.dump({"confirmed": confirmed, "unattributed": list(unattributed.values()),
+                               "launch_timed_out": launch_timed_out,
                                "rss_samples": rss_samples.summary(),
                                "unattributed_limit": MAX_DESCENDANTS,
                                "additional_records_omitted": omitted}, stream)
             except BaseException as error:
                 failed = True
                 sys.stderr.write("guardian_cleanup_failure:diagnostic_write:" + type(error).__name__ + "\n")
-    return 125 if failed or not confirmed else (child.returncode if child is not None else 125)
+    return 125 if failed or not confirmed else 124 if launch_timed_out else (child.returncode if child is not None else 125)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 7 or sys.argv[1] != "--guard" or sys.argv[5] != "--":
+    if len(sys.argv) < 8 or sys.argv[1] != "--guard" or sys.argv[6] != "--":
         raise SystemExit(2)
     try:
-        code = guard(int(sys.argv[2]), sys.argv[6:], sys.argv[3], sys.argv[4])
+        code = guard(int(sys.argv[2]), sys.argv[7:], sys.argv[3], sys.argv[4], float(sys.argv[5]))
     except BaseException as error:
         sys.stderr.write("guardian_failure:" + type(error).__name__ + "\n")
         code = 125

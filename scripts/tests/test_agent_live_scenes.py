@@ -75,6 +75,52 @@ class ScenePreparation(unittest.TestCase):
                 self.assertEqual(json.loads(evidence.read_text())["outcome"], "unknown")
                 self.assertEqual(counts[operation], ordinal, "no transport call may start after expiration")
                 self.assertTrue(budgets)
+                if operation == "screen" and ordinal == 1:
+                    first = json.loads(evidence.read_text())["samples"][0]
+                    self.assertIn("❯ No, exit", first["screen"])
+                    self.assertIsNone(first["agent"])
+
+    def test_large_preparation_window_keeps_each_transport_at_fifteen_seconds(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve()
+            runtime, recipe, cwd, _, _, _, _ = self.trust_fixture(root)
+            runtime.owner.deadline = 500
+            budgets = []
+            def transport(original):
+                def call(*args, seconds):
+                    budgets.append(seconds)
+                    return original(*args)
+                return call
+            for kind in ("screen", "agent", "command"):
+                setattr(runtime, kind, transport(getattr(runtime, kind)))
+            with patch("agent_live_check.setup.time.monotonic", lambda: 100):
+                self.assertTrue(prepare_startup(runtime, "owned", recipe, "rest", cwd,
+                                                "owned-workspace", 120, root / "prep.json"))
+            self.assertTrue(budgets)
+            self.assertTrue(all(value == 15 for value in budgets))
+
+    def test_received_screen_survives_a_failed_following_identity_query(self):
+        for ordinal, phase in ((1, "before"), (2, "selected")):
+            with self.subTest(ordinal=ordinal), tempfile.TemporaryDirectory() as name:
+                root = Path(name).resolve()
+                runtime, recipe, cwd, _, commands, screens, _ = self.trust_fixture(root)
+                original, queries = runtime.agent, []
+                def agent(*args, **kwargs):
+                    queries.append(args)
+                    if len(queries) == ordinal:
+                        raise ProcessError("fixture_identity_query_failed")
+                    return original(*args, **kwargs)
+                runtime.agent = agent
+                evidence = root / "preparation.json"
+                with self.assertRaisesRegex(ProcessError, "fixture_identity_query_failed"):
+                    prepare_startup(runtime, "owned", recipe, "rest", cwd, "owned-workspace", 1, evidence)
+                record = json.loads(evidence.read_text())
+                sample = next(row for row in record["samples"] if row["phase"] == phase)
+                self.assertEqual(sample["screen"], screens[ordinal - 1])
+                self.assertIsNone(sample["agent"])
+                self.assertEqual([row[-1] for row in commands], [] if ordinal == 1 else ["down"])
+                self.assertEqual(record["outcome"], "unknown")
+                self.assertEqual(len(queries), ordinal)
 
     def test_nonstartup_trust_preparation_confirms_each_owned_selection_before_ready(self):
         with tempfile.TemporaryDirectory() as name:

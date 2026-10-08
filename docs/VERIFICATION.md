@@ -151,6 +151,9 @@ For other scenes, an observed recipe may prepare the owned folder by selecting i
 Each key requires fresh matching pane, workspace, cwd, agent kind and selection evidence; an unknown option, changed identity, login prompt or missing ready composer prevents the scene from proceeding.
 Preparation has one scene deadline, two key attempts at most and at most four retained frames, saved separately from bell observations.
 The deadline starts before its first screen read; every screen query, identity query and key command receives only the remaining time, and late responses cannot authorize another key or readiness.
+Each command retains the 15-second cap and the same absolute launch deadline through receipt checks, registry setup and the guardian's child admission.
+Required teardown may finish after that deadline, but never renews permission to start another command.
+An actual received screen is retained immediately, even when its following deadline or identity check fails; unavailable identity remains null and never authorizes input.
 This does not grant writes to shared operator trust files; any resulting private probe key follows the shared-file observer and leftover policy below.
 
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.

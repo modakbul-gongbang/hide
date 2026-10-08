@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.process_table import (BsdInfo, Process, ProcessTable, descendants, marked_descendants,
                                            procargs_owned, require_complete, snapshot, validate_linux_procfs)
-from agent_live_check.processes import (OwnedProcesses, ProcessError, ProcessSafetyError, RssSamples,
+from agent_live_check.processes import (OwnedProcesses, ProcessError, ProcessSafetyError, RssSamples, guard,
                                        control_plane, linux_children_remain, signal_reserved_group)
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
@@ -439,6 +439,64 @@ raise SystemExit('FIFO was accepted as configuration')
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_expired_prelaunch_work_never_starts_a_child_or_owes_a_receipt(self):
+        for phase, seconds, delay in (("receipt", .1, 2), ("environment", .1, 2), ("environment", 120, 16)):
+            with self.subTest(phase=phase, seconds=seconds), tempfile.TemporaryDirectory() as name:
+                clock = [100.0]
+                owner = OwnedProcesses(diagnostics=Path(name) / "diagnostics")
+                owner.deadline = 500
+                owner.family = "f" * 64  # No registry mutation in this admission fixture.
+                if phase == "receipt":
+                    old = Mock()
+                    old.poll.return_value = 0
+                    owner.children[old] = None
+                    def retire(child):
+                        owner.children.pop(child)
+                        clock[0] += delay
+                    owner.end = retire
+                class SlowEnvironment(dict):
+                    def items(self):
+                        if phase == "environment":
+                            clock[0] += delay
+                        return super().items()
+                with patch("agent_live_check.processes.time.monotonic", lambda: clock[0]), \
+                        patch("agent_live_check.processes.os.pipe", wraps=os.pipe) as pipe, \
+                        patch("agent_live_check.processes.os.close", wraps=os.close) as close, \
+                        patch("agent_live_check.processes.subprocess.Popen") as launch:
+                    with self.assertRaisesRegex(ProcessError, "command_timeout"):
+                        owner.run(["fixture-no-execution"], env=SlowEnvironment(), seconds=seconds)
+                    launch.assert_not_called()
+                    self.assertEqual(close.call_count, 2 * pipe.call_count)
+                self.assertEqual(owner.children, {})
+                self.assertEqual(owner.sequence, 0)
+                self.assertEqual(list(owner.diagnostics.iterdir()), [])
+
+    def test_guardian_refuses_expired_actual_child_admission_with_empty_cleanup_receipt(self):
+        with tempfile.TemporaryDirectory() as name:
+            diagnostic = Path(name) / "receipt.json"
+            clock = [100.0]
+            table = ProcessTable()
+            table[123] = Process(123, 0, 123, 1, 0, False, os.getuid())
+            def initial():
+                clock[0] += 2
+                return table
+            with patch("agent_live_check.processes.time.monotonic", lambda: clock[0]), \
+                    patch("agent_live_check.processes.snapshot", initial), \
+                    patch("agent_live_check.processes.os.getpid", return_value=123), \
+                    patch("agent_live_check.processes.signal.signal"), \
+                    patch("agent_live_check.processes.threading.Thread.start"), \
+                    patch("agent_live_check.processes.ctypes.CDLL") as libc, \
+                    patch("agent_live_check.processes.issued_family", return_value=True), \
+                    patch("agent_live_check.processes.subprocess.Popen") as launch, \
+                    patch("sys.stderr", io.StringIO()) as output:
+                libc.return_value.prctl.return_value = 0
+                self.assertEqual(guard(-1, ["fixture-never-executed"], str(diagnostic), "f" * 64, 100.1), 124)
+                launch.assert_not_called()
+                self.assertIn("guardian_launch_timeout", output.getvalue())
+            receipt = json.loads(diagnostic.read_text())
+            self.assertTrue(receipt["confirmed"])
+            self.assertTrue(receipt["launch_timed_out"])
+
     def test_unavailable_receipts_preserve_known_rss_counts_without_inventing_totals(self):
         # A cleanup receipt failure must not erase a known controller count or
         # turn an unavailable guardian total into zero (letter 2709, B8/B12).
