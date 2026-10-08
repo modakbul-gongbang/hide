@@ -134,10 +134,17 @@ fn subagent_poll_fixture() -> (tempfile::TempDir, PathBuf, LabelTranscriptReques
 }
 
 fn sized_tool_record(number: u64, bytes: usize) -> String {
+    sized_tool_result_record(number, bytes, Some("t"))
+}
+
+fn sized_tool_result_record(number: u64, bytes: usize, tool_use_id: Option<&str>) -> String {
     let mut record = serde_json::json!({"type":"user","sessionId":"budget-session",
         "timestamp":"2026-10-03T01:00:01Z","message":{"role":"user",
-        "content":[{"type":"tool_result","tool_use_id":"t",
+        "content":[{"type":"tool_result",
         "content":format!("https://github.com/acme/app/pull/{number}")}]}});
+    if let Some(id) = tool_use_id {
+        record["message"]["content"][0]["tool_use_id"] = id.into();
+    }
     let padding = bytes.checked_sub(record.to_string().len() + 1).unwrap();
     let text = record["message"]["content"][0]["content"]
         .as_str()
@@ -226,7 +233,10 @@ fn claude_subagent_poll_resumes_an_oversized_tool_discard_across_its_budget() {
     write_poll_subagent(
         &folder,
         3,
-        &(sized_tool_record(300, 900 * 1024) + &sized_tool_record(301, 1024)),
+        // This byte-budget test discards only an uncorrelated result.
+        // A correlated native result may answer a question and must refuse
+        // at the line cap instead of authorizing a silent discard.
+        &(sized_tool_result_record(300, 900 * 1024, None) + &sized_tool_record(301, 1024)),
     );
     let first = read(home.path(), &request).unwrap();
     assert_eq!(first.subagents["agent-3.jsonl"].offset(), 648 * 1024);
