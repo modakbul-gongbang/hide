@@ -136,6 +136,7 @@ class OwnedProcesses:
         self.family = None
         self.sequence = 0
         self.rss_samples = RssSamples()
+        self.guardian_rss_samples = None
         if diagnostics is not None:
             diagnostics.mkdir(mode=0o700)
         self.cancelled = cancelled or threading.Event()
@@ -286,7 +287,17 @@ class OwnedProcesses:
         if failures:
             raise ProcessError("cleanup_unconfirmed: " + ",".join(failures))
 
+    def rss_report(self):
+        controller, guardians = self.rss_samples.summary(), self.guardian_rss_samples
+        return {"controller": controller, "guardians": guardians,
+                "missed": None if guardians is None else controller["missed"] + guardians["missed"],
+                "max_consecutive_misses": None if guardians is None else max(
+                    controller["max_consecutive_misses"], guardians["max_consecutive_misses"]),
+                "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT}
+
     def attribution_report(self):
+        # A failed reread cannot reuse earlier complete guardian accounting.
+        self.guardian_rss_samples = None
         records = {}
         omitted = False
         rss_missed, rss_max_consecutive = 0, 0
@@ -299,9 +310,15 @@ class OwnedProcesses:
                 if len(data) > MAX_OUTPUT:
                     raise ProcessError("process_diagnostic_over_budget")
                 record = json.loads(data)
-                if record.get("confirmed") is not True:
+                if not isinstance(record, dict) or record.get("confirmed") is not True:
                     raise ProcessError("guardian_cleanup_receipt_unconfirmed")
-                samples = record["rss_samples"]
+                samples = record.get("rss_samples")
+                if (not isinstance(samples, dict) or any(type(samples.get(key)) is not int
+                        for key in ("missed", "max_consecutive_misses", "consecutive_miss_limit"))
+                        or samples["consecutive_miss_limit"] != RSS_CONSECUTIVE_MISS_LIMIT
+                        or not 0 <= samples["max_consecutive_misses"] <= RSS_CONSECUTIVE_MISS_LIMIT
+                        or samples["missed"] < samples["max_consecutive_misses"]):
+                    raise ProcessError("guardian_rss_receipt_invalid")
                 rss_missed += samples["missed"]
                 rss_max_consecutive = max(rss_max_consecutive, samples["max_consecutive_misses"])
                 omitted |= record["additional_records_omitted"]
@@ -313,15 +330,11 @@ class OwnedProcesses:
                         records[key] = item
             if count != self.sequence:
                 raise ProcessError("guardian_cleanup_receipt_missing")
-        controller = self.rss_samples.summary()
-        guardians = {"missed": rss_missed, "max_consecutive_misses": rss_max_consecutive,
-                     "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT}
+            self.guardian_rss_samples = {"missed": rss_missed, "max_consecutive_misses": rss_max_consecutive,
+                                        "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT}
         return {"status": "출처 확인 못 함", "processes": list(records.values()),
                 "limit": MAX_DESCENDANTS, "additional_records_omitted": omitted,
-                "rss_samples": {"missed": controller["missed"] + rss_missed,
-                                "max_consecutive_misses": max(controller["max_consecutive_misses"], rss_max_consecutive),
-                                "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT,
-                                "controller": controller, "guardians": guardians},
+                "rss_samples": self.rss_report(),
                 "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}
 
     def __enter__(self):

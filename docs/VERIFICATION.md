@@ -170,6 +170,7 @@ Three consecutive missed samples of that same live identity fail; a successful r
 Available samples still enforce the unchanged RSS cap immediately, and an incomplete sum is explicitly marked as such in the resource summary.
 Guardian receipts and the final report record total missed samples, the largest consecutive streak and its fixed limit of three.
 The final report separates controller and guardian observations and also totals them, including the last failed observation when resource sampling raises.
+If receipt validation fails, cleanup still fails and the resource report retains known controller counters while marking guardian and combined totals unavailable.
 A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
 A different live guardian's marker belongs to concurrent work and is excluded.
 Private issued marker families are retained under `agents/runs/process-owner-families/` so a fabricated scope prefix cannot claim a previous run.

@@ -260,6 +260,7 @@ def main(argv=None):
         except (OSError, ValueError, ProcessError) as error:
             report["cleanup"]["confirmed"] = False
             report["failures"].append({"type": type(error).__name__, "reason": str(error)})
+        report["resources"]["rss_samples"] = owner.rss_report()
         if guard:
             attribution_failures = []
             try:

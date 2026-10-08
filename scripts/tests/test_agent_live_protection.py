@@ -435,6 +435,43 @@ raise SystemExit('FIFO was accepted as configuration')
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_unavailable_receipts_preserve_known_rss_counts_without_inventing_totals(self):
+        # A cleanup receipt failure must not erase a known controller count or
+        # turn an unavailable guardian total into zero (letter 2709, B8/B12).
+        for state in ("missing", "unconfirmed", "corrupt", "invalid_samples"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as name:
+                run = Path(name)
+                owner = OwnedProcesses(diagnostics=run / "diagnostics")
+                subject = Process(123, 2, 123, 10, -1, False, os.getuid())
+                for _ in range(2):
+                    owner.rss_samples.measure({123: subject})
+                receipt = run / "diagnostics/1.json"
+                valid = {"confirmed": True, "unattributed": [], "additional_records_omitted": False,
+                         "rss_samples": {"missed": 0, "max_consecutive_misses": 0, "consecutive_miss_limit": 3}}
+                receipt.write_text(json.dumps(valid))
+                owner.sequence = 1
+                owner.attribution_report()  # A prior complete result must not mask a later failure.
+                if state == "missing":
+                    receipt.unlink()
+                elif state == "corrupt":
+                    receipt.write_text("{")
+                elif state == "unconfirmed":
+                    receipt.write_text(json.dumps({**valid, "confirmed": False}))
+                else:
+                    receipt.write_text(json.dumps({**valid, "rss_samples": {}}))
+                with self.assertRaises((ProcessError, ValueError)):
+                    owner.attribution_report()
+                report = {"herdr": {}, "agents": [], "configuration": {}, "failures": [],
+                          "cleanup": {"confirmed": False}, "resources": {"rss_samples": owner.rss_report()}}
+                self.assertEqual(save(run, report), 2)
+                samples = json.loads((run / "report.json").read_text())["resources"]["rss_samples"]
+                self.assertEqual(samples["controller"]["missed"], 2)
+                self.assertEqual(samples["controller"]["max_consecutive_misses"], 2)
+                self.assertIsNone(samples["guardians"])
+                self.assertIsNone(samples["missed"])
+                self.assertIsNone(samples["max_consecutive_misses"])
+                self.assertIn('"guardians": null', (run / "report.md").read_text())
+
     def test_final_report_retains_controller_and_guardian_rss_misses_after_failure(self):
         # Letter 2709 requires all missed observations in the final report,
         # including the controller's failed sample, independently of cleanup.
