@@ -3,7 +3,8 @@
 // The bridge carries the app menu's commands in, the operator's macOS pane
 // chords out, so the menu shows and answers the chords the page runs, the
 // host's OS, a file or folder to show in the OS file manager, the paths a terminal link names and handing one
-// to macOS, and places the pages of browser displays (issue 155); the shell
+// to macOS, places the pages of browser displays (issue 155), and shows the
+// Factory's notifications with their clicks back; the shell
 // never reaches the host any other way (desktop PRD B11).
 
 import { revealLabel, type RevealHost } from "./revealExternal";
@@ -103,6 +104,10 @@ export type HostBridge = {
   probePaths(paths: string[]): Promise<ProbedPath[]>;
   /** Hands an absolute path, in the wire spelling, to the system: its default application, a folder window, or a file manager reveal when opening would run it. */
   openPath(path: string): void;
+  /** Shows a macOS notification about one Factory item while the app runs (PRD factory-observer D-50). */
+  notify(id: string, title: string, body: string): void;
+  /** Delivers the id of a notification the operator clicked; returns the unsubscribe. */
+  onNotificationOpen(listener: (id: string) => void): () => void;
   browser: BrowserBridge;
 };
 
