@@ -67,6 +67,16 @@ def wrapper(runtime, recipe, executable, sandbox):
     return target
 
 
+def record_process_diagnostics(owner, report):
+    """Receipt failures fail cleanup but preserve known resource accounting."""
+    try:
+        report["cleanup"]["attribution"] = owner.attribution_report()
+    except (OSError, ValueError, ProcessError) as error:
+        report["cleanup"]["confirmed"] = False
+        report["failures"].append({"type": type(error).__name__, "reason": str(error)})
+    report["resources"]["rss_samples"] = owner.rss_report()
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     checkout = Path(__file__).resolve().parents[2]
@@ -255,12 +265,7 @@ def main(argv=None):
                 owner.close()
             except Exception as cleanup_error:
                 report["cleanup"]["failures"].append(str(cleanup_error))
-        try:
-            report["cleanup"]["attribution"] = owner.attribution_report()
-        except (OSError, ValueError, ProcessError) as error:
-            report["cleanup"]["confirmed"] = False
-            report["failures"].append({"type": type(error).__name__, "reason": str(error)})
-        report["resources"]["rss_samples"] = owner.rss_report()
+        record_process_diagnostics(owner, report)
         if guard:
             attribution_failures = []
             try:

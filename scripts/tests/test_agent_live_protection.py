@@ -25,6 +25,7 @@ from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, val
 from agent_live_check.sandbox import WriteSandbox
 from agent_live_check.runtime import Runtime
 from agent_live_check.report import save
+from agent_live_check.cli import record_process_diagnostics
 
 
 def procargs(*environment, argv=(b"fixture",), pointer_width=8):
@@ -438,7 +439,8 @@ class ProcessProtection(unittest.TestCase):
     def test_unavailable_receipts_preserve_known_rss_counts_without_inventing_totals(self):
         # A cleanup receipt failure must not erase a known controller count or
         # turn an unavailable guardian total into zero (letter 2709, B8/B12).
-        for state in ("missing", "unconfirmed", "corrupt", "invalid_samples"):
+        for state in ("missing", "unconfirmed", "corrupt", "invalid_samples", "missing_omitted",
+                      "missing_unattributed", "invalid_unattributed", "invalid_identity"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as name:
                 run = Path(name)
                 owner = OwnedProcesses(diagnostics=run / "diagnostics")
@@ -457,12 +459,20 @@ class ProcessProtection(unittest.TestCase):
                     receipt.write_text("{")
                 elif state == "unconfirmed":
                     receipt.write_text(json.dumps({**valid, "confirmed": False}))
-                else:
+                elif state == "invalid_samples":
                     receipt.write_text(json.dumps({**valid, "rss_samples": {}}))
-                with self.assertRaises((ProcessError, ValueError)):
-                    owner.attribution_report()
+                else:
+                    broken = dict(valid)
+                    if state.startswith("missing_"):
+                        del broken["additional_records_omitted" if state == "missing_omitted" else "unattributed"]
+                    else:
+                        broken["unattributed"] = None if state == "invalid_unattributed" else [{"pid": 1}]
+                    receipt.write_text(json.dumps(broken))
                 report = {"herdr": {}, "agents": [], "configuration": {}, "failures": [],
-                          "cleanup": {"confirmed": False}, "resources": {"rss_samples": owner.rss_report()}}
+                          "cleanup": {"confirmed": True}, "resources": {}}
+                record_process_diagnostics(owner, report)
+                self.assertFalse(report["cleanup"]["confirmed"])
+                self.assertEqual(len(report["failures"]), 1)
                 self.assertEqual(save(run, report), 2)
                 samples = json.loads((run / "report.json").read_text())["resources"]["rss_samples"]
                 self.assertEqual(samples["controller"]["missed"], 2)

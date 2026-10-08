@@ -312,6 +312,15 @@ class OwnedProcesses:
                 record = json.loads(data)
                 if not isinstance(record, dict) or record.get("confirmed") is not True:
                     raise ProcessError("guardian_cleanup_receipt_unconfirmed")
+                entries = record.get("unattributed")
+                if (type(record.get("additional_records_omitted")) is not bool
+                        or not isinstance(entries, list) or len(entries) > MAX_DESCENDANTS
+                        or any(not isinstance(item, dict)
+                               or type(item.get("pid")) is not int or item["pid"] <= 0
+                               or type(item.get("birth")) is not int or item["birth"] < 0
+                               or not isinstance(item.get("executable"), str) or len(item["executable"]) > 32
+                               for item in entries)):
+                    raise ProcessError("guardian_cleanup_receipt_invalid")
                 samples = record.get("rss_samples")
                 if (not isinstance(samples, dict) or any(type(samples.get(key)) is not int
                         for key in ("missed", "max_consecutive_misses", "consecutive_miss_limit"))
