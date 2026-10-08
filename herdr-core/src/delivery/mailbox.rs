@@ -1738,30 +1738,54 @@ mod tests {
     }
 
     #[test]
-    fn a_request_not_yet_taken_in_stays_open_for_intake_after_its_party_ends() {
+    fn only_the_exact_pane_device_and_session_that_ended_closes_a_wait() {
+        let (a, b) = (actor("a"), actor("b"));
+        let mut ledger = Ledger::default();
+        awaiting_reply(&mut ledger, &a, &b, "ask", 1);
+        let restarted_session = Actor {
+            session: Some("another-session".into()),
+            ..b.clone()
+        };
+        let other_device = Actor {
+            device_id: "another-device".into(),
+            ..b.clone()
+        };
+        let other_pane = Actor {
+            pane_id: "another-pane".into(),
+            ..b.clone()
+        };
+        let renamed_only = Actor {
+            name: "b".into(),
+            pane_id: "elsewhere".into(),
+            ..b.clone()
+        };
+        for stranger in [
+            &restarted_session,
+            &other_device,
+            &other_pane,
+            &renamed_only,
+        ] {
+            assert!(!ledger.end_answer_waits_of(stranger, 5), "{stranger:?}");
+        }
+        assert!(ledger.letters[0].waiting_answer);
+        assert!(ledger.end_answer_waits_of(&b, 5));
+    }
+
+    #[test]
+    fn a_request_not_yet_taken_in_is_left_to_the_delivery_deadline_when_its_party_ends() {
         let (a, b) = (actor("a"), actor("b"));
         let mut ledger = Ledger::default();
         let letter = send(&mut ledger, &a, &b, "ask", "body", "request", None, 1).unwrap();
-        assert!(ledger.end_answer_waits_of(&a, 5));
+        assert!(!ledger.end_answer_waits_of(&a, 5));
+        assert!(!ledger.end_answer_waits_of(&b, 5));
         let pending = letter_of(&ledger, &letter.id);
-        assert!(!pending.waiting_answer && pending.open());
-        assert!(pending.finished_at_unix_ms.is_none());
+        assert!(pending.waiting_answer && pending.answer_wait_ended.is_none());
+        // Never collected, it ends as undelivered, as before this rule.
+        assert!(ledger.expire(1 + super::super::DELIVERY_EXPIRY_MS));
+        let undelivered = letter_of(&ledger, &letter.id);
+        assert_eq!(undelivered.state, State::Undelivered);
+        assert!(!undelivered.open() && undelivered.answer_wait_ended.is_none());
         ledger.validate().unwrap();
-        // Intake finishes it; no answer is awaited any more.
-        apply(
-            &mut ledger,
-            &b,
-            None,
-            &Command::Confirm {
-                ids: vec![letter.id.clone()],
-            },
-            6,
-        )
-        .unwrap();
-        let taken = letter_of(&ledger, &letter.id);
-        assert!(!taken.open());
-        assert_eq!(taken.finished_at_unix_ms, Some(6));
-        assert_eq!(taken.answer_wait_ended, Some(AnswerWaitEnd::PartyEnded));
     }
 
     #[test]

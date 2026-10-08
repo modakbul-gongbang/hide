@@ -1489,7 +1489,18 @@ mod tests {
         );
         let mut before = Ledger::default();
         for intent in ["one", "two"] {
-            mailbox::send(&mut before, &a, &b, intent, "body", "request", None, 1).unwrap();
+            let letter =
+                mailbox::send(&mut before, &a, &b, intent, "body", "request", None, 1).unwrap();
+            mailbox::apply(
+                &mut before,
+                &b,
+                None,
+                &Command::Confirm {
+                    ids: vec![letter.id],
+                },
+                1,
+            )
+            .unwrap();
         }
         let mut after = before.clone();
         after.end_answer_waits_of(&b, 2);

@@ -266,12 +266,15 @@ impl Ledger {
         changed
     }
 
-    /// Ends the answer wait of every letter `actor` sent or received, because
-    /// its registration ended. Returns whether any wait ended.
+    /// Ends the answer wait of every letter `actor` sent or received and the
+    /// recipient took in, because its registration ended. A letter still
+    /// awaiting intake is left to the delivery deadline. Returns whether any
+    /// wait ended.
     pub(crate) fn end_answer_waits_of(&mut self, actor: &Actor, now: u64) -> bool {
         let mut ended = false;
         for letter in &mut self.letters {
             if letter.waiting_answer
+                && !letter.awaiting_intake()
                 && (letter.sender.same_identity(actor) || letter.recipient.same_identity(actor))
             {
                 letter.end_answer_wait(AnswerWaitEnd::PartyEnded, now);

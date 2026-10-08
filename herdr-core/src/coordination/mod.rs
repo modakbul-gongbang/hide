@@ -669,7 +669,9 @@ fn end_record(ledger: &mut Ledger, id: &str, now: u64) -> bool {
     ledger
         .watches
         .retain(|watch| !watch.target.same_identity(&target));
-    ledger.end_answer_waits_of(&target, now);
+    if live {
+        ledger.end_answer_waits_of(&target, now);
+    }
     live
 }
 
@@ -864,9 +866,24 @@ mod tests {
             let b_id = register(&mut ledger, b.clone(), &b.actor);
             register(&mut ledger, c.clone(), &c.actor);
             let ask = |ledger: &mut Ledger, from: &Actor, to: &Actor, intent: &str| {
-                crate::delivery::mailbox::send(ledger, from, to, intent, "body", "request", None, 2)
-                    .unwrap()
-                    .id
+                let id = crate::delivery::mailbox::send(
+                    ledger, from, to, intent, "body", "request", None, 2,
+                )
+                .unwrap()
+                .id;
+                // The recipient took it in; a letter still awaiting intake
+                // is left to the delivery deadline.
+                crate::delivery::mailbox::apply(
+                    ledger,
+                    to,
+                    None,
+                    &crate::delivery::Command::Confirm {
+                        ids: vec![id.clone()],
+                    },
+                    2,
+                )
+                .unwrap();
+                id
             };
             let to_b = ask(&mut ledger, &a.actor, &b.actor, "to-b");
             let from_b = ask(&mut ledger, &b.actor, &c.actor, "from-b");
@@ -898,6 +915,61 @@ mod tests {
             assert_eq!(wait(&from_b), ended, "by_pane={by_pane}");
             assert_eq!(wait(&elsewhere), (true, None), "by_pane={by_pane}");
         }
+    }
+
+    /// Repeating `hide agent end` on a registration that already ended must not
+    /// end the waits of the live registration that took its pane and session.
+    #[test]
+    fn ending_an_already_ended_registration_again_leaves_the_new_ones_waits() {
+        let mut ledger = Ledger::default();
+        let (a, b) = (
+            record("pane-a", "session-a", None),
+            record("pane-b", "session-b", None),
+        );
+        register(&mut ledger, a.clone(), &a.actor);
+        let old = register(&mut ledger, b.clone(), &b.actor);
+        let end = |ledger: &mut Ledger, id: &str, now: u64| {
+            apply(
+                ledger,
+                &b.actor,
+                &Mutation::End {
+                    id: id.into(),
+                    actor: None,
+                },
+                now,
+            )
+            .unwrap()
+        };
+        end(&mut ledger, &old, 3);
+        let renewed = register(&mut ledger, b.clone(), &b.actor);
+        assert_ne!(renewed, old);
+        let id = crate::delivery::mailbox::send(
+            &mut ledger,
+            &a.actor,
+            &b.actor,
+            "ask",
+            "body",
+            "request",
+            None,
+            4,
+        )
+        .unwrap()
+        .id;
+        crate::delivery::mailbox::apply(
+            &mut ledger,
+            &b.actor,
+            None,
+            &crate::delivery::Command::Confirm {
+                ids: vec![id.clone()],
+            },
+            4,
+        )
+        .unwrap();
+        end(&mut ledger, &old, 5);
+        let letter = ledger.letters.iter().find(|l| l.id == id).unwrap();
+        assert!(letter.waiting_answer && letter.answer_wait_ended.is_none());
+        end(&mut ledger, &renewed, 6);
+        assert!(!ledger.letters[0].waiting_answer);
     }
 
     /// `here` is the caller's own live registration, and a caller with
