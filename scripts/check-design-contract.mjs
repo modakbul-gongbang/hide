@@ -29,10 +29,8 @@ try {
         || file === 'hide-kit/src/agents.rs'
         || file === 'hide-ai/src/registry.rs'
         || file.startsWith('web/src/')
-        // Pen generators split into screen modules as the library grows.
-        // Export that module family together so its imports stay available.
-        || (file.startsWith('scripts/pen-') && file.endsWith('.mjs'))
-        || [...commands, 'pen-token-map.json', 'gen-tokens.mjs'].some(name => file === 'scripts/' + name);
+        // Materialize the script module boundary, including new imports.
+        || (file.startsWith('scripts/') && ['.mjs', '.json'].includes(path.extname(file)));
       if (!input) continue;
       if (stage !== '0') throw new Error(`Resolve staged conflict before design check: ${file}`);
       if (!['100644', '100755'].includes(mode)) throw new Error(`Design inputs must be ordinary files: ${file}`);

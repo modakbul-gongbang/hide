@@ -16,6 +16,7 @@ pub enum CommandKind {
     /// `hide factory ...`
     Factory(crate::factory_cli::FactoryRequest),
     Help,
+    AgentSpawnHelp,
     /// `hide version [--json]`: this build's version, commit and contract.
     Version {
         json: bool,
@@ -101,6 +102,7 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Serve { keep_alive })
         }
         Some("dev") => Ok(CommandKind::Dev),
+        Some("agent") if args[2..] == ["spawn", "--help"] => Ok(CommandKind::AgentSpawnHelp),
         Some("agent") => {
             crate::cli_contract::admit(&args[1..])
                 .map_err(|refusal| format!("{refusal}\n{}", crate::agent_cli::USAGE))?;
@@ -369,6 +371,10 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::cli_contract::document());
         return Ok(());
     }
+    if kind == CommandKind::AgentSpawnHelp {
+        println!("{}", crate::agent_cli::SPAWN_HELP);
+        return Ok(());
+    }
     if kind == CommandKind::Help {
         println!("hide version [--json]\nhide contract --json");
         println!("{}", crate::delivery_cli::USAGE);
@@ -425,6 +431,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         }
         CommandKind::Factory(request) => crate::factory_cli::run(&env, request),
         CommandKind::Help
+        | CommandKind::AgentSpawnHelp
         | CommandKind::BrowserHelp
         | CommandKind::Version { .. }
         | CommandKind::Contract => unreachable!("handled above"),
@@ -1546,6 +1553,27 @@ mod tests {
     fn a_state_with_no_recorded_start_is_judged_by_liveness() {
         assert!(still_the_daemon(&recorded(std::process::id(), None)));
         assert!(!still_the_daemon(&recorded(0, None)));
+    }
+
+    #[test]
+    fn spawn_alone_supports_subcommand_help_and_rejects_no_watch_before_delivery() {
+        let parse = |args: &[&str]| {
+            parse_args(&args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "agent", "spawn", "--help"]).unwrap(),
+            CommandKind::AgentSpawnHelp
+        );
+        for verb in ["register", "list", "show", "end"] {
+            assert!(
+                parse(&["hide", "agent", verb, "--help"])
+                    .unwrap_err()
+                    .contains("Unknown flag")
+            );
+        }
+        let error = parse(&["hide", "agent", "spawn", "--no-watch"]).unwrap_err();
+        assert!(error.starts_with("Unknown flag for hide agent spawn: --no-watch\n"));
+        assert!(error.contains(crate::agent_cli::USAGE));
     }
 
     #[test]
