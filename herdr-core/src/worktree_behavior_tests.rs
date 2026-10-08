@@ -87,6 +87,7 @@ fn discard_names_every_measured_repository_and_an_unavailable_scan_blocks_the_ch
 struct Repository(PathBuf);
 impl Repository {
     fn new() -> Self {
+        hide_host::worktrees::record_git_calls();
         static NEXT_REPOSITORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "hide-worktree-policy-{}-{}-{}",

@@ -110,7 +110,7 @@ The harness is a small script that times the installed command through `sh -c` w
 An ordinary call therefore pays about 3 ms over the process-start baseline, and a refused launch about 10 ms in total.
 These numbers prove the helper's cost at that boundary; they do not prove the agent's own time to a first token, and a runtime that serializes hooks on its own schedule can add more.
 A non-`herdr` Bash call was also watched in both TUIs against a private Herdr server and showed no hook output and no visible delay.
-Regression owners are `hide-agent-hooks/tests/spawn_guard.rs` (nothing spawned for a payload without `herdr`, a slow `hide` stays under the budget) and the parser tests in `src/spawn_guard.rs`.
+Regression owners are `hide-agent-hooks/tests/it/spawn_guard.rs` (nothing spawned for a payload without `herdr`, a slow `hide` stays under the budget) and the parser tests in `src/spawn_guard.rs`.
 
 ## Resident work cost review
 
@@ -487,7 +487,7 @@ A worker turn handles at most eight chunks and yields between chunks after 20 ms
 The 30-second refresh interval starts after a completed pass, and unchanged answer snapshots publish no notification.
 Measure backfill, unchanged and append workloads separately: actual source bytes per operation and total, query latency, notification count/WS payload sizes, idle and driven CPU/RSS, and terminal input-to-write timing.
 Include a 2,000-row named history while indexing and a broad query with hundreds of matches in one session; a progress deadline alone proves neither end-to-end latency nor responsiveness.
-Regression owners additionally include `hide-session/tests/search.rs`, `runtime::tests::session_search`, `runtime::tests::snapshot_delta`, `web/src/store.test.ts`, and the server/session browser and native E2E flows.
+Regression owners additionally include `hide-session/tests/it/search.rs`, `runtime::tests::session_search`, `runtime::tests::snapshot_delta`, `web/src/store.test.ts`, and the server/session browser and native E2E flows.
 Neither read schedules Memory work or touches the due-work poll.
 Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test.ts` and `web/e2e/s8.spec.ts`.
 

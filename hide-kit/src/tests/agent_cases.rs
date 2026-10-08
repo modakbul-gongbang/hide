@@ -768,14 +768,16 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRD and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18).
+    // The session-reader common contract B1/B6 enables starts for the five
+    // partial agents without enabling their future reader/sleep/fork features.
     let expected: [(&str, &[Feature]); 7] = [
         ("claude-code", &Feature::ALL),
         ("codex", &Feature::ALL),
-        ("grok", &[Skill, HerdrIntegration]),
-        ("opencode", &[Skill, HerdrIntegration]),
-        ("pi", &[Skill, HerdrIntegration]),
-        ("omp", &[Skill, HerdrIntegration]),
-        ("cursor", &[Skill, Guidance, HerdrIntegration]),
+        ("grok", &[Skill, HerdrIntegration, Start]),
+        ("opencode", &[Skill, HerdrIntegration, Start]),
+        ("pi", &[Skill, HerdrIntegration, Start]),
+        ("omp", &[Skill, HerdrIntegration, Start]),
+        ("cursor", &[Skill, Guidance, HerdrIntegration, Start]),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),

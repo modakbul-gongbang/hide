@@ -2,13 +2,15 @@
 // B30, B38): pairing, the refused and unpaired guidance, and the list; the
 // detail is `Detail.tsx`. Every value comes from the store the socket writes.
 
-import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react";
+import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, MoonIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
 import { statusText } from "../agentStatus";
 import { Button } from "../components/ui/button";
-import { closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
+import { AgentMark } from "../AgentMark";
+import { sleepingCaption } from "../sleeping-session";
+import { actOnSleepingSession, closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
 import { Detail } from "./Detail";
 import { AgentHead, Place } from "./parts";
 import { StartSheet } from "./StartSheet";
@@ -20,6 +22,7 @@ import {
   noticeText,
   notificationRow,
   type PhoneAgent,
+  type PhoneSleepingSession,
 } from "./protocol";
 import { closeStaleNotifications, enableNotifications, permission, pushSupported } from "./push";
 import { patch, usePhone } from "./store";
@@ -103,6 +106,7 @@ function ListScreen() {
   }, [groups, connected]);
   const dim = unreachable && !connected;
   const agents = groups?.flatMap((group) => group.agents) ?? [];
+  const sleeping = groups?.flatMap((group) => group.sleeping_sessions ?? []) ?? [];
   return (
     <main className="phone-safe-bottom flex min-h-full flex-col">
       <header className="phone-safe-top px-lg">
@@ -142,7 +146,7 @@ function ListScreen() {
       {installHint && !standalone() ? <InstallHint /> : null}
       {connected ? <NotificationRow /> : null}
       <div className={dim ? "opacity-50" : undefined} aria-busy={dim}>
-        {groups && agents.length === 0 ? (
+        {groups && agents.length === 0 && sleeping.length === 0 ? (
           <p className="px-lg py-xxl text-center text-title text-muted-foreground" data-phone-empty="true">
             {t("mobile.noAgents")}
           </p>
@@ -162,6 +166,9 @@ function ListScreen() {
                 {group.agents.map((agent) => (
                   <AgentRow key={`${agent.device_id}|${agent.pane_id}`} agent={agent} />
                 ))}
+                {group.sleeping_sessions?.map((session) => (
+                  <SleepingRow key={session.sleep_id} session={session} />
+                ))}
               </ul>
             </section>
           );
@@ -169,6 +176,41 @@ function ListScreen() {
       </div>
       <StartSheet />
     </main>
+  );
+}
+
+function SleepingRow({ session }: { session: PhoneSleepingSession }) {
+  const { t } = useInterfaceTranslation();
+  const connected = usePhone((state) => state.connected);
+  const action = usePhone((state) => state.sleepAction);
+  const pending = action?.sleepId === session.sleep_id && !!action.requestId;
+  const uncertain = session.phase === "close_unknown" || session.phase === "wake_unknown";
+  const failed = (action?.sleepId === session.sleep_id && action.error) || session.attention;
+  const caption = t(sleepingCaption(session));
+  return (
+    <li className="flex min-h-(--size-touch-target) flex-col gap-xs py-md" data-phone-sleeping={session.sleep_id}>
+      <div className="flex min-w-0 items-center gap-sm">
+        <MoonIcon aria-label={caption} className="size-(--size-status-mark) shrink-0 text-muted-foreground" />
+        <AgentMark kind={session.agent_kind} />
+        <span className="min-w-0 flex-1 truncate text-title text-subtle-foreground">{session.title}</span>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-sm pl-(--size-mobile-row-inset)">
+        <span className="min-w-0 break-words text-subhead text-muted-foreground" role={failed ? "status" : undefined}>
+          {failed ? t("panes.sleep.requestFailed") : caption}
+        </span>
+        {session.wake_available || uncertain ? (
+          <Button
+            variant="ghost"
+            className="min-h-(--size-touch-target) shrink-0 text-body"
+            disabled={!connected || !!action?.requestId || session.checking}
+            data-phone-sleep-action={session.wake_available ? "wake" : "check"}
+            onClick={() => actOnSleepingSession(session.sleep_id, session.wake_available ? "wake_sleeping_session" : "check_sleeping_session")}
+          >
+            {session.checking ? t("agents.checking") : pending ? t(session.wake_available ? "panes.sleep.waking" : "agents.checking") : session.wake_available ? t("panes.sleep.wake") : t("workspace.checkStatus")}
+          </Button>
+        ) : null}
+      </div>
+    </li>
   );
 }
 

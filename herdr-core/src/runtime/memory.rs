@@ -845,6 +845,39 @@ mod scope_tests {
 
     const FUNCTIONAL_HOOK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
+    #[test]
+    fn an_unknown_session_provider_is_unavailable_before_its_locator_is_read() {
+        let temp = tempdir().unwrap();
+        let row = crate::model::SessionRowSnapshot {
+            id: "unknown-session".to_owned(),
+            provider: "future-provider".to_owned(),
+            provider_label: "Future provider".to_owned(),
+            locator: temp
+                .path()
+                .join("missing-session")
+                .to_string_lossy()
+                .into_owned(),
+            checkout_path: temp.path().to_string_lossy().into_owned(),
+            first_human_request: None,
+            started_at_unix_ms: None,
+            updated_at_unix_ms: 1,
+            title: None,
+            unavailable_reason: None,
+        };
+
+        let result = load_session_detail(
+            &hide_node::Local::new(Some(temp.path().to_path_buf())),
+            &temp.path().join("missing.sqlite3"),
+            "project-1",
+            row,
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Unsupported session provider: future-provider"
+        );
+    }
+
     fn functional_hook_output(
         runtime: AgentRuntime,
         event: HookEvent,
@@ -1651,22 +1684,29 @@ fn project_sessions(
     sessions_node: &dyn NodeLink,
     identity: &hide_project::ProjectIdentity,
 ) -> Result<Vec<ProjectSession>, String> {
-    call_as(
+    let page = hide_node_link::readers::project_sessions(
         sessions_node,
-        Call::ProjectSessions {
-            project: identity.clone(),
-        },
+        identity.clone(),
         SESSION_CALL_TIMEOUT,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    if page.refused > 0 {
+        crate::diagnostic!(serde_json::json!({
+            "component": "memory", "kind": "sessions.reader_refused",
+            "project_id": identity.id, "sessions": page.refused,
+        }));
+    }
+    Ok(page.rows)
 }
 
 fn session_stat(
     sessions_node: &dyn NodeLink,
     session: &ProjectSession,
 ) -> Result<SessionStat, String> {
-    call_as(
+    hide_node_link::link::call_as_reader(
         sessions_node,
+        session.agent,
+        hide_node_link::sessions::ReaderFeature::Memory,
         Call::SessionStat {
             path: session.locator.to_string_lossy().into_owned(),
         },
@@ -1681,13 +1721,21 @@ fn session_chunk(
     session: &ProjectSession,
     saved: Option<&SessionCursorRecord>,
 ) -> Result<SessionChunk, String> {
+    hide_node_link::link::check_reader_support(
+        sessions_node,
+        session.agent,
+        hide_node_link::sessions::ReaderFeature::Memory,
+    )
+    .map_err(|error| error.to_string())?;
     let checkpoint = saved
         .filter(|record| !record.checkpoint.is_empty())
         .map(|record| serde_json::from_slice(&record.checkpoint))
         .transpose()
         .map_err(|error| format!("session_checkpoint:{error}"))?;
-    call_as(
+    hide_node_link::link::call_as_reader(
         sessions_node,
+        session.agent,
+        hide_node_link::sessions::ReaderFeature::Memory,
         Call::SessionChunk {
             path: session.locator.to_string_lossy().into_owned(),
             checkpoint,
@@ -2312,8 +2360,13 @@ pub(super) fn load_session_detail(
             memory: None,
         });
     }
-    let contents: String = call_as(
+    let agent = Agent::from_kind(&row.provider)
+        .filter(|agent| agent.has_session_file())
+        .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
+    let contents: String = hide_node_link::link::call_as_reader(
         sessions_node,
+        agent,
+        hide_node_link::sessions::ReaderFeature::Conversation,
         Call::SessionText {
             path: row.locator.clone(),
         },
@@ -2323,9 +2376,6 @@ pub(super) fn load_session_detail(
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
-    let agent = Agent::from_kind(&row.provider)
-        .filter(|agent| agent.has_session_file())
-        .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
     let parsed = hide_session::parse_events(agent, &contents);
     let events = parsed
         .events

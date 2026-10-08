@@ -121,7 +121,7 @@ impl Runtime {
         self.set_task_agent_launch(
             id,
             prompt,
-            agent_choice::agent_arguments(model.as_deref(), &[]),
+            agent_choice::agent_arguments(agent_kind.as_deref(), model.as_deref(), &[]),
         );
         let projects = self.home_projects(device);
         self.home_links
@@ -158,6 +158,7 @@ impl Runtime {
             return None;
         }
         let request_id = operation.request_id.clone();
+        let agent_kind = operation.agent_kind.clone();
         let synced = match synced {
             Ok(synced) => synced,
             Err(LinkError::Refused(error))
@@ -184,14 +185,15 @@ impl Runtime {
         self.record_home_applied(device, projects);
         self.register_home(device, &synced.home);
         // The agent may write every linked project through its link (D-02,
-        // D-08); each CLI takes the real folders as extra roots. The helper
+        // D-08); supported CLIs take the real folders as extra roots. The helper
         // links no folder whose path Herdr could not pass (`control_character`).
         let folders: Vec<String> = synced
             .links
             .iter()
             .map(|link| link.target.clone())
             .collect();
-        self.extend_task_agent_args(id, agent_choice::agent_arguments(None, &folders));
+        let arguments = agent_choice::agent_arguments(agent_kind.as_deref(), None, &folders);
+        self.extend_task_agent_args(id, arguments);
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.repository_root = Some(synced.home.clone());
         }

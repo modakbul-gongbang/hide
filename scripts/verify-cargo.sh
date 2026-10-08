@@ -5,6 +5,7 @@
 # CI-scoped lanes: test-scoped | check | build | clippy | metadata [cargo arguments...]
 #                  nextest [cargo nextest run arguments...] (the CI Rust lane; .config/nextest.toml)
 #                  fmt-check (cargo fmt --all --check alone)
+#                  hakari (workspace-hack is current; scripts/install-hakari.sh)
 #
 # The PRD harness runs each verify command with execvp and no shell, so an
 # `ENV=value cargo ...` binding fails with ENOENT at verify time rather than at
@@ -85,6 +86,14 @@ case "${1:-}" in
         report_toolchain
         exec cargo fmt --all --check
         ;;
+    hakari)
+        # workspace-hack holds the features the manifests ask for, and every
+        # member that should depends on it; neither command writes a file.
+        # docs/BUILD.md, "One feature set per dependency".
+        report_toolchain
+        cargo hakari generate --diff
+        exec cargo hakari manage-deps --dry-run
+        ;;
     lint)
         report_toolchain
         cargo fmt --all --check
@@ -101,7 +110,7 @@ case "${1:-}" in
         exec cargo build --locked -p hided --bins -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
-        printf 'usage: %s test [args...]|lint|fmt-check|release|cli|test-scoped|check|build|clippy|metadata|nextest [args...]\n' "$0" >&2
+        printf 'usage: %s test [args...]|lint|fmt-check|hakari|release|cli|test-scoped|check|build|clippy|metadata|nextest [args...]\n' "$0" >&2
         exit 2
         ;;
 esac

@@ -32,6 +32,7 @@ pub mod ports;
 pub mod process;
 pub mod project;
 pub mod protocol;
+pub mod readers;
 pub mod register;
 pub mod save;
 pub mod sessions;

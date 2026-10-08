@@ -50,6 +50,11 @@ describe("the model catalog (B28)", () => {
     expect(catalogFor(ai(provider("claude", { state: "ready" })), "claude")).toEqual({ state: "unavailable", reason: null });
   });
 
+  it("finishes loading when the chosen start has no model catalog provider", () => {
+    expect(catalogFor(undefined, "omp")).toEqual({ state: "loading" });
+    expect(catalogFor(ai(provider("claude")), "omp")).toEqual({ state: "unavailable", reason: null });
+  });
+
   it("keeps the last list while the catalog is read again", () => {
     catalogFor(ai(provider("claude", { models: ["haiku"] })), "claude");
     expect(catalogFor(ai(provider("claude", { state: "unread" })), "claude")).toEqual({ state: "ready", models: ["haiku"] });

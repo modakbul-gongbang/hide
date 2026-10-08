@@ -9,7 +9,7 @@
 //! independent Unix owner channel for cooperative children that retain an
 //! [`OwnerWatch`], without using or replacing stdin.
 //!
-//! What a caller can rely on, on all three systems (`tests/process.rs` checks
+//! What a caller can rely on, on all three systems (`tests/it/process.rs` checks
 //! each line):
 //!
 //! - [`OwnedChild::kill_tree`] and dropping the owner end the child and every

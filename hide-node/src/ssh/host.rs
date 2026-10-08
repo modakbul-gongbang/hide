@@ -17,6 +17,7 @@
 use super::*;
 #[path = "retirement.rs"]
 mod retirement;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use hide_node_link::HostError;
 pub use hide_node_link::LinkError;
 use hide_node_link::device::{HostConsent, HostIdentity};
@@ -451,6 +452,7 @@ struct Inner {
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
     roots: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
+    readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
 }
 
 impl Drop for Inner {
@@ -478,8 +480,9 @@ impl RemoteHost {
 
     /// A link with no device behind it: it has an identity and can be
     /// closed, and every call on it times out. For tests of what a link's
-    /// identity decides.
-    #[cfg(any(test, feature = "test-support"))]
+    /// identity decides, in this crate and in hided; a feature that compiled
+    /// it only for them built hide-node and every crate above it twice.
+    #[doc(hidden)]
     pub fn detached(target: &str) -> Self {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -500,6 +503,7 @@ impl RemoteHost {
                 gate: Gate::new(),
                 next_id: AtomicU64::new(1),
                 roots: Mutex::new(HashMap::new()),
+                readers: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -519,6 +523,7 @@ impl RemoteHost {
     /// Sends one request and waits at most `timeout` for its answer. Must
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        hide_node_link::link::check_reader_call(self, &call)?;
         self.inner.gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, None);
         self.inner.gate.release();
@@ -534,6 +539,7 @@ impl RemoteHost {
         timeout: Duration,
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
+        hide_node_link::link::check_reader_call(self, &call)?;
         self.inner.gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, Some(progress));
         self.inner.gate.release();
@@ -642,6 +648,10 @@ impl RemoteHost {
     /// is taken out again.
     fn send(&self, id: u64, call: Call, timeout: Duration) -> Result<(), LinkError> {
         let inner = &self.inner;
+        if let Err(error) = hide_node_link::link::check_reader_call(self, &call) {
+            lock_recover(&inner.pending).remove(&id);
+            return Err(error);
+        }
         // A cancel adds no effect on the device and is how a draining link
         // ends the reporting calls it waits for.
         let cancels = matches!(call, Call::Cancel { .. });
@@ -713,6 +723,13 @@ impl RemoteHost {
 }
 
 impl NodeLink for RemoteHost {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        if self.closed_reason().is_some() || self.inner.gate.stopped().is_some() {
+            return None;
+        }
+        self.inner.readers.get()
+    }
+
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         RemoteHost::call(self, call, timeout)
     }
@@ -894,6 +911,18 @@ pub fn establish(
         host.close("helper protocol mismatch");
         return Err(EstablishError::Helper(reason));
     }
+    let readers = hello.readers();
+    for reason in readers.diagnostics() {
+        crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.reader_advertisement_refused",
+            "target": target,
+            "reason": reason,
+        }));
+    }
+    host.inner.readers.set(readers).map_err(|_| {
+        EstablishError::Helper("The device reader facts were already established".to_owned())
+    })?;
     if panes.is_some() {
         establish_stage(target, "panes", since);
         start_panes(client, &host);
@@ -948,16 +977,11 @@ fn start_panes(client: &RusshRemoteClient, host: &RemoteHost) {
     }
 }
 
-/// Why a started helper is not used: one that answers another protocol reads
-/// this build's requests with other shapes (a helper on protocol 8 ignores
-/// the View diffs a `changes` read carries and answers none, PRD S7 A5).
-/// The refusal is the device's unavailable reason. A device always runs the
-/// helper this Hide carries, installed by the digest of its bytes, so only a
-/// rebuilt or reinstalled Hide clears it: a development `hided` carries the
-/// `hided` it runs as (`host_helper_dir`), and a
-/// stale build there is installed and refused again on every connection.
+/// Protocol24 has an audited transition contract with a frozen reader set.
+/// Every other mismatch is refused before use; ordinary digest-based payload
+/// replacement still installs the helper carried by this build.
 fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
-    (hello.protocol != PROTOCOL_VERSION).then(|| {
+    (!matches!(hello.protocol, 24 | PROTOCOL_VERSION)).then(|| {
         format!(
             "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}; the helper this Hide carries does not match it, so rebuild or reinstall Hide",
             hello.protocol
@@ -1240,6 +1264,61 @@ async fn install(
 /// name.
 static NEXT_UPLOAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// How much of a file one SFTP request carries, and how many requests an
+/// upload or a read-back keeps in flight. One request at a time made each
+/// 32 KiB wait a round trip, so a 41 MB helper took about two minutes at a
+/// 78 ms link and never finished inside `INSTALL_TIMEOUT`; sixteen in flight
+/// is 512 KiB per round trip.
+const TRANSFER_CHUNK: usize = 32 * 1024;
+const TRANSFERS_IN_FLIGHT: usize = 16;
+
+/// Staging names this process made whose upload ended before it removed
+/// them: an install that times out drops its upload mid-write, where no
+/// `await` can run. The next upload into the same folder removes them. Only
+/// this process's own names are ever listed, and the list is capped.
+static ABANDONED_STAGING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+const ABANDONED_STAGING_CAP: usize = 64;
+
+/// A staging name in use; dropped before `finish`, it is listed as abandoned.
+struct Staging {
+    path: String,
+    finished: bool,
+}
+
+impl Staging {
+    fn finish(mut self) {
+        self.finished = true;
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let mut abandoned = lock_recover(&ABANDONED_STAGING);
+        if abandoned.len() == ABANDONED_STAGING_CAP {
+            abandoned.remove(0);
+        }
+        abandoned.push(std::mem::take(&mut self.path));
+    }
+}
+
+/// Removes the staging files this process abandoned in `folder`.
+async fn remove_abandoned_staging(raw: &RawSftpSession, folder: &str) {
+    let here: Vec<String> = {
+        let mut abandoned = lock_recover(&ABANDONED_STAGING);
+        let (here, elsewhere) = std::mem::take(&mut *abandoned)
+            .into_iter()
+            .partition(|path| path.rsplit_once('/').map(|(parent, _)| parent) == Some(folder));
+        *abandoned = elsewhere;
+        here
+    };
+    for path in here {
+        let _ = raw.remove(&path).await;
+    }
+}
+
 /// Whether `path` already holds exactly `package`'s bytes.
 async fn holds(raw: &RawSftpSession, path: &str, package: &Package, what: &str) -> bool {
     matches!(
@@ -1269,8 +1348,13 @@ async fn place_file(
         std::process::id(),
         NEXT_UPLOAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
+    remove_abandoned_staging(raw, folder).await;
     // Only a process that ended with this same pid could have left it.
     let _ = raw.remove(&staging).await;
+    let staged = Staging {
+        path: staging.clone(),
+        finished: false,
+    };
     let handle = raw
         .open(
             &staging,
@@ -1283,15 +1367,22 @@ async fn place_file(
         .await
         .map_err(|error| sftp_failure(&format!("The {what} could not be uploaded"), error))?
         .handle;
-    let written = async {
-        for (index, chunk) in package.bytes.chunks(32 * 1024).enumerate() {
-            raw.write(&handle, (index * 32 * 1024) as u64, chunk.to_vec())
-                .await
-                .map_err(|error| sftp_failure(&format!("The {what} upload failed"), error))?;
-        }
-        Ok::<(), EstablishError>(())
-    }
-    .await;
+    // Each write names its own offset, so the order they land in does not
+    // matter; every one's answer is checked, and the read-back below checks
+    // the whole file.
+    let written = stream::iter(package.bytes.chunks(TRANSFER_CHUNK).enumerate())
+        .map(|(index, chunk)| {
+            let handle = handle.clone();
+            async move {
+                raw.write(handle, (index * TRANSFER_CHUNK) as u64, chunk.to_vec())
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| sftp_failure(&format!("The {what} upload failed"), error))
+            }
+        })
+        .buffer_unordered(TRANSFERS_IN_FLIGHT)
+        .try_collect::<()>()
+        .await;
     let closed = raw.close(handle).await;
     let verified = match (written, closed) {
         (Ok(()), Ok(_)) => match remote_digest(raw, &staging, package.bytes.len(), what).await {
@@ -1309,20 +1400,26 @@ async fn place_file(
     };
     if let Err(error) = verified {
         let _ = raw.remove(&staging).await;
+        staged.finish();
         return Err(error);
     }
     if holds(raw, &final_path, package, what).await {
         let _ = raw.remove(&staging).await;
+        staged.finish();
     } else {
         let _ = raw.remove(&final_path).await;
-        if let Err(error) = raw.rename(&staging, &final_path).await {
+        let renamed = raw.rename(&staging, &final_path).await;
+        if renamed.is_err() {
             let _ = raw.remove(&staging).await;
-            if !holds(raw, &final_path, package, what).await {
-                return Err(sftp_failure(
-                    &format!("The {what} could not be put in place"),
-                    error,
-                ));
-            }
+        }
+        staged.finish();
+        if let Err(error) = renamed
+            && !holds(raw, &final_path, package, what).await
+        {
+            return Err(sftp_failure(
+                &format!("The {what} could not be put in place"),
+                error,
+            ));
         }
     }
     let placed = raw.lstat(&final_path).await.map_err(|error| {
@@ -1599,28 +1696,44 @@ async fn remote_digest(
         .handle;
     let mut hasher = Sha256::new();
     let mut offset = 0usize;
-    let result = async {
-        while offset < length {
-            let data = raw
-                .read(
-                    &handle,
-                    offset as u64,
-                    (length - offset).min(32 * 1024) as u32,
-                )
-                .await
-                .map_err(|error| {
-                    sftp_failure(&format!("The {what} could not be read back"), error)
-                })?
-                .data;
-            if data.is_empty() {
-                break;
+    // Several reads in flight, hashed in file order; a read may answer
+    // short, so each one asks again for the rest of its range. A file that
+    // ends early answers nothing more and is incomplete below.
+    let read_range = |start: usize, end: usize| {
+        let handle = handle.clone();
+        async move {
+            let mut bytes = Vec::with_capacity(end - start);
+            while start + bytes.len() < end {
+                let at = start + bytes.len();
+                let data = match raw.read(handle.clone(), at as u64, (end - at) as u32).await {
+                    Ok(data) => data.data,
+                    Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => {
+                        Vec::new()
+                    }
+                    Err(error) => {
+                        return Err(sftp_failure(
+                            &format!("The {what} could not be read back"),
+                            error,
+                        ));
+                    }
+                };
+                if data.is_empty() {
+                    break;
+                }
+                bytes.extend_from_slice(&data);
             }
-            offset += data.len();
-            hasher.update(&data);
+            Ok(bytes)
         }
-        Ok::<(), EstablishError>(())
-    }
-    .await;
+    };
+    let result = stream::iter((0..length).step_by(TRANSFER_CHUNK))
+        .map(|start| read_range(start, (start + TRANSFER_CHUNK).min(length)))
+        .buffered(TRANSFERS_IN_FLIGHT)
+        .try_for_each(|bytes| {
+            offset += bytes.len();
+            hasher.update(&bytes);
+            futures_util::future::ready(Ok(()))
+        })
+        .await;
     let _ = raw.close(handle).await;
     result?;
     if offset != length {
@@ -1661,6 +1774,7 @@ fn spawn_host(
         gate: Gate::new(),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
+        readers: std::sync::OnceLock::new(),
     });
     let reader = Arc::downgrade(&inner);
     client.runtime.spawn(async move {
@@ -1861,6 +1975,7 @@ fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     #[derive(Default)]
     struct Heard(Mutex<Vec<(String, NodeEvent)>>);
@@ -2008,10 +2123,10 @@ mod tests {
         assert_eq!((admission.running, admission.queued), (0, 0));
     }
 
-    /// PRD S7 A5: a helper still on the protocol before the View diffs is
-    /// refused with a reason naming both versions, never used.
+    /// Only the audited protocol24 transition is admitted alongside the
+    /// current protocol; earlier and unknown future contracts are refused.
     #[test]
-    fn a_helper_on_the_previous_protocol_is_refused_with_both_versions() {
+    fn only_the_audited_previous_helper_protocol_is_admitted() {
         let hello = |protocol| Hello {
             protocol,
             version: "0.0.0".to_owned(),
@@ -2021,16 +2136,19 @@ mod tests {
             machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
                 reason: "fixture identity is unavailable".to_owned(),
             },
+            reader_features: None,
         };
-        let refusal = helper_protocol_refusal(&hello(PROTOCOL_VERSION - 1)).expect("refused");
+        let refusal = helper_protocol_refusal(&hello(23)).expect("refused");
         assert_eq!(
             refusal,
             format!(
                 "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}; the helper this Hide carries does not match it, so rebuild or reinstall Hide",
-                PROTOCOL_VERSION - 1
+                23
             )
         );
         assert_eq!(helper_protocol_refusal(&hello(PROTOCOL_VERSION)), None);
+        assert_eq!(helper_protocol_refusal(&hello(24)), None);
+        assert!(helper_protocol_refusal(&hello(PROTOCOL_VERSION + 1)).is_some());
     }
 
     /// An answer line keeps its result as the helper's own text, `null`
@@ -2262,6 +2380,245 @@ mod tests {
         assert_ne!(second, first);
         write(&directory.path().join(HOOKS_NAME), b"two", 0o755);
         assert_ne!(packages.payload(os, arch).unwrap().version(), second);
+    }
+
+    /// A writable in-memory SFTP account for the upload tests: each write
+    /// lands at its own offset, a read answers at most `read_cap` bytes, and
+    /// while `slow` is set every write waits, so an install can be cut off
+    /// mid-upload.
+    #[derive(Clone, Default)]
+    struct Uploads {
+        files: Arc<Mutex<std::collections::BTreeMap<String, Vec<u8>>>>,
+        slow: Arc<AtomicBool>,
+    }
+
+    struct UploadAccount {
+        uploads: Uploads,
+        read_cap: usize,
+    }
+
+    const UPLOAD_OWNER: u32 = 501;
+
+    fn ok_status(id: u32) -> russh_sftp::protocol::Status {
+        russh_sftp::protocol::Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: String::new(),
+            language_tag: String::new(),
+        }
+    }
+
+    impl russh_sftp::server::Handler for UploadAccount {
+        type Error = StatusCode;
+        fn unimplemented(&self) -> Self::Error {
+            StatusCode::OpUnsupported
+        }
+        async fn open(
+            &mut self,
+            id: u32,
+            filename: String,
+            flags: OpenFlags,
+            _attrs: FileAttributes,
+        ) -> Result<russh_sftp::protocol::Handle, Self::Error> {
+            let mut files = lock_recover(&self.uploads.files);
+            if flags.contains(OpenFlags::CREATE) {
+                if flags.contains(OpenFlags::EXCLUDE) && files.contains_key(&filename) {
+                    return Err(StatusCode::Failure);
+                }
+                files.entry(filename.clone()).or_default();
+            } else if !files.contains_key(&filename) {
+                return Err(StatusCode::NoSuchFile);
+            }
+            Ok(russh_sftp::protocol::Handle {
+                id,
+                handle: filename,
+            })
+        }
+        async fn write(
+            &mut self,
+            id: u32,
+            handle: String,
+            offset: u64,
+            data: Vec<u8>,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            if self.uploads.slow.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let mut files = lock_recover(&self.uploads.files);
+            let file = files.get_mut(&handle).ok_or(StatusCode::NoSuchFile)?;
+            let end = offset as usize + data.len();
+            if file.len() < end {
+                file.resize(end, 0);
+            }
+            file[offset as usize..end].copy_from_slice(&data);
+            Ok(ok_status(id))
+        }
+        async fn read(
+            &mut self,
+            id: u32,
+            handle: String,
+            offset: u64,
+            len: u32,
+        ) -> Result<russh_sftp::protocol::Data, Self::Error> {
+            let files = lock_recover(&self.uploads.files);
+            let bytes = files.get(&handle).ok_or(StatusCode::NoSuchFile)?;
+            let offset = offset as usize;
+            if offset >= bytes.len() {
+                return Err(StatusCode::Eof);
+            }
+            let end = bytes.len().min(offset + (len as usize).min(self.read_cap));
+            Ok(russh_sftp::protocol::Data {
+                id,
+                data: bytes[offset..end].to_vec(),
+            })
+        }
+        async fn close(
+            &mut self,
+            id: u32,
+            _handle: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            Ok(ok_status(id))
+        }
+        async fn lstat(
+            &mut self,
+            id: u32,
+            path: String,
+        ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
+            let files = lock_recover(&self.uploads.files);
+            let bytes = files.get(&path).ok_or(StatusCode::NoSuchFile)?;
+            Ok(russh_sftp::protocol::Attrs {
+                id,
+                attrs: FileAttributes {
+                    uid: Some(UPLOAD_OWNER),
+                    size: Some(bytes.len() as u64),
+                    permissions: Some(0o100700),
+                    ..FileAttributes::empty()
+                },
+            })
+        }
+        async fn remove(
+            &mut self,
+            id: u32,
+            filename: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            lock_recover(&self.uploads.files)
+                .remove(&filename)
+                .ok_or(StatusCode::NoSuchFile)?;
+            Ok(ok_status(id))
+        }
+        async fn rename(
+            &mut self,
+            id: u32,
+            oldpath: String,
+            newpath: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            let mut files = lock_recover(&self.uploads.files);
+            let bytes = files.remove(&oldpath).ok_or(StatusCode::NoSuchFile)?;
+            files.insert(newpath, bytes);
+            Ok(ok_status(id))
+        }
+    }
+
+    fn package(relative: &str, length: usize) -> Package {
+        let bytes: Vec<u8> = (0..length).map(|index| (index * 31 % 251) as u8).collect();
+        let digest = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Package {
+            relative: relative.to_owned(),
+            bytes,
+            digest,
+            executable: true,
+        }
+    }
+
+    /// Runs `body` against a fresh in-memory account.
+    fn with_account<T>(
+        uploads: &Uploads,
+        read_cap: usize,
+        body: impl AsyncFnOnce(&RawSftpSession) -> T,
+    ) -> T {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (client, server) = tokio::io::duplex(1024 * 1024);
+            let account = UploadAccount {
+                uploads: uploads.clone(),
+                read_cap,
+            };
+            let task = tokio::spawn(russh_sftp::server::run(server, account));
+            let raw = RawSftpSession::new(client);
+            raw.init().await.unwrap();
+            let result = body(&raw).await;
+            let _ = raw.close_session();
+            drop(raw);
+            let _ = task.await;
+            result
+        })
+    }
+
+    fn staging_names(uploads: &Uploads) -> Vec<String> {
+        lock_recover(&uploads.files)
+            .keys()
+            .filter(|path| path.contains("/.upload-"))
+            .cloned()
+            .collect()
+    }
+
+    /// The helper goes up many writes at a time and is read back many reads
+    /// at a time, short reads included; what lands is the package, byte for
+    /// byte, under its final name, with no staging file left.
+    #[test]
+    fn a_pipelined_upload_places_the_package_byte_for_byte() {
+        let uploads = Uploads::default();
+        let helper = package("hided", TRANSFER_CHUNK * TRANSFERS_IN_FLIGHT * 3 + 1234);
+        let placed = with_account(&uploads, 10_000, async |raw| {
+            place_file(raw, "/pipelined/v1", &helper, UPLOAD_OWNER, "helper").await
+        })
+        .unwrap();
+        assert_eq!(placed, "/pipelined/v1/hided");
+        assert_eq!(
+            lock_recover(&uploads.files).get("/pipelined/v1/hided"),
+            Some(&helper.bytes)
+        );
+        assert!(staging_names(&uploads).is_empty());
+    }
+
+    /// An install that times out mid-upload drops the upload where nothing
+    /// can be awaited; its staging file is gone after the next upload into
+    /// the same folder, and nothing else there is touched.
+    #[test]
+    fn a_timed_out_upload_leaves_no_staging_file_after_the_next_attempt() {
+        let uploads = Uploads::default();
+        lock_recover(&uploads.files).insert("/timed-out/v1/other".into(), b"kept".to_vec());
+        let helper = package("hided", TRANSFER_CHUNK * TRANSFERS_IN_FLIGHT * 4);
+        uploads.slow.store(true, Ordering::SeqCst);
+        let first = with_account(&uploads, usize::MAX, async |raw| {
+            tokio::time::timeout(
+                Duration::from_millis(30),
+                place_file(raw, "/timed-out/v1", &helper, UPLOAD_OWNER, "helper"),
+            )
+            .await
+        });
+        assert!(first.is_err(), "the first attempt was cut off");
+        assert_eq!(staging_names(&uploads).len(), 1, "it left its staging file");
+
+        uploads.slow.store(false, Ordering::SeqCst);
+        with_account(&uploads, usize::MAX, async |raw| {
+            place_file(raw, "/timed-out/v1", &helper, UPLOAD_OWNER, "helper").await
+        })
+        .unwrap();
+        assert!(staging_names(&uploads).is_empty());
+        let files = lock_recover(&uploads.files);
+        assert_eq!(files.get("/timed-out/v1/hided"), Some(&helper.bytes));
+        assert_eq!(
+            files.get("/timed-out/v1/other").map(Vec::as_slice),
+            Some(&b"kept"[..])
+        );
     }
 }
 

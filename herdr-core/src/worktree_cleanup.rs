@@ -1660,6 +1660,7 @@ mod tests {
     }
     impl Fixture {
         fn new() -> Self {
+            hide_host::worktrees::record_git_calls();
             let root = std::env::temp_dir().join(format!(
                 "hide-cleanup-{}-{}-{}",
                 std::process::id(),
@@ -2911,22 +2912,12 @@ mod tests {
             Ok(&InUseMap::new()),
             &[(Layer::BuildCache,), (Layer::Dependencies,)],
         );
-        let asked = hide_host::worktrees::GIT_CALLS
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(cwd, command)| *cwd == built.f.main && command == "ls-files")
-            .count();
+        let asked = hide_host::worktrees::git_calls(&built.f.main, "ls-files");
         assert_eq!(asked, 1, "three folders, one ls-files");
     }
 
     fn ls_files_asked(root: &Path) -> usize {
-        hide_host::worktrees::GIT_CALLS
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(cwd, command)| cwd == root && command == "ls-files")
-            .count()
+        hide_host::worktrees::git_calls(root, "ls-files")
     }
 
     #[test]

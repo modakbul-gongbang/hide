@@ -15,8 +15,9 @@ use serde_json::Value;
 use crate::RootIdentity;
 use crate::error::HostError;
 
-/// Bumped when a request or an answer changes shape. The core refuses a
-/// helper that reports another version and installs the one it carries.
+/// Bumped when a request or an answer changes shape. Except for the audited
+/// 24 transition, another version is refused; normal payload replacement
+/// still installs the helper this build carries.
 /// 9: `changes` takes the View displays' `diffs` and answers each (PRD S7
 /// A5); a helper on 8 would ignore them and answer none.
 /// 10: `kit` installs, judges and removes the device's install kit (PRD
@@ -75,7 +76,10 @@ use crate::error::HostError;
 /// panes ask for credentials and run `hide` commands over this link
 /// (`panes_start`, `pane_proof_answer`, `pane_inspect`, the stream calls and
 /// [`crate::panes::NodeEvent`]) instead of a separate bridge.
-pub const PROTOCOL_VERSION: u32 = 24;
+/// 25: Hello carries exact independently implemented reader features. A
+/// matching protocol does not grant a reader, and an authenticated 24 link
+/// retains only its audited legacy features until normal payload replacement.
+pub const PROTOCOL_VERSION: u32 = 25;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -683,6 +687,22 @@ pub struct Hello {
     /// Read once when this connection starts; a failure leaves lineage
     /// unresolved without making the file helper unavailable.
     pub machine_identity: MachineIdentity,
+    /// Absent on protocol24. Missing or invalid facts on protocol25 grant
+    /// no reader; files, Git and unrelated node operations remain available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader_features: Option<crate::sessions::ReaderFeatures>,
+}
+
+impl Hello {
+    pub fn readers(&self) -> crate::sessions::ReaderFeatures {
+        match self.protocol {
+            24 => crate::sessions::ReaderFeatures::protocol24(),
+            PROTOCOL_VERSION => self.reader_features.clone().unwrap_or_else(|| {
+                crate::sessions::ReaderFeatures::unavailable("reader_advertisement_missing")
+            }),
+            _ => crate::sessions::ReaderFeatures::unavailable("reader_protocol_unsupported"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

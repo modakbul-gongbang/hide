@@ -60,6 +60,16 @@ pub enum HumanNoticeKind {
     LetterUndelivered,
 }
 
+impl HumanNoticeKind {
+    /// The code a diagnostic names the notice by.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::ObserverUnconfirmed => "observer_unconfirmed",
+            Self::LetterUndelivered => "letter_undelivered",
+        }
+    }
+}
+
 impl HumanNotice {
     pub fn english_title(&self) -> &'static str {
         match self.kind {
@@ -82,10 +92,13 @@ impl HumanNotice {
     }
 
     /// Runs only after the durable receipt on a daemon request worker.
+    /// `Ok` means Herdr showed it; `Err` is the stable reason code the log
+    /// records: Herdr's own `reason` for a `shown: false` answer, or
+    /// `call_failed` / `answer_unreadable` when there was no usable answer.
     pub fn notify_herdr(
         &self,
         connector: &dyn hide_herdr_client::ApiConnector,
-    ) -> Result<bool, String> {
+    ) -> Result<(), &'static str> {
         // The pinned request schema requires title and accepts body/sound.
         // This outcome is an external effect receipt, never a core input.
         let params =
@@ -96,11 +109,31 @@ impl HumanNotice {
             params,
             Duration::from_millis(500),
         )
-        .map_err(|_| "delivery_notification_unavailable")?;
-        value
-            .get("shown")
-            .and_then(Value::as_bool)
-            .ok_or_else(|| "delivery_notification_format".into())
+        .map_err(|_| "call_failed")?;
+        herdr_notice_answer(&value)
+    }
+}
+
+/// Reads `notification.show`'s answer. Herdr names why nothing showed in
+/// `reason` (`NotificationShowReason`); a reason outside that set is
+/// recorded as `not_shown` rather than echoed into the log.
+fn herdr_notice_answer(value: &Value) -> Result<(), &'static str> {
+    match value.get("shown").and_then(Value::as_bool) {
+        Some(true) => Ok(()),
+        Some(false) => Err(
+            match value
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "disabled" => "disabled",
+                "rate_limited" => "rate_limited",
+                "no_foreground_client" => "no_foreground_client",
+                "busy" => "busy",
+                _ => "not_shown",
+            },
+        ),
+        None => Err("answer_unreadable"),
     }
 }
 
@@ -152,7 +185,7 @@ impl Prepared {
                 authority: self.authority,
                 actor: self.actor,
                 target: self.target.map(Box::new),
-                command: self.command,
+                command: Box::new(self.command),
             },
             timeout,
         )
@@ -191,7 +224,7 @@ pub(crate) enum Effect {
         authority: Authority,
         actor: Actor,
         target: Option<Box<Observation>>,
-        command: Command,
+        command: Box<Command>,
     },
     Tick(Vec<watch::Reading>),
     BellAttempt {
@@ -562,7 +595,7 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             target,
             command,
             ..
-        } => (actor, target, command),
+        } => (actor, target, &**command),
     };
     let value = match command {
         Command::WatchStart { .. } => {
@@ -681,6 +714,7 @@ fn run(
             if gone.is_empty()
                 && !state.letters.iter().any(|letter| {
                     letter.intake_overdue(now)
+                        || letter.answer_overdue(now)
                         || (!letter.open()
                             && letter.finished_at_unix_ms.is_some_and(|finished| {
                                 now.saturating_sub(finished) >= super::RETENTION_MS
@@ -692,7 +726,8 @@ fn run(
         }
         let mut candidate = (*state).clone();
         candidate.expire(now);
-        let ended = crate::coordination::end_gone(&mut candidate, &gone);
+        candidate.end_overdue_answer_waits(now);
+        let ended = crate::coordination::end_gone(&mut candidate, &gone, now);
         let mut results = Vec::with_capacity(batch.len());
         let mut transitions = !ended.is_empty();
         for request in &batch {
@@ -731,6 +766,7 @@ fn run(
                     target,
                     command,
                 } => {
+                    let command: &Command = command;
                     // The intent lookup uses the owned candidate outside Runtime.
                     // Replays converge even after the original recipient leaves.
                     let target_required = matches!(
@@ -822,6 +858,14 @@ fn run(
                     "code":error.code(),"persistence":error.diagnostic()}));
         }
         if saved.is_ok() {
+            if changed {
+                for (letter, why) in answer_waits_ended(&state, &candidate) {
+                    crate::diagnostic!(json!({"component":"delivery","kind":"answer_wait.ended",
+                        "letter_id":letter.id,"sender":letter.sender.name,
+                        "sender_pane":letter.sender.pane_id,"recipient":letter.recipient.name,
+                        "recipient_pane":letter.recipient.pane_id,"reason":why.as_str()}));
+                }
+            }
             for (record, reason) in &ended {
                 crate::diagnostic!(json!({"component":"coordination","kind":"agent.ended",
                     "agent_id":record.id,"machine":record.machine,"pane_id":record.pane,
@@ -856,6 +900,25 @@ fn run(
     while let Ok(request) = requests.try_recv() {
         let _ = request.reply.send(Err("delivery_unavailable".into()));
     }
+}
+
+/// The letters whose answer wait `after` ended and `before` still held.
+fn answer_waits_ended<'a>(
+    before: &Ledger,
+    after: &'a Ledger,
+) -> Vec<(&'a super::ledger::Letter, super::ledger::AnswerWaitEnd)> {
+    let waiting: std::collections::HashSet<&str> = before
+        .letters
+        .iter()
+        .filter(|letter| letter.waiting_answer)
+        .map(|letter| letter.id.as_str())
+        .collect();
+    after
+        .letters
+        .iter()
+        .filter(|letter| !letter.waiting_answer && waiting.contains(letter.id.as_str()))
+        .filter_map(|letter| Some((letter, letter.answer_wait_ended?)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -918,8 +981,72 @@ mod tests {
         );
     }
 
+    fn undelivered_notice() -> HumanNotice {
+        HumanNotice {
+            id: "letter-1".into(),
+            actor: Actor {
+                pane_id: "sender".into(),
+                name: "sender".into(),
+                kind: "codex".into(),
+                device_id: crate::node::TEST_NODE.into(),
+                session: None,
+            },
+            kind: HumanNoticeKind::LetterUndelivered,
+            recipient: "lead".into(),
+            about: String::new(),
+        }
+    }
+
+    #[test]
+    fn herdr_notice_names_why_nothing_showed() {
+        for (answer, expected) in [
+            (json!({"shown": true, "reason": "shown"}), Ok(())),
+            (
+                json!({"shown": false, "reason": "disabled"}),
+                Err("disabled"),
+            ),
+            (
+                json!({"shown": false, "reason": "rate_limited"}),
+                Err("rate_limited"),
+            ),
+            (
+                json!({"shown": false, "reason": "no_foreground_client"}),
+                Err("no_foreground_client"),
+            ),
+            (json!({"shown": false, "reason": "busy"}), Err("busy")),
+            (json!({"shown": false}), Err("not_shown")),
+            (json!({"shown": false, "reason": "other"}), Err("not_shown")),
+            (json!({"reason": "disabled"}), Err("answer_unreadable")),
+        ] {
+            assert_eq!(herdr_notice_answer(&answer), expected, "{answer}");
+        }
+    }
+
+    #[test]
+    fn notify_herdr_reports_herdr_reason_or_a_failed_call() {
+        let herdr = crate::fake_herdr::FakeHerdr::start("notice-reason", |method, _| {
+            assert_eq!(method, "notification.show");
+            json!({"type": "notification_show", "shown": false, "reason": "disabled"})
+        });
+        let notice = undelivered_notice();
+        assert_eq!(notice.notify_herdr(&herdr.connector()), Err("disabled"));
+        let gone = hide_herdr_client::LocalSocketConnector::new(
+            herdr.socket_path().with_file_name("absent.sock"),
+        );
+        assert_eq!(notice.notify_herdr(&gone), Err("call_failed"));
+    }
+
     struct ActivityPeer(std::sync::atomic::AtomicU64);
     impl crate::node_access::NodeLink for ActivityPeer {
+        fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+            static READERS: std::sync::LazyLock<hide_node_link::sessions::ReaderFeatures> =
+                std::sync::LazyLock::new(|| {
+                    serde_json::from_str(r#"[{"provider":"codex","features":["activity"]}]"#)
+                        .unwrap()
+                });
+            Some(&READERS)
+        }
+
         fn call(
             &self,
             call: hide_node_link::protocol::Call,
@@ -1178,7 +1305,7 @@ mod tests {
                             authority: authority(&target.actor),
                             actor: target.actor.clone(),
                             target: Some(Box::new(target.clone())),
-                            command
+                            command: Box::new(command)
                         },
                         Duration::from_secs(5)
                     )
@@ -1233,7 +1360,7 @@ mod tests {
                             authority: authority(&actor),
                             actor: actor.clone(),
                             target: Some(Box::new(target.clone())),
-                            command: command.clone()
+                            command: Box::new(command.clone())
                         },
                         Duration::from_secs(5)
                     )
@@ -1264,7 +1391,7 @@ mod tests {
                         authority: authority(&actor),
                         actor: actor.clone(),
                         target: Some(Box::new(target)),
-                        command: command.clone(),
+                        command: Box::new(command.clone()),
                     },
                     Duration::from_secs(5),
                 )
@@ -1281,7 +1408,7 @@ mod tests {
                         authority: authority(&actor),
                         actor,
                         target: None,
-                        command,
+                        command: Box::new(command),
                     },
                     Duration::from_secs(5),
                 )
@@ -1315,12 +1442,12 @@ mod tests {
                     authority: authority(&actor),
                     actor,
                     target: Some(Box::new(target)),
-                    command: Command::Send {
+                    command: Box::new(Command::Send {
                         target: "recipient".into(),
                         intent: "send-once".into(),
                         body: "private fixture".into(),
                         kind: "request".into(),
-                    },
+                    }),
                 },
                 Duration::from_secs(5),
             );
@@ -1362,5 +1489,125 @@ mod tests {
                 drop(worker);
             }
         }
+    }
+    /// Waits for a state the store's idle maintenance reaches by itself.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn wait_for_ledger(what: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn idle_maintenance_ends_an_overdue_answer_wait_and_persists_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, target, path) = fixture(root.path());
+        let hour = 60 * 60_000;
+        let mut installed = Ledger::default();
+        let mut ask = |intent: &str, age: u64| {
+            let sent = now() - age;
+            let letter = mailbox::send(
+                &mut installed,
+                &actor,
+                &target.actor,
+                intent,
+                "body",
+                "request",
+                None,
+                sent,
+            )
+            .unwrap();
+            mailbox::apply(
+                &mut installed,
+                &target.actor,
+                None,
+                &Command::Confirm {
+                    ids: vec![letter.id.clone()],
+                },
+                sent,
+            )
+            .unwrap();
+            letter.id
+        };
+        let old = ask("old", 25 * hour);
+        let recent = ask("recent", 23 * hour);
+        ledger::save(&path, &installed).unwrap();
+        runtime
+            .lock()
+            .unwrap()
+            .publish_delivery(Arc::new(installed), false);
+        let (_worker, _client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let waiting = |id: &str| {
+            runtime
+                .lock()
+                .unwrap()
+                .delivery_state()
+                .unwrap()
+                .letters
+                .iter()
+                .find(|letter| letter.id == id)
+                .map(|letter| (letter.waiting_answer, letter.answer_wait_ended))
+                .unwrap()
+        };
+        wait_for_ledger("the overdue wait to end", || !waiting(&old).0);
+        assert_eq!(
+            waiting(&old),
+            (false, Some(super::super::ledger::AnswerWaitEnd::Deadline))
+        );
+        assert!(waiting(&recent).0);
+        let persisted = ledger::load(&path).unwrap();
+        let saved = persisted.letters.iter().find(|l| l.id == old).unwrap();
+        assert_eq!(saved.answer_wait_ended, waiting(&old).1);
+    }
+
+    #[test]
+    fn answer_waits_ended_names_only_letters_that_stopped_waiting_in_this_pass() {
+        let (a, b) = (
+            Actor {
+                pane_id: "a".into(),
+                name: "a".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: Some("session-a".into()),
+            },
+            Actor {
+                pane_id: "b".into(),
+                name: "b".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: Some("session-b".into()),
+            },
+        );
+        let mut before = Ledger::default();
+        for intent in ["one", "two"] {
+            let letter =
+                mailbox::send(&mut before, &a, &b, intent, "body", "request", None, 1).unwrap();
+            mailbox::apply(
+                &mut before,
+                &b,
+                None,
+                &Command::Confirm {
+                    ids: vec![letter.id],
+                },
+                1,
+            )
+            .unwrap();
+        }
+        let mut after = before.clone();
+        after.end_answer_waits_of(&b, 2);
+        // Only the first letter was still waiting in `before`.
+        before.letters[1].waiting_answer = false;
+        let ended = answer_waits_ended(&before, &after);
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].0.id, before.letters[0].id);
+        assert_eq!(ended[0].1.as_str(), "party_ended");
+        assert!(answer_waits_ended(&after, &after).is_empty());
     }
 }

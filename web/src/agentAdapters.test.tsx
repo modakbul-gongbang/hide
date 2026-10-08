@@ -37,8 +37,13 @@ it.each(["opencode", "grok", "pi", "omp", "cursor", "future-agent"])("keeps %s n
   expect(resumeProvider(kind)).toBeNull();
 });
 
-it("derives the unchanged phone choices and default from the generated start projection", () => {
-  expect(START_KINDS).toEqual([{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }]);
+it("derives all seven supported phone starts and the existing default from the generated projection", () => {
+  expect(START_KINDS).toEqual([
+    { id: "claude", label: "Claude" }, { id: "codex", label: "Codex" },
+    { id: "grok", label: "Grok" }, { id: "opencode", label: "OpenCode" },
+    { id: "pi", label: "Pi" }, { id: "omp", label: "omp" },
+    { id: "cursor", label: "Cursor" },
+  ]);
   expect(START_KINDS.map((row) => row.id)).toEqual(PROVIDER_KINDS);
   expect(START_KINDS).toEqual(AGENT_ADAPTERS.filter((row) => row.can_start).map((row) => ({ id: row.herdr_kind, label: row.picker_label })));
   expect(selectionOf(null, NO_CHOICE).kind).toBe("claude");

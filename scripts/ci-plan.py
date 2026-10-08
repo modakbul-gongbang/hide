@@ -62,8 +62,9 @@ OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
 OS_LANES = ("os-contract", "windows-check", "windows-e2e")
 # The remote mailbox lane builds `hided`, `hide`, the host helper and the hook
 # binary, and runs `hided`'s `remote_delivery` test against them over
-# private SSH; a change to any crate they link, or to the test, can change its
-# result, and nothing else can. Web code and web specs do not reach it.
+# private SSH, and its `held_letter_notice` test against the pinned Herdr; a
+# change to any crate they link, or to the tests, can change its result, and
+# nothing else can. Web code and web specs do not reach it.
 MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
 
 # Web files the desktop host imports or drives through native input: the host
