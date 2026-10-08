@@ -53,6 +53,20 @@ def default_herdr(checkout, home):
     return cache / digest / "herdr"
 
 
+def operator_routing(environment):
+    """Inherited operator routes, before the private environment replaces them."""
+    routes = []
+    for key, suffix in {"HIDE_STATE_DIR": "", "HERDR_CONFIG_PATH": "",
+                        "HERDR_SESSION_PATH": "", "HERDR_SOCKET_PATH": "",
+                        "XDG_STATE_HOME": "hide", "XDG_CONFIG_HOME": "herdr"}.items():
+        if value := environment.get(key):
+            path = Path(value)
+            if not path.is_absolute():
+                raise ProtectionError("operator_routing_must_be_absolute")
+            routes.append(path / suffix if suffix else path)
+    return routes
+
+
 def wrapper(runtime, recipe, executable, sandbox):
     directory = runtime.bin / recipe["id"]
     private_directory(directory)
@@ -134,12 +148,7 @@ def main(argv=None):
                   for recipe in all_recipes for relative, format in recipe.get("shared", {}).items()}
         guard = ConfigGuard(run / "configuration-backup", known, roots,
                             exclusive_root=agent_home if args.fixture_bin else None, shared=shared)
-        # These are inherited operator routes, never the private runtime's
-        # rewritten environment. Default and legacy roots are protected too.
-        routing = [Path(os.environ[key]) for key in ("HIDE_STATE_DIR", "HERDR_CONFIG_PATH", "HERDR_SESSION_PATH")
-                   if os.environ.get(key)]
-        if os.environ.get("XDG_STATE_HOME"):
-            routing.append(Path(os.environ["XDG_STATE_HOME"]) / "hide")
+        routing = operator_routing(os.environ)
         executables = [runtime.herdr_bin, Path(sys.executable)]
         executables.extend(Path(value) for recipe in all_recipes
                            if (value := shutil.which(recipe["executable"])))

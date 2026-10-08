@@ -244,6 +244,7 @@ An addition or removal is reported only where the opposite inventory observed ab
 Metadata changes outside the known file list are named and preserved without failing the run or attempting restoration.
 The native sandbox explicitly protects nonshared declared configuration/trust files, operator Hide/Herdr routing, the installed app and this checkout's control files, including its external Git metadata, the owner-family registry, candidate and selected CLI executables, wrappers, backups and evidence.
 Protected ancestors cannot be renamed or removed; the private probe/temp/socket trees and exact issued claim files remain writable.
+Both lexical entrypoints and resolved targets are protected, including symlinked CLI installations and inherited custom Herdr sockets or XDG configuration roots.
 Native account and session state, including shared project bookkeeping and Claude's session environment, remain writable under the recorded native-state policy.
 There is no universal OS guarantee that files outside the probe cannot change: harmless probe instructions constrain requested actions, and the bounded metadata inventory observes only its recorded roots and exclusions.
 Existing and new native history changes remain named where that inventory covers them; the profile never enumerates session files.

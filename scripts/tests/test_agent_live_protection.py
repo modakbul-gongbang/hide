@@ -11,6 +11,7 @@ import io
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,7 @@ from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, val
 from agent_live_check.sandbox import WriteSandbox
 from agent_live_check.runtime import Runtime
 from agent_live_check.report import save
-from agent_live_check.cli import record_process_diagnostics, wrapper
+from agent_live_check.cli import operator_routing, record_process_diagnostics, wrapper
 
 
 def procargs(*environment, argv=(b"fixture",), pointer_width=8):
@@ -1098,6 +1099,63 @@ else:raise RuntimeError("group_survived_reap")
 
 @unittest.skipUnless(sys.platform == "darwin", "authenticated write guard is macOS-only")
 class NativeWriteProtection(unittest.TestCase):
+    def test_cli_symlink_and_custom_operator_socket_cannot_be_removed_or_retargeted(self):
+        with tempfile.TemporaryDirectory(prefix="acl-alias-", dir="/tmp") as name:
+            root = Path(name).resolve()
+            run, sockets, home, checkout = [root / key for key in ("run", "sockets", "operator", "candidate")]
+            for path in (run, sockets, home, checkout):
+                path.mkdir(mode=0o700)
+            target = root / "installation/cli"
+            target.parent.mkdir()
+            target.write_bytes(b"inert-original")
+            entry = home / "bin/cli"
+            entry.parent.mkdir()
+            entry.symlink_to(target)
+            config = root / "custom-xdg/herdr"
+            config.mkdir(parents=True)
+            config_file = config / "config.json"
+            config_file.write_bytes(b"original-routing")
+            endpoint = root / "custom-socket/operator.sock"
+            endpoint.parent.mkdir()
+            listener = socket.socket(socket.AF_UNIX)
+            try:
+                listener.bind(str(endpoint))
+                identity = endpoint.stat().st_ino
+                sandbox = WriteSandbox(run, sockets, home, checkout=checkout,
+                                       routing=operator_routing({"HERDR_SOCKET_PATH": str(endpoint),
+                                                                 "XDG_CONFIG_HOME": str(config.parent)}),
+                                       executables=[entry])
+                program = ("from pathlib import Path\n"
+                           f"for name in {[str(entry), str(endpoint), str(config_file)]!r}:\n"
+                           " p=Path(name)\n"
+                           " for operation in ('unlink','replace'):\n"
+                           "  try:\n"
+                           "   if operation=='unlink': p.unlink()\n"
+                           "   else:\n"
+                           f"    q=Path({str(sandbox.probe / 'replacement')!r}); q.write_bytes(b'forbidden'); q.replace(p)\n"
+                           "  except PermissionError: pass\n"
+                           "  else: raise SystemExit(31)\n"
+                           f"try: Path({str(config_file)!r}).write_bytes(b'forbidden')\n"
+                           "except PermissionError: pass\n"
+                           "else: raise SystemExit(33)\n"
+                           f"for name in {[str(entry.parent), str(target.parent), str(config)]!r}:\n"
+                           " p=Path(name); q=p.with_name(p.name+'.moved')\n"
+                           " try: p.rename(q)\n"
+                           " except PermissionError: pass\n"
+                           " else: q.rename(p); raise SystemExit(32)\n")
+                with OwnedProcesses() as owner:
+                    code, _, error = owner.run(sandbox.command([sys.executable, "-c", program]),
+                                               env=dict(os.environ), check=False)
+                self.assertEqual(code, 0, error)
+                self.assertTrue(entry.is_symlink())
+                self.assertEqual(entry.resolve(), target)
+                self.assertEqual(target.read_bytes(), b"inert-original")
+                self.assertEqual(config_file.read_bytes(), b"original-routing")
+                self.assertTrue(endpoint.is_socket())
+                self.assertEqual(endpoint.stat().st_ino, identity)
+            finally:
+                listener.close()
+
     def test_other_process_control_arguments_and_mailbox_storage_are_denied(self):
         with tempfile.TemporaryDirectory(prefix="acl-", dir="/tmp") as name:
             root = Path(name).resolve()

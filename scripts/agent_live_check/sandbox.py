@@ -15,6 +15,12 @@ from .processes import OwnedProcesses
 from .protection import ProtectionError, beneath, private_directory, write_private
 
 
+def spellings(paths: list[Path]) -> list[Path]:
+    """Protect an entrypoint and its target, including both ancestor chains."""
+    return list(dict.fromkeys(candidate for path in paths
+                             for candidate in (Path(os.path.abspath(path)), path.resolve())))
+
+
 class WriteSandbox:
     def __init__(self, run: Path, sockets: Path, operator_home: Path,
                  state: Path | None = None, *, checkout: Path,
@@ -55,7 +61,7 @@ class WriteSandbox:
                 if not value or "\n" in value:
                     raise ProtectionError("candidate_git_common_path_invalid")
                 controls.append((directory / value).resolve())
-        controls = list(dict.fromkeys(path.resolve() for path in controls))
+        controls = spellings(controls)
         allowed = [self.probe, self.temp, self.sockets]
         # The remote-unix grammar follows the installed system sandbox profiles.
         rules = ["(version 1)", "(allow default)",
@@ -73,9 +79,9 @@ class WriteSandbox:
                  f"(deny file-read* (subpath {quote(self.run)}))",
                  "(allow file-read* " + " ".join(f"(subpath {quote(p)})" for p in
                                                    [*allowed, self.run / "bin"]) + ")"]
-        leaves = [*[path.resolve() for path in protected], self.declared_proof]
+        leaves = spellings([*protected, self.declared_proof])
         for path in dict.fromkeys(leaves):
-            rules.append(f"(deny file-write* (literal {quote(path.resolve())}))")
+            rules.append(f"(deny file-write* (literal {quote(path)}))")
         # A leaf denial alone cannot prevent renaming its containing tree.
         ancestors = {parent for path in [*controls, *leaves, self.sockets]
                      for parent in (path, *path.parents) if parent != Path("/")}
@@ -83,10 +89,10 @@ class WriteSandbox:
             f"(literal {quote(p)})" for p in sorted(ancestors)) + ")")
         # Installed hook executables may live in .hide/kit. They remain
         # readable; only operator routing/credentials are concealed.
-        for path in (operator_home / ".hide/state", operator_home / ".hide/hcoord",
+        for path in spellings([operator_home / ".hide/state", operator_home / ".hide/hcoord",
                      operator_home / ".local/state/hide", operator_home / ".config/herdr",
-                     *[path.resolve() for path in routing or []]):
-            rules.append(f"(deny file-read* (subpath {quote(path.resolve())}))")
+                     *(routing or [])]):
+            rules.append(f"(deny file-read* (subpath {quote(path)}))")
         self.profile = self.run / "native-write-guard.sb"
         self.rules = rules
         self.references = set()
