@@ -129,6 +129,7 @@ fn removing_devices_retires_only_their_pane_reads_and_rejects_late_publications(
             instance: format!("terminal-{index}"),
             pane: "child".into(),
             parent: None,
+            origin: None,
             project: None,
             actor: child.clone(),
             ended: false,

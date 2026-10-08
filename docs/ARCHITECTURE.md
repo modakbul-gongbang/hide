@@ -410,8 +410,16 @@ A count Hide cannot read is reported as unknown, never as zero.
 
 A pane's parent travels the same channel, and it is the only lineage there is: Herdr records none.
 hided is the sole writer of `parent_pane`, optional `parent_machine`, `child_session` and `parent_session` through `pane.report_metadata`; the unchanged value and lifetime contract is described in [status-model.md](status-model.md#where-a-parent-comes-from).
-Those tokens die with the pane, not with the agent, so a relationship holds only while both panes still report the sessions it was written for: `wire.rs` compares the child's, `sidebar::apply_lineage` the parent's, and an agent that took over a pane is a root.
-Hide's fork and `hide agent spawn` register the relationship only after Herdr produces the real pane and agent; a registration failure preserves that pane and records a diagnostic instead of inventing an edge.
+Those tokens die with the pane, not with the agent, so a relationship holds only while both panes still report the sessions it was written for: `wire.rs` compares the child's, `agent_state::apply_lineage` the parent's, and an agent that took over a pane is a root.
+A spawn without `--parent` is an operator handoff: `AgentRecord.parent` is empty and its separate optional `origin` records the spawner.
+Delegated origin is derived from parent, and all CLI agent answers include nullable origin.
+Origin never feeds lineage tokens, sidebar ownership, ancestor unread state, descendant badges, subtree close or the links worker's parent edges; a handed-off session remains linked to its own branch without a delegation line.
+The spawn receipt's `parent` continues to name the caller that authorizes every creation phase in both modes, with an explicit `SpawnMode` distinguishing responsibility and watch behavior.
+Only delegation installs an automatic watch; handoff retains normal mail and explicit watches.
+Version-1 receipts lacking mode default to delegation, and legacy `no_watch` fields are ignored while completed receipts and existing watches survive unchanged.
+Caller plus intent is still the receipt key, and a mode change is an `intent_conflict` before side effects.
+Both paths create a separate tab without focus, including a tab in an already-open checkout; interactive product tab creation retains its existing focus behavior.
+Hide's fork and delegated `hide agent spawn --parent here|<self id>` register the relationship only after Herdr produces the real pane and agent; a registration failure preserves that pane and records a diagnostic instead of inventing an edge.
 `wire.rs` is the only token conversion boundary.
 The consented helper supplies `hide_platform::host::machine_id` once in its connection greeting; the device worker applies it only to the established connection generation, outside `Mutex<Runtime>`, before resolving machine-qualified lineage.
 A failed identity read logs a lineage diagnostic and leaves the parent unresolved while the helper stays usable; there is no SSH-alias fallback or extra identity SSH command.
