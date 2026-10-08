@@ -15,12 +15,13 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
 }) {
   const { t } = useInterfaceTranslation();
   const uncertain = session.phase === "close_unknown" || session.phase === "wake_unknown";
+  const pending = session.phase !== "sleeping" && session.phase !== "failed" && !uncertain;
   const caption = t(sleepingCaption(session));
   return (
     <li data-sleeping-session={session.sleep_id} className="flex min-w-0 items-center gap-xs rounded-sm py-xs pr-xs text-body" style={{ paddingLeft: inset }}>
       <Hint label={caption}>
         <span className="flex min-h-(--size-sidebar-line) shrink-0 items-center text-muted-foreground">
-          {session.checking || (!session.wake_available && !uncertain)
+          {session.checking || pending
             ? <Loader2Icon aria-hidden="true" className="size-(--size-status-mark) animate-spin" />
             : <MoonIcon aria-hidden="true" className="size-(--size-status-mark)" />}
         </span>

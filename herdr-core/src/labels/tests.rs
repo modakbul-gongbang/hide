@@ -317,6 +317,33 @@ fn task(label: Option<AgentLabel>) -> Option<String> {
 }
 
 #[test]
+fn a_path_reveals_only_its_proven_native_id_and_a_switched_path_has_no_identity() {
+    let harness = Harness::new();
+    let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "완료")]);
+    let other = harness.session("b", "native-b", &[("user", "다른 요청")]);
+    harness.backend.answer("신원 확인 작업", "done", "");
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let observed = agent(&path, "idle", 1);
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+    let native = |path: &Path| {
+        let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+            "pane_id":"w1:p1", "agent":"claude", "agent_status":"idle", "state_change_seq":1,
+            "agent_session":{"kind":"path","value":path.display().to_string()}
+        }]}))
+        .unwrap();
+        worker.overlay().apply(&mut payload);
+        payload
+            .agents
+            .remove(0)
+            .facts
+            .and_then(|facts| facts.native_session_id)
+    };
+    assert_eq!(native(&path).as_deref(), Some("native-a"));
+    assert!(native(&other).is_none());
+}
+
+#[test]
 fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
     let harness = Harness::new();
     let (mut worker, woken, source) = harness.worker(harness.store());
@@ -676,10 +703,15 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
     );
 }
 
-/// A helper from before protocol 12, which does not know the call.
+/// Audited legacy reader facts with a missing optional label RPC.
 struct OlderHelper;
 
 impl crate::node_access::NodeLink for OlderHelper {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        static FACTS: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures> =
+            std::sync::OnceLock::new();
+        Some(FACTS.get_or_init(hide_node_link::sessions::ReaderFeatures::protocol24))
+    }
     fn call(
         &self,
         _: hide_node_link::protocol::Call,
@@ -699,6 +731,11 @@ impl crate::node_access::NodeLink for OlderHelper {
 struct HelperAt(PathBuf);
 
 impl crate::node_access::NodeLink for HelperAt {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        static FACTS: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures> =
+            std::sync::OnceLock::new();
+        Some(FACTS.get_or_init(hide_node_link::sessions::ReaderFeatures::implemented))
+    }
     fn call(
         &self,
         call: hide_node_link::protocol::Call,
@@ -1766,6 +1803,22 @@ fn a_restart_keeps_the_plan_wait_and_reads_a_record_without_one_once() {
 struct HelperWithoutTurns(PathBuf);
 
 impl crate::node_access::NodeLink for HelperWithoutTurns {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        static FACTS: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures> =
+            std::sync::OnceLock::new();
+        Some(FACTS.get_or_init(|| {
+            let mut rows =
+                serde_json::to_value(hide_node_link::sessions::ReaderFeatures::implemented())
+                    .unwrap();
+            for row in rows.as_array_mut().unwrap() {
+                row["features"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|feature| feature != "turns" && feature != "user_turn_content");
+            }
+            serde_json::from_value(rows).unwrap()
+        }))
+    }
     fn call(
         &self,
         call: hide_node_link::protocol::Call,

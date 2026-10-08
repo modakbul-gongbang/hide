@@ -660,11 +660,17 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         last_activity,
         state_change_seq: agent.state_change_seq,
         session_id: agent
-            .agent_session
+            .facts
             .as_ref()
-            .filter(|session| session.kind == "id")
-            .map(|session| session.value.clone())
-            .filter(|value| !value.trim().is_empty()),
+            .and_then(|facts| facts.native_session_id.clone())
+            .or_else(|| {
+                agent
+                    .agent_session
+                    .as_ref()
+                    .filter(|session| session.kind == "id")
+                    .map(|session| session.value.clone())
+                    .filter(|value| !value.trim().is_empty())
+            }),
         own_find: crate::agent_find::agent_find(agent_kind).is_some(),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         declared_parent_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())

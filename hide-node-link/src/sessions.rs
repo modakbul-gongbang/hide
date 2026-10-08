@@ -56,7 +56,7 @@ impl ReaderFeatures {
                 features.insert(Conversation);
             }
             if agent.reports_turns() {
-                features.insert(Turns);
+                features.extend([Turns, UserTurnContent]);
             }
             result.providers.insert(agent.as_str().to_owned(), features);
         }

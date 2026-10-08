@@ -184,6 +184,11 @@ fn prepare_label_call(
         .is_some_and(|features| features.supports(request.agent.as_str(), ReaderFeature::Turns))
     {
         request.turns = None;
+    } else if !link.reader_features().is_some_and(|features| {
+        features.supports(request.agent.as_str(), ReaderFeature::UserTurnContent)
+    }) && let Some(turns) = &mut request.turns
+    {
+        turns.clear_user_turn_content();
     }
     Some(request.agent)
 }
@@ -207,7 +212,8 @@ fn label_answer(
     })?;
     let titles = features.supports(agent.as_str(), ReaderFeature::Titles);
     let turns = features.supports(agent.as_str(), ReaderFeature::Turns);
-    if titles && turns {
+    let content = features.supports(agent.as_str(), ReaderFeature::UserTurnContent);
+    if titles && turns && content {
         return Ok(answer);
     }
     let raw = match answer {
@@ -234,6 +240,17 @@ fn label_answer(
     {
         refused.push("reader_turns_unsupported");
     }
+    if turns
+        && !content
+        && let Some(raw) = fields.0.get_mut("turns")
+        && raw.get() != "null"
+    {
+        let (filtered, changed) = without_turn_content(raw)?;
+        *raw = filtered;
+        if changed {
+            refused.push("reader_user_turn_content_unsupported");
+        }
+    }
     if !refused.is_empty() {
         let mut reasons: std::collections::BTreeMap<String, usize> = fields
             .0
@@ -253,6 +270,77 @@ fn label_answer(
     serde_json::value::to_raw_value(&fields.0)
         .map(LinkAnswer::Raw)
         .map_err(|_| invalid_label_answer())
+}
+
+/// Remove unsupported nested bodies before decoding their provider format.
+/// Native wait markers remain readable on a peer with only `Turns`.
+fn without_turn_content(
+    raw: &serde_json::value::RawValue,
+) -> Result<(Box<serde_json::value::RawValue>, bool), LinkError> {
+    let mut tracker: RawReaderFields =
+        serde_json::from_str(raw.get()).map_err(|_| invalid_label_answer())?;
+    let mut changed = false;
+    if let Some(last) = tracker.0.get_mut("last")
+        && last.get() != "null"
+    {
+        let mut fields: RawReaderFields =
+            serde_json::from_str(last.get()).map_err(|_| invalid_label_answer())?;
+        changed |= fields
+            .0
+            .remove("plan_content")
+            .is_some_and(|raw| raw.get() != "null");
+        *last = serde_json::value::to_raw_value(&fields.0).map_err(|_| invalid_label_answer())?;
+    }
+    if let Some(questions) = tracker.0.get_mut("questions") {
+        struct Questions;
+        impl<'de> serde::de::Visitor<'de> for Questions {
+            type Value = Vec<RawReaderFields>;
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("bounded native question calls")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut calls = Vec::new();
+                while calls.len() < hide_session::turns::QUESTION_CALL_LIMIT {
+                    let Some(call) = seq.next_element()? else {
+                        return Ok(calls);
+                    };
+                    calls.push(call);
+                }
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::custom("user_turn_capacity"));
+                }
+                Ok(calls)
+            }
+        }
+        use serde::de::Deserializer;
+        let mut decoder = serde_json::Deserializer::from_str(questions.get());
+        let mut calls = (&mut decoder)
+            .deserialize_seq(Questions)
+            .map_err(|_| invalid_label_answer())?;
+        decoder.end().map_err(|_| invalid_label_answer())?;
+        for call in &mut calls {
+            changed |= call
+                .0
+                .remove("content")
+                .is_some_and(|raw| raw.get() != "null");
+            call.0.insert(
+                "content".into(),
+                serde_json::value::to_raw_value(&Option::<()>::None)
+                    .map_err(|_| invalid_label_answer())?,
+            );
+        }
+        *questions = serde_json::value::to_raw_value(
+            &calls.into_iter().map(|call| call.0).collect::<Vec<_>>(),
+        )
+        .map_err(|_| invalid_label_answer())?;
+    }
+    Ok((
+        serde_json::value::to_raw_value(&tracker.0).map_err(|_| invalid_label_answer())?,
+        changed,
+    ))
 }
 
 fn invalid_label_answer() -> LinkError {
@@ -491,6 +579,60 @@ mod tests {
             answer.turns.unwrap().waiting(),
             Some(hide_session::turns::Waiting::PlanApproval)
         );
+    }
+
+    #[test]
+    fn a_peer_without_user_turn_content_keeps_native_waits_without_decoding_future_bodies() {
+        for response in [
+            r#"{"events":[],"turns":{"through":31,"last":{"id":"turn","mode":"plan","plan":true,"plan_content":{"future":42},"end":"completed","answered":false}},"skipped_reasons":{}}"#,
+            r#"{"events":[],"turns":{"through":31,"questions":[{"call":"ask-a","content":{"future":42},"answered":false}]},"skipped_reasons":{}}"#,
+        ] {
+            let peer = LabelPeer {
+                features: ReaderFeatures::protocol24(),
+                response,
+            };
+            let answer: LabelProbe = call_as(
+                &peer,
+                label_call(hide_session::Agent::Codex),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            let turn = answer.turns.unwrap().user_turn().unwrap();
+            assert!(turn.content.is_none());
+            assert_eq!(
+                answer
+                    .skipped_reasons
+                    .get("reader_user_turn_content_unsupported"),
+                Some(&1)
+            );
+        }
+    }
+
+    #[test]
+    fn request_checkpoint_content_is_removed_independently_from_the_native_plan_hold() {
+        let peer = LabelPeer {
+            features: ReaderFeatures::protocol24(),
+            response: "{}",
+        };
+        let mut call = label_call(hide_session::Agent::Codex);
+        let Call::LabelTranscript { request } = &mut call else {
+            unreachable!()
+        };
+        request.turns = Some(
+            serde_json::from_value(serde_json::json!({
+                "through":31,"last":{"id":"turn","mode":"plan","plan":true,
+                "plan_content":{"text":"review this plan","choices":[],"truncated":false},
+                "end":"completed","answered":false}
+            }))
+            .unwrap(),
+        );
+        prepare_label_call(&peer, &mut call);
+        let Call::LabelTranscript { request } = call else {
+            unreachable!()
+        };
+        let turn = request.turns.unwrap().user_turn().unwrap();
+        assert_eq!(turn.kind, hide_session::turns::UserTurnKind::PlanApproval);
+        assert!(turn.content.is_none());
     }
 
     #[test]

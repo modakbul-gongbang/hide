@@ -226,7 +226,9 @@ impl DormantRecord {
             // Historical parent metadata never creates a live relationship.
             group: crate::agent_state::dormant_group().name(),
             wake_available: self.closed
-                && matches!(self.phase, DormantPhase::Sleeping | DormantPhase::Failed),
+                && matches!(self.phase, DormantPhase::Sleeping | DormantPhase::Failed)
+                && hide_agent_adapter::adapter(&self.kind)
+                    .is_some_and(|adapter| adapter.resume.is_some()),
             checking: false,
         }
     }
@@ -489,6 +491,21 @@ mod tests {
         }
         let old: AgentSleepStore = serde_json::from_str(r#"{"stamps":{},"records":{}}"#).unwrap();
         assert!(old.dormant.is_empty());
+    }
+
+    #[test]
+    fn retained_sessions_offer_wake_only_for_this_builds_resume_capabilities() {
+        let mut store = AgentSleepStore::default();
+        let id = store.admit_dormant(record("p1")).unwrap();
+        let entry = store.dormant.get_mut(&id).unwrap();
+        entry.phase = DormantPhase::Sleeping;
+        entry.closed = true;
+        assert!(store.dormant_snapshots()[0].wake_available);
+        for kind in ["pi", "omp", "grok", "cursor", "opencode", "unknown"] {
+            store.dormant.get_mut(&id).unwrap().kind = kind.into();
+            assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
+        }
+        assert_eq!(store.dormant.len(), 1);
     }
 
     #[test]

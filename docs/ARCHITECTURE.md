@@ -1070,6 +1070,8 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   Off, the worker asks for nothing, the analyzer answers a queued job as stopped and cancels the running one (`LabelAnalyzer::cancel_running`), and the overlay lays no goal, line or end, so every surface shows the session's own title and the request view its facts; reads go on, because the rows stand on them.
   On again, the stored labels show at once and each pane's current turn is asked for, never the turns that ended while it was off.
 - **Only for the session it was proven for.** A record stores the provider's native owner, proven from transcript metadata, and the reference it was proven under.
+  A path reference yields a native session id only after the reader confirms it from that file's own metadata and the id hashes to the same provider owner.
+  The optional id is retained with that proof and projected only while the current reference still proves it; a switched path exposes no previous identity, and a retained helper answer without the field grants no path identity.
   The projection shows a label only while the pane's current Herdr reference proves that owner, so a new session, a reused pane, a provider change and an A to B to A switch show nothing of the previous session until the new one is proven, and returning to the same session restores its label (`PaneRecord::proven_for`).
   Every read and analysis result carries the pane's generation, which moves with the reference, and a late result for an earlier generation is dropped.
   Nothing is exchanged through Herdr tokens, so there is no token fence or publication guard to keep in step.
@@ -1554,6 +1556,8 @@ The snapshot carries one entry per display in `changes.diffs` (`path`, `committe
 The diffs are taken under the folder History reads, the front Project's registered folder, while a Workspace is keyed by its checkout, so every Project registered in one checkout shares its views; a diff display outside that folder gets no text and a `notice` naming the folder, and shows its diff when a Project that holds it is in front.
 The request and its answer changed shape, so the helper protocol version moved with them (`hide-node-link/src/protocol.rs`); unaudited protocol mismatches are refused before use.
 Protocol 25 adds bounded reader-feature facts to the existing authenticated Hello, retained only for that live connection.
+Structured question and plan content is a separate feature from turn lifecycle facts.
+An unsupported content field is removed before typed decoding in both directions, preserving native question identities, answered markers and plan waits for a helper that supports turns alone.
 Missing or malformed facts disable the affected reader feature while file and Git operations remain available; the protocol number alone grants no reader.
 The audited protocol-24 transition keeps its frozen Claude/Codex and partial OpenCode label/link capabilities, with no new reader or structured user-turn content inferred from the current build.
 Reader requests and returned bodies are checked against the live link before serialization and decoding; draining, closed or replaced links cannot lend their retired facts to a checkpoint.
