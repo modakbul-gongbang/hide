@@ -3410,6 +3410,7 @@ impl Runtime {
         }
         let request = live::CheckoutTabRequest {
             id,
+            agent_kind,
             resume_reference,
             resume_scope: payload
                 .resume_session_id

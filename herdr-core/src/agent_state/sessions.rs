@@ -90,18 +90,17 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Row {
     if agent.escalation.is_some() {
         return Row {
             group: Group::MyTurn,
-            tag: Some(if agent.blocked {
-                Tag::Approval
-            } else if agent
-                .escalation
-                .as_ref()
-                .is_some_and(|e| e.cause != super::escalation::Cause::ObserverUnconfirmed)
-                || agent.demand == "question"
-            {
-                Tag::Answer
-            } else {
-                Tag::Stopped
-            }),
+            tag: Some(demand_tag(agent).unwrap_or_else(|| {
+                if agent
+                    .escalation
+                    .as_ref()
+                    .is_some_and(|e| e.cause != super::escalation::Cause::ObserverUnconfirmed)
+                {
+                    Tag::Answer
+                } else {
+                    Tag::Stopped
+                }
+            })),
         };
     }
     let tag = tag(agent, verb);
@@ -127,10 +126,21 @@ pub(super) fn mergeable(pull: &crate::request_view::AgentPullRequestSnapshot) ->
         && matches!(pull.review, None | Some(ReviewDecision::Approved))
 }
 
+/// Native questions also hold the pane blocked until a reply. Their demand
+/// still outranks approval on every tag surface, as it does on the row mark.
+fn demand_tag(agent: &SidebarAgentSnapshot) -> Option<Tag> {
+    if agent.demand == "question" {
+        Some(Tag::Answer)
+    } else if agent.blocked {
+        Some(Tag::Approval)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn tag(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Tag {
     match verb {
-        RequestVerb::Answer if agent.blocked => Tag::Approval,
-        RequestVerb::Answer => Tag::Answer,
+        RequestVerb::Answer => demand_tag(agent).unwrap_or(Tag::Answer),
         RequestVerb::Fix => Tag::Fix,
         RequestVerb::Review => {
             let mut duties = agent

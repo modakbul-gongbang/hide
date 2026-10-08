@@ -1519,6 +1519,8 @@ Pi starts with the existing first-prompt argument boundary and CLI model default
 omp's Basic popover also includes native titles, Sleep and Fork from its complete session reader, while hook and collaboration capabilities remain unavailable.
 Its current native/manual title wins over a generated goal; an explicit clear returns to the existing fallback without replaying the conversation.
 An unanswered native `ask` enters the existing question state with bounded text and choices even with summaries off, and a correlated answer clears it.
+Its question keeps the existing Answer tag in the pane header even while the native session holds for an operator reply.
+Archive resume sends the selected source path to the core, which decides whether the native reader requires that exact file proof before starting.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Plugin: Outdated: …` for OpenCode's hook piece, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
 An agent that is on and found whose hook Hide could not put in says why in one muted line without Reinstall, since nothing is broken: its program has not created its configuration folder yet, a file of that name is not Hide's, or Hide does not write that hook on this system (`Plugin: OpenCode has not created ~/.config/opencode yet; …`).

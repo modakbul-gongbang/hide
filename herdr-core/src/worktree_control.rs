@@ -918,6 +918,7 @@ pub fn spawn_remote_purpose_write(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckoutTabRequest {
     pub id: u64,
+    pub agent_kind: Option<String>,
     pub checkout_path: String,
     pub label: String,
     pub host: crate::checkout_owner::TabHost,
@@ -983,7 +984,7 @@ fn start_task_agent(
     let reader = start
         .resume_scope
         .as_ref()
-        .map(|_| task_session_node(&runtime, id))
+        .map(|_| task_session_node(&runtime, id, &start.kind))
         .transpose();
     let outcome = match reader {
         Err(reason) => TaskAgentOutcome::Failed(reason),
@@ -1004,7 +1005,7 @@ fn start_task_agent(
                         .map_err(|_| "runtime unavailable")?
                         .pending_task_agent_start(id);
                     if pending.as_ref() != Some(&expected)
-                        || !Arc::ptr_eq(&task_session_node(&runtime, id)?, reader)
+                        || !Arc::ptr_eq(&task_session_node(&runtime, id, &expected.kind)?, reader)
                     {
                         return Err("session_resume_intent_changed".into());
                     }
@@ -1283,21 +1284,25 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
         if let Some(scope) = request.resume_scope.as_ref() {
             target.check_current(request.id)?;
             let runtime = target.runtime.upgrade().ok_or("runtime stopped")?;
-            let node = task_session_node(&runtime, request.id)?;
+            let kind = request
+                .agent_kind
+                .as_deref()
+                .ok_or("session_resume_agent_required")?;
+            let node = task_session_node(&runtime, request.id, kind)?;
             crate::live::confirm_session_launch(
                 node.as_ref(),
-                "pi",
+                kind,
                 &scope.id,
                 Some(&scope.cwd),
                 request.resume_reference.as_ref(),
             )?;
-            if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+            if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id, kind)?) {
                 return Err("session_resume_reader_changed".into());
             }
             target.check_current(request.id)?;
             let current = || {
                 target.check_current(request.id)?;
-                if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+                if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id, kind)?) {
                     return Err("session_resume_reader_changed".into());
                 }
                 Ok(())
@@ -1335,6 +1340,7 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
 fn task_session_node(
     runtime: &Arc<Mutex<Runtime>>,
     id: u64,
+    kind: &str,
 ) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
     let mut runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
     let operation = runtime
@@ -1343,6 +1349,9 @@ fn task_session_node(
         .as_ref()
         .filter(|operation| operation.id == id)
         .ok_or("task superseded")?;
+    if operation.agent_kind.as_deref() != Some(kind) {
+        return Err("session_resume_intent_changed".into());
+    }
     let device = operation
         .device_id
         .clone()

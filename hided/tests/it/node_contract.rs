@@ -312,7 +312,20 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             .unwrap()
             .supports("pi", ReaderFeature::Turns)
     );
-    for agent in ["omp", "grok", "cursor"] {
+    for feature in [
+        ReaderFeature::Conversation,
+        ReaderFeature::Turns,
+        ReaderFeature::UserTurnContent,
+    ] {
+        assert!(
+            device
+                .link
+                .reader_features()
+                .unwrap()
+                .supports("omp", feature)
+        );
+    }
+    for agent in ["grok", "cursor"] {
         assert!(
             !device
                 .link
@@ -486,6 +499,25 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
                 .supports(provider, ReaderFeature::Identity)
         );
     }
+    let refused: Result<LabelTranscript, _> = call_as(
+        device.link.as_ref(),
+        Call::LabelTranscript {
+            request: LabelTranscriptRequest {
+                agent: Agent::Omp,
+                reference_kind: "id".into(),
+                reference_value: "native-omp".into(),
+                cwd: Some("/work/app".into()),
+                checkpoint: None,
+                subagents: Default::default(),
+                turns: None,
+            },
+        },
+        TIMEOUT,
+    );
+    assert!(
+        refused.is_err(),
+        "an actual protocol24 helper cannot read omp"
+    );
     let project: RootOpened = call_as(
         device.link.as_ref(),
         Call::RootOpen {
@@ -526,6 +558,13 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
     assert_eq!(
         established.host.reader_features(),
         Some(&hide_node_link::sessions::ReaderFeatures::implemented())
+    );
+    assert!(
+        established
+            .host
+            .reader_features()
+            .unwrap()
+            .supports("omp", ReaderFeature::UserTurnContent)
     );
     device.link = established.host;
     device.link.close("retained-payload fixture ended");

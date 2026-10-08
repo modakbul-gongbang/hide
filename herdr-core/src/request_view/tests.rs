@@ -168,6 +168,7 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
     let mut rows = rows(&[
         ("approval", "blocked"),
         ("question", "idle"),
+        ("native-question", "blocked"),
         ("read-question", "idle"),
         ("read-with-ci", "idle"),
         ("working-with-ci", "working"),
@@ -211,6 +212,8 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
         [
             ("approval", Group::MyTurn, Some(Tag::Approval)),
             ("question", Group::MyTurn, Some(Tag::Answer)),
+            // Native unanswered questions remain held after being read.
+            ("native-question", Group::MyTurn, Some(Tag::Answer)),
             ("read-question", Group::Resting, Some(Tag::Idle)),
             // The question holder already owns PR 1, so another row cannot also fix it.
             ("read-with-ci", Group::Resting, Some(Tag::Idle)),

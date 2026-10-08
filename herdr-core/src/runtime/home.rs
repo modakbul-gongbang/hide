@@ -218,6 +218,7 @@ impl Runtime {
         Some(live::CheckoutTabRequest {
             resume_reference: None,
             id,
+            agent_kind: None,
             resume_scope: None,
             checkout_path: synced.home,
             label,
