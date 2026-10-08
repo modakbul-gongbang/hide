@@ -67,21 +67,21 @@ const DAY = 24 * HOUR;
 /** The most worker candidates a Factory keeps (D-41). */
 const WORKER_LIMIT = 5;
 
-/** A number setting: its key, the unit the engine takes it in, and how it reads from the config. */
-type NumberSetting = { key: string; read: (answer: ConfigAnswer) => number };
+/** A number the engine keeps, how to read it from the config, and the words for its unit after the field. */
+type NumberSetting = { key: string; read: (answer: ConfigAnswer) => number; unit: MessageKey };
 
 const per = (unit: number, field: keyof FactoryConfig) => (answer: ConfigAnswer) => Math.round((answer.config[field] as number) / unit);
 const plain = (field: keyof FactoryConfig) => (answer: ConfigAnswer) => answer.config[field] as number;
 
-const DEADLINE: NumberSetting = { key: "question_deadline_hours", read: per(HOUR, "question_deadline_ms") };
-const STALL: NumberSetting = { key: "stall_minutes", read: per(MINUTE, "stall_ms") };
-const NO_REPORT: NumberSetting = { key: "no_report_minutes", read: per(MINUTE, "no_report_ms") };
-const OBSERVER_LIMIT: NumberSetting = { key: "observer_daily_limit", read: plain("observer_daily_limit") };
-const WATCH_INTERVAL: NumberSetting = { key: "watch_interval_minutes", read: per(MINUTE, "watch_interval_ms") };
-const WATCH_LIMIT: NumberSetting = { key: "watch_daily_limit", read: plain("watch_daily_limit") };
-const CANCEL_KEEP: NumberSetting = { key: "cancel_keep_days", read: per(DAY, "cancel_keep_ms") };
-const DONE_FOLD: NumberSetting = { key: "done_fold_days", read: per(DAY, "done_fold_ms") };
-const ARCHIVE_FOLD: NumberSetting = { key: "archive_fold_days", read: per(DAY, "archive_fold_ms") };
+const DEADLINE: NumberSetting = { key: "question_deadline_hours", read: per(HOUR, "question_deadline_ms"), unit: "factory.settings.adv.hours" };
+const STALL: NumberSetting = { key: "stall_minutes", read: per(MINUTE, "stall_ms"), unit: "factory.settings.adv.quiet" };
+const NO_REPORT: NumberSetting = { key: "no_report_minutes", read: per(MINUTE, "no_report_ms"), unit: "factory.settings.adv.noReport" };
+const OBSERVER_LIMIT: NumberSetting = { key: "observer_daily_limit", read: plain("observer_daily_limit"), unit: "factory.settings.adv.perDay" };
+const WATCH_INTERVAL: NumberSetting = { key: "watch_interval_minutes", read: per(MINUTE, "watch_interval_ms"), unit: "factory.settings.adv.every" };
+const WATCH_LIMIT: NumberSetting = { key: "watch_daily_limit", read: plain("watch_daily_limit"), unit: "factory.settings.adv.perDay" };
+const CANCEL_KEEP: NumberSetting = { key: "cancel_keep_days", read: per(DAY, "cancel_keep_ms"), unit: "factory.settings.adv.cancelDays" };
+const DONE_FOLD: NumberSetting = { key: "done_fold_days", read: per(DAY, "done_fold_ms"), unit: "factory.settings.adv.doneDays" };
+const ARCHIVE_FOLD: NumberSetting = { key: "archive_fold_days", read: per(DAY, "archive_fold_ms"), unit: "factory.settings.adv.archiveDays" };
 
 const RECOVERY: readonly { id: string; label: MessageKey }[] = [
   { id: "remove_finished_worktrees", label: "factory.settings.recovery.remove_finished_worktrees" },
@@ -231,10 +231,10 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
   const set = (key: string, value: string) => write.send({ verb: "config", project: factory.project, set: [[key, value]] });
   const send = (command: FactoryCommand) => write.send(command);
   // A number inside a sentence: the field, then the words for its unit (B36).
-  const amount = (row: NumberSetting, unit: MessageKey) => (
+  const amount = (row: NumberSetting) => (
     <span className="flex items-center gap-xs">
       <TextField reset={refusals} value={String(row.read(answer))} numeric valid={(text) => Number.isInteger(Number(text)) && Number(text) >= 0} onCommit={(value) => set(row.key, value)} data={row.key} />
-      <span className="text-caption text-muted-foreground">{t(unit)}</span>
+      <span className="text-caption text-muted-foreground">{t(row.unit)}</span>
     </span>
   );
   // Closing follows the lifecycle states, independent of board presentation.
@@ -264,23 +264,23 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
         </Row>
         <Disclosure title={t("factory.settings.advanced")} summary={t("factory.settings.advancedSummary")} data-factory-settings-group="advanced">
           <Row label={t("factory.settings.adv.deadline")} detail={<Note>{t("factory.settings.adv.deadlineDetail")}</Note>}>
-            {amount(DEADLINE, "factory.settings.adv.hours")}
+            {amount(DEADLINE)}
           </Row>
           <Row label={t("factory.settings.adv.stop")}>
-            {amount(STALL, "factory.settings.adv.quiet")}
-            {amount(NO_REPORT, "factory.settings.adv.noReport")}
+            {amount(STALL)}
+            {amount(NO_REPORT)}
           </Row>
           <Row label={t("factory.settings.adv.aiLimit")} detail={<Note>{t("factory.settings.adv.aiLimitDetail")}</Note>}>
-            {amount(OBSERVER_LIMIT, "factory.settings.adv.perDay")}
+            {amount(OBSERVER_LIMIT)}
           </Row>
           <Row label={t("factory.settings.adv.watch")}>
-            {amount(WATCH_INTERVAL, "factory.settings.adv.every")}
-            {amount(WATCH_LIMIT, "factory.settings.adv.perDay")}
+            {amount(WATCH_INTERVAL)}
+            {amount(WATCH_LIMIT)}
           </Row>
           <Row label={t("factory.settings.adv.keep")}>
-            {amount(CANCEL_KEEP, "factory.settings.adv.cancelDays")}
-            {amount(DONE_FOLD, "factory.settings.adv.doneDays")}
-            {amount(ARCHIVE_FOLD, "factory.settings.adv.archiveDays")}
+            {amount(CANCEL_KEEP)}
+            {amount(DONE_FOLD)}
+            {amount(ARCHIVE_FOLD)}
           </Row>
           <Row label={t("factory.settings.adv.recovery")} detail={
             <div className="flex flex-col gap-xs">
