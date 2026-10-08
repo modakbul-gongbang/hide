@@ -474,11 +474,16 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
         try:
             if child is not None:
                 try:
-                    # Normal exit was just positively sampled. Reuse only
-                    # that decision table, avoiding a duplicate whole-host
-                    # scan per short command. Signals still collect afresh,
-                    # and the post-wait absence scan remains mandatory.
-                    current = dict(observed) if root_exited else collect()
+                    # The unreaped root still reserves its group. Refresh
+                    # that cheap group view before wait, retaining the last
+                    # marker proofs without repeating the whole-host scan.
+                    if root_exited:
+                        current = snapshot(group)
+                        require_complete(current)
+                        observed.update(current)
+                        current = dict(observed)
+                    else:
+                        current = collect()
                     active = any(not process.zombie for process in current.values())
                 except BaseException:
                     active = True
@@ -516,8 +521,11 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                     except Exception:
                         signal_proven(dict(observed), signal.SIGKILL, skip_group=False)
                         raise
-                    live_extras = [p for p in remaining.values() if p.group != group and not p.zombie]
-                    errors = signal_proven({p.pid: p for p in live_extras}, signal.SIGKILL)
+                    live_extras = [p for p in remaining.values() if not p.zombie]
+                    # The released PGID grants no signal authority. Retained
+                    # group proofs and readable tokens still authorize each
+                    # independently rechecked birth, including same-group peers.
+                    errors = signal_proven({p.pid: p for p in live_extras}, signal.SIGKILL, skip_group=False)
                     if errors:
                         raise ProcessError("owned_signal_failures:" + json.dumps(errors, separators=(",", ":")))
                     if not group_exists(group) and not any(p.group != group for p in remaining.values()):
