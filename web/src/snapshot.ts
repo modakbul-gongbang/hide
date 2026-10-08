@@ -19,7 +19,7 @@ export type AgentState = {
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
   chip_tone: StatusTone; mark_tone: StatusTone;
-  line: { text: string; mode: "request" | "news" | "quiet"; tone: StatusTone } | null;
+  line: { text: string; mode: "request" | "news" | "quiet" | "raised_child"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
   attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
@@ -31,6 +31,10 @@ export type AgentState = {
 };
 
 export type AgentRow = {
+  resolved?: { at_unix_ms: number; source: "operator" | "automatic"; local_date: string } | null;
+  resolved_today?: boolean;
+  escalation?: { cause: "parent_blocked" | "draft" | "bell_exhausted" | "undelivered" | "child_blocked" | "observer_unconfirmed"; letter_id: string | null; since_unix_ms: number | null; human_notice: boolean } | null;
+  raised_children?: { pane_id: string; title: string; tag: SessionTag; reason: string | null; since_unix_ms: number | null }[];
   state: AgentState;
   id: string;
   pane_id: string;
@@ -68,6 +72,7 @@ export type AgentRow = {
   close_descendant_pane_ids?: string[];
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
+  direct_child_counts?: DescendantCounts;
   /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */
   waiting_on_descendants?: boolean;
   /** How deep under its lineage root; a root is 0. */
@@ -587,6 +592,7 @@ export type Workspace = {
   removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
+  session_folds?: { empty: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
@@ -712,6 +718,14 @@ export type PaneLayout = {
   zoomed: boolean;
   root: LayoutNode;
 };
+
+export type PaneHeader = {
+  working: boolean;
+  pull: PaneHeaderAction | null;
+  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; child_tag: SessionTag | null} | null;
+};
+export type PaneHeaderTone = "muted" | "warning" | "error" | "success" | "pr";
+export type PaneHeaderAction = {kind: "pr"; workspace_id: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
 
 export type TerminalPane = {
   pane_id: string;
@@ -1461,7 +1475,7 @@ export type SnapshotRest = {
     operator_focus?: { client_id: string; sequence: number }[];
   };
   pane_layouts?: PaneLayout[];
-  terminal?: { pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
+  terminal?: { headers?: Record<string, PaneHeader>; pane_id?: string | null; panes?: TerminalPane[]; input_requests?: InputRequest[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
     device_rail_visible?: boolean;
@@ -1477,6 +1491,7 @@ export type SnapshotRest = {
     collapsed_workspace_ids?: string[];
     /** Checkouts whose agent rows the Projects list opened; absence is closed, where line two names the agents. */
     expanded_checkout_ids?: string[];
+    session_collapsed_checkout_ids?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;

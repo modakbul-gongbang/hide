@@ -79,9 +79,10 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
       { id: "local", label: "This Mac", kind: "local" },
       { id: "mini", label: "mini", kind: "remote" },
     ];
-    const status = { remote: [{ target_id: "mini", state: "connected", session: { agents: [agent("r1", { group: "needs_you" })], workspaces: [] } }] };
+    const project = (id: string, device_id: string, pane: string) => ({ id, device_id, expanded: true, checkouts: [{ id: `${id}-checkout`, tabs: [{ id: `${id}-tab`, panes: [{ id: pane }] }] }] });
+    const status = { remote: [{ target_id: "mini", state: "connected", session: { agents: [agent("r1", { group: "needs_you" })], workspaces: [project("remote", "mini", "r1")] } }] };
     const local = [agent("l1")];
-    const at = (front: string) => agentListOrder({ rest: legacyRest({ navigator: { focused_device_id: front, devices }, status } as unknown as SnapshotRest, local), agents: local }).map((row) => row.agent.pane_id);
+    const at = (front: string) => [...numberedAgents(agentListOrder({ rest: legacyRest({ navigator: { focused_device_id: front, devices, workspaces: [project("local-project", "local", "l1")] }, status } as unknown as SnapshotRest, local), agents: local })).values()];
     expect(at("local")).toEqual(["l1"]);
     expect(at("mini")).toEqual(["r1"]);
   });
@@ -90,8 +91,10 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     const parent = agent("p1", { lineage_child_pane_ids: ["p2"], lineage_collapsed: true });
     const child = agent("p2", { delegated: true, lineage_parent_pane_id: "p1" });
     const other = agent("p3", { group: "needs_you" });
+    const checkout = checkoutWith(["t1", "t2"]);
+    checkout.tabs[0]!.panes = ["p1", "p2", "p3"].map((id) => ({ id })) as Checkout["tabs"][number]["panes"];
     const rest = {
-      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [{ id: "w1", label: "w", checkouts: [checkoutWith(["t1", "t2"])] }] },
+      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [{ id: "w1", label: "w", device_id: "local", expanded: true, checkouts: [checkout] }] },
       status: { remote: [] },
     } as unknown as SnapshotRest;
     const state = { rest: legacyRest(rest, [parent, child, other]), agents: [parent, child, other] };

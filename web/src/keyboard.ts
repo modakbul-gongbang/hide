@@ -114,7 +114,7 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
     const layout = !remoteContext(state.rest) && view?.device_id === localDeviceId(state.rest) && view.path === checkout?.path ? view.agent_layout : null;
     return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
-  return numberedAgents(agentListOrder(state)).get(number) ?? null;
+  return numberedAgents(agentListOrder(state, useUiStore.getState().raisedOpen)).get(number) ?? null;
 }
 
 /**

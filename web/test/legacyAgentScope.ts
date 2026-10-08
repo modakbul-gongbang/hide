@@ -7,7 +7,7 @@ import * as drawClose from "../src/close";
 import type { CloseScope, CloseSubtree } from "../src/agentScope";
 import type { PaneRow } from "../src/snapshot";
 import { projectRows as drawProjectRows, checkoutPresentation as drawCheckoutPresentation, checkoutCard as drawCheckoutCard } from "../src/projects";
-import { projectListNumbers as drawProjectNumbers } from "../src/numbering";
+import { projectListNumbers as drawProjectNumbers } from "./legacyProjectNumbers";
 import { buildPullRequests as beforeBuildPrs } from "./legacyPrBoard";
 import { checkoutAgentRows as beforeCheckoutAgentRows } from "./legacyAgentTree";
 import { buildTasks as drawBuildTasks, buildPullRequests as drawBuildPullRequests, shownAgents as drawShownAgents, type BoardRow } from "../src/projectBoard";
@@ -18,12 +18,12 @@ import type { AgentScope } from "../src/agentScope";
 import type { AgentRow, Workspace, Checkout, RequestVerb, SnapshotRest } from "../src/snapshot";
 import type { BoardProject } from "../src/projectBoard";
 import { agentsTile as drawAgentsTile, scopeAgents as drawScopeAgents, type LensAgent } from "../src/overviewLens";
-import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, requestsTile as drawRequestsTile, type RequestRow } from "../src/requestList";
+import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, requestsTile as drawRequestsTile, type RequestRow } from "./legacyRequestList";
 
 const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
 const todo = verbs.slice(0, 5);
 export function emptyScope(): AgentScope {
-  return { sessions: { counts: { my_turn: 0, review_merge: 0, in_progress: 0, resting: 0, resolved_today: 0 }, groups: [] }, overview_needs_you: 0, work: {}, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { cross: {}, attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { sessions: { closed_prs: [], counts: { my_turn: 0, review_merge: 0, in_progress: 0, resting: 0, resolved_today: 0 }, groups: [] }, overview_needs_you: 0, work: {}, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { cross: {}, attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, sidebar_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
 export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent), workers: ReadonlySet<string> = new Set()): AgentScope {
@@ -91,7 +91,7 @@ export function legacyProject<T extends Workspace>(project: T, agents: readonly 
   scope.graph = legacyGraphScope(project, scope.members, agents);
   scope.graph.cross = legacyGraphCross(project, members);
   scope.prs = { counts: legacyPrCounts(prs), rows: prs.groups.flatMap((g) => g.rows).map((r) => ({ number: r.number, checkout_id: r.checkout?.id ?? null, agents: legacyRefs(r.agents, agents), lineage: r.lineage.map((a) => ({ ...legacyRefs([a.agent], agents)[0]!, depth: a.depth })), needs_look: r.needsLook, group: r.group, issue: r.issue ? { key: r.issue.key, label: r.issue.label, url: r.issue.url, task_key: r.issue.task?.key ?? null } : null })), groups: prs.groups.map((g) => ({ group: g.group, numbers: g.rows.map((r) => r.number) })), open: (project.pull_requests ?? []).filter((p) => p.badge !== "merged").length };
-  return { ...project, checkouts, agent_scope: scope };
+  return { ...project, inactive_checkouts: project.inactive_checkouts ?? { expanded: false, checkout_ids: [] }, checkouts, agent_scope: scope };
 }
 
 function physicalScope(scope: AgentScope, agents: readonly AgentRow[]) {
@@ -99,6 +99,9 @@ function physicalScope(scope: AgentScope, agents: readonly AgentRow[]) {
   scope.total = agents.length;
   scope.overview_needs_you = agents.filter(a => a.group === "needs_you").length;
   scope.roots = legacyRefs(agents.filter((a) => !a.delegated), agents);
+  // Session-first-ui B1/B7 fixture wire: roots only, default-open checkouts.
+  const sidebar = legacyRefs(agents.filter((a) => !a.delegated && !a.resolved), agents).map((row) => ({ ...row, depth: 0 }));
+  scope.sidebar_tree = { rows: sidebar, visible_rows: sidebar, shown: sidebar.slice(0, 2).map((row) => row.pane_id), more: Math.max(0, sidebar.length - 2), needs_you: agents.some((a) => !a.delegated && a.group === "needs_you"), turn_kind: null };
   for (const agent of agents) if (agent.group in scope.groups) scope.groups[agent.group as keyof AgentScope["groups"]]++;
   const byPane = new Map(agents.map((a) => [a.pane_id, a]));
   for (const agent of agents) {

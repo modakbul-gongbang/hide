@@ -1,6 +1,6 @@
 //! Quiet pane identity and one operator-facing band, from existing core facts.
 //! No clock, I/O, delivery authority or terminal geometry lives here.
-use crate::model::{PaneSnapshot, SidebarAgentSnapshot, TerminalPaneSnapshot};
+use crate::model::{PaneSnapshot, SidebarAgentSnapshot, TerminalPaneSnapshot, WorkspaceSnapshot};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -29,6 +29,7 @@ pub enum Action {
         workspace_id: String,
         number: u32,
         checks: crate::model::PullRequestChecks,
+        tone: &'static str,
     },
     Child {
         pane_id: String,
@@ -40,7 +41,7 @@ pub(crate) fn of(
     pane: &PaneSnapshot,
     agent: Option<&SidebarAgentSnapshot>,
     transport: Option<&TerminalPaneSnapshot>,
-    workspace_id: &str,
+    workspace: &WorkspaceSnapshot,
     offline: Option<&str>,
 ) -> Header {
     let pull = agent
@@ -52,9 +53,14 @@ pub(crate) fn of(
                 .find(|pull| pull.live && !pull.badge.is_settled())
         })
         .map(|pull| Action::Pr {
-            workspace_id: workspace_id.to_owned(),
+            workspace_id: workspace.id.clone(),
             number: pull.number,
             checks: pull.checks,
+            tone: workspace
+                .pull_requests
+                .iter()
+                .find(|pr| pr.number == pull.number)
+                .map_or("pr", pr_tone),
         });
     let band = |kind: &str, tone, reason, since_unix_ms, action, more, exit_code| {
         Some(Band {
@@ -168,8 +174,8 @@ pub(crate) fn of(
         Some(Tag::Approval) => ("approval", "warning", None),
         Some(Tag::Answer) => ("answer", "warning", None),
         Some(Tag::Fix) => ("fix", "error", pull.clone()),
-        Some(Tag::Review) => ("review", "warning", pull.clone()),
-        Some(Tag::Merge) => ("merge", "success", pull.clone()),
+        Some(Tag::Review) => ("review", pull_tone(&pull), pull.clone()),
+        Some(Tag::Merge) => ("merge", pull_tone(&pull), pull.clone()),
         Some(Tag::Stopped) => ("stopped", "warning", None),
         Some(Tag::Result) => ("result", "success", None),
         _ => {
@@ -195,5 +201,22 @@ pub(crate) fn of(
             0,
             None,
         ),
+    }
+}
+
+fn pull_tone(pull: &Option<Action>) -> &'static str {
+    match pull {
+        Some(Action::Pr { tone, .. }) => tone,
+        _ => "pr",
+    }
+}
+
+fn pr_tone(pr: &crate::model::PullRequestSnapshot) -> &'static str {
+    use crate::model::{PullRequestBadge, ReviewDecision};
+    match (pr.badge, pr.review, pr.is_draft) {
+        (PullRequestBadge::Review, Some(ReviewDecision::ChangesRequested), _) => "error",
+        (PullRequestBadge::Review, Some(ReviewDecision::Approved), _) => "success",
+        (PullRequestBadge::Review, _, _) | (_, _, true) => "muted",
+        _ => "pr",
     }
 }

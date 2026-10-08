@@ -207,9 +207,9 @@ function prioritized<T extends { needsYou: boolean }>(cards: T[]): T[] {
  * first, whatever is folded; the Projects sidebar drops a folded row's
  * descendants itself (`unfoldedRows`).
  */
-export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[], context: "device" | "global" | "visible" = "device"): Map<string, BoardRow[]> {
+export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[], context: "device" | "global" | "visible" | "sidebar" = "device"): Map<string, BoardRow[]> {
   return new Map(workspace.checkouts.map((checkout) => {
-    const tree = context === "device" ? checkout.agent_scope.tree : checkout.agent_scope.global_tree;
+    const tree = context === "sidebar" ? checkout.agent_scope.sidebar_tree : context === "device" ? checkout.agent_scope.tree : checkout.agent_scope.global_tree;
     const rows = context === "visible" ? tree.visible_rows : tree.rows;
     return [checkout.id, scopeOccurrences(rows, agents).map((agent, index) => ({ agent, depth: rows[index]!.depth }))];
   }));

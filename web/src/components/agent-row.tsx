@@ -1,149 +1,9 @@
-import { ChevronRightIcon } from "lucide-react";
-import { memo, useRef } from "react";
-import { AgentMark } from "../AgentMark";
+import { badgeLabel, badgeParts } from "../agentRow";
 import { useInterfaceTranslation } from "../i18n/client";
-import { badgeLabel, badgeParts, branchChip, lineShownAtRest, lineTone, markTone, rowAccessibleName, rowLine } from "../agentRow";
 import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
-import { Elapsed } from "./elapsed";
 import { BadgeMarks } from "./status-badge";
-import { StatusMark } from "./status-mark";
-import { DeviceChip } from "./device-chip";
 import { Badge } from "./ui/badge";
-import { Hint } from "./ui/tooltip";
-
-/**
- * One agent in a list (PRD sidebar-agent-status D-05, B1-B9). Line one is
- * always the stable task name with the status mark, the provider mark, a
- * branch chip when the checkout differs from the parent's, the descendant
- * badge while the descendants are folded, and the elapsed time. The second
- * line follows `agentRow.ts`: a request stays in its warning colour, news is
- * bright until read, and a quiet row reveals its full sentence (two lines,
- * the rest in the tooltip) only while selected or under the pointer.
- *
- * The whole row opens the agent; the chevron and the badge are their own
- * controls beside it, so the badge's list is a real button's popover.
- */
-export const AgentRowItem = memo(function AgentRowItem({
-  agent,
-  device,
-  depth,
-  descendants,
-  childRows,
-  selected,
-  onOpen,
-  onToggleTree,
-  inset = "var(--spacing-xs)",
-}: {
-  agent: AgentRow;
-  device: string | null;
-  /** How deep under the root drawn above it; a root is 0. */
-  depth: number;
-  /** Live descendants among the listed rows. */
-  descendants: number;
-  /** The direct children still listed, for the badge's popover. */
-  childRows: AgentRow[];
-  selected: boolean;
-  onOpen: (paneId: string) => void;
-  /** Null for a list that draws every descendant and so has nothing to fold. */
-  onToggleTree: ((paneId: string) => void) | null;
-  /** Where a root's first column starts; a list nested under another row passes that row's name column. */
-  inset?: string;
-}) {
-  const { t } = useInterfaceTranslation();
-  const main = useRef<HTMLButtonElement>(null);
-  const line = rowLine(agent);
-  const branch = branchChip(agent);
-  const folded = agent.lineage_collapsed !== false;
-  const hasChildren = childRows.length > 0;
-  const attention = agent.state.attention;
-  const titleTone = agent.state.title_emphasized ? "text-foreground" : "text-subtle-foreground";
-  const label = rowAccessibleName(t, agent, device);
-  const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, line?.text].filter(Boolean).join("\n");
-  const shownAtRest = line ? lineShownAtRest(line, selected) : false;
-  return (
-    <li
-      data-pane={agent.pane_id}
-      data-attention={attention ? "true" : "false"}
-      data-delegated={agent.delegated ? "true" : "false"}
-      data-waiting={agent.waiting_on_descendants ? "true" : "false"}
-      data-agent-device={device ?? undefined}
-      data-depth={depth}
-      className={`group/row relative flex items-start gap-xs py-xs pr-md text-body ${selected ? "bg-secondary" : "hover:bg-accent"} focus-within:bg-accent`}
-      style={{ paddingLeft: `calc(${inset} + ${depth} * var(--size-lineage-indent))` }}
-    >
-      <Hint label={hint} reveals>
-        <button
-          ref={main}
-          type="button"
-          aria-label={label}
-          aria-current={selected ? "true" : undefined}
-          data-agent-open={agent.pane_id}
-          className="absolute inset-0 outline-none"
-          onClick={() => onOpen(agent.pane_id)}
-        />
-      </Hint>
-      {/* A list that draws every descendant (an Overview card) has no fold, so no chevron column. */}
-      {onToggleTree ? (
-        <span className="relative flex w-(--size-agent-badge-compact) shrink-0 justify-center self-center">
-          {hasChildren ? (
-            <button
-              type="button"
-              aria-label={folded ? t("agents.showChildren", { name: agent.identity_label }) : t("agents.hideChildren", { name: agent.identity_label })}
-              aria-expanded={!folded}
-              data-agent-tree-toggle={agent.pane_id}
-              className="rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-              onClick={() => onToggleTree(agent.pane_id)}
-            >
-              <ChevronRightIcon className={`size-(--size-icon) transition-transform ${folded ? "" : "rotate-90"}`} />
-            </button>
-          ) : null}
-        </span>
-      ) : null}
-      <StatusMark
-        symbol={agent.symbol}
-        className={`pointer-events-none mt-xxs ${markTone(agent)}`}
-        data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code}
-      />
-      <AgentMark kind={agent.agent_kind} className="pointer-events-none" />
-      {/* The row button's name already reads all of this out. */}
-      <span className="pointer-events-none flex min-w-0 flex-1 flex-col" aria-hidden="true">
-        <span className="flex min-w-0 items-center gap-xs">
-          <span className={`min-w-0 flex-1 truncate ${titleTone} ${attention ? "font-medium" : ""}`}>{agent.identity_label}</span>
-          {branch ? (
-            <Badge variant="secondary" className="min-w-0 shrink font-mono" data-branch-chip={branch}>
-              <span className="truncate">{branch}</span>
-            </Badge>
-          ) : null}
-          {device ? (
-            <DeviceChip label={device} />
-          ) : null}
-        </span>
-        {line ? (
-          <span
-            data-agent-line={line.mode}
-            className={`break-keep text-caption ${lineTone(line, agent)} ${
-              shownAtRest ? "" : "hidden group-hover/row:block group-focus-within/row:block"
-            } ${selected ? "line-clamp-2 break-words" : "truncate group-hover/row:line-clamp-2 group-hover/row:whitespace-normal group-hover/row:break-words"}`}
-          >
-            {line.text}
-          </span>
-        ) : null}
-      </span>
-      {descendants > 0 && folded ? (
-        <DescendantBadge
-          agent={agent}
-          descendants={descendants}
-          childRows={childRows}
-          onOpenChild={onOpen}
-          onUnfold={onToggleTree ? () => onToggleTree(agent.pane_id) : null}
-          returnFocus={() => main.current?.focus()}
-        />
-      ) : null}
-      <Elapsed since={agent.changed_at_unix_ms} className="pointer-events-none shrink-0 self-start pt-xxs text-micro text-muted-foreground" />
-    </li>
-  );
-});
 
 /**
  * A folded parent's badge (docs/status-model.md, The descendant badge): one
@@ -167,7 +27,7 @@ export function DescendantBadge({
   returnFocus: () => void;
 }) {
   const { t } = useInterfaceTranslation();
-  const parts = badgeParts(agent.descendant_counts);
+  const parts = badgeParts(agent.direct_child_counts ?? agent.descendant_counts);
   return (
     <AgentChildrenPopover
       parent={agent}
@@ -175,10 +35,11 @@ export function DescendantBadge({
       onOpenChild={onOpenChild}
       onUnfold={onUnfold}
       returnFocus={returnFocus}
+      triggerLabel={badgeLabel(agent.direct_child_counts ?? agent.descendant_counts, descendants, t)}
       trigger={
         <button
           type="button"
-          aria-label={badgeLabel(agent.descendant_counts, descendants, t)}
+          aria-label={badgeLabel(agent.direct_child_counts ?? agent.descendant_counts, descendants, t)}
           aria-haspopup="dialog"
           data-descendant-badge={descendants}
           className="relative shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:ring-1 data-[state=open]:ring-ring"

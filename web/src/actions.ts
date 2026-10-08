@@ -1387,6 +1387,10 @@ export function createActions(send: DispatchFn) {
     },
 
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
+    resolveSession(paneId: string) {
+      dispatch({ schema_version: 2, kind: "resolve_session", payload: { pane_id: paneId } });
+    },
+
     openAgent(paneId: string) {
       beginOpening({ paneId });
       const node = localDeviceId(rest());
@@ -1798,6 +1802,10 @@ export function createActions(send: DispatchFn) {
 
     focusCheckout,
 
+    toggleSessionFold(key: string) {
+      dispatch({ schema_version: 2, kind: "session_fold_toggle", payload: { key } });
+    },
+
     toggleInactiveCheckouts(projectPath: string) {
       dispatch({ schema_version: 2, kind: "inactive_checkouts_toggle", payload: { project_path: projectPath } });
     },
@@ -1858,6 +1866,7 @@ export function createActions(send: DispatchFn) {
     },
 
     focusSidebarMode(mode: SidebarMode) {
+      if (mode === "agents") return this.openAgentsOverview();
       useUiStore.setState({ overviewOpen: false, overviewReturnFocus: null, sidebarMode: mode, sidebarFocus: ui().sidebarFocus + 1 });
       if (!rest()?.ui_state?.left_sidebar_visible) setLeftSidebarVisible(true);
     },
@@ -1887,6 +1896,12 @@ export function createActions(send: DispatchFn) {
     openOverviewEntry() {
       if (ui().screen?.kind === "main") return;
       this.toggleOverview();
+    },
+
+    openAgentsOverview() {
+      ui().setLens({ tab: "agents" });
+      ui().setMainView("agents");
+      if (ui().screen?.kind !== "main" && !ui().overviewOpen) this.toggleOverview();
     },
 
     openHome(deviceId?: string) {
@@ -1951,7 +1966,8 @@ export function createActions(send: DispatchFn) {
     openRequests() {
       ui().setOverviewProject(null);
       ui().setScreen({ kind: "main" });
-      ui().setMainView("requests");
+      ui().setMainView("agents");
+      showTool("agent_sessions");
     },
 
     /** Asks the engine for a Task page's detail; it follows the engine in `factory_task` until closed. */

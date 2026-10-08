@@ -142,8 +142,8 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     if !asking && let Some(child) = agent.raised_children.first() {
         line = Some(RowLine {
             text: child.reason.as_ref().map_or_else(
-                || child.title.clone(),
-                |reason| format!("{} · {reason}", child.title),
+                || format!("↳ {}", child.title),
+                |reason| format!("↳ {}: {reason}", child.title),
             ),
             mode: "raised_child",
             tone: Tone {

@@ -7,6 +7,7 @@ export type RowWork = { pull: number | null; more: number; issues: string[]; iss
 
 export type AgentScope = {
   sessions: {
+    closed_prs: { project_id: string; number: number; tag: "review" | "merge" }[];
     counts: Record<SessionGroup, number>;
     groups: { group: SessionGroup; members: number[] }[];
   };
@@ -49,6 +50,7 @@ export type AgentScope = {
     badge_children: string[];
   }>;
   tree: AgentTreeScope;
+  sidebar_tree: AgentTreeScope;
   global_tree: AgentTreeScope;
   requests: {
     rows: { member: number; children: string[] }[];

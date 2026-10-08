@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import { CircleAlertIcon, EllipsisIcon, Maximize2Icon, MoonIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, EllipsisIcon, GitPullRequestIcon, Maximize2Icon, MoonIcon, TerminalSquareIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
@@ -7,14 +7,16 @@ import { AgentMark } from "./AgentMark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
+import { PaneHeaderBand, PaneChildrenBadge } from "./PaneHeaderBand";
+import { ChecksMark } from "./TaskBoards";
+import { cn } from "./lib/utils";
 import { PaneConnectionChip } from "./PaneConnection";
-import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
+import { ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
 import { keySystem } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
-import { statusText } from "./agentStatus";
 import { modChord, TERMINAL_COPY, TERMINAL_PASTE } from "./shortcuts";
-import { sleepCaption, wakingLine } from "./sleep";
+import { wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
 import { caughtUp } from "./operatorFocus";
 import { useShellStore } from "./store";
@@ -271,10 +273,10 @@ export const PaneView = memo(function PaneView({
 
   const caption = transportCaption(transport, t, local, offline);
   const sleep = local ? pane.sleep : undefined;
-  const sleepWords = sleep ? sleepCaption(sleep, Date.now(), t) : null;
+  const header = useShellStore((s) => s.rest?.terminal?.headers?.[paneId]);
   return (
     <section
-      className="group/pane relative flex h-full min-h-0 min-w-0 flex-col bg-background"
+      className="group/pane @container/pane relative flex h-full min-h-0 min-w-0 flex-col bg-background"
       data-pane-view={paneId}
       data-focused={focused ? "true" : "false"}
       data-menu-open={paneMenu.open ? "true" : "false"}
@@ -294,13 +296,15 @@ export const PaneView = memo(function PaneView({
         }}
       >
         <ReturnToParent pane={pane} actions={actions} />
-        {markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
-        <AgentMark kind={agentKind} />
+        {agentKind && markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
+        {agentKind ? <AgentMark kind={agentKind} /> : <TerminalSquareIcon className="size-(--size-icon-sm) shrink-0" aria-label={t("agentSessions.shell")} />}
         <Hint label={title} reveals>
         <span className="min-w-0 flex-1 truncate">
           {title}
         </span>
         </Hint>
+        {header?.pull?.kind === "pr" ? <Hint label={`#${header.pull.number}`}><button type="button" className={cn("flex shrink-0 items-center gap-xxs rounded-xs px-xs text-micro outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring", { muted: "text-muted-foreground", warning: "text-warning", error: "text-destructive", success: "text-success", pr: "text-pr-open" }[header.pull.tone])} data-pane-pr={header.pull.number} onClick={() => {if (header.pull?.kind === "pr") actions.openPullRequestRow(header.pull.workspace_id, header.pull.number);}}><GitPullRequestIcon className="size-(--size-icon-sm)" />#{header.pull.number}{(header.pull.checks === "passing" || header.pull.checks === "failed" || header.pull.checks === "pending") ? <ChecksMark checks={header.pull.checks} /> : null}</button></Hint> : null}
+        {agentKind ? <PaneChildrenBadge paneId={paneId} actions={actions} /> : null}
         <PaneConnectionChip pane={pane} actions={actions} local={local} />
         {zoomed ? (
           <Hint label={zoomChord ? t("panes.unzoomChord", { chord: zoomChord }) : t("panes.unzoom")}>
@@ -321,17 +325,7 @@ export const PaneView = memo(function PaneView({
               {hidden > 0 ? <span>+{hidden}</span> : null}
             </Button>
           </Hint>
-        ) : null}
-        {sleepWords ? (
-          <span className="flex min-w-0 items-center gap-xxs truncate text-muted-foreground" data-pane-sleep-caption={sleep?.state}>
-            {sleepWords.moon ? <MoonIcon className="size-(--size-status-mark) shrink-0" aria-hidden="true" /> : null}
-            <span className="truncate">{sleepWords.text}</span>
-          </span>
-        ) : caption ? (
-          <span className="truncate text-muted-foreground">{caption.text}</span>
-        ) : (
-          <span className="truncate text-muted-foreground">{statusText(t, pane.status_code)}</span>
-        )}
+        ) : paneCount > 1 ? <Hint label={t("panes.menu.zoom")}><Button variant="ghost" size="icon-sm" className="shrink-0 text-subtle-foreground hover:bg-popover" aria-label={t("panes.menu.zoom")} data-pane-zoom="false" onClick={() => actions.toggleZoom(paneId)}><Maximize2Icon aria-hidden="true" /></Button></Hint> : null}
         <Hint label={t("panes.actions", { name: title })}>
           <Button
             variant="ghost"
@@ -360,7 +354,6 @@ export const PaneView = memo(function PaneView({
         </Hint>
         {paneMenu.menu}
       </header>
-      <ChildChipRow pane={pane} actions={actions} />
       <div className="h-[var(--size-hairline)] shrink-0 bg-border" />
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0 overflow-hidden" data-terminal-host={paneId} onContextMenu={openTerminalMenu} />
@@ -374,6 +367,7 @@ export const PaneView = memo(function PaneView({
             </Hint>
           </div>
         ) : null}
+        <PaneHeaderBand paneId={paneId} header={header} actions={actions} />
         {sleep ? <SleepBody paneId={paneId} sleep={sleep} actions={actions} /> : null}
         {caption?.reconnects && !sleep ? (
           <button

@@ -1,4 +1,4 @@
-import { deviceScope, scopeOccurrences, type AgentScope } from "./agentScope";
+import { deviceScope, scopeOccurrences } from "./agentScope";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
@@ -17,17 +17,16 @@ import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
-import { BADGE_STATES, BADGE_TEXT, frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
+import { frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
 import { badgeWords } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
-import { agentNumber, listedAgentOrder, numberOf, numberedAgents, projectListNumbers } from "./numbering";
+import { agentNumber, sidebarAgentNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentTree as sectionTree, agentGroupTitle, agentPlaces, allAgents, deviceListedAgents, type ListedAgent } from "./navigation";
-import { foldedLineage, type FoldedLineage } from "./lineageSummary";
+import { agentGroupTitle, agentPlaces, allAgents, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
   checkoutCard,
@@ -67,7 +66,7 @@ function herdrRowLabel(state: string | null, t: TFunction<"translation">): strin
 export function Sidebar({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const herdrState = useShellStore((s) => s.herdrState);
-  const mode = useUiStore((s) => s.sidebarMode);
+  const mode = "projects" as const;
   const visible = useShellStore((s) => s.rest?.ui_state?.left_sidebar_visible ?? true);
   // The row speaks for this machine's Herdr, so it is not shown over a
   // selected SSH device's lists; that device's state is on the canvas.
@@ -99,8 +98,6 @@ export function Sidebar({ actions }: { actions: Actions }) {
   useHomeStart();
   useSecretaryStart(actions);
   // The switch has no chord of its own until the operator binds one (issue 170).
-  const projectChord = useShellStore((s) => commandLabel("sidebar_projects", s.rest?.ui_state));
-  const agentChord = useShellStore((s) => commandLabel("sidebar_agents", s.rest?.ui_state));
   const overviewChord = useShellStore((s) => commandLabel("overview", s.rest?.ui_state));
   const overviewCount = useOverviewCount();
   const overviewSelected = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main");
@@ -135,7 +132,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
   // Every device's sidebar is its Projects | Agents: Projects lists its Needs You, its Done, its Home and its projects, Agents lists its agents by state;
   // a device that is not connected shows its name and the way to reconnect, and no stale tree (quick device-rail-badges B3).
   const list =
-    body === "agents" ? <AgentList actions={actions} /> : body === "disconnected" ? <DisconnectedDevice actions={actions} /> : <ProjectList actions={actions} home={home} />;
+    body === "disconnected" ? <DisconnectedDevice actions={actions} /> : <ProjectList actions={actions} home={home} />;
 
   return (
     // The width is a CSS variable, never the nav's own inline width, which
@@ -171,18 +168,13 @@ export function Sidebar({ actions }: { actions: Actions }) {
           <SidebarHeader
             rail={rail}
             title={title}
-            addProject={body !== "agents"}
-            tabs={body !== "disconnected"}
-            mode={mode}
-            compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
+            addProject={true}
+                        compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
             deviceMenu={deviceMenu}
-            projectChord={projectChord || null}
-            agentChord={agentChord || null}
             overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
             factory={{ selected: factorySelected, count: factoryCount, chord: factoryChord || null, onOpen: () => actions.openFactory(), secretary }}
             searchChord={commandLabel("search") || null}
             newWorkspaceChord={commandLabel("new_workspace") || null}
-            onMode={actions.showSidebarMode}
             onSearch={() => actions.openSearch()}
             onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
           />
@@ -409,10 +401,11 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const agentScope = useShellStore((s) => deviceScope(s.rest, deviceId));
-  const roots = useMemo(() => home ? scopeOccurrences(home.agent_scope.roots, agents) : NO_HOME_AGENTS, [home, agents]);
-  const presentations = useMemo(() => new Map(roots.map((agent) => [agent.pane_id, foldedLineage(agent, agents, agentScope!)])), [roots, agents, agentScope]);
+  const roots = useMemo(() => home ? scopeOccurrences(home.agent_scope.sidebar_tree.rows, agents) : NO_HOME_AGENTS, [home, agents]);
   const menu = useAgentRowMenu(actions);
+  const hints = useUiStore((s) => s.hint);
+  const raisedOpen = useUiStore((s) => s.raisedOpen);
+  const numbers = hints === "agents" ? sidebarAgentNumbers(useShellStore.getState(), raisedOpen) : null;
   const refusal = useUiStore((s) => (s.homeStart?.deviceId === deviceId ? s.homeStart.refusal : null));
   return (
     <li data-home={deviceId}>
@@ -465,7 +458,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
       {roots.length > 0 ? (
         <ul aria-label={t("sidebar.homeAgents")} data-home-agents="true">
           {roots.map((agent) => {
-            const presentation = presentations.get(agent.pane_id)!;
+            const children = directChildren(agent, agents);
             return (
               <SidebarAgentRow
                 key={agent.id}
@@ -473,14 +466,14 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
                 device={null}
                 place={null}
                 depth={0}
-                descendants={presentation.badgeDescendants}
-                childRows={presentation.badgeChildren}
+                descendants={children.length}
+                childRows={children}
                 selected={workspaceScreen && agent.pane_id === focusedPaneId}
                 onOpen={actions.openAgent}
-                onToggleTree={null}
+                onOpenChild={(id) => actions.followRelation(agent.pane_id, id, agents.find((child) => child.pane_id === id)!.identity_label)}
+                onAll={() => actions.openAgentsOverview()}
                 inset={CHECKOUT_COLUMN}
-                foldedLineage={presentation}
-                number={null}
+                number={numbers?.(agent.pane_id, "home") ?? null}
                 menu={menu}
               />
             );
@@ -515,115 +508,6 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
   );
 }
 
-/**
- * The device in front's current agents under Needs You, Done, Working and
- * Seen (S6 B13, narrowed to one device by quick device-rail-badges B3), with
- * the count of each of the first three above the list (B5); no row names its
- * device, since the whole list is the one in front. Each section draws its roots, and a root's descendants follow it
- * while the operator has it unfolded; folded, the root's badge speaks for
- * them and opens their list (PRD sidebar-agent-status D-02, D-03). Showing
- * the list changes nothing: no focus moves and nothing is marked read.
- */
-function AgentList({ actions }: { actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  // Only what the list reads, so a terminal frame or an editor change does
-  // not rebuild it.
-  const loaded = useShellStore((s) => s.rest !== null);
-  const remote = useShellStore((s) => s.rest?.status?.remote);
-  const devices = useShellStore((s) => s.rest?.navigator?.devices);
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const localAgents = useShellStore((s) => s.agents);
-  const frontId = useShellStore((s) => frontDeviceId(s.rest));
-  const listed = useMemo(() => deviceListedAgents(remote, devices, localAgents, frontId), [remote, devices, localAgents, frontId]);
-  const agentScope = useShellStore((s) => deviceScope(s.rest, frontId));
-  const tree = useMemo(() => agentTree(listed, agentScope), [listed, agentScope]);
-  const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices, t]);
-  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  // An ⌥ hold numbers the drawn rows top to bottom (PRD
-  // electron-digit-shortcuts-hints B5); the numbers exist only while it
-  // shows, so the memoized rows are untouched by an unrevealed hold.
-  const numbered = useUiStore((s) => s.hint === "agents");
-  const numbers = useMemo(() => (numbered ? numberedAgents(tree.sections.flatMap((section) => section.rows)) : null), [numbered, tree]);
-  const menu = useAgentRowMenu(actions);
-  // Before the first snapshot nothing is known, so an empty list would be a claim.
-  if (!loaded) return <ListLoading />;
-  if (tree.sections.length === 0) {
-    return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">{t("sidebar.noAgents")}</div>;
-  }
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <AgentCounts counts={agentScope!.groups} />
-      <ul className="min-h-0 flex-1 overflow-auto px-xs" data-agent-list="true">
-        {tree.sections.map((section) => (
-          <li key={section.group} data-agent-group={section.group}>
-            <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
-              {agentGroupTitle(section.group, t)} · {section.count}
-            </div>
-            <ul aria-labelledby={`agent-group-${section.group}`}>
-              {section.rows.map((row) => (
-                <SidebarAgentRow
-                  key={`${row.device ?? ""}:${row.agent.id}`}
-                  agent={row.agent}
-                  device={null}
-                  place={row.depth === 0 ? placeOf(row.device, row.agent.pane_id) : null}
-                  depth={row.depth}
-                  descendants={row.descendants}
-                  childRows={tree.presentation(row.agent).badgeChildren}
-                  selected={row.agent.pane_id === focusedPaneId}
-                  onOpen={actions.openAgent}
-                  onToggleTree={actions.toggleAgentTree}
-                  inset="var(--spacing-xs)"
-                  foldedLineage={tree.presentation(row.agent)}
-                  number={numbers ? numberOf(numbers, row.agent.pane_id) : null}
-                  menu={menu}
-                />
-              ))}
-            </ul>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/**
- * The selected device's `Needs You N · Done N · Working N` line above its
- * Agents list (quick device-rail-badges B5): the three states in the colors
- * the rail's marks wear, a zero count left out, and nothing at all when the
- * device has no agent in any of them. Working is counted here and not on the
- * rail (quick device-rail-slack).
- */
-function AgentCounts({ counts }: { counts: AgentScope["groups"] }) {
-  const { t } = useInterfaceTranslation();
-  const shown = BADGE_STATES.filter(({ state }) => counts[state] > 0);
-  if (shown.length === 0) return null;
-  return (
-    <p className="flex shrink-0 flex-wrap items-center gap-x-xs px-md pt-sm text-caption text-muted-foreground" data-agent-counts="true">
-      {shown.map(({ state }, index) => (
-        <span key={state} className="flex items-center gap-x-xs">
-          {index > 0 ? <span aria-hidden="true">·</span> : null}
-          <span className={BADGE_TEXT[state]} data-agent-count={state}>
-            {agentGroupTitle(state, t)} {counts[state]}
-          </span>
-        </span>
-      ))}
-    </p>
-  );
-}
-
-/**
- * The sections and rows each draws from the core's one global lineage.
- * Remote pane ids are already scoped, while machine identities can connect
- * a child to a parent on another device.
- */
-function agentTree(listed: ListedAgent[], scope: AgentScope | null) {
-  const agents = listed.map((row) => row.agent);
-  const presentations = new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, scope!)]));
-  const sections = sectionTree(listed, scope).sections.map((section) => ({ ...section, rows: section.rows.map((row) => ({
-    ...row, descendants: presentations.get(row.agent.pane_id)!.badgeDescendants,
-  })) }));
-  return { sections, presentation: (agent: AgentRow) => presentations.get(agent.pane_id)! };
-}
 /** The first snapshot has not arrived: neither an empty list nor a zero is known yet. */
 function ListLoading() {
   const { t } = useInterfaceTranslation();
@@ -666,9 +550,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const listedAgents = useMemo(() => allAgents(remoteStatuses, localAgents, agentScope), [remoteStatuses, localAgents, agentScope]);
   const agents = useMemo(() => listedAgents.map((row) => row.agent), [listedAgents]);
   const frontId = useShellStore((s) => frontDeviceId(s.rest));
-  const frontListed = useMemo(() => deviceListedAgents(remoteStatuses, devices, localAgents, frontId), [remoteStatuses, devices, localAgents, frontId]);
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
-  const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
+  const openCheckouts = useShellStore((s) => s.rest?.ui_state?.session_collapsed_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
@@ -680,27 +563,27 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const raised = useMemo(() => rows.filter((row) => row.kind === "raised"), [rows]);
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
   const agentRowMenu = useAgentRowMenu(actions);
-  const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, agentScope!)])), [agents, agentScope]);
+  const children = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, directChildren(agent, agents)])), [agents]);
   const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices), [localWorkspaces, remoteStatuses, devices, t]);
   // An ⌥ hold shows each agent's number once, on its raised row or else its
   // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
   const numbered = useUiStore((s) => s.hint === "agents");
   const numberOfPane = useMemo(
-    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(frontListed, frontScope)), rows, frontScope) : null),
-    [numbered, frontListed, frontScope, rows],
+    () => (numbered ? sidebarAgentNumbers(useShellStore.getState(), raisedOpen) : null),
+    [numbered, frontScope, rows, openCheckouts, workspaces, raisedOpen],
   );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
   const context: ListContext = {
     agents,
-    presentationOf: (agent) => presentations.get(agent.pane_id)!,
+    childrenOf: (agent) => children.get(agent.pane_id)!,
     placeOf,
     numberOf: numberOfPane,
     focusedCheckoutId,
     focusedPaneId,
     workspaceScreen: workspaceVisible,
     openCheckouts,
-    disclosure: !remote,
+    disclosure: true,
     actions,
     agentRowMenu,
   };
@@ -719,6 +602,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
       {tree.map((row) => (
         <ProjectRowView key={rowKey(row)} row={row} context={context} />
       ))}
+      <CleanupRows workspaces={workspaces} context={context} deviceId={frontId} />
       {!remote && workspaces.length === 0 ? (
         <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
           {t("sidebar.noProjects")}
@@ -738,7 +622,7 @@ const NO_IDS: string[] = [];
 /** What every row of the Projects list reads besides its own project. */
 type ListContext = {
   agents: AgentRow[];
-  presentationOf: (agent: AgentRow) => FoldedLineage;
+  childrenOf: (agent: AgentRow) => AgentRow[];
   /** The Agents list's context line for a raised row, which no project row above names. */
   placeOf: (device: string | null, paneId: string) => string | null;
   /** The number an ⌥ hold shows on an agent's raised row (checkout null) or tree row, while one shows. */
@@ -842,7 +726,7 @@ function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "rai
 }
 
 function RaisedAgentRow({ listed: { agent, device }, context }: { listed: ListedAgent; context: ListContext }) {
-  const presentation = context.presentationOf(agent);
+  const children = context.childrenOf(agent);
   return (
     <SidebarAgentRow
       agent={agent}
@@ -850,13 +734,13 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       device={null}
       place={context.placeOf(device, agent.pane_id)}
       depth={0}
-      descendants={presentation.badgeDescendants}
-      childRows={presentation.badgeChildren}
+      descendants={children.length}
+      childRows={children}
       selected={context.workspaceScreen && agent.pane_id === context.focusedPaneId}
       onOpen={context.actions.openAgent}
-      onToggleTree={null}
+      onOpenChild={(id) => context.actions.followRelation(agent.pane_id, id, children.find((child) => child.pane_id === id)!.identity_label)}
+      onAll={() => context.actions.openAgentsOverview()}
       inset={PROJECT_COLUMN}
-      foldedLineage={presentation}
       number={context.numberOf?.(agent.pane_id, null) ?? null}
       menu={context.agentRowMenu}
     />
@@ -954,11 +838,12 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const { agents, actions, disclosure } = context;
   const active = activeCheckouts(workspace);
   const inactive = inactiveCheckouts(workspace);
-  const rowsByCheckout = useMemo(() => checkoutAgentRows(workspace, agents, disclosure ? "visible" : "global"), [workspace, agents, disclosure]);
+  const rowsByCheckout = useMemo(() => checkoutAgentRows(workspace, agents, "sidebar"), [workspace, agents]);
   const expanded = !disclosure || workspace.expanded !== false;
   const inset = level === "child" ? "pl-(--size-lineage-indent)" : "";
   const folder = folderCheckout(workspace);
   if (folder) {
+    if (workspace.session_folds?.cleanup.includes(folder.id)) return null;
     return (
       <FolderRowView
         workspace={workspace}
@@ -970,6 +855,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       />
     );
   }
+  if (workspace.checkouts.length > 0 && workspace.checkouts.every((checkout) => workspace.session_folds?.cleanup.includes(checkout.id))) return null;
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
@@ -1023,6 +909,12 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       {expanded ? (
         <ul>
           {active.map(checkoutRow)}
+          {(workspace.session_folds?.empty.length ?? 0) > 0 ? <li>
+            <FoldRow label={[t("agentSessions.emptyWorktrees"), workspace.session_folds!.open_prs > 0 ? t("agentSessions.openPrs", { count: workspace.session_folds!.open_prs }) : null].filter(Boolean).join(" · ")}
+              count={workspace.session_folds!.empty.length} expanded={workspace.session_folds!.empty_open} level="checkout"
+              onToggle={() => actions.toggleSessionFold(workspace.id)} data-empty-worktrees={workspace.id} />
+            {workspace.session_folds!.empty_open ? <ul>{workspace.checkouts.filter((checkout) => workspace.session_folds!.empty.includes(checkout.id)).map(checkoutRow)}</ul> : null}
+          </li> : null}
           {inactive.length > 0 ? (
             <li>
               <FoldRow
@@ -1044,6 +936,19 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
 
 const NO_BOARD_ROWS: BoardRow[] = [];
 
+function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[]; context: ListContext; deviceId: string }) {
+  const { t } = useInterfaceTranslation();
+  const rows = workspaces.flatMap((workspace) => workspace.checkouts.filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id)).map((checkout) => ({ workspace, checkout })));
+  if (rows.length === 0) return null;
+  const expanded = rows[0]!.workspace.session_folds!.cleanup_open;
+  return <li data-session-cleanup={deviceId}>
+    <FoldRow label={t("agentSessions.cleanup")} count={rows.length} expanded={expanded} level="project" onToggle={() => context.actions.toggleSessionFold(`cleanup/${deviceId}`)} />
+    {expanded ? <ul>{rows.map(({ workspace, checkout }) => <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout}
+      agentRows={checkoutAgentRows(workspace, context.agents, "sidebar").get(checkout.id) ?? NO_BOARD_ROWS}
+      focused={context.workspaceScreen && context.focusedCheckoutId === checkout.id} context={context} />)}</ul> : null}
+  </li>;
+}
+
 
 /**
  * What a checkout's row draws besides line one, shared by the checkout row and
@@ -1055,7 +960,7 @@ const NO_BOARD_ROWS: BoardRow[] = [];
  */
 function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">) {
   const foldable = context.disclosure && agentRows.length > 0;
-  const open = agentRows.length > 0 && (!context.disclosure || context.openCheckouts.includes(checkout.id));
+  const open = agentRows.length > 0 && !context.openCheckouts.includes(checkout.id);
   const purpose = checkout.purpose?.text ?? null;
   const parents = [...new Set(agentRows
     .filter((row) => row.depth === 0)
@@ -1161,7 +1066,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {agentRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you)} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1246,7 +1151,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {agentRows.length > 0 ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you)} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1419,7 +1324,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
   return (
     <ul data-checkout-agents-open={checkoutId}>
       {rows.map((row) => {
-        const presentation = context.presentationOf(row.agent);
+        const children = context.childrenOf(row.agent);
         const device = row.agent.device_id !== deviceId ? (row.agent.device_label ?? null) : null;
         return (
           <SidebarAgentRow
@@ -1428,15 +1333,15 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             device={device}
             place={null}
             depth={row.depth}
-            descendants={context.disclosure ? presentation.badgeDescendants : 0}
-            childRows={context.disclosure ? presentation.badgeChildren : NO_AGENT_ROWS}
+            descendants={children.length}
+            childRows={children}
             selected={context.workspaceScreen && row.agent.pane_id === context.focusedPaneId}
             onOpen={context.actions.openAgent}
-            onToggleTree={context.disclosure ? context.actions.toggleAgentTree : null}
+            onOpenChild={(id) => context.actions.followRelation(row.agent.pane_id, id, children.find((child) => child.pane_id === id)!.identity_label)}
+            onAll={() => context.actions.openAgentsOverview()}
             inset={inset}
             branchShown={row.depth > 0}
-            foldedLineage={presentation}
-            number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
+                  number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
             menu={context.agentRowMenu}
           />
         );
@@ -1446,7 +1351,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
 }
 
 /** A tree drawn with nothing folded lists no folded children. */
-const NO_AGENT_ROWS: AgentRow[] = [];
+
 
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {
@@ -1512,7 +1417,7 @@ function useAgentRowMenu(actions: Actions): AgentRowMenu {
     () => ({
       items: (agent) => {
         const state = useShellStore.getState();
-        const number = agentNumber(state, agent.pane_id);
+        const number = agentNumber(state, agent.pane_id, useUiStore.getState().raisedOpen);
         const chord = number === null ? "" : commandLabel(`select_agent_${number}`, state.rest?.ui_state);
         return agentMenu(agent, chord, t);
       },
@@ -1533,4 +1438,8 @@ function useAgentRowMenu(actions: Actions): AgentRowMenu {
     }),
     [actions, t],
   );
+}
+
+function directChildren(parent: AgentRow, agents: AgentRow[]): AgentRow[] {
+  return (parent.lineage_child_pane_ids ?? []).map((id) => agents.find((agent) => agent.pane_id === id)).filter((agent): agent is AgentRow => agent !== undefined);
 }

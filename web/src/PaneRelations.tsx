@@ -1,25 +1,21 @@
 import { CornerUpLeftIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
-import { StatusMark } from "./components/status-mark";
-import { DeviceChip } from "./components/device-chip";
-import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
+import { parentStep, relationEntries, relationState } from "./lineage";
 import { herdrPaneId } from "./remote";
-import { localDeviceId, type PaneRow, type SnapshotRest, type Workspace } from "./snapshot";
+import { type PaneRow } from "./snapshot";
 import { useShellStore } from "./store";
 import { copySelection, pasteClipboard, selectAllText } from "./terminals";
 import { useUiStore } from "./ui";
-import type { TFunction } from "i18next";
 import { translate, useInterfaceTranslation } from "./i18n/client";
 import { splitLabel } from "./areaLayout";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
-// child pane's header returns to its parent, a parent's header lists every
-// direct child on one scrolling row, and the pane menu lists parent,
+// child pane's header returns to its parent, a parent's badge lists every
+// direct child in a popover, and the pane menu lists parent,
 // siblings and children, each moved to only by its explicit Open. Every move
 // is one tracked focus; its pending and failed states show in the Agent area,
 // which stays on screen while the core moves the visible tab to the target,
@@ -33,94 +29,27 @@ import { splitLabel } from "./areaLayout";
 export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const parent = parentStep(pane);
-  const pending = useRelationPending(pane.id, parent?.pane_id ?? null);
+  const progress = useRelationProgress(pane.id, parent?.pane_id ?? null);
+  const pending = progress?.phase === "pending";
   if (!parent) return null;
   const label = t("panes.relation.return", { name: parent.label });
   return (
-    <Hint label={label}>
+    <Hint label={progress?.phase === "failed" ? progress.message : label}>
       <Button
         variant="ghost"
         size="icon-sm"
-        className="shrink-0 hover:bg-popover hover:text-foreground"
+        className={`w-auto shrink-0 gap-xs px-xs hover:bg-popover hover:text-foreground ${progress?.phase === "failed" ? "text-destructive" : ""}`}
         aria-label={label}
         aria-busy={pending}
         data-pane-return={parent.pane_id}
-        disabled={pending}
+        disabled={pending || (progress?.phase === "failed" && !progress.retryable)}
         onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
       >
         {pending ? <span aria-hidden="true">…</span> : <CornerUpLeftIcon />}
+        <span className="hidden max-w-32 truncate @min-[640px]/pane:inline">{progress?.phase === "failed" && progress.retryable ? t("common.retry") : parent.label}</span>
       </Button>
     </Hint>
   );
-}
-
-/**
- * Every direct child of the pane's agent on one row under the header (B14).
- * The row scrolls sideways instead of growing; a pane with no children has
- * no row at all.
- */
-export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const chips = directChildren(pane);
-  const rest = useShellStore((s) => s.rest);
-  const parentLocation = paneLocation(rest, pane.id, t);
-  const relation = useUiStore((s) => s.relation);
-  const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
-  if (chips.length === 0) return null;
-  const state = relation?.sourcePaneId === pane.id ? relationState(relation, outcome, t) : null;
-  return (
-    <div
-      className="flex h-[var(--size-pane-child-row)] shrink-0 items-center gap-xxs overflow-x-auto overflow-y-hidden whitespace-nowrap bg-card px-sm text-caption"
-      role="group"
-      aria-label={t("panes.relation.children", { name: pane.identity_label ?? pane.id })}
-      data-pane-children={pane.id}
-    >
-      {chips.map((chip) => {
-        const pending = state?.phase === "pending" && relation?.targetPaneId === chip.pane_id;
-        const childLocation = paneLocation(rest, chip.pane_id, t);
-        const label = childLocation?.checkout !== parentLocation?.checkout && chip.checkout_label ? chip.checkout_label : chip.label;
-        const device = childLocation && childLocation.deviceId !== parentLocation?.deviceId ? childLocation.deviceLabel : null;
-        const title = chipTitle(t, { ...chip, label });
-        return (
-          <Hint key={chip.pane_id} label={title} reveals>
-          <button
-            type="button"
-            className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-border px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring ${
-              chip.delegated ? "text-subtle-foreground" : "text-foreground"
-            }`}
-            aria-label={t("panes.relation.openChild", { name: title })}
-            aria-busy={pending}
-            data-child-chip={chip.pane_id}
-            data-pending={pending ? "true" : "false"}
-            onClick={() => {
-              if (!pending) actions.followRelation(pane.id, chip.pane_id, chip.label);
-            }}
-          >
-            <StatusMark symbol={pending ? "…" : chip.symbol} className={chipTone(chip)} />
-            <AgentMark kind={chip.agent_kind} />
-            <span className="truncate">{label}</span>
-            {device ? <DeviceChip label={device} className="max-w-2/5" /> : null}
-          </button>
-          </Hint>
-        );
-      })}
-    </div>
-  );
-}
-
-function paneLocation(rest: SnapshotRest | null, paneId: string, t: TFunction<"translation">): { checkout: string; deviceId: string; deviceLabel: string } | null {
-  const workspaces: Workspace[] = [
-    ...(rest?.navigator?.workspaces ?? []),
-    ...(rest?.status?.remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? []),
-  ];
-  for (const workspace of workspaces) {
-    for (const checkout of workspace.checkouts) {
-      if (!checkout.tabs.some((tab) => tab.panes.some((candidate) => candidate.id === paneId))) continue;
-      const deviceLabel = rest?.navigator?.devices?.find((device) => device.id === workspace.device_id)?.label ?? (workspace.device_id === localDeviceId(rest) ? t("common.thisMac") : workspace.device_id);
-      return { checkout: checkout.id, deviceId: workspace.device_id, deviceLabel };
-    }
-  }
-  return null;
 }
 
 /**
@@ -290,10 +219,10 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   };
 }
 
-function useRelationPending(sourcePaneId: string, targetPaneId: string | null): boolean {
+function useRelationProgress(sourcePaneId: string, targetPaneId: string | null) {
   const { t } = useInterfaceTranslation();
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
-  if (!targetPaneId || relation?.sourcePaneId !== sourcePaneId || relation.targetPaneId !== targetPaneId) return false;
-  return relationState(relation, outcome, t)?.phase === "pending";
+  if (!targetPaneId || relation?.sourcePaneId !== sourcePaneId || relation.targetPaneId !== targetPaneId) return null;
+  return relationState(relation, outcome, t);
 }

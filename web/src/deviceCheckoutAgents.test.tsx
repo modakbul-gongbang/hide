@@ -49,7 +49,7 @@ function project(device: string): { workspace: Workspace; agent: AgentRow; check
 
 // docs/UI_BEHAVIOR.md, Projects: both folds are this machine's, so a selected SSH device's tree is drawn with nothing
 // folded, while this Mac's checkouts start closed until the operator opens one.
-it("draws a selected SSH device's agent rows open under their checkout, with no fold, and this Mac's closed", async () => {
+it("starts both device checkouts open and offers the same persisted fold (session-first-ui B7/B32)", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   // jsdom loads no stylesheet, and the sidebar reads its width tokens from the document: take them from the token source.
@@ -87,10 +87,10 @@ it("draws a selected SSH device's agent rows open under their checkout, with no 
   try {
     await act(async () => root.render(<TooltipProvider><Sidebar actions={actions} /></TooltipProvider>));
     expect(open(remote.checkoutId)?.textContent).toContain("인사에 답하기");
-    expect(toggle(remote.checkoutId)).toBeNull();
+    expect(toggle(remote.checkoutId)?.getAttribute("aria-label")).toContain("main");
 
     await act(async () => useShellStore.setState({ rest: legacyRest(thisMac, [local.agent]), agents: [local.agent] }));
-    expect(open(local.checkoutId)).toBeNull();
+    expect(open(local.checkoutId)?.textContent).toContain("인사에 답하기");
     expect(toggle(local.checkoutId)?.getAttribute("aria-label")).toContain("main");
   } finally {
     await act(async () => root.unmount());

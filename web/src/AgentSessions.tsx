@@ -1,15 +1,17 @@
-import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { markTone } from "./agentRow";
+import { lineTone, markTone } from "./agentRow";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
-import { AgentChildrenPopover } from "./components/agent-children-popover";
+import { DescendantBadge } from "./components/agent-row";
 import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
+import { formatDateTime } from "./i18n/format";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
 import { IssueChip, lensHandlers } from "./OverviewLenses";
 import type { LensAgent } from "./overviewLens";
@@ -60,7 +62,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, onlyChec
   const groups = scope?.sessions.groups ?? [];
   const filtered = model.front !== null && onlyCheckout === model.front.id;
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-agent-sessions="true">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-session-panel="true">
       <header className="flex shrink-0 flex-col gap-sm border-b border-border px-md py-sm">
         <span className="truncate text-caption font-medium" title={model.project?.label}>{model.project?.label ?? t("overview.allProjects")}</span>
         {model.project && model.front ? <div className="flex min-w-0 gap-xs">
@@ -84,13 +86,14 @@ const SessionsContent = memo(function SessionsContent({ model, actions, onlyChec
             <button type="button" data-session-focus="group" className={cn("flex w-full items-center gap-xs px-xs py-sm text-left text-caption font-medium text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring", group === "my_turn" && "text-warning")}
               aria-expanded={collapsible ? expanded : undefined} onClick={() => group === "resting" ? setResting(!resting) : group === "resolved_today" ? setResolved(!resolved) : undefined}>
               {collapsible ? expanded ? <ChevronDownIcon className="size-(--size-icon-sm)" /> : <ChevronRightIcon className="size-(--size-icon-sm)" /> : null}
-              <span>{t(GROUP_LABEL[group])}</span><span className="tabular-nums text-muted-foreground">{members.length}</span>
+              <span>{t(GROUP_LABEL[group])}</span><span className="tabular-nums text-muted-foreground">{scope!.sessions.counts[group]}</span>
             </button>
             {expanded ? <ul className="flex min-w-0 flex-col">
               {members.map((member) => {
                 const row = sessionMember(model, member);
                 return <SessionRow key={`${row.project.id}:${row.agent.pane_id}`} row={row} model={model} actions={actions} />;
               })}
+              {group === "review_merge" ? scope!.sessions.closed_prs.map((row) => <ClosedSessionRow key={`${row.project_id}:${row.number}`} state={row} model={model} actions={actions} />) : null}
             </ul> : null}
           </section>;
         })}
@@ -103,7 +106,8 @@ const SessionsContent = memo(function SessionsContent({ model, actions, onlyChec
 
 function sameModel(a: SessionsModel, b: SessionsModel): boolean {
   return a.scope === b.scope && a.project === b.project && a.front === b.front
-    && a.agents === b.agents && a.available === b.available && a.reason === b.reason && a.deviceId === b.deviceId
+    && a.agents.length === b.agents.length && a.agents.every((row, index) => row === b.agents[index])
+    && a.available === b.available && a.reason === b.reason && a.deviceId === b.deviceId
     && a.members.length === b.members.length && a.members.every((row, index) => {
       const next = b.members[index]!;
       return row.agent === next.agent && row.project === next.project && row.checkout === next.checkout;
@@ -117,7 +121,7 @@ function sessionMember(model: SessionsModel, member: number): LensAgent {
 }
 
 const SessionRow = memo(function SessionRow({ row, model, actions }: { row: LensAgent; model: SessionsModel; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
+  const { t, i18n } = useInterfaceTranslation();
   const button = useRef<HTMLButtonElement>(null);
   const { agent, project, checkout } = row;
   const state = agent.state.session;
@@ -125,7 +129,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions }: { row: Lens
   const pull = work?.pull == null ? null : agent.request?.pull_requests[work.pull] ?? null;
   const issues = (work?.issue_chips ?? []).map((key) => project.tasks?.tasks.find((task) => task.key === key)).filter((task) => task !== undefined);
   const byPane = new Map(model.agents.map((child) => [child.pane_id, child]));
-  const children = (project.agent_scope.children[agent.pane_id] ?? []).map((id) => {
+  const children = (agent.lineage_child_pane_ids ?? []).map((id) => {
     const child = byPane.get(id);
     if (!child) throw new Error("Sessions references a missing child");
     return child;
@@ -135,7 +139,11 @@ const SessionRow = memo(function SessionRow({ row, model, actions }: { row: Lens
     toggleFold: () => undefined,
   });
   const tag = state.tag ? t(TAG_LABEL[state.tag]) : null;
-  const line = agent.request?.line;
+  const raisedLine = agent.state.line?.mode === "raised_child" ? agent.state.line : null;
+  const line = raisedLine?.text ?? agent.request?.line;
+  const github = checkout.github;
+  const stale = github?.stale === true;
+  const pullHint = [pull?.title, stale && github?.last_success_at_unix_ms != null ? t("agentSessions.lastRead", {time: formatDateTime(requireInterfaceLanguage(i18n.language), github.last_success_at_unix_ms, { dateStyle: "short", timeStyle: "short" })}) : null].filter(Boolean).join("\n");
   const location = [model.project ? null : project.label, checkout.label].filter(Boolean).join(" · ");
   const open = () => { if (model.available) actions.openAgent(agent.pane_id); };
   return <li className={cn("group/session relative flex min-w-0 flex-col gap-xxs rounded-xs border-l-2 border-transparent px-xs py-sm hover:bg-accent focus-within:bg-accent", model.front?.id === checkout.id && "border-l-primary")}
@@ -147,22 +155,43 @@ const SessionRow = memo(function SessionRow({ row, model, actions }: { row: Lens
         <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
       </button>
       {issues.map((task) => <IssueChip key={task.key} project={project} task={task} handlers={handlers} now={Date.now()} />)}
-      {pull ? <Hint label={pull.title}><button type="button" disabled={!model.available} onClick={(event) => { event.stopPropagation(); actions.openPullRequestRow(project.id, pull.number); }} className="flex shrink-0 items-center gap-xxs rounded-xs text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" data-session-pr={pull.number}>
+      {pull ? <Hint label={pullHint}><button type="button" disabled={!model.available} onClick={(event) => { event.stopPropagation(); actions.openPullRequestRow(project.id, pull.number); }} className="flex shrink-0 items-center gap-xxs rounded-xs text-micro text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" data-session-pr={pull.number} style={stale ? {opacity: 0.5} : undefined}>
         <GitPullRequestIcon className="size-(--size-icon-sm)" /><span>#{pull.number}</span>
         {pull.checks === "passing" || pull.checks === "failed" || pull.checks === "pending" ? <ChecksMark checks={pull.checks} /> : null}
         {work && work.more > 0 ? <span>+{work.more}</span> : null}
       </button></Hint> : null}
-      {children.length > 0 ? <AgentChildrenPopover parent={agent} childRows={children} onOpenChild={actions.openAgent} onUnfold={() => actions.openOverview(project.device_id, project.id)} returnFocus={() => button.current?.focus()}
-        trigger={<button type="button" disabled={!model.available} onClick={(event) => event.stopPropagation()} aria-label={t("agentSessions.children", { count: children.length })} className="shrink-0 rounded-xs px-xxs text-micro text-muted-foreground outline-none hover:bg-secondary data-[state=open]:bg-secondary focus-visible:ring-1 focus-visible:ring-ring">↳ {children.length}</button>} /> : null}
+      {children.length > 0 ? <span onClick={(event) => event.stopPropagation()}><DescendantBadge agent={agent} descendants={children.length} childRows={children} onOpenChild={(pane) => actions.followRelation(agent.pane_id, pane, byPane.get(pane)!.identity_label)} onUnfold={() => actions.openAgentsOverview()} returnFocus={() => button.current?.focus()} /></span> : null}
       <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
+      {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : null}
     </div>
     <div className="flex min-w-0 items-baseline gap-xs pl-lg text-micro">
-      {tag ? <span className={cn("shrink-0 text-subtle-foreground", state.group === "my_turn" && "text-warning")}>{tag}</span> : null}
-      {line ? <span className="min-w-0 flex-1 truncate text-subtle-foreground" title={line}>{line}</span> : <span className="flex-1" />}
+      {agent.escalation && agent.lineage_parent_pane_id ? <span className="max-w-1/3 truncate text-muted-foreground" title={byPane.get(agent.lineage_parent_pane_id)?.identity_label}>↰ {byPane.get(agent.lineage_parent_pane_id)?.identity_label}</span> : null}
+      {tag ? <span className={cn("shrink-0 text-subtle-foreground", state.group === "my_turn" && "text-warning", state.tag === "fix" && "text-destructive")}>{tag}</span> : null}
+      {line ? <span className={cn("min-w-0 flex-1 truncate", raisedLine ? lineTone(raisedLine, agent) : "text-subtle-foreground")} title={line}>{line}</span> : <span className="flex-1" />}
       <span className="max-w-2/5 truncate text-muted-foreground" title={[project.label, checkout.path, checkout.branch].filter(Boolean).join(" · ")}>{location}</span>
     </div>
   </li>;
 });
+
+function ClosedSessionRow({ state, model, actions }: { state: NonNullable<SessionsModel["scope"]>["sessions"]["closed_prs"][number]; model: SessionsModel; actions: Actions }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const project = model.projects.find((project) => project.id === state.project_id);
+  const pull = project?.pull_requests?.find((pull) => pull.number === state.number);
+  if (!project || !pull) throw new Error("Closed Sessions PR is missing its source facts");
+  const issue = project.agent_scope.prs.rows.find((row) => row.number === pull.number)?.issue;
+  const status = project.checkouts.find((checkout) => checkout.github)?.github;
+  const stale = status?.stale === true;
+  const title = [pull.title, stale && status?.last_success_at_unix_ms != null ? t("agentSessions.lastRead", {time: formatDateTime(requireInterfaceLanguage(i18n.language), status.last_success_at_unix_ms, { dateStyle: "short", timeStyle: "short" })}) : null].filter(Boolean).join("\n");
+  return <li className="rounded-xs px-xs py-sm hover:bg-accent focus-within:bg-accent" data-session-closed-pr={pull.number}>
+    <button type="button" disabled={!model.available} data-session-focus="row" className="flex w-full min-w-0 flex-col gap-xxs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50" title={title} onClick={() => actions.openPullRequestRow(project.id, pull.number)}>
+      <span className="flex w-full min-w-0 items-center gap-xs text-caption"><GitPullRequestIcon className="size-(--size-icon-sm) shrink-0" /><span className="min-w-0 flex-1 truncate">{pull.title}</span>
+        {issue ? <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro">{issue.label}</span> : null}
+        <span className={cn("flex shrink-0 items-center gap-xxs text-micro", stale && "opacity-50")}>#{pull.number}{pull.checks === "passing" || pull.checks === "failed" || pull.checks === "pending" ? <ChecksMark checks={pull.checks} /> : null}</span>
+      </span>
+      <span className="flex w-full min-w-0 gap-xs pl-lg text-micro text-muted-foreground"><span className="shrink-0 text-subtle-foreground">{t(TAG_LABEL[state.tag])}</span><span className="shrink-0">{t("agentSessions.closed")}</span><span className="min-w-0 flex-1 truncate" title={pull.head_branch}>{pull.head_branch}</span>{!model.project ? <span className="max-w-2/5 truncate">{project.label}</span> : null}</span>
+    </button>
+  </li>;
+}
 
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
   if (event.metaKey || event.ctrlKey || event.altKey) return;

@@ -10,6 +10,7 @@ export type SessionsModel = {
   project: Workspace | null;
   scope: AgentScope | null;
   members: LensAgent[];
+  projects: Workspace[];
   agents: AgentRow[];
   front: ReturnType<typeof frontCheckout>;
   deviceId: string;
@@ -37,8 +38,9 @@ export function sessionsModel(rest: SnapshotRest | null, agents: AgentRow[], onl
   });
   const remote = rest?.status?.remote?.find((status) => status.target_id === deviceId);
   return {
-    project, scope, members, front, deviceId,
-    agents: remote ? remote.session?.agents ?? [] : agents,
+    project, scope, members, front, deviceId, projects: projects.map((item) => item.workspace),
+    // Lineage can cross devices even when the panel is scoped to one device.
+    agents: [...agents, ...(rest?.status?.remote ?? []).flatMap((status) => status.session?.agents ?? [])],
     available: deviceConnected(rest, deviceId),
     reason: remote?.message ?? null,
   };

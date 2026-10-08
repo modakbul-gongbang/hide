@@ -10,7 +10,7 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { LensAgent } from "./overviewLens";
-import { childrenSummary, fullRequest, openCandidates, pullRequestChip as drawPullRequestChip, requestLine, senderWords, resultLine, rowIssues as drawRowIssues, rowIssueChips as drawRowIssueChips, splitTail, verdictLine,  } from "./requestList";
+import { childrenSummary, fullRequest, openCandidates, pullRequestChip as drawPullRequestChip, requestLine, senderWords, resultLine, rowIssues as drawRowIssues, rowIssueChips as drawRowIssueChips, splitTail, verdictLine,  } from "../test/legacyRequestList";
 import type { AgentPullRequest, AgentRequest, AgentRow, Checkout, RequestVerb, Task, Workspace } from "./snapshot";
 
 const NOW = new Date(2026, 9, 3, 15, 0, 0).getTime();
@@ -297,11 +297,11 @@ describe("the words of a row follow the interface language", () => {
   });
 });
 
-function withWork(row: import("./requestList").RequestRow, project: Workspace) {
+function withWork(row: import("../test/legacyRequestList").RequestRow, project: Workspace) {
   return { ...project, agent_scope: { ...emptyScope(), work: { [row.lens.agent.pane_id]: legacyWork(row.lens, project) } } };
 }
-function rowIssues(row: import("./requestList").RequestRow, project: Workspace) { return drawRowIssues(row, withWork(row, project)); }
-function rowIssueChips(row: import("./requestList").RequestRow, project: Workspace) { return drawRowIssueChips(row, withWork(row, project)); }
+function rowIssues(row: import("../test/legacyRequestList").RequestRow, project: Workspace) { return drawRowIssues(row, withWork(row, project)); }
+function rowIssueChips(row: import("../test/legacyRequestList").RequestRow, project: Workspace) { return drawRowIssueChips(row, withWork(row, project)); }
 function pullRequestChip(pulls: AgentPullRequest[]) {
   const [row] = requestRows([lens(agent("a", "review", { request: block("review", { pull_requests: pulls }) }))], []);
   return drawPullRequestChip({ ...row!, lens: { ...row!.lens, project: withWork(row!, PROJECT) } });
