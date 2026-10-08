@@ -24,6 +24,33 @@ fn set_workers(h: &mut Bench, factory: &str, n: u32) {
     let _ = factory;
 }
 
+/// Two worker candidates, Claude Code first, so a usage limit has
+/// somewhere to go (D-42).
+fn two_candidates(h: &mut Bench) {
+    let answer = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![(
+            "workers".into(),
+            r#"[{"agent":"claude","description":"기본"},{"agent":"codex","description":"막히면"}]"#
+                .into(),
+        )],
+    });
+    assert_eq!(answer["ok"], true, "{answer}");
+}
+
+/// The worker vanishes twice: the first time it restarts on its own, the
+/// second it stops for a person (D-25).
+fn vanish_twice(h: &mut Bench, factory: &str, task: &str) {
+    for _ in 0..2 {
+        h.world()
+            .worker_status
+            .insert(task.to_owned(), WorkerStatus::Gone);
+        h.advance(5 * MINUTE_MS);
+        h.engine.tick();
+    }
+    assert_eq!(h.task(factory, task).stop, Some(StopReason::WorkerGone));
+}
+
 /// Ticks until the Task reaches `state`, failing with its last state.
 fn tick_until(h: &mut Bench, factory: &str, id: &str, state: TaskState) {
     for _ in 0..20 {
@@ -133,7 +160,7 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     assert_eq!(created["created"], true, "{created}");
     assert_eq!(h.writes("label.create"), vec!["label.create factory"]);
     let factory = h.engine.factories().next().unwrap().clone();
-    assert_eq!(factory.config.default_runtime, Runtime::Claude);
+    assert_eq!(factory.config.default_runtime, Runtime::CLAUDE);
     // Confirming records the approval: the account, the repository, when.
     let approval = factory
         .github_approval
@@ -203,7 +230,7 @@ fn a_github_project_without_a_logged_in_account_is_not_created() {
 #[test]
 fn a_machine_with_only_codex_defaults_new_workers_to_codex() {
     let mut h = Bench::new(false);
-    h.world().runtimes = vec![Runtime::Codex];
+    h.world().runtimes = vec![Runtime::CODEX];
     let preview = h.op(Command::Init {
         project: PROJECT.into(),
         verification: None,
@@ -218,7 +245,7 @@ fn a_machine_with_only_codex_defaults_new_workers_to_codex() {
         confirm: true,
     });
     let factory = h.engine.factories().next().unwrap().clone();
-    assert_eq!(factory.config.default_runtime, Runtime::Codex);
+    assert_eq!(factory.config.default_runtime, Runtime::CODEX);
 }
 
 #[test]
@@ -715,6 +742,7 @@ fn a_question_with_a_default_waits_only_before_merge_and_the_deadline_applies_it
             default_action: "use --fast".into(),
             deadline_hours: Some(24),
             letter: None,
+            choices: Vec::new(),
         },
     );
     assert_eq!(answer["ok"], true, "{answer}");
@@ -753,6 +781,7 @@ fn a_different_answer_before_the_deadline_sends_the_worker_back() {
             default_action: "use --fast".into(),
             deadline_hours: Some(24),
             letter: None,
+            choices: Vec::new(),
         },
     );
     h.done(&f, &t);
@@ -787,8 +816,11 @@ fn a_blocking_answer_names_the_waiting_tasks_it_frees() {
             suggestion: "this one".into(),
             deadline_hours: Some(24),
             letter: None,
+            choices: Vec::new(),
         },
     );
+    // The Observer sorts it on the next tick; a product choice is a person's.
+    h.engine.tick();
     let inbox = h.op(Command::Inbox);
     let item = &inbox["items"][0];
     assert_eq!(item["result_code"], "wake_worker", "{inbox}");
@@ -808,6 +840,7 @@ fn a_question_needs_a_suggestion_and_a_deadline() {
             suggestion: " ".into(),
             deadline_hours: Some(24),
             letter: None,
+            choices: Vec::new(),
         },
     );
     assert_eq!(refused["reason"], "suggestion_required", "{refused}");
@@ -819,6 +852,7 @@ fn a_question_needs_a_suggestion_and_a_deadline() {
             suggestion: "this one".into(),
             deadline_hours: None,
             letter: None,
+            choices: Vec::new(),
         },
     );
     assert_eq!(refused["reason"], "deadline_required", "{refused}");
@@ -841,14 +875,15 @@ fn a_blocking_question_releases_the_slot_and_the_answer_wakes_the_same_session()
             suggestion: "sqlite".into(),
             deadline_hours: Some(24),
             letter: Some("letter-7".into()),
+            choices: Vec::new(),
         },
     );
     assert_eq!(h.state(&f, &blocked), TaskState::Blocked);
     assert!(h.world().sleeps.contains(&blocked));
     assert_eq!(card_json(&h, &blocked)["waiting_code"], "answer");
+    h.engine.tick();
     let inbox = h.op(Command::Inbox);
     assert_eq!(inbox["items"][0]["result_code"], "wake_worker", "{inbox}");
-    h.engine.tick();
     assert_eq!(
         h.state(&f, &other),
         TaskState::Running,
@@ -1004,7 +1039,7 @@ fn three_tasks_failing_the_same_check_together_are_the_environment() {
 }
 
 #[test]
-fn a_turn_ended_without_a_report_stops_the_task() {
+fn a_turn_ended_without_a_report_is_woken_once_then_diagnosed_then_stopped() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let t = h.ready("Quiet", &[]);
@@ -1014,18 +1049,64 @@ fn a_turn_ended_without_a_report_stops_the_task() {
         .insert(t.clone(), WorkerStatus::Resting { since });
     h.advance(2 * MINUTE_MS);
     h.engine.tick();
-    assert_eq!(
-        h.state(&f, &t),
-        TaskState::Running,
+    assert!(
+        h.world().messages.is_empty(),
         "one minute at rest is not yet two"
     );
+    // Two minutes: one next-prompt letter asks for a report (D-22).
     h.advance(MINUTE_MS);
     h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    let nudges: Vec<String> = h
+        .world()
+        .messages
+        .iter()
+        .filter(|(task, body)| *task == t && body.contains("done, ask, block"))
+        .map(|(_, body)| body.clone())
+        .collect();
+    assert_eq!(nudges.len(), 1, "woken once");
+    h.engine.tick();
+    assert_eq!(
+        h.world()
+            .messages
+            .iter()
+            .filter(|(_, body)| body.contains("done, ask, block"))
+            .count(),
+        1,
+        "not woken again in the same rest"
+    );
+    // Still no report two minutes later: one diagnosis, which reads the
+    // worker's text and, unable to tell, stops the card with its line.
+    h.world().texts.last_answer = Some("x".repeat(9_000) + "끝");
+    h.advance(2 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let diagnosed: Vec<_> = h
+        .world()
+        .judged
+        .iter()
+        .filter_map(|j| match &j.input {
+            JudgmentInput::ObserverDiagnose { worker_text, .. } => Some(worker_text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(diagnosed.len(), 1);
+    let text = diagnosed[0].clone().expect("the last answer is sent");
+    assert_eq!(
+        text.source,
+        hide_factory::judgment::WorkerTextSource::LastAnswer
+    );
+    assert!(
+        text.text.len() <= 4096 && text.text.ends_with('끝'),
+        "its end, cut"
+    );
     let task = h.task(&f, &t);
     assert_eq!(
         (task.state, task.stop),
         (TaskState::Stopped, Some(StopReason::NoReport))
     );
+    let detail = h.engine.show(&f, &t).unwrap();
+    assert_eq!(detail.diagnosis.as_deref(), Some("알 수 없음"));
 }
 
 #[test]
@@ -1134,13 +1215,9 @@ fn question_authority_follows_only_an_accepted_replacement_spawn() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let t = h.ready("Restarted worker", &[]);
+    vanish_twice(&mut h, &f, &t);
     let old = h.task(&f, &t).worker.unwrap();
     let old_pane = old.pane.clone().unwrap();
-    h.world()
-        .worker_status
-        .insert(t.clone(), WorkerStatus::Gone);
-    h.advance(5 * MINUTE_MS);
-    h.engine.tick();
     assert_eq!(h.state(&f, &t), TaskState::Stopped);
     h.world().spawn_failure = Some(Failure::start_pending("worker.spawn"));
     h.op(Command::Retry { task: t.clone() });
@@ -2499,8 +2576,8 @@ fn a_backlog_held_by_usage_limits_reads_the_machine_once_a_minute() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let until = h.world().now + 60 * MINUTE_MS;
-    h.world().usage_limits.insert(Runtime::Claude, until);
-    h.world().usage_limits.insert(Runtime::Codex, until);
+    h.world().usage_limits.insert(Runtime::CLAUDE, until);
+    h.world().usage_limits.insert(Runtime::CODEX, until);
     let t = h.ready("Limited", &[]);
     assert_eq!(h.state(&f, &t), TaskState::Waiting);
     let reads = h.world().disk_reads;
@@ -2643,6 +2720,7 @@ fn sleep_wake_reaches_only_a_worker_waiting_on_input() {
 fn switching_runtime_moves_new_starts_to_the_other_runtime() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
+    two_candidates(&mut h);
     let held = diagnose(&mut h, "switch_runtime");
     h.world().disk_free = None;
     h.advance(2 * MINUTE_MS);
@@ -2683,6 +2761,7 @@ fn a_failed_store_write_is_counted_and_handed_to_the_host_log() {
 fn a_usage_limit_moves_new_starts_to_the_other_runtime() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
+    two_candidates(&mut h);
     let t = h.ready("First", &[]);
     let mut failure = Failure::environment("worker", EnvSignal::UsageLimit, "limit");
     failure.reset_at = Some(h.world().now + HOUR_MS);
@@ -2696,14 +2775,15 @@ fn a_usage_limit_moves_new_starts_to_the_other_runtime() {
         .iter()
         .map(|s| (s.task.clone(), s.runtime))
         .collect();
-    assert_eq!(runtimes[&t], Runtime::Claude);
-    assert_eq!(runtimes[&u], Runtime::Codex);
+    assert_eq!(runtimes[&t], Runtime::CLAUDE);
+    assert_eq!(runtimes[&u], Runtime::CODEX);
 }
 
 #[test]
 fn a_worker_its_usage_limit_stopped_waits_and_the_next_start_uses_the_other_runtime() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
+    two_candidates(&mut h);
     let t = h.ready("Limited", &[]);
     let now = h.world().now;
     h.world()
@@ -2711,7 +2791,7 @@ fn a_worker_its_usage_limit_stopped_waits_and_the_next_start_uses_the_other_runt
         .insert(t.clone(), WorkerStatus::Resting { since: now });
     h.world()
         .usage_limits
-        .insert(Runtime::Claude, now + HOUR_MS);
+        .insert(Runtime::CLAUDE, now + HOUR_MS);
     h.advance(3 * MINUTE_MS);
     h.engine.tick();
     let task = h.task(&f, &t);
@@ -2724,7 +2804,7 @@ fn a_worker_its_usage_limit_stopped_waits_and_the_next_start_uses_the_other_runt
         .iter()
         .find(|s| s.task == u)
         .map(|s| s.runtime);
-    assert_eq!(spawned, Some(Runtime::Codex));
+    assert_eq!(spawned, Some(Runtime::CODEX));
 }
 
 #[test]
@@ -2830,6 +2910,7 @@ fn a_cancelled_task_leaves_no_question_for_a_person_or_a_deadline() {
             default_action: "use --fast".into(),
             deadline_hours: Some(1),
             letter: None,
+            choices: Vec::new(),
         },
     );
     h.op(Command::Cancel { task: t.clone() });
@@ -2854,6 +2935,7 @@ fn a_blocked_task_takes_only_an_answer() {
             suggestion: "x".into(),
             deadline_hours: Some(1),
             letter: None,
+            choices: Vec::new(),
         },
     );
     for command in [
@@ -2888,6 +2970,7 @@ fn a_restart_keeps_every_task_question_and_applied_letter() {
         body: "Q?\nSuggestion: yes".into(),
     };
     h.engine.letter(letter.clone());
+    h.engine.tick();
     let before: Vec<Task> = h.engine.tasks_of(&f).cloned().collect();
 
     let mut h = h.restart();
@@ -2961,6 +3044,7 @@ fn the_inbox_orders_blocking_questions_first_then_answers_merges_and_stops() {
             default_action: "d".into(),
             deadline_hours: Some(5),
             letter: None,
+            choices: Vec::new(),
         },
     );
     h.advance(MINUTE_MS);
@@ -2972,8 +3056,10 @@ fn the_inbox_orders_blocking_questions_first_then_answers_merges_and_stops() {
             suggestion: "s".into(),
             deadline_hours: Some(5),
             letter: None,
+            choices: Vec::new(),
         },
     );
+    h.engine.tick();
     let summary = h.engine.summary();
     let groups: Vec<(&str, &str)> = summary
         .inbox
@@ -3088,11 +3174,7 @@ fn a_resumed_worker_still_starting_holds_its_slot_without_a_failure_per_tick() {
     let f = h.factory(true);
     set_workers(&mut h, &f, 1);
     let t = h.ready("Resumed", &[]);
-    h.world()
-        .worker_status
-        .insert(t.clone(), WorkerStatus::Gone);
-    h.advance(5 * MINUTE_MS);
-    h.engine.tick();
+    vanish_twice(&mut h, &f, &t);
     assert_eq!(h.state(&f, &t), TaskState::Stopped);
     h.world().spawn_failure = Some(Failure::start_pending("worker.spawn"));
     h.op(Command::Retry { task: t.clone() });
@@ -3367,6 +3449,7 @@ fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {
             default_action: "use calc".into(),
             deadline_hours: Some(24),
             letter: None,
+            choices: Vec::new(),
         },
     );
     assert_eq!(asked["ok"], true, "{asked}");
@@ -3688,7 +3771,7 @@ fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
     let mut h = Bench::new(false);
     h.factory(true);
     let added = h.add_card(CardInput {
-        runtime: Some(Runtime::Claude),
+        runtime: Some(Runtime::CLAUDE),
         ..card("Limited", &[])
     });
     let id = added["task"]["id"].as_str().unwrap().to_owned();
@@ -3699,7 +3782,7 @@ fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
         .insert(id.clone(), WorkerStatus::Resting { since: now });
     h.world()
         .usage_limits
-        .insert(Runtime::Claude, now + HOUR_MS);
+        .insert(Runtime::CLAUDE, now + HOUR_MS);
     h.advance(3 * MINUTE_MS);
     h.engine.tick();
     let resting = card_json(&h, &id);

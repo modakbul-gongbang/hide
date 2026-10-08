@@ -1240,6 +1240,7 @@ name = "hide-factory"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "hide-agent-adapter",
  "hide-node",
  "hide-node-link",
  "rusqlite",

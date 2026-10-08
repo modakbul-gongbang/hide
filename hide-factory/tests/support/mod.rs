@@ -104,7 +104,19 @@ pub struct World {
     pub outside: VecDeque<OutsideEvent>,
     pub observe_failure: Option<Failure>,
     pub observed: u32,
-    pub macos: Vec<String>,
+    /// Scripted Observer answers to decision requests, oldest first; a
+    /// product choice for a person (kind C) when empty.
+    pub observer: VecDeque<Value>,
+    /// Scripted diagnoses of quiet workers; `unknown` when empty.
+    pub diagnosis: VecDeque<Value>,
+    /// The Observer's risk-path merge answer; a decline when absent.
+    pub risk_merge: Option<Value>,
+    /// What a resting worker shows a diagnosis.
+    pub texts: WorkerTexts,
+    /// Agents the machine lacks, refused as worker candidates.
+    pub missing_agents: Vec<Runtime>,
+    /// Factory AI choices `check_ai` refuses, by provider.
+    pub refused_ai: Vec<String>,
     pub producer: Vec<(String, String)>,
 }
 
@@ -134,6 +146,9 @@ impl TaskSource for Shared {
     }
     fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String> {
         std::fs::read(path).map_err(|error| error.to_string())
+    }
+    fn installed(&mut self, agent: Runtime) -> bool {
+        !self.world().missing_agents.contains(&agent)
     }
     fn probe(&mut self, _project: &str) -> Result<ProjectProbe, Failure> {
         let github = self.world().github;
@@ -427,6 +442,8 @@ impl WorkerRuntime for Shared {
             branch: request.branch.clone(),
             started_at: world.now,
             asleep: false,
+            model: None,
+            effort: None,
         })
     }
     fn message(
@@ -490,6 +507,9 @@ impl WorkerRuntime for Shared {
     fn usage_limited(&mut self, runtime: Runtime) -> Option<UnixMs> {
         self.world().usage_limits.get(&runtime).copied()
     }
+    fn texts(&mut self, _worker: &WorkerRef) -> WorkerTexts {
+        self.world().texts.clone()
+    }
 }
 
 fn task_of(worker: &WorkerRef) -> String {
@@ -508,6 +528,12 @@ impl Judge for Shared {
             return Err(Failure::task("judge", "no provider"));
         }
         world.submitted.push(judgment);
+        Ok(())
+    }
+    fn check_ai(&mut self, ai: &hide_factory::model::FactoryAi) -> Result<(), String> {
+        if self.world().refused_ai.contains(&ai.provider) {
+            return Err(format!("{} is not signed in", ai.provider));
+        }
         Ok(())
     }
     fn finished(&mut self) -> Vec<JudgmentAnswer> {
@@ -546,6 +572,18 @@ impl Judge for Shared {
                     .env_diagnosis
                     .clone()
                     .unwrap_or_else(|| json!({"cause": "unknown", "action": "none"})),
+                JudgmentInput::ObserverClassify { .. } => world
+                    .observer
+                    .pop_front()
+                    .unwrap_or_else(|| classified("C", "")),
+                JudgmentInput::ObserverDiagnose { .. } => world
+                    .diagnosis
+                    .pop_front()
+                    .unwrap_or_else(|| json!({"verdict": "unknown", "reason": "알 수 없음", "question": question_none()})),
+                JudgmentInput::ObserverMerge { .. } => world
+                    .risk_merge
+                    .clone()
+                    .unwrap_or_else(|| json!({"approve": false, "reason": "확인 필요"})),
             };
             answers.push(JudgmentAnswer {
                 id: judgment.id.clone(),
@@ -559,6 +597,26 @@ impl Judge for Shared {
     }
 }
 
+/// An Observer verdict of `kind` answering `answer`, no proposal.
+pub fn classified(kind: &str, answer: &str) -> Value {
+    json!({
+        "kind": kind,
+        "ambiguous": false,
+        "permission_signal": false,
+        "answer": answer,
+        "proposal": {"type": "none", "title": "", "goal": "", "criteria": [], "prerequisite": false},
+        "reason": format!("{kind} 판단"),
+    })
+}
+
+pub fn question_none() -> Value {
+    let mut question = classified("A", "");
+    question["text"] = json!("");
+    question["suggestion"] = json!("");
+    question["choices"] = json!([]);
+    question
+}
+
 impl Environment for Shared {
     fn disk_free(&mut self, _project: &str) -> Option<u64> {
         self.world().disk_reads += 1;
@@ -570,9 +628,6 @@ impl Environment for Shared {
 }
 
 impl Notifier for Shared {
-    fn macos(&mut self, title: &str, _body: &str) {
-        self.world().macos.push(title.to_owned());
-    }
     fn producer(&mut self, _factory: &str, pane: &str, body: &str) -> bool {
         self.world()
             .producer

@@ -22,7 +22,10 @@ pub struct CardInput {
     pub review_directly: bool,
     pub priority: Option<i32>,
     pub merge_mode: Option<MergeMode>,
+    /// Pins the agent's first worker candidate.
     pub runtime: Option<Runtime>,
+    /// Pins a worker candidate by its number in the list, 1 first.
+    pub worker: Option<usize>,
     /// A PRD the daemon copies into the Factory's private folder (D-10).
     pub prd: Option<String>,
 }
@@ -66,12 +69,17 @@ pub enum Command {
         default_action: String,
         deadline_hours: Option<u64>,
         letter: Option<String>,
+        /// Up to five choices a person answers with (D-13).
+        #[serde(default)]
+        choices: Vec<String>,
     },
     Block {
         text: String,
         suggestion: String,
         deadline_hours: Option<u64>,
         letter: Option<String>,
+        #[serde(default)]
+        choices: Vec<String>,
     },
     Propose {
         class: DiscoveryClass,
@@ -113,6 +121,24 @@ pub enum Command {
     },
     Retry {
         task: String,
+    },
+    /// Pauses a whole Factory (D-48): no starts, no AI judgments, no auto
+    /// merge, workers asleep; kept across a restart.
+    PauseFactory {
+        project: Option<String>,
+    },
+    ResumeFactory {
+        project: Option<String>,
+    },
+    /// Clears every notice of a Factory in one action (D-43).
+    AckNotices {
+        project: Option<String>,
+    },
+    /// Pins a Task's worker candidate by its number, 1 first; `None` lets
+    /// the review's pick decide again (D-41).
+    Worker {
+        task: String,
+        worker: Option<usize>,
     },
     Merge {
         task: String,
@@ -156,13 +182,17 @@ impl Command {
             | Self::Done { .. }
             | Self::Decide { .. } => Permission::Report,
             Self::Dep { remove: false, .. } => Permission::AddDependency,
-            Self::Dep { remove: true, .. } | Self::Priority { .. } => Permission::Loosen,
+            Self::Dep { remove: true, .. } | Self::Priority { .. } | Self::Worker { .. } => {
+                Permission::Loosen
+            }
             Self::Init { .. } | Self::Add { .. } | Self::Check { .. } => Permission::Intake,
-            Self::Answer { .. } => Permission::Answer,
+            Self::Answer { .. } | Self::AckNotices { .. } => Permission::Answer,
             Self::Merge { .. } | Self::RequestChanges { .. } => Permission::Merge,
             Self::Pause { .. }
             | Self::Resume { .. }
             | Self::Retry { .. }
+            | Self::PauseFactory { .. }
+            | Self::ResumeFactory { .. }
             | Self::Cancel { .. }
             | Self::Revive { .. }
             | Self::Close { .. } => Permission::Control,
@@ -190,6 +220,10 @@ impl Command {
             Self::Pause { .. } => "pause",
             Self::Resume { .. } => "resume",
             Self::Retry { .. } => "retry",
+            Self::PauseFactory { .. } => "pause-factory",
+            Self::ResumeFactory { .. } => "resume-factory",
+            Self::AckNotices { .. } => "ack-notices",
+            Self::Worker { .. } => "worker",
             Self::Merge { .. } => "merge",
             Self::RequestChanges { .. } => "request-changes",
             Self::Cancel { .. } => "cancel",
@@ -237,13 +271,13 @@ impl Refusal {
 }
 
 pub const USAGE: &str = "hide factory init <project> [--ci [<check>...]] [--verify <command>]... [--no-verification] [--merge auto|manual] [--confirm]
-hide factory add [--task <id>|<issue>] --title <t> --goal <g> --criterion <c>... [--out-of-scope <s>]... [--open <decision>]... [--after <task>]... [--external <ref>]... [--prd <path>] [--review-directly] [--priority <n>] [--merge auto|manual] [--runtime claude|codex] [--project <path>]
+hide factory add [--task <id>|<issue>] --title <t> --goal <g> --criterion <c>... [--out-of-scope <s>]... [--open <decision>]... [--after <task>]... [--external <ref>]... [--prd <path>] [--review-directly] [--priority <n>] [--merge auto|manual] [--runtime <agent>] [--worker <n>] [--project <path>]
 hide factory status [--project <path>]
 hide factory show <task>
 hide factory inbox
 hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>]
-hide factory ask --question <text> --suggestion <text> --default <action> [--deadline-hours <n>]
-hide factory block --question <text> --suggestion <text> [--deadline-hours <n>]
+hide factory ask --question <text> --suggestion <text> --default <action> [--choice <text>]... [--deadline-hours <n>]
+hide factory block --question <text> --suggestion <text> [--choice <text>]... [--deadline-hours <n>]
 hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...] [--autonomy <scope>] [--reclassify <discovery>]
 hide factory done [--summary <text>] [--breaking]
 hide factory decide --text <decision>
@@ -251,6 +285,9 @@ hide factory config [--project <path>] [--set <key>=<value>]...
 hide factory priority <task> <n>
 hide factory dep add|remove <task> --on <task>
 hide factory pause|resume|retry|merge|cancel|revive <task>
+hide factory pause|resume --factory [--project <path>]
+hide factory worker <task> <n>|auto
+hide factory ack-notices [--project <path>]
 hide factory request-changes <task> --comment <text>
 hide factory check --at intake|after-done|periodic --instruction <text> [--project <path>]
 hide factory close [--project <path>]

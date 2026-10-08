@@ -208,11 +208,13 @@ fn task(fixture: &Fixture, id: &str, file: &str, text: &str) -> Task {
         agent: None,
         name: id.into(),
         pane: None,
-        runtime: Runtime::Claude,
+        runtime: Runtime::CLAUDE,
         worktree: worktree.display().to_string(),
         branch,
         started_at: 0,
         asleep: true,
+        model: None,
+        effort: None,
     });
     task
 }

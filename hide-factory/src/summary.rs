@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::dag;
 use crate::model::{
-    Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionRecord, Discovery, EnvHold,
-    Factory, Gate, MergeMode, PullRequest, Question, QuestionKind, Runtime, SourceKind, StopReason,
-    Task, TaskState, UnixMs, Verification,
+    Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionKind, DecisionRecord,
+    Discovery, EnvHold, Factory, FactoryAi, Gate, MergeMode, NoticeCode, PauseReason, PullRequest,
+    Question, QuestionKind, Runtime, SourceKind, StopReason, Task, TaskState, UnixMs, Verification,
+    WorkerCandidate,
 };
 
 /// What a card waits for, as a code beside `waiting_for`'s words, so a
@@ -63,10 +64,12 @@ pub enum ResultCode {
     Merge,
     /// The worker restarts in the same worktree.
     RestartWorker,
+    /// A paused Task resumes in the same worktree.
+    ResumeWorker,
 }
 
 impl ResultCode {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::WakeWorker,
         Self::ApplyOrMerge,
         Self::Ready,
@@ -77,13 +80,17 @@ impl ResultCode {
         Self::Acknowledge,
         Self::Merge,
         Self::RestartWorker,
+        Self::ResumeWorker,
     ];
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FactorySummary {
-    /// The one person-facing number: open inbox items across Factories (D-37).
+    /// The one person-facing number: answers, merge waits and stops across
+    /// Factories; notices are not counted (D-43).
     pub my_turn: u32,
+    /// Notices across Factories, shown below the line (D-43).
+    pub notices: u32,
     pub factories: Vec<FactoryView>,
     pub inbox: Vec<InboxItem>,
 }
@@ -97,8 +104,21 @@ pub struct FactoryView {
     /// `ci`, `verify` or `none` (D-21).
     pub verification: String,
     pub closed: bool,
+    /// The operator paused the whole Factory (D-48).
+    pub paused: bool,
     pub flow: Flow,
     pub my_turn: u32,
+    pub notices: u32,
+    /// `manual`, `assist` or `autonomous` (직접, 함께, 맡김).
+    pub observer_mode: String,
+    /// Observer calls today and the daily cap (D-34).
+    pub observer_today: u32,
+    pub observer_limit: u32,
+    /// The Factory AI; `None` is the app's Hide AI (D-40).
+    pub factory_ai: Option<FactoryAi>,
+    /// The worker candidates, the first the default (D-41).
+    pub workers: Vec<WorkerCandidate>,
+    pub macos_notifications: bool,
     pub columns: Vec<ColumnView>,
     /// Off the board, revivable for the keep period (D-47).
     pub cancelled: Vec<CardView>,
@@ -141,6 +161,8 @@ pub struct CardView {
     pub issue_url: Option<String>,
     pub pr: Option<PullRequest>,
     pub worker_runtime: Option<String>,
+    /// The worker's agent as a person reads it, its accessible name (B43).
+    pub worker_label: Option<String>,
     pub resume_at: Option<UnixMs>,
     /// `person` or `other`, only in the stuck column.
     pub waiting_group: Option<String>,
@@ -159,6 +181,8 @@ pub struct CardView {
     pub env_hold: Option<EnvHold>,
     /// The stop reason behind a stopped card's `state_label`.
     pub stop: Option<StopReason>,
+    /// Why a paused card is paused.
+    pub pause_reason: Option<PauseReason>,
     pub priority: i32,
     pub since: UnixMs,
     /// A completion the person has not looked at (D-30).
@@ -222,6 +246,15 @@ pub struct InboxItem {
     pub gates: Vec<Gate>,
     /// Why a stopped item stopped.
     pub stop: Option<StopReason>,
+    /// What a notice says, as a code.
+    pub notice: Option<NoticeCode>,
+    /// The decision a notice is about; "다른 답" answers that question.
+    pub refers_to: Option<String>,
+    /// The Observer's kind and reason for a request it sorted.
+    pub decision_kind: Option<DecisionKind>,
+    pub observer_reason: Option<String>,
+    /// Whether the decision can still be changed (its Task is not finished).
+    pub overridable: bool,
 }
 
 pub fn build(
@@ -239,15 +272,17 @@ pub fn build(
             .map(|task| (task.id.clone(), (*task).clone()))
             .collect();
         let items = inbox_items(factory, &mine, now);
+        let notices = items.iter().filter(|item| item.group == "notice").count() as u32;
         let view = factory_view(
             factory,
             &mine,
-            items.len() as u32,
+            (items.len() as u32 - notices, notices),
             now,
             utc_offset_ms,
             runtime_holds,
         );
         summary.my_turn += view.my_turn;
+        summary.notices += view.notices;
         summary.inbox.extend(items);
         summary.factories.push(view);
     }
@@ -268,7 +303,7 @@ fn local_day(at: UnixMs, utc_offset_ms: i64) -> i64 {
 fn factory_view(
     factory: &Factory,
     tasks: &BTreeMap<String, Task>,
-    my_turn: u32,
+    (my_turn, notices): (u32, u32),
     now: UnixMs,
     utc_offset_ms: i64,
     runtime_holds: &BTreeMap<Runtime, UnixMs>,
@@ -283,7 +318,7 @@ fn factory_view(
             let runtime = task
                 .worker
                 .as_ref()
-                .map_or_else(|| task.runtime(factory), |worker| worker.runtime);
+                .map_or_else(|| task.candidate(factory).0.agent, |worker| worker.runtime);
             card.resume_at = runtime_holds
                 .get(&runtime)
                 .copied()
@@ -375,8 +410,20 @@ fn factory_view(
             Verification::None => "none".into(),
         },
         closed: factory.closed,
+        paused: factory.paused,
         flow,
         my_turn,
+        notices,
+        observer_mode: factory.config.observer_mode.as_str().to_owned(),
+        observer_today: if factory.observer_day == local_day(now, utc_offset_ms) as u64 {
+            factory.observer_calls
+        } else {
+            0
+        },
+        observer_limit: factory.config.observer_daily_limit,
+        factory_ai: factory.config.factory_ai.clone(),
+        workers: factory.config.candidates(),
+        macos_notifications: factory.config.macos_notifications,
         columns,
         cancelled,
         graph,
@@ -503,6 +550,10 @@ pub fn card_view(
             .worker
             .as_ref()
             .map(|worker| worker.runtime.as_str().to_owned()),
+        worker_label: task
+            .worker
+            .as_ref()
+            .map(|worker| worker.runtime.label().to_owned()),
         resume_at: None,
         waiting_group: (board_column(task) == Some(Column::Stuck)).then(|| {
             if task.needs_person() || task.state == TaskState::Paused {
@@ -528,6 +579,9 @@ pub fn card_view(
             .filter(|_| waiting_code == Some(WaitingFor::Environment)),
         waiting_code,
         stop,
+        pause_reason: task
+            .pause_reason
+            .filter(|_| task.state == TaskState::Paused),
         waiting_for,
         priority: task.human.priority,
         since: task.state_since,
@@ -586,9 +640,19 @@ pub fn inbox_items(
             unblocks: Vec::new(),
             gates: Vec::new(),
             stop: None,
+            notice: None,
+            refers_to: None,
+            decision_kind: None,
+            observer_reason: None,
+            overridable: false,
         };
         let frees = waiting_on_this(task, tasks);
-        for question in task.open_questions() {
+        let finished = matches!(
+            task.state,
+            TaskState::Done | TaskState::Landed | TaskState::Cancelled | TaskState::Outside
+        );
+        // A request the Observer is still sorting is not a person's yet.
+        for question in task.open_questions().filter(|q| q.awaits_person()) {
             let (group, rank) = match question.kind {
                 QuestionKind::Blocking => ("answer", 0),
                 QuestionKind::Notice => ("notice", 4),
@@ -607,6 +671,23 @@ pub fn inbox_items(
                 item.waiting_days = now.saturating_sub(question.asked_at) / DAY_MS;
             }
             item.question = Some(question.id.clone());
+            item.notice = question.notice;
+            item.refers_to = question.refers_to.clone();
+            item.overridable = question.refers_to.is_some()
+                && !finished
+                && task
+                    .questions
+                    .iter()
+                    .find(|q| Some(&q.id) == question.refers_to.as_ref())
+                    .is_some_and(|q| {
+                        q.answer
+                            .as_ref()
+                            .is_some_and(|a| a.relayed_by == crate::model::OBSERVER)
+                    });
+            if let Some(routing) = &question.routing {
+                item.decision_kind = routing.kind;
+                item.observer_reason = routing.reason.clone();
+            }
             item.suggestion = question.suggestion.clone();
             item.default_action = question.default_action.clone();
             item.choices = question.choices.clone();
@@ -681,6 +762,21 @@ pub fn inbox_items(
                 item.result = "같은 worktree에서 worker를 다시 시작".into();
                 item.result_code = ResultCode::RestartWorker;
                 item.stop = task.stop;
+                items.push(item);
+            }
+            // The operator closed the worker's pane: a person resumes it (D-26).
+            TaskState::Paused if task.pause_reason == Some(PauseReason::PaneClosed) => {
+                let mut item = base(
+                    "stopped",
+                    3,
+                    "일시정지: 작업자 pane을 닫음".to_owned(),
+                    task.state_since,
+                );
+                item.kind = "paused".into();
+                item.choices = vec!["resume".into(), "cancel".into()];
+                item.suggestion = "resume".into();
+                item.result = "같은 worktree에서 이어서 시작".into();
+                item.result_code = ResultCode::ResumeWorker;
                 items.push(item);
             }
             _ => {}
@@ -788,6 +884,27 @@ pub struct TaskDetail {
     pub worker_name: Option<String>,
     pub worktree: Option<String>,
     pub branch: Option<String>,
+    /// The worker that actually started, and why its candidate (B33).
+    pub worker: Option<WorkerLine>,
+    /// The Observer's one line under a no-report stop (B23).
+    pub diagnosis: Option<String>,
+    /// Automatic restarts used since a person last started it (D-25).
+    pub auto_restarts: u32,
+    /// When the worker's current rest began, as the core saw it (B43).
+    pub resting_since: Option<UnixMs>,
+    /// The candidate a person pinned, 1 first.
+    pub pinned_worker: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerLine {
+    pub agent: String,
+    pub label: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    /// The candidate's description when the review picked it, with why.
+    pub picked: Option<String>,
+    pub pick_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -894,6 +1011,26 @@ pub fn detail(
         worker_name: task.worker.as_ref().map(|worker| worker.name.clone()),
         worktree: task.worker.as_ref().map(|worker| worker.worktree.clone()),
         branch: task.worker.as_ref().map(|worker| worker.branch.clone()),
+        worker: task.worker.as_ref().map(|worker| {
+            let candidates = factory.config.candidates();
+            let pick = task
+                .ai_pick
+                .as_ref()
+                .filter(|_| task.human.worker.is_none() && task.human.runtime.is_none())
+                .and_then(|pick| candidates.get(pick.index).map(|c| (c, pick)));
+            WorkerLine {
+                agent: worker.runtime.as_str().to_owned(),
+                label: worker.runtime.label().to_owned(),
+                model: worker.model.clone(),
+                effort: worker.effort.clone(),
+                picked: pick.map(|(candidate, _)| candidate.description.clone()),
+                pick_reason: pick.map(|(_, pick)| pick.reason.clone()),
+            }
+        }),
+        diagnosis: task.diagnosis.clone(),
+        auto_restarts: task.auto_restarts,
+        resting_since: task.rest_seen.filter(|_| task.state == TaskState::Running),
+        pinned_worker: task.human.worker.map(|index| index + 1),
     }
 }
 
@@ -987,6 +1124,7 @@ mod tests {
             StopReason::EnvironmentRepeated => 4,
             StopReason::WorkerStart => 5,
             StopReason::PublishRefused => 6,
+            StopReason::WorkerGone => 7,
         });
         assert_eq!(
             wire(&StopReason::ALL),
@@ -998,6 +1136,7 @@ mod tests {
                 "environment_repeated",
                 "worker_start",
                 "publish_refused",
+                "worker_gone",
             ]
         );
         complete(&EnvHold::ALL, |hold| match hold {
@@ -1030,6 +1169,7 @@ mod tests {
             ResultCode::Acknowledge => 7,
             ResultCode::Merge => 8,
             ResultCode::RestartWorker => 9,
+            ResultCode::ResumeWorker => 10,
         });
         assert_eq!(
             wire(&ResultCode::ALL),
@@ -1044,6 +1184,24 @@ mod tests {
                 "acknowledge",
                 "merge",
                 "restart_worker",
+                "resume_worker",
+            ]
+        );
+        complete(&NoticeCode::ALL, |code| match code {
+            NoticeCode::AiAnswered => 0,
+            NoticeCode::AiCardFixed => 1,
+            NoticeCode::AiNewTask => 2,
+            NoticeCode::AiRiskMerge => 3,
+            NoticeCode::DailyLimit => 4,
+        });
+        assert_eq!(
+            wire(&NoticeCode::ALL),
+            [
+                "ai_answered",
+                "ai_card_fixed",
+                "ai_new_task",
+                "ai_risk_merge",
+                "daily_limit",
             ]
         );
     }
