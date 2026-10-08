@@ -20,14 +20,20 @@ use crate::judgment::{
 use crate::model::*;
 use crate::role::Role;
 
-/// Failure classes of a call the provider never received: not counted
-/// against the daily cap (D-34).
-const NOT_SENT: [&str; 5] = [
+/// Failure classes of a call the provider never received, not counted
+/// against the daily cap (D-34): the engine's own (`paused`, a full
+/// queue's `over_budget`) and Hide AI's refusals whose request was never
+/// submitted (`hide_ai::AiError`).
+const NOT_SENT: [&str; 9] = [
     "disabled",
     "no_provider",
     "over_budget",
     "unsupported",
     "paused",
+    "not_authenticated",
+    "usage_limited",
+    "provider_unavailable",
+    "transient",
 ];
 
 /// The most recorded decisions an Observer call carries.
@@ -766,14 +772,16 @@ impl Engine {
         let Some(task) = self.task(factory, id).cloned() else {
             return;
         };
+        // A rest the worker left by working again already moved into
+        // `rest_before` (`worker_working`).
         let rest_before = if task.rest_seen == Some(rest) {
             task.rest_before
         } else {
             self.with_task(factory, id, |t| {
-                t.rest_before = t.rest_seen;
+                t.rest_before = t.rest_seen.or(t.rest_before);
                 t.rest_seen = Some(rest);
             });
-            task.rest_seen
+            task.rest_seen.or(task.rest_before)
         };
         let started = task.state_since.max(task.woken_at.unwrap_or(0));
         if rest < started {
@@ -822,6 +830,19 @@ impl Engine {
             return;
         }
         self.stop_no_report(factory, id, None);
+    }
+
+    /// A worker working again has left its rest: the Task page stops
+    /// counting it, and the rest stays the one before the next (D-24, B43).
+    pub(super) fn worker_working(&mut self, factory: &str, id: &str) {
+        if self
+            .task(factory, id)
+            .is_some_and(|t| t.rest_seen.is_some())
+        {
+            self.with_task(factory, id, |t| {
+                t.rest_before = t.rest_seen.take();
+            });
+        }
     }
 
     /// Reaches a resting worker the way its adapter declares, never by
@@ -1048,9 +1069,12 @@ impl Engine {
             return;
         };
         if task.auto_restarts == 0 {
-            self.with_task(factory, id, |t| t.auto_restarts += 1);
-            self.record(factory, Some(id), "worker.gone", json!({"restart": true}));
-            self.start(factory, id);
+            // A start that has to wait (its agent's usage is used up) keeps
+            // the one restart for when it can start (D-25).
+            if self.start(factory, id) {
+                self.with_task(factory, id, |t| t.auto_restarts += 1);
+                self.record(factory, Some(id), "worker.gone", json!({"restart": true}));
+            }
             return;
         }
         self.set_state(factory, id, TaskState::Stopped);

@@ -212,7 +212,8 @@ Stopping a worker, when its Task is cancelled or an outside pull request takes i
 A wake restarts the agent in the same pane and session.
 Letters for a woken worker are held, at most 16, until its agent is back, and are dropped to the diagnostic log after 10 minutes.
 A retried Task spawns again in the same worktree and session with a fresh intent.
-A worker that is `gone` is detected from its pane, with a three-minute grace after its start; a pane Hide did not close starts again once in the same worktree, counted as an automatic restart, and a second disappearance stops the Task as "worker gone" for a person, whose start sets the count back to 0.
+A worker that is `gone` is detected from its pane, with a three-minute grace after its start; a pane Hide did not close starts again once in the same worktree, counted as an automatic restart once that start begins, and a second disappearance stops the Task as "worker gone" for a person, whose start sets the count back to 0.
+A pane Hide is closing is never read as gone, since its close pauses the Task.
 A pane the operator closes in Hide pauses its Task (`pause_reason` `pane_closed`) and nothing starts it again until a person resumes it, which continues the session in the same worktree.
 
 A worker reports through `hide factory` and gets its answer in the same call.
@@ -303,13 +304,13 @@ The prompts tell Factory AI that the request and the worker's recorded decisions
 
 **Notices.**
 A notice is a line under the inbox that a person reads and never answers: `ai_answered` (a request Factory AI answered), `ai_card_fixed`, `ai_new_task`, `ai_risk_merge` and `daily_limit`.
-Notices are counted apart from 내 차례 (`FactorySummary.notices`), and `hide factory ack-notices` clears every notice of a Factory at once.
+Notices are counted apart from 내 차례 (`FactorySummary.notices`), and `hide factory ack-notices` clears every notice at once: of the named or current checkout's Factory, else of every open Factory.
 `hide factory answer <task> --question <id> --change --choose <choice>|--text <answer>` replaces an answer Factory AI gave, which 다른 답 on its notice sends.
 It is refused for an answer a person gave (`already_answered`) and on a finished Task (`task_finished`); it records "뒤집음: <question> -> <answer>", settles the notice, and a Task in `verifying` or `merge_waiting` goes back to `running` with its verification cancelled and its worker woken with the new answer, while any other Task's worker gets it by reply.
 
 **The daily cap.**
 A Factory sends at most `observer_daily_limit` (100, from 1 to 1000) Observer calls a day, counted by the machine's local day.
-A call the provider never received gives its count back: Hide AI off, no agent to run it, a full queue or spent budget, an unsupported request, or a paused Factory.
+A call the provider never received gives its count back: Hide AI off, no agent to run it, a full queue or spent budget, an unsupported request, a paused Factory, or a provider that refused it before it was submitted (not logged in, at its usage limit, unavailable, or a refusal that may clear on its own).
 At the cap nothing is sent, the request goes to a person, and the first refusal of the day leaves one `daily_limit` notice.
 
 **A quiet worker.**
@@ -329,6 +330,7 @@ The wake and the diagnosis stay on the stopped Task for its page, and a retry, a
 
 **A vanished worker.**
 A worker pane that disappears without Hide closing it starts again once in the same worktree and session (`auto_restarts`), and a second disappearance stops the Task as "worker gone".
+A restart that waits for its agent's usage reset spends nothing until it starts.
 A pane the operator closes in Hide pauses the Task with `pause_reason` `pane_closed`, which lists it in the inbox with `resume` and `cancel`; nothing starts it again until a person resumes it.
 
 **A risk-path merge.**
@@ -338,7 +340,7 @@ In 직접 and 함께 a risk path always waits for a person.
 
 **Pausing a Factory.**
 `hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends; a request that arrives meanwhile goes to a person.
-A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing, and a risk-path approval that answers after the pause merges nothing.
+A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing, a verified Task moves to its merge step only after the resume, and a risk-path approval that answers after the pause merges nothing.
 `hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path.
 
 **The Factory AI and the workers.**
@@ -554,7 +556,7 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 | `verify_timeout_minutes` | Minutes per bundle run, at least 1 | 60 |
 | `disk_floor_gb` | Gigabytes | 20 |
 | `default_runtime` | An agent Factory can start and this machine has; replaces the first worker candidate with that agent on its defaults | Claude Code when `init` finds it on the path, else Codex when it finds that, else `claude` |
-| `workers` | A JSON list of 1 to 5 `{agent, model, effort, description}`, the first the default; `default_runtime` follows it | The default runtime on its CLI's defaults |
+| `workers` | A JSON list of 1 to 5 `{agent, model, effort, description}`, each description at most 200 characters, the first the default; `default_runtime` follows it | The default runtime on its CLI's defaults |
 | `observer_mode` | `manual`, `assist` or `autonomous` (직접, 함께, 맡김) | `assist` |
 | `observer_daily_limit` | 1 to 1000 Factory AI calls a local day | 100 |
 | `factory_ai` | An agent id, or `default` for the Hide AI choice | `default` |
@@ -610,9 +612,9 @@ Add --json to print the answer as JSON.
 | `config`, `check` | Reads and sets settings, and adds a natural-language check. A check cannot be removed once added. |
 | `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in an active lifecycle state (anything except drafting, waiting, done or cancelled). `pause --factory` and `resume --factory` pause and resume a whole Factory. |
 | `worker` | Pins the Task's worker candidate by its number from 1, or `auto` for the review's pick (`worker_out_of_range`). `add --worker <n>` pins at add. |
-| `ack-notices` | Clears every notice of the Factory and answers how many. |
+| `ack-notices` | Clears every notice of the Factory and answers how many; with no Factory named or current, every open Factory's in one command. |
 
-Without `--project`, `add`, `config`, `check`, `close`, `ack-notices` and a Factory's `pause` and `resume` use the only open Factory, and answer `factory_ambiguous` when there are several.
+Without `--project`, `add`, `config`, `check`, `close` and a Factory's `pause` and `resume` use the only open Factory, and answer `factory_ambiguous` when there are several.
 A project path is made absolute by the CLI.
 `--json` prints the engine's answer as one JSON object, and without it the answer is printed for a person.
 Every answer carries `ok`.
@@ -682,7 +684,7 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `waiting_group` | `person` for a stuck Task needing a person or paused; `other` for another stuck Task; otherwise absent. |
 | `stage` | 0 waiting, 1 work, 2 verification, 3 merge, 4 complete. |
 | `state`, `state_label` | The state id and its label, with the stop reason for a stopped Task. |
-| `needs_person` | The Task is blocked, stopped, `merge_waiting`, or has an open question that is not a notice. |
+| `needs_person` | The Task is blocked, stopped, `merge_waiting`, or has an open question that is not a notice; a Task blocked only on requests Factory AI is still sorting is not yet. |
 | `waiting_for` | For a waiting Task, the predecessors by display id, the environment hold, or `slot`; for a blocked one, `answer` or `predecessor`. |
 | `waiting_code` | The same as a `WaitingFor` code. |
 | `waiting_on` | For `predecessors` on a waiting Task, the display ids of the predecessors it waits on, for a waiting or blocked Task. |

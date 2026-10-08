@@ -952,8 +952,27 @@ impl Engine {
                 Ok(json!({"message": "resumed: workers continue in their worktrees"}))
             }
             Command::AckNotices { project } => {
-                let factory = self.factory_id(project.as_deref())?;
-                let cleared = self.ack_notices(&factory, role);
+                // "모두 확인" is one action: without a project it clears
+                // every open Factory's notices (D-43).
+                let factories: Vec<String> = match project.as_deref() {
+                    Some(project) => vec![self.factory_id(Some(project))?],
+                    None => self
+                        .factories
+                        .values()
+                        .filter(|f| !f.closed)
+                        .map(|f| f.id.clone())
+                        .collect(),
+                };
+                if factories.is_empty() {
+                    return Err(refuse(
+                        "factory_not_found",
+                        "Create one with hide factory init <project>",
+                    ));
+                }
+                let cleared: usize = factories
+                    .iter()
+                    .map(|factory| self.ack_notices(factory, role))
+                    .sum();
                 Ok(json!({"message": "notices cleared", "cleared": cleared}))
             }
             Command::Worker { task, worker } => {
@@ -3527,6 +3546,11 @@ impl Engine {
         if !verified {
             return;
         }
+        // A paused Factory reads nothing more toward a merge (D-48): the
+        // pre-merge check and its verification wait for the resume.
+        if factory.paused {
+            return;
+        }
         let now = self.now();
         // Questions with a default wait only here, until answer or deadline (B26).
         let waiting_question = task.open_questions().any(|q| {
@@ -3623,9 +3647,8 @@ impl Engine {
             }
             return;
         }
-        if factory.main.broken || factory.paused {
-            // A manual Task always has its gate; nothing merges on red, and
-            // a paused Factory merges nothing on its own (D-48).
+        if factory.main.broken {
+            // A manual Task always has its gate; nothing merges on red.
             return;
         }
         let _ = self.merge_now(factory_id, id);
@@ -4620,6 +4643,15 @@ impl Engine {
                         .with(json!({"key": key, "min": 1, "max": WORKER_CANDIDATE_LIMIT})));
                     }
                     for candidate in &workers {
+                        if candidate.description.chars().count() > WORKER_DESCRIPTION_LIMIT {
+                            return Err(refuse(
+                                "out_of_range",
+                                format!(
+                                    "Keep a worker description to {WORKER_DESCRIPTION_LIMIT} characters"
+                                ),
+                            )
+                            .with(json!({"key": key, "max": WORKER_DESCRIPTION_LIMIT})));
+                        }
                         self.worker_agent(key, candidate.agent.as_str())?;
                         candidate.launch_arguments().map_err(|detail| {
                             refuse("config_invalid", detail).with(json!({"key": key}))
@@ -5199,8 +5231,9 @@ impl Engine {
                     self.check_rest(&factory, &id, &worker, rest, no_report, now)
                 }
                 WorkerStatus::Gone => self.worker_gone(&factory, &id),
+                WorkerStatus::Working | WorkerStatus::Blocked => self.worker_working(&factory, &id),
                 // A worker whose activity cannot be read is never resting (B43).
-                WorkerStatus::Working | WorkerStatus::Blocked | WorkerStatus::Unknown => {}
+                WorkerStatus::Unknown => {}
             }
         }
     }

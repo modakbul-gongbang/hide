@@ -273,19 +273,26 @@ fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_notice() {
 
 #[test]
 fn a_call_hide_ai_never_sent_is_not_counted() {
-    let mut h = Bench::new(false);
-    let f = h.factory(true);
-    let t = h.ready("Off", &[]);
-    h.world().judgment_failure = Some("disabled".into());
-    ask(&mut h, &f, &t, "Which?", &[]);
-    h.engine.tick();
-    let view = &h.op(Command::Status { project: None })["factories"][0];
-    assert_eq!(view["observer_today"], 0);
-    assert_eq!(
-        inbox(&mut h)["count"],
-        1,
-        "a person decides with Hide AI off"
-    );
+    // Hide AI's classes for a request no provider took, and one that was
+    // submitted and timed out (D-34).
+    for (reason, counted) in [
+        ("disabled", 0),
+        ("not_authenticated", 0),
+        ("usage_limited", 0),
+        ("provider_unavailable", 0),
+        ("transient", 0),
+        ("timeout", 1),
+    ] {
+        let mut h = Bench::new(false);
+        let f = h.factory(true);
+        let t = h.ready("Off", &[]);
+        h.world().judgment_failure = Some(reason.into());
+        ask(&mut h, &f, &t, "Which?", &[]);
+        h.engine.tick();
+        let view = &h.op(Command::Status { project: None })["factories"][0];
+        assert_eq!(view["observer_today"], counted, "{reason}");
+        assert_eq!(inbox(&mut h)["count"], 1, "a person decides: {reason}");
+    }
 }
 
 #[test]
@@ -363,6 +370,69 @@ fn a_finished_task_s_ai_answer_cannot_be_changed() {
     assert_eq!(refused["reason"], "task_finished", "{refused}");
 }
 
+fn board_card(h: &Bench, id: &str) -> Value {
+    let summary = serde_json::to_value(h.engine.summary()).unwrap();
+    summary["factories"][0]["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|column| column["cards"].as_array().unwrap().iter())
+        .find(|card| card["task"] == id)
+        .cloned()
+        .expect("card on the board")
+}
+
+#[test]
+fn a_task_blocked_while_factory_ai_sorts_the_request_is_not_yet_a_person_s() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Sorting", &[]);
+    h.world().hold_judgments = true;
+    block(&mut h, &f, &t, "Which table?");
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Blocked);
+    let sorting = board_card(&h, &t);
+    assert_eq!(
+        (
+            sorting["needs_person"].clone(),
+            sorting["waiting_group"].clone()
+        ),
+        (json!(false), json!("other")),
+        "{sorting}"
+    );
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    let routed = board_card(&h, &t);
+    assert_eq!(
+        (
+            routed["needs_person"].clone(),
+            routed["waiting_group"].clone()
+        ),
+        (json!(true), json!("person")),
+        "{routed}"
+    );
+}
+
+#[test]
+fn a_verdict_that_lands_after_its_task_was_cancelled_leaves_nothing_waiting_on_revive() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Revived", &[]);
+    h.world().hold_judgments = true;
+    ask(&mut h, &f, &t, "Which table?", &[]);
+    h.engine.tick();
+    let cancelled = h.op(Command::Cancel { task: t.clone() });
+    assert_eq!(cancelled["ok"], true, "{cancelled}");
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    let revived = h.op(Command::Revive { task: t.clone() });
+    assert_eq!(revived["ok"], true, "{revived}");
+    h.engine.tick();
+    // Cancelling answered the request; the revived worker asks again.
+    assert_eq!(h.task(&f, &t).open_questions().count(), 0);
+    assert_eq!(inbox(&mut h)["items"], json!([]));
+}
+
 #[test]
 fn ack_notices_clears_every_notice_and_leaves_the_count() {
     let mut h = Bench::new(false);
@@ -387,6 +457,33 @@ fn ack_notices_clears_every_notice_and_leaves_the_count() {
         (after["count"].clone(), after["notices"].clone()),
         (json!(1), json!(0))
     );
+}
+
+#[test]
+fn ack_notices_without_a_project_clears_every_open_factory_in_one_command() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let other = h.factory_at("/work/other", true);
+    let here = h.ready("Here", &[]);
+    let added = h.op(Command::Add {
+        project: Some("/work/other".into()),
+        task: None,
+        issue: None,
+        card: card("There", &[]),
+        producer_pane: None,
+    });
+    let there = added["task"]["id"].as_str().unwrap().to_owned();
+    h.engine.tick();
+    for answer in ["a", "b"] {
+        h.world().observer.push_back(classified("B", answer));
+    }
+    ask(&mut h, &f, &here, "Here?", &[]);
+    ask(&mut h, &other, &there, "There?", &[]);
+    h.engine.tick();
+    assert_eq!(inbox(&mut h)["notices"], 2);
+    let acked = h.op(Command::AckNotices { project: None });
+    assert_eq!(acked["cleared"], 2, "{acked}");
+    assert_eq!(inbox(&mut h)["notices"], 0);
 }
 
 // ------------------------------------------------------------- wrong cards
@@ -630,6 +727,47 @@ fn a_worker_that_asked_once_is_still_caught_resting_without_a_later_report() {
 }
 
 #[test]
+fn a_worker_working_again_leaves_its_rest_and_a_later_quiet_turn_is_still_caught() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Works again", &[]);
+    ask(&mut h, &f, &t, "Which?", &[]);
+    h.engine.tick();
+    let first = h.world().now + MINUTE_MS;
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Resting { since: first });
+    h.advance(4 * MINUTE_MS);
+    h.engine.tick();
+    let resting_since =
+        |h: &mut Bench| h.op(Command::Show { task: t.clone() })["task"]["resting_since"].clone();
+    assert_eq!(resting_since(&mut h), json!(first));
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Working);
+    h.advance(MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(
+        resting_since(&mut h),
+        Value::Null,
+        "the Task page stops counting the rest"
+    );
+    // The next turn ends with no report since the one that asked (D-24).
+    let second = h.world().now + MINUTE_MS;
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Resting { since: second });
+    h.advance(4 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(resting_since(&mut h), json!(second));
+    assert!(
+        letters_to(&h, &t)
+            .iter()
+            .any(|b| b.contains("done, ask, block"))
+    );
+}
+
+#[test]
 fn an_unknown_activity_is_never_counted_as_rest() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -749,6 +887,15 @@ fn a_vanished_worker_restarts_once_then_stops_and_a_retry_gives_the_restart_back
         h.advance(5 * MINUTE_MS);
         h.engine.tick();
     };
+    // While its agent's usage is used up the restart waits, unspent.
+    let runtime = h.task(&f, &t).worker.unwrap().runtime;
+    let until = h.world().now + HOUR_MS;
+    h.world().usage_limits.insert(runtime, until);
+    gone(&mut h);
+    let task = h.task(&f, &t);
+    assert_eq!((task.state, task.auto_restarts), (TaskState::Running, 0));
+    h.advance(HOUR_MS);
+    h.world().usage_limits.clear();
     gone(&mut h);
     let task = h.task(&f, &t);
     assert_eq!(task.state, TaskState::Running, "back in the same worktree");
@@ -860,9 +1007,15 @@ fn a_task_reported_while_its_factory_is_paused_is_checked_on_resume_and_merges_o
     h.op(Command::PauseFactory { project: None });
     // The worker's turn was still running: it reports after the pause.
     h.done(&f, &t);
+    let premerge = h.world().premerge_calls;
     for _ in 0..5 {
         h.engine.tick();
     }
+    assert_eq!(
+        h.world().premerge_calls,
+        premerge,
+        "no merge read while paused"
+    );
     let task = h.task(&f, &t);
     assert!(!task.gates.contains(&Gate::CheckFailed), "{:?}", task.gates);
     assert_eq!(task.state, TaskState::Verifying);
@@ -1052,6 +1205,12 @@ fn worker_and_observer_settings_are_checked_and_old_values_keep_reading() {
     );
     let six = format!("[{}]", [r#"{"agent":"claude"}"#; 6].join(","));
     assert_eq!(config(&mut h, "workers", &six)["reason"], "out_of_range");
+    let long = json!([{"agent": "claude", "description": "가".repeat(201)}]).to_string();
+    let refused = config(&mut h, "workers", &long);
+    assert_eq!(
+        (refused["reason"].clone(), refused["detail"]["max"].clone()),
+        (json!("out_of_range"), json!(200))
+    );
     h.world().missing_agents.push(Runtime::CODEX);
     let missing = config(&mut h, "default_runtime", "codex");
     assert_eq!(missing["reason"], "agent_not_installed", "{missing}");
@@ -1075,6 +1234,8 @@ fn worker_and_observer_settings_are_checked_and_old_values_keep_reading() {
     let refused = config(&mut h, "factory_ai", "codex");
     assert_eq!(refused["reason"], "factory_ai_unavailable", "{refused}");
     assert_eq!(h.engine.factories().next().unwrap().config.factory_ai, None);
+    let fits = json!([{"agent": "claude", "description": "가".repeat(200)}]).to_string();
+    assert_eq!(config(&mut h, "workers", &fits)["ok"], true);
     let _ = f;
 }
 

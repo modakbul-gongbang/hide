@@ -245,6 +245,9 @@ impl WorkerCandidate {
 
 /// The most worker candidates one Factory keeps (D-42).
 pub const WORKER_CANDIDATE_LIMIT: usize = 5;
+/// The longest worker candidate description, in Unicode characters; every
+/// intake review carries it.
+pub const WORKER_DESCRIPTION_LIMIT: usize = 200;
 /// The Observer's daily call cap: default and range (D-17, D-34).
 pub const OBSERVER_DAILY_DEFAULT: u32 = 100;
 pub const OBSERVER_DAILY_RANGE: std::ops::RangeInclusive<u32> = 1..=1000;
@@ -1456,12 +1459,22 @@ impl Task {
     }
 
     /// The card a person must look at: blocked, stopped, merge waiting, or
-    /// an open question (D-28, D-47).
+    /// an open question (D-28, D-47). A Task blocked only on requests the
+    /// Observer is still sorting is not yet a person's (D-14).
     pub fn needs_person(&self) -> bool {
-        matches!(
+        let sorting = self.state == TaskState::Blocked && {
+            let mut open = self
+                .open_questions()
+                .filter(|question| !matches!(question.kind, QuestionKind::Notice))
+                .peekable();
+            open.peek().is_some() && open.all(|question| !question.awaits_person())
+        };
+        (matches!(
             self.state,
             TaskState::Blocked | TaskState::Stopped | TaskState::MergeWaiting
-        ) || (self.state == TaskState::Paused && self.pause_reason == Some(PauseReason::PaneClosed))
+        ) && !sorting)
+            || (self.state == TaskState::Paused
+                && self.pause_reason == Some(PauseReason::PaneClosed))
             || self.open_questions().any(|question| {
                 question.awaits_person() && !matches!(question.kind, QuestionKind::Notice)
             })

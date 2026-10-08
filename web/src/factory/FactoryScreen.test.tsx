@@ -482,11 +482,18 @@ it("changes Factory AI's answer only through 다른 답, which answers the quest
   expect(commands(events)).toEqual([{ verb: "answer", task: "f1/T-1", question: "q-1", choice: null, text: "sqlite", change: true }]);
 });
 
-it("acknowledges the notices of every Factory shown with one action (D-43)", async () => {
+it("acknowledges the notices of every Factory shown with one event (D-43)", async () => {
   const other = factory({ id: "f2", project: "/other", project_name: "other" });
   const { container, events } = await mount({ my_turn: 0, notices: 2, factories: [factory(), other], inbox: [NOTICE, { ...NOTICE, factory: "f2", question: "q-8" }] });
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-ack-all]")!.click());
-  expect(commands(events)).toEqual([{ verb: "ack_notices", project: "/fixture" }, { verb: "ack_notices", project: "/other" }]);
+  expect(commands(events)).toEqual([{ verb: "ack_notices", project: null }]);
+});
+
+it("acknowledges only the filtered Factory's notices when the screen shows one Factory", async () => {
+  const other = factory({ id: "f2", project: "/other", project_name: "other" });
+  const { container, events } = await mount({ my_turn: 0, notices: 2, factories: [factory(), other], inbox: [NOTICE, { ...NOTICE, factory: "f2", question: "q-8" }] }, { factory: "f2" });
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-ack-all]")!.click());
+  expect(commands(events)).toEqual([{ verb: "ack_notices", project: "/other" }]);
 });
 
 it("says why a request Factory AI sorted is still the person's in the Factory's mode (D-14, D-21)", async () => {

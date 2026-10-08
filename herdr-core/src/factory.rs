@@ -1374,7 +1374,6 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn status(&mut self, worker: &WorkerRef) -> WorkerStatus {
-        use crate::agent_state::AgentUse;
         let Some(pane) = &worker.pane else {
             return WorkerStatus::Gone;
         };
@@ -1387,28 +1386,7 @@ impl WorkerRuntime for CoreWorkers {
         };
         let probe = guard(&runtime).factory_worker_probe(pane);
         drop(runtime);
-        // A rest starts when the core saw the agent's state change (D-52).
-        let resting = || match probe.changed_at_unix_ms {
-            Some(since) => WorkerStatus::Resting { since },
-            None => WorkerStatus::Unknown,
-        };
-        if probe.asleep || pending {
-            return resting();
-        }
-        if !probe.present {
-            return if now_ms().saturating_sub(worker.started_at) < START_GRACE_MS {
-                WorkerStatus::Working
-            } else {
-                WorkerStatus::Gone
-            };
-        }
-        match probe.activity {
-            AgentUse::Working => WorkerStatus::Working,
-            AgentUse::Waiting => WorkerStatus::Blocked,
-            AgentUse::Quiet => resting(),
-            // What Hide cannot tell is never counted as rest (D-52).
-            AgentUse::Unknown => WorkerStatus::Unknown,
-        }
+        worker_status(&probe, pending, worker.started_at, now_ms())
     }
 
     /// What a diagnosis reads about a quiet worker, in the order D-37 takes
@@ -1528,6 +1506,43 @@ impl WorkerRuntime for CoreWorkers {
 
 /// The lines a worker's screen shows now, for a diagnosis; a read Herdr
 /// does not answer in time is no screen text.
+/// What a worker is doing, from what the runtime sees in its pane.
+fn worker_status(
+    probe: &crate::runtime::WorkerProbe,
+    pending_sleep: bool,
+    started_at: UnixMs,
+    now: UnixMs,
+) -> WorkerStatus {
+    use crate::agent_state::AgentUse;
+    // A pane Hide is closing is neither gone nor resting until its close
+    // lands as `worker_closed`; reading it as gone would restart it.
+    if probe.closing {
+        return WorkerStatus::Unknown;
+    }
+    // A rest starts when the core saw the agent's state change (D-52).
+    let resting = || match probe.changed_at_unix_ms {
+        Some(since) => WorkerStatus::Resting { since },
+        None => WorkerStatus::Unknown,
+    };
+    if probe.asleep || pending_sleep {
+        return resting();
+    }
+    if !probe.present {
+        return if now.saturating_sub(started_at) < START_GRACE_MS {
+            WorkerStatus::Working
+        } else {
+            WorkerStatus::Gone
+        };
+    }
+    match probe.activity {
+        AgentUse::Working => WorkerStatus::Working,
+        AgentUse::Waiting => WorkerStatus::Blocked,
+        AgentUse::Quiet => resting(),
+        // What Hide cannot tell is never counted as rest (D-52).
+        AgentUse::Unknown => WorkerStatus::Unknown,
+    }
+}
+
 fn read_screen(connector: &dyn hide_herdr_client::ApiConnector, pane: &str) -> Option<String> {
     let params = crate::wire::pane_read_params(pane, "recent_unwrapped", SCREEN_LINES).ok()?;
     let answer = hide_herdr_client::request_small_response(
@@ -2052,6 +2067,32 @@ mod tests {
         assert_eq!(
             (picked.provider.as_str(), picked.model.as_deref()),
             ("claude", Some("sonnet"))
+        );
+    }
+
+    #[test]
+    fn a_worker_pane_hide_is_closing_is_never_read_as_gone_or_resting() {
+        use crate::agent_state::AgentUse;
+        let probe = |present, closing| crate::runtime::WorkerProbe {
+            present,
+            closing,
+            asleep: false,
+            activity: AgentUse::Unknown,
+            changed_at_unix_ms: Some(5_000),
+        };
+        let late = START_GRACE_MS + 10;
+        assert_eq!(
+            worker_status(&probe(false, false), false, 0, late),
+            WorkerStatus::Gone
+        );
+        assert_eq!(
+            worker_status(&probe(false, true), false, 0, late),
+            WorkerStatus::Unknown,
+            "the close lands as worker_closed, never as a vanished worker to restart"
+        );
+        assert_eq!(
+            worker_status(&probe(true, true), true, 0, late),
+            WorkerStatus::Unknown
         );
     }
 

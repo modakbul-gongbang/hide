@@ -1178,7 +1178,7 @@ A request Factory AI sorted and handed to the person names, under its question, 
 A worker whose pane the operator closed in Hide is an item in 멈춤 with '다시 시작' and cancel, and a stop the Observer diagnosed carries its reading.
 In a paused Factory an answer's result line reads '다시 시작하면 작업자에게 전합니다', because the worker sleeps until the Factory resumes.
 
-알림 is headed by its count, the line '확인만 하면 되는 것 · 내 차례 숫자에 세지 않음' and '모두 확인', which clears every shown Factory's notices at once.
+알림 is headed by its count, the line '확인만 하면 되는 것 · 내 차례 숫자에 세지 않음' and '모두 확인', which clears every shown Factory's notices at once in one request: the filtered Factory's, or every open Factory's.
 A notice row has a sparkle for something Factory AI did (answered, fixed a card, made a Task, approved a risk-path merge) and a bell for the daily limit, its line, the decision's kind or the mode that let Factory AI act, and '다른 답' while that decision can still be changed, else '보기'.
 An open notice sends '확인' on ⏎, which marks it read; '다른 답' opens a field whose '이 답으로 바꾸기' replaces Factory AI's answer (`answer --change`) and tells the worker, and '보기' opens the Task.
 The daily-limit notice reads '오늘 AI 판단 n/n번' with '남은 결정은 내가 정합니다'.

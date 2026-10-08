@@ -50,6 +50,7 @@ mod view_bookmarks;
 mod workspace_control;
 mod workspace_view;
 
+pub(crate) use factory::WorkerProbe;
 pub use hosts::WorkspaceRemoteRoute;
 pub(crate) use kit::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob};
 pub use snapshot_delta::serialize_snapshot_delta;

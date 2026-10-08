@@ -35,6 +35,9 @@ pub(super) struct FactoryTaskOpenPayload {
 pub(crate) struct WorkerProbe {
     /// Herdr shows an agent in the pane.
     pub present: bool,
+    /// A close Hide asked for is in flight for the pane, so its agent
+    /// vanishing is that close, not the worker going away.
+    pub closing: bool,
     /// The agent sleeps (or its end is in flight).
     pub asleep: bool,
     /// What the agent is doing, from the status model's axes; work it
@@ -461,6 +464,7 @@ impl Runtime {
             .find(|agent| agent.pane_id == pane);
         WorkerProbe {
             present: agent.is_some(),
+            closing: self.panes_closing.contains(pane),
             asleep,
             activity: match agent {
                 None => AgentUse::Unknown,
@@ -1092,6 +1096,9 @@ mod tests {
         );
         let gone = runtime.factory_worker_probe("gone");
         assert_eq!((gone.present, gone.activity), (false, AgentUse::Unknown));
+        assert!(!gone.closing);
+        runtime.panes_closing.insert("quiet".into());
+        assert!(runtime.factory_worker_probe("quiet").closing);
     }
 
     #[test]

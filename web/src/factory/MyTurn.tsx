@@ -106,7 +106,7 @@ export function MyTurn({ summary, factory, actions }: { summary: FactorySummary;
             <div key={key} role="listitem" className="flex flex-col">
               {/* Notices are only read, so they sit under a rule and stay out of the count (D-43). */}
               {head && item.group === "notice" ? (
-                <NoticesHead count={notices} factories={shown.filter((other) => items.some((notice) => notice.group === "notice" && notice.factory === other.id))} actions={actions} />
+                <NoticesHead count={notices} project={factory === null ? null : (view?.project ?? null)} actions={actions} />
               ) : head ? (
                 <h2 className="pt-md pb-xs text-caption text-subtle-foreground" data-factory-group={item.group}>
                   {t(GROUP_LABEL[item.group])} {count}
@@ -137,12 +137,18 @@ function KindIcon({ item, className }: { item: InboxItem; className?: string }) 
   return <Icon aria-hidden="true" className={cn("size-(--size-icon) shrink-0", className)} />;
 }
 
-/** The notices' head: how many, that they are only read, and one action that clears them all (D-43). */
-function NoticesHead({ count, factories, actions }: { count: number; factories: FactoryView[]; actions: Actions }) {
+/**
+ * The notices' head: how many, that they are only read, and one action that clears them all (D-43).
+ * `project` is the filtered Factory's; without a filter one request clears every open Factory.
+ */
+function NoticesHead({ count, project, actions }: { count: number; project: string | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const [asked, setAsked] = useState<string[]>([]);
-  // One request per Factory; the first refusal stays in place with the engine's next action.
-  const refused = useShellStore((s) => asked.map((id) => s.factory?.actions.find((row) => row.request_id === id)?.answer).find((answer) => answer !== undefined && !answer.ok) ?? null);
+  const [asked, setAsked] = useState<string | null>(null);
+  // A refusal stays in place with the engine's next action.
+  const refused = useShellStore((s) => {
+    const answer = asked === null ? undefined : s.factory?.actions.find((row) => row.request_id === asked)?.answer;
+    return answer !== undefined && !answer.ok ? answer : null;
+  });
   return (
     <div className="mt-md flex flex-col border-t border-border pt-sm" data-factory-group="notice">
       <div className="flex min-w-0 items-center gap-sm px-md pb-xs text-caption text-subtle-foreground">
@@ -151,7 +157,7 @@ function NoticesHead({ count, factories, actions }: { count: number; factories: 
         </h2>
         <span className="min-w-0 truncate text-muted-foreground">{t("factory.turn.noticesHint")}</span>
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" data-factory-ack-all="true" onClick={() => setAsked(factories.map((view) => actions.factoryAction({ verb: "ack_notices", project: view.project })))}>
+        <Button variant="ghost" size="sm" data-factory-ack-all="true" onClick={() => setAsked(actions.factoryAction({ verb: "ack_notices", project }))}>
           {t("factory.turn.ackAll")}
         </Button>
       </div>
