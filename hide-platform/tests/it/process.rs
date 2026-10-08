@@ -543,12 +543,16 @@ fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
 #[test]
 fn repeated_guarded_work_releases_children_and_capture_resources() {
     let _serial = serial();
-    let baseline = measure_tree(std::process::id()).unwrap().descendants;
+    // The other modules of this binary start children of their own, so the
+    // test follows each child it starts, by pid and start time, rather than
+    // counting the shared process's tree.
     for _ in 0..10 {
         let deadline = Instant::now() + HANG_LIMIT;
         let mut command = role_command("echo");
         command.stdin(Stdio::null());
         let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+        let pid = child.id();
+        let started = start_time(pid).unwrap();
         assert!(
             child
                 .capture_until(deadline, 64 * 1024)
@@ -557,9 +561,10 @@ fn repeated_guarded_work_releases_children_and_capture_resources() {
                 .success()
         );
         drop(child);
-        assert_eq!(
-            measure_tree(std::process::id()).unwrap().descendants,
-            baseline
+        assert_ne!(
+            start_time(pid).ok(),
+            Some(started),
+            "the dropped child is reaped, not left behind"
         );
     }
 }
