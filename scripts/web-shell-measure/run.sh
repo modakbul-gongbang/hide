@@ -32,7 +32,9 @@
 # MEASURE_DEVICE_KNOWN_HOSTS (both copied into the private HOME), its Herdr
 # socket in MEASURE_DEVICE_SOCKET, MEASURE_DEVICE_HERDR the command that
 # runs its Herdr from here, and MEASURE_DEVICE_HELPER_ROOT and
-# MEASURE_DEVICE_CLI_DIR the consent folders inside that account.
+# MEASURE_DEVICE_CLI_DIR the consent folders inside that account. With
+# MEASURE_DEVICE_DRIVEN_SECONDS set, four more device panes print a line per
+# 8 ms while the key echo runs again (key-echo-device-driven.json).
 # MEASURE_HIDED_BIN measures another hided build, such as a baseline, with
 # the same fixture.
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
@@ -367,6 +369,37 @@ if [[ "$scenario" == device ]]; then
       MEASURE_PANE_READ="$MEASURE_DEVICE_HERDR pane read '$device_pane' --source recent-unwrapped --lines 4000" \
       node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count-device.json"
     cat "$MEASURE_RUN_DIR/key-count-device.json"
+  fi
+  driven_seconds="${MEASURE_DEVICE_DRIVEN_SECONDS:-0}"
+  if (( driven_seconds > 0 )); then
+    # Four more panes on the device, each printing a line per 8 ms, beside
+    # the measured pane, which goes back to a plain cat so its marker
+    # arrives whole; the splits are closed again afterwards.
+    device_herdr pane send-keys "$device_pane" ctrl+c >/dev/null
+    sleep 0.3
+    device_herdr pane run "$device_pane" "printf '\033c'; stty -echo -icanon; cat" >/dev/null
+    device_splits=()
+    split_from="$device_pane"
+    for direction in right down right down; do
+      split_from="$(device_herdr pane split "$split_from" --direction "$direction" --no-focus | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')"
+      device_splits+=("$split_from")
+    done
+    for pane in "${device_splits[@]}"; do
+      deadline=$((SECONDS+20))
+      until device_herdr pane read "$pane" --source visible --format text 2>/dev/null | grep -q 'fixture %'; do
+        (( SECONDS < deadline )) || { echo "device pane $pane prompt did not appear" >&2; exit 1; }
+        sleep 0.3
+      done
+      # One line per 8 ms on the device's clock, with no process per line.
+      device_herdr pane run "$pane" "perl -e 'use Time::HiRes qw(sleep time); \$|=1; my \$s=time; my \$i=0; while (time < \$s+$((driven_seconds + 30))) { print qq(drive \$i\\n); \$i++; my \$w=\$s+\$i*0.008-time; sleep \$w if \$w>0 }'" >/dev/null
+    done
+    wait_js "document.querySelectorAll('[data-pane-view]').length === 5 && window.__hideProbe.paneId() === '$scoped_pane'"
+    sleep 3
+    note "device: screen key echo, driven (50 samples, four device panes printing)"
+    MEASURE_PANE_ID="$scoped_pane" MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-device-driven.json"
+    python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/key-echo-device-driven.json" > "$MEASURE_RUN_DIR/key-echo-device-driven-summary.json"
+    cat "$MEASURE_RUN_DIR/key-echo-device-driven-summary.json"
+    for pane in "${device_splits[@]}"; do device_herdr pane close "$pane" >/dev/null || true; done
   fi
   device_herdr pane send-keys "$device_pane" ctrl+c >/dev/null
   note 'measurement complete; cleaning up owned processes'
