@@ -3,6 +3,7 @@
 // the hook, Factory registration, transcript read and snapshot are production.
 import { expect, test } from "@playwright/test";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { factoryQuestionFixture, startFactoryStack } from "./factory-fixture";
 import { claudeProjects, sessionOf, writeFixtureTranscript } from "./herdr-fixture";
 import type { FactorySection } from "../src/factory/model";
@@ -65,7 +66,20 @@ test("Factory questions redirect to ask while a nonworker publishes and clears i
     await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${nonworker}"]`)).toHaveCount(0);
   } catch (error) {
     failure = error;
-    throw error;
+    try {
+      const panes = stack.herdr.run(["pane", "list"]) as { result: { panes: { pane_id: string }[] } };
+      const native = panes.result.panes.slice(0, 4).map(({ pane_id }) => {
+        const read = spawnSync(stack.herdr.bin, ["pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", "40"],
+          { env: stack.herdr.env, encoding: "utf8", timeout: 5_000, maxBuffer: 65_536 });
+        return { pane_id, exit: read.status, text: read.stdout, error: read.stderr };
+      });
+      await test.info().attach("factory-question-failure", {
+        body: JSON.stringify({ factory, agents, native }, null, 2), contentType: "application/json",
+      });
+    } catch (diagnosticError) {
+      failure = afterCleanup(error, () => { throw diagnosticError; });
+    }
+    throw failure;
   } finally {
     const stop = () => {
       try { stack.daemon.stop(); } finally { stack.herdr.stop(); }
