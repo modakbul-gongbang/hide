@@ -14,13 +14,16 @@
 //! [`MAX_UNSENT_OUTPUT_BYTES`] loses that pane's backlog and gets nothing
 //! more of it until a full frame, which it asks the pane's node for. A full
 //! frame replaces whatever of its pane waits for a client, since it draws
-//! over it, and is never counted against the cap, and a chunk is always
-//! queued when nothing counted waits, so a pane whose full frame alone
-//! passes the cap still draws. A
+//! over it, and is never counted against the cap, so a pane whose full
+//! frame alone passes the cap still draws. A
 //! client that resumes from a cursor the retained chunks no longer reach,
 //! for a pane, is treated the same way for that pane. Either way the pane is
 //! drawn whole, never left blank or drawn from a broken stream, and the
 //! redraw is counted in the diagnostic log.
+//!
+//! A chunk past [`MAX_CHUNK_BYTES`] is not drawn at all: its pane waits for
+//! a full frame that fits, asked for when the long chunk was not full
+//! itself, so a pane whose every frame is that long cannot loop.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -31,9 +34,14 @@ use hide_node::terminal::OutputSink;
 use hide_node_link::terminal::{MAX_UNSENT_OUTPUT_BYTES, RETAINED_BYTES, RETAINED_CHUNKS};
 use serde_json::json;
 
-/// Chunks one `terminal` frame carries at most, so a client catching up
-/// gets its backlog in frames the socket can interleave with the rest.
+/// Chunks one `terminal` frame carries at most, and the text after which it
+/// takes no more, so a client catching up gets its backlog in frames the
+/// socket can interleave with the rest.
 const FRAME_CHUNKS: usize = 256;
+const FRAME_TEXT_BYTES: usize = 4 * 1024 * 1024;
+/// The longest output chunk the hub draws, in bytes before encoding; with
+/// a pane's ring and unsent output this bounds what one pane holds.
+const MAX_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// A redraw asked for and not answered by a full frame is asked again
 /// after this long.
 const REDRAW_RETRY: Duration = Duration::from_secs(2);
@@ -229,9 +237,48 @@ fn resume_from(state: &mut HubState, client: &mut Client, cursor: u64) {
     }
     missed.sort_by_key(|chunk| chunk.sequence);
     for chunk in missed {
-        *client.unsent.entry(Arc::clone(&chunk.pane)).or_default() += chunk.size();
+        // The same rule as live output: a full frame replaces what of its
+        // pane waits and is never counted.
+        let unsent = client.unsent.entry(Arc::clone(&chunk.pane)).or_default();
+        if chunk.full {
+            *unsent = 0;
+            client.queue.retain(|queued| queued.pane != chunk.pane);
+        } else {
+            *unsent += chunk.size();
+        }
         client.queue.push_back(chunk);
     }
+}
+
+/// A chunk too long to draw: no client gets it or anything more of its
+/// pane until a full frame that fits. One that was not full asks for that
+/// frame; a full one does not ask again.
+fn drop_oversized(state: &mut HubState, pane: &str, bytes: usize, full: bool) {
+    let pane: Arc<str> = state
+        .panes
+        .get_key_value(pane)
+        .map_or_else(|| Arc::from(pane), |(key, _)| Arc::clone(key));
+    let ring = state.panes.entry(Arc::clone(&pane)).or_default();
+    ring.unrepaired_drop = true;
+    if full {
+        ring.redraw_asked = None;
+    }
+    for client in state.clients.values_mut() {
+        client.queue.retain(|queued| queued.pane != pane);
+        client.unsent.remove(&pane);
+        client.awaiting_full.insert(Arc::clone(&pane));
+        if !full && client.redraw.insert(Arc::clone(&pane)) {
+            client.wake.notify_one();
+        }
+    }
+    herdr_core::diagnostic!(json!({
+        "component": "terminal_hub",
+        "kind": "terminal.frame_too_long",
+        "pane_id": pane.as_ref(),
+        "bytes": bytes,
+        "cap": MAX_CHUNK_BYTES,
+        "full": full,
+    }));
 }
 
 fn await_full(client: &mut Client, pane: &Arc<str>, cause: &str) {
@@ -248,6 +295,10 @@ fn await_full(client: &mut Client, pane: &Arc<str>, cause: &str) {
 impl OutputSink for TerminalHub {
     fn output(&self, pane: &str, bytes: &[u8], full: bool) {
         let mut state = lock(&self.state);
+        if bytes.len() > MAX_CHUNK_BYTES {
+            drop_oversized(&mut state, pane, bytes.len(), full);
+            return;
+        }
         state.sequence += 1;
         let sequence = state.sequence;
         let (pane, ring) = match state.panes.get_key_value(pane) {
@@ -314,7 +365,7 @@ impl OutputSink for TerminalHub {
                 client.wake.notify_one();
                 continue;
             }
-            if *unsent > 0 && *unsent + chunk.size() > MAX_UNSENT_OUTPUT_BYTES {
+            if *unsent + chunk.size() > MAX_UNSENT_OUTPUT_BYTES {
                 let dropped = *unsent;
                 *unsent = 0;
                 client.queue.retain(|queued| queued.pane != pane);
@@ -374,8 +425,8 @@ impl HubClient {
     }
 
     /// The next frame to send and the panes whose node should draw them
-    /// again. Draining stops at [`FRAME_CHUNKS`]; a client with more is
-    /// woken again.
+    /// again. Draining stops at [`FRAME_CHUNKS`] or [`FRAME_TEXT_BYTES`],
+    /// after at least one chunk; a client with more is woken again.
     pub fn take(&self) -> (Option<TerminalFrame>, Vec<String>) {
         let mut state = lock(&self.hub.state);
         let now = Instant::now();
@@ -406,6 +457,9 @@ impl HubClient {
         let mut text = String::from(r#"{"type":"terminal","payload":{"chunks":["#);
         let mut last = 0;
         for index in 0..FRAME_CHUNKS {
+            if index > 0 && text.len() >= FRAME_TEXT_BYTES {
+                break;
+            }
             let Some(chunk) = client.queue.pop_front() else {
                 break;
             };
@@ -645,5 +699,72 @@ mod tests {
         let (sent, redraws) = client.take();
         assert!(redraws.is_empty(), "nothing was dropped");
         assert_eq!(frame_chunks(&sent.unwrap()).0.len(), 2);
+    }
+
+    #[test]
+    fn a_chunk_past_the_hub_cap_is_not_drawn_and_its_pane_waits_for_a_frame_that_fits() {
+        let hub = TerminalHub::new();
+        let client = hub.connect(Resume::Fresh);
+        assert!(client.take().0.is_some(), "the fresh client's cursor");
+        let long = vec![b'w'; MAX_CHUNK_BYTES + 1];
+
+        hub.output("w1:p1", &long, false);
+        hub.output("w1:p1", b"after", false);
+        hub.output("w1:p2", b"other", false);
+        let (sent, redraws) = client.take();
+        assert_eq!(redraws, ["w1:p1"], "a long chunk asks for a full frame");
+        assert_eq!(
+            frame_chunks(&sent.unwrap()).0,
+            [("w1:p2".to_owned(), b"other".to_vec())],
+            "nothing of the pane is drawn before it, the other pane goes on"
+        );
+
+        hub.output("w1:p1", &long, true);
+        hub.output("w1:p1", b"after", false);
+        let (sent, redraws) = client.take();
+        assert!(redraws.is_empty(), "a long full frame is not asked again");
+        assert!(sent.is_none_or(|frame| frame_chunks(&frame).0.is_empty()));
+
+        hub.output("w1:p1", b"screen", true);
+        let (sent, _) = client.take();
+        assert_eq!(
+            frame_chunks(&sent.unwrap()).0,
+            [("w1:p1".to_owned(), b"screen".to_vec())]
+        );
+    }
+
+    #[test]
+    fn a_resumed_full_frame_counts_nothing_against_the_cap() {
+        let hub = TerminalHub::new();
+        let first = hub.connect(Resume::Fresh);
+        let (frame, _) = first.take();
+        let (_, cursor) = frame_chunks(&frame.unwrap());
+        drop(first);
+        let screen = vec![b's'; 1200 * 1024];
+        hub.output("w1:p1", &screen, true);
+        let resumed = hub.connect(Resume::After(cursor));
+        let line = vec![b'l'; 600 * 1024];
+        hub.output("w1:p1", &line, false);
+        let (sent, redraws) = resumed.take();
+        assert!(redraws.is_empty(), "the full frame was never unsent output");
+        assert_eq!(
+            frame_chunks(&sent.unwrap()).0,
+            [("w1:p1".to_owned(), screen), ("w1:p1".to_owned(), line)]
+        );
+    }
+
+    #[test]
+    fn a_frame_stops_taking_chunks_past_its_text_budget() {
+        let hub = TerminalHub::new();
+        let client = hub.connect(Resume::Fresh);
+        assert!(client.take().0.is_some(), "the fresh client's cursor");
+        let screen = vec![b's'; 1600 * 1024];
+        for pane in ["w1:p1", "w1:p2", "w1:p3"] {
+            hub.output(pane, &screen, true);
+        }
+        let counts = std::iter::from_fn(|| client.take().0)
+            .map(|frame| frame_chunks(&frame).0.len())
+            .collect::<Vec<_>>();
+        assert_eq!(counts, [2, 1]);
     }
 }

@@ -146,9 +146,9 @@ impl Uplink {
             }));
             return;
         }
-        // Only a backlog is dropped, never the one frame that could repair
-        // it.
-        if !full && entry.bytes > 0 && entry.bytes + line.len() > MAX_UNSENT_OUTPUT_BYTES {
+        // Only output a full frame would draw over is dropped, never the
+        // full frame that repairs it.
+        if !full && entry.bytes + line.len() > MAX_UNSENT_OUTPUT_BYTES {
             let dropped = entry.bytes + line.len();
             entry.lines.clear();
             entry.bytes = 0;
