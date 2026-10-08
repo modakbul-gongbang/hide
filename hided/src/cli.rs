@@ -49,6 +49,10 @@ pub enum CommandKind {
     /// `hide browser help`: the agent guide for the page commands.
     BrowserHelp,
     WorkspaceBootstrap,
+    FactoryQuestionGuard {
+        session: String,
+        runtime: String,
+    },
     WorkspaceInfo,
     ViewList,
     ViewStatus {
@@ -115,9 +119,20 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         }
         Some("factory") => crate::factory_cli::parse(iter).map(CommandKind::Factory),
         Some("browser") => parse_browser(iter),
-        Some("workspace") => match (iter.next().map(String::as_str), iter.next()) {
-            (Some("bootstrap"), None) => Ok(CommandKind::WorkspaceBootstrap),
-            (Some("info"), None) => Ok(CommandKind::WorkspaceInfo),
+        Some("workspace") => match iter.next().map(String::as_str) {
+            Some("factory-question-guard") => {
+                let words: Vec<&str> = iter.map(String::as_str).collect();
+                match words.as_slice() {
+                    ["--session", session, "--runtime", runtime]
+                        if !session.is_empty() && session.len() <= 256
+                            && !session.chars().any(char::is_control)
+                            && matches!(*runtime, "claude-code" | "codex") =>
+                        Ok(CommandKind::FactoryQuestionGuard { session: (*session).to_owned(), runtime: (*runtime).to_owned() }),
+                    _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex>".into()),
+                }
+            }
+            Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
+            Some("info") if iter.next().is_none() => Ok(CommandKind::WorkspaceInfo),
             _ => Err("usage: hide workspace info".to_owned()),
         },
         Some("file") => parse_open(iter, true),
@@ -396,6 +411,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             if matches!(
                 &kind,
                 CommandKind::WorkspaceBootstrap
+                    | CommandKind::FactoryQuestionGuard { .. }
                     | CommandKind::Delivery(_)
                     | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
@@ -460,6 +476,16 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             Ok(())
         }
         CommandKind::WorkspaceInfo => workspace_query(&env, "info"),
+        CommandKind::FactoryQuestionGuard { session, runtime } => {
+            let credential = crate::workspace_cli::Credential::acquire(&env)?;
+            let answer = crate::workspace_cli::request_factory_question_guard(
+                &credential,
+                &session,
+                &runtime,
+            )?;
+            println!("{answer}");
+            Ok(())
+        }
         CommandKind::ViewList => workspace_query(&env, "view_list"),
         CommandKind::ViewStatus { view_id } => view_status(&env, &view_id),
         CommandKind::WorkspaceAction { action, request_id } => {
@@ -1586,6 +1612,70 @@ mod tests {
             parse_args(&args).unwrap(),
             CommandKind::Serve { keep_alive: true }
         );
+    }
+
+    #[test]
+    fn factory_question_guard_requires_one_native_session_and_known_runtime() {
+        let parse = |args: &[&str]| {
+            parse_args(
+                &args
+                    .iter()
+                    .map(|word| (*word).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for runtime in ["claude-code", "codex"] {
+            assert_eq!(
+                parse(&[
+                    "hide",
+                    "workspace",
+                    "factory-question-guard",
+                    "--session",
+                    "native-1",
+                    "--runtime",
+                    runtime
+                ])
+                .unwrap(),
+                CommandKind::FactoryQuestionGuard {
+                    session: "native-1".into(),
+                    runtime: runtime.into()
+                }
+            );
+        }
+        for args in [
+            vec!["hide", "workspace", "factory-question-guard"],
+            vec![
+                "hide",
+                "workspace",
+                "factory-question-guard",
+                "--session",
+                "",
+                "--runtime",
+                "codex",
+            ],
+            vec![
+                "hide",
+                "workspace",
+                "factory-question-guard",
+                "--session",
+                "s1",
+                "--runtime",
+                "foreign",
+            ],
+            vec![
+                "hide",
+                "workspace",
+                "factory-question-guard",
+                "--session",
+                "s1",
+                "--runtime",
+                "codex",
+                "--pane",
+                "w1:p1",
+            ],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
     }
 
     #[test]

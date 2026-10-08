@@ -45,6 +45,7 @@ struct ProvenLabel {
     /// What the session's last complete read says the agent waits for, with
     /// the Herdr state it was read under.
     turn: Option<(u64, Option<Waiting>)>,
+    user_turn: Option<(u64, hide_session::turns::UserTurnFact)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,6 +74,7 @@ impl LabelOverlay {
                     }),
                     facts: row_facts(&record.facts),
                     turn: record.turn_read(),
+                    user_turn: record.user_turn(),
                 });
                 (
                     pane_id.clone(),
@@ -112,7 +114,10 @@ impl LabelOverlay {
 
     pub(crate) fn apply(&self, payload: &mut SessionSnapshotPayload) {
         for agent in &mut payload.agents {
-            let awaiting_operator = self.waiting(agent) == Some(Waiting::PlanApproval);
+            let awaiting_operator = matches!(
+                self.waiting(agent),
+                Some(Waiting::Question | Waiting::PlanApproval)
+            );
             let Some(pane_id) = agent.pane_id.as_deref().or(agent.id.as_deref()) else {
                 continue;
             };
@@ -135,6 +140,9 @@ impl LabelOverlay {
             }
             let mut facts = label.facts.clone();
             facts.awaiting_operator = awaiting_operator;
+            facts.user_turn = label.user_turn.as_ref().and_then(|(seq, fact)| {
+                (agent.state_change_seq == Some(*seq)).then(|| fact.clone())
+            });
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
@@ -171,6 +179,7 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
         end: None,
         line: None,
         awaiting_operator: false,
+        user_turn: None,
     }
 }
 

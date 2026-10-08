@@ -491,6 +491,25 @@
                     ],
                     "type": "object"
                 },
+                "AnswerWaitEnd": {
+                    "description": "Why a letter stopped waiting for an answer nobody gave.",
+                    "oneOf": [
+                        {
+                            "description": "The sender's or the recipient's registration ended.",
+                            "enum": [
+                                "party_ended"
+                            ],
+                            "type": "string"
+                        },
+                        {
+                            "description": "The letter was sent 24 hours ago and no answer came.",
+                            "enum": [
+                                "deadline"
+                            ],
+                            "type": "string"
+                        }
+                    ]
+                },
                 "InboxEntry": {
                     "description": "One letter of `hide inbox`.",
                     "properties": {
@@ -500,6 +519,18 @@
                                 "string",
                                 "null"
                             ]
+                        },
+                        "answer_wait_ended": {
+                            "anyOf": [
+                                {
+                                    "$ref": "#/definitions/AnswerWaitEnd"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "default": null,
+                            "description": "Set when the wait for an answer ended without one; null otherwise."
                         },
                         "bell_attempts": {
                             "default": null,
@@ -601,7 +632,8 @@
                         "bell_sent",
                         "bell_attempts",
                         "human_notified",
-                        "watch_warning"
+                        "watch_warning",
+                        "answer_wait_ended"
                     ],
                     "type": "object"
                 },
@@ -711,6 +743,25 @@
                     ],
                     "type": "object"
                 },
+                "AnswerWaitEnd": {
+                    "description": "Why a letter stopped waiting for an answer nobody gave.",
+                    "oneOf": [
+                        {
+                            "description": "The sender's or the recipient's registration ended.",
+                            "enum": [
+                                "party_ended"
+                            ],
+                            "type": "string"
+                        },
+                        {
+                            "description": "The letter was sent 24 hours ago and no answer came.",
+                            "enum": [
+                                "deadline"
+                            ],
+                            "type": "string"
+                        }
+                    ]
+                },
                 "State": {
                     "enum": [
                         "pending",
@@ -753,6 +804,18 @@
                 }
             },
             "properties": {
+                "answer_wait_ended": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/AnswerWaitEnd"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "description": "Set when the wait for an answer ended without one; null otherwise."
+                },
                 "bell_attempts": {
                     "default": null,
                     "format": "uint8",
@@ -853,7 +916,8 @@
                 "bell_sent",
                 "bell_attempts",
                 "human_notified",
-                "watch_warning"
+                "watch_warning",
+                "answer_wait_ended"
             ],
             "title": "Letter",
             "type": "object"
@@ -1672,7 +1736,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:c151836161c948d53adc7d3224d3c6b5ad3c9cd9d9f3450d1d403e67269e596f",
+    "digest": "sha256:b0759ca1374df712b0de93061334cb7662b30dab37c49b1553a2b777cad0c99a",
     "envelopes": {
         "agent": {
             "answer": "value",

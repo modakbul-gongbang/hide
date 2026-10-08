@@ -3,13 +3,14 @@
 //! D-01..D-04).
 //!
 //! The tracker knows no agent: an agent's line parser turns its own records
-//! into [`TurnMark`]s (today only Codex's, `codex_turn_mark`), and the
+//! into [`TurnMark`]s (`native` owns Claude/Codex records), and the
 //! tracker folds them into one derived fact, [`Waiting`], that the doorbell
 //! and the sidebar read without looking at the agent's kind. The caller keeps
 //! the tracker beside its read checkpoint and hands it back on the next read,
 //! so an incremental read continues the turn it was in.
 
 mod content;
+pub(crate) mod native;
 pub use content::{UserTurnContent, UserTurnFact, UserTurnKind};
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,8 @@ pub enum Waiting {
     Nothing,
     /// The agent proposed a plan and waits for the operator to approve it.
     PlanApproval,
+    /// A native question tool is waiting for the operator's answer.
+    Question,
 }
 
 /// The mode a turn's start record names.
@@ -45,13 +48,41 @@ pub enum TurnMark {
     },
     /// The turn proposed a plan.
     Plan { turn: Option<String> },
+    /// The provider's structured plan item or explicitly tagged plan body.
+    PlanContent {
+        turn: Option<String>,
+        content: UserTurnContent,
+    },
+    /// Native question calls and their correlated results in one record.
+    Tools(Vec<ToolTurnMark>),
     /// The turn finished.
     Completed { turn: Option<String> },
     /// The turn was interrupted.
     Aborted { turn: Option<String> },
     /// A person's message.
     Human,
+    /// A person's message in a format whose native question calls are
+    /// known but which supplies no separate task-start record (Claude).
+    HumanTurn,
+    /// A native interruption, without a turn identifier.
+    Interrupted,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolTurnMark {
+    Asked {
+        call: String,
+        content: Option<UserTurnContent>,
+    },
+    Answered {
+        call: String,
+    },
+}
+
+/// A provider can ask several questions in a turn, but no unbounded call
+/// history is retained. A ninth distinct native question fails the read.
+pub const QUESTION_CALL_LIMIT: usize = 8;
+pub const NATIVE_ID_LIMIT_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,11 +103,17 @@ enum End {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Turn {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "content::deserialize_optional_id"
+    )]
     id: Option<String>,
     mode: Mode,
     #[serde(default)]
     plan: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plan_content: Option<UserTurnContent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     end: Option<End>,
     /// A person wrote after the turn ended.
@@ -84,7 +121,17 @@ struct Turn {
     answered: bool,
 }
 
-/// The last turn of a session as far as it has been read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct QuestionCall {
+    #[serde(deserialize_with = "content::deserialize_id")]
+    call: String,
+    content: Option<UserTurnContent>,
+    answered: bool,
+}
+
+/// The last turn of a session as far as it has been read. Byte offsets
+/// deduplicate reread records; native call IDs deduplicate only within the
+/// current turn, whose bounded history resets on a new human/start record.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnTracker {
     /// The offset of the first record not folded yet. A read that starts
@@ -97,19 +144,73 @@ pub struct TurnTracker {
     /// read): what the session waits for is not known.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     unstructured: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_calls"
+    )]
+    questions: Vec<QuestionCall>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    question_capacity: bool,
+}
+
+fn deserialize_calls<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<QuestionCall>, D::Error> {
+    struct Calls;
+    impl<'de> serde::de::Visitor<'de> for Calls {
+        type Value = Vec<QuestionCall>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(formatter, "at most {QUESTION_CALL_LIMIT} question calls")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut calls = Vec::new();
+            while calls.len() < QUESTION_CALL_LIMIT {
+                let Some(call) = sequence.next_element()? else {
+                    return Ok(calls);
+                };
+                calls.push(call);
+            }
+            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::custom("user_turn_capacity"));
+            }
+            Ok(calls)
+        }
+    }
+    deserializer.deserialize_seq(Calls)
 }
 
 impl TurnTracker {
     /// Existing records establish the kind of wait, never invented text.
-    /// This adds no serialized field to the tracker or helper protocol.
     pub fn user_turn(&self) -> Option<UserTurnFact> {
         match self.waiting()? {
             Waiting::Nothing => None,
             Waiting::PlanApproval => Some(UserTurnFact {
                 kind: UserTurnKind::PlanApproval,
-                content: None,
+                content: self.last.as_ref()?.plan_content.clone(),
             }),
+            Waiting::Question => {
+                let pending = || self.questions.iter().filter(|question| !question.answered);
+                let content = pending()
+                    .all(|question| question.content.is_some())
+                    .then(|| {
+                        UserTurnContent::combine(
+                            pending().filter_map(|question| question.content.as_ref()),
+                        )
+                    });
+                Some(UserTurnFact {
+                    kind: UserTurnKind::Question,
+                    content,
+                })
+            }
         }
+    }
+
+    pub fn capacity_exceeded(&self) -> bool {
+        self.question_capacity
     }
 
     /// Folds the mark of the record at `offset`; a record before what was
@@ -121,6 +222,18 @@ impl TurnTracker {
         self.through = offset + 1;
         match mark {
             TurnMark::Started { turn, mode } => {
+                // A provider may repeat a native start at another byte
+                // offset. It must not reopen an answered plan or question.
+                if turn.is_some()
+                    && self
+                        .last
+                        .as_ref()
+                        .is_some_and(|last| last.id == *turn && last.mode != Mode::Unseen)
+                {
+                    return;
+                }
+                self.questions.clear();
+                self.question_capacity = false;
                 self.last = Some(Turn {
                     id: turn.clone(),
                     mode: match mode {
@@ -129,22 +242,100 @@ impl TurnTracker {
                         TurnMode::Unknown => Mode::Unseen,
                     },
                     plan: false,
+                    plan_content: None,
                     end: None,
                     answered: false,
                 });
             }
             TurnMark::Plan { turn } => self.current(turn).plan = true,
+            TurnMark::PlanContent { turn, content } => {
+                let current = self.current(turn);
+                current.plan = true;
+                current.plan_content = Some(content.clone());
+            }
+            TurnMark::Tools(marks) => {
+                for mark in marks {
+                    match mark {
+                        ToolTurnMark::Asked { call, content } => {
+                            if self.questions.iter().any(|known| known.call == *call) {
+                                continue;
+                            }
+                            if self.questions.len() == QUESTION_CALL_LIMIT
+                                || call.len() > NATIVE_ID_LIMIT_BYTES
+                            {
+                                self.question_capacity = true;
+                                self.questions.clear();
+                                break;
+                            }
+                            self.questions.push(QuestionCall {
+                                call: call.clone(),
+                                content: content.clone(),
+                                answered: false,
+                            });
+                        }
+                        ToolTurnMark::Answered { call } => {
+                            if let Some(question) =
+                                self.questions.iter_mut().find(|known| known.call == *call)
+                            {
+                                question.answered = true;
+                                question.content = None;
+                            }
+                        }
+                    }
+                }
+            }
             TurnMark::Completed { turn } => {
                 let current = self.current(turn);
-                current.end = Some(End::Completed);
-                current.answered = false;
+                if current.end != Some(End::Completed) {
+                    current.end = Some(End::Completed);
+                    current.answered = false;
+                }
             }
-            TurnMark::Aborted { turn } => self.current(turn).end = Some(End::Aborted),
-            TurnMark::Human => match self.last.as_mut() {
-                Some(turn) if turn.end.is_some() => turn.answered = true,
-                Some(_) => {}
-                None => self.unstructured = true,
-            },
+            TurnMark::Aborted { turn } => {
+                if self
+                    .last
+                    .as_ref()
+                    .is_none_or(|last| turn.is_none() || last.id.is_none() || last.id == *turn)
+                {
+                    self.clear_questions();
+                }
+                self.current(turn).end = Some(End::Aborted);
+            }
+            TurnMark::Human => {
+                self.questions.clear();
+                self.question_capacity = false;
+                match self.last.as_mut() {
+                    Some(turn) if turn.end.is_some() => turn.answered = true,
+                    Some(_) => {}
+                    None => self.unstructured = true,
+                }
+            }
+            TurnMark::HumanTurn => {
+                self.questions.clear();
+                self.question_capacity = false;
+                self.unstructured = false;
+                self.last = Some(Turn {
+                    id: None,
+                    mode: Mode::Other,
+                    plan: false,
+                    plan_content: None,
+                    end: None,
+                    answered: false,
+                });
+            }
+            TurnMark::Interrupted => {
+                self.clear_questions();
+                if let Some(turn) = &mut self.last {
+                    turn.end = Some(End::Aborted);
+                }
+            }
+        }
+    }
+
+    fn clear_questions(&mut self) {
+        for question in &mut self.questions {
+            question.answered = true;
+            question.content = None;
         }
     }
 
@@ -153,6 +344,12 @@ impl TurnTracker {
     /// finished plan whose turn's mode was not read or not known, or a
     /// person's messages with no turn record at all).
     pub fn waiting(&self) -> Option<Waiting> {
+        if self.question_capacity {
+            return None;
+        }
+        if self.questions.iter().any(|question| !question.answered) {
+            return Some(Waiting::Question);
+        }
         let Some(turn) = &self.last else {
             return (!self.unstructured).then_some(Waiting::Nothing);
         };
@@ -191,6 +388,7 @@ impl TurnTracker {
                 id: id.clone(),
                 mode: Mode::Unseen,
                 plan: pending,
+                plan_content: None,
                 end: None,
                 answered: false,
             });

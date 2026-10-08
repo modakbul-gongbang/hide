@@ -396,6 +396,40 @@ pub fn request_factory(
     })
 }
 
+/// One question check, with no automatic replay on an expired credential.
+pub fn request_factory_question_guard(
+    credential: &Credential,
+    session: &str,
+    agent_runtime: &str,
+) -> Result<Value, String> {
+    let path = &credential.path;
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| "request_unavailable".to_owned())?;
+    runtime.block_on(async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let (value, mut socket) = tokio::time::timeout_at(
+            deadline,
+            exchange_response_with_limit(
+                &reference,
+                json!({"type":"factory_question_guard", "request_id":request_id,
+                "session":session, "runtime":agent_runtime}),
+                &request_id,
+                Some(16 * 1024),
+            ),
+        )
+        .await
+        .map_err(|_| "factory_guard_expired".to_owned())??;
+        tokio::time::timeout_at(deadline, claim(&mut socket, path))
+            .await
+            .map_err(|_| "factory_guard_expired".to_owned())??;
+        Ok(value)
+    })
+}
+
 /// The relay socket for one `hide browser` page command: the same scoped
 /// handshake and claim as every Workspace request, after which the socket
 /// carries CDP frames to the caller's display. A refusal keeps the daemon's
@@ -540,6 +574,13 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Transport for T {}
 pub(crate) type WorkspaceSocket = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;
 
 async fn connect(reference: &Reference) -> Result<WorkspaceSocket, String> {
+    connect_with_limit(reference, None).await
+}
+
+async fn connect_with_limit(
+    reference: &Reference,
+    response_limit: Option<usize>,
+) -> Result<WorkspaceSocket, String> {
     let (request, transport): (_, Pin<Box<dyn Transport>>) = match &reference.route {
         Route::Daemon { port, origin_port } => {
             let mut request = format!("ws://127.0.0.1:{port}/ws")
@@ -566,7 +607,12 @@ async fn connect(reference: &Reference) -> Result<WorkspaceSocket, String> {
             (request, Box::pin(node_stream(&socket)?))
         }
     };
-    let (socket, _) = tokio_tungstenite::client_async(request, transport)
+    let config = response_limit.map(|limit| {
+        tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+            .max_message_size(Some(limit))
+            .max_frame_size(Some(limit))
+    });
+    let (socket, _) = tokio_tungstenite::client_async_with_config(request, transport, config)
         .await
         .map_err(|_| UNREACHABLE.to_owned())?;
     Ok(socket)
@@ -645,7 +691,19 @@ async fn exchange_response(
     payload: Value,
     request_id: &str,
 ) -> Result<(Value, WorkspaceSocket), String> {
-    let mut socket = connect(reference).await?;
+    exchange_response_with_limit(reference, payload, request_id, None).await
+}
+
+async fn exchange_response_with_limit(
+    reference: &Reference,
+    payload: Value,
+    request_id: &str,
+    response_limit: Option<usize>,
+) -> Result<(Value, WorkspaceSocket), String> {
+    let mut socket = match response_limit {
+        Some(limit) => connect_with_limit(reference, Some(limit)).await?,
+        None => connect(reference).await?,
+    };
     socket
         .send(Message::Text(
             json!({"token":reference.token,"schema_version":SCHEMA_VERSION})

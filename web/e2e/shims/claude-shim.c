@@ -2,10 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
 #include <sys/stat.h>
+#include <process.h>
 #define read _read
 #define write _write
 #define open _open
@@ -128,6 +130,34 @@ static int run_as_codex(const char *argv0) {
   return strncmp(base, "codex", 5) == 0;
 }
 
+// A Factory question fixture needs the existing owned-command runner's native
+// session report and sentinel command. Provider/auth/model requests above keep
+// using this shim; only an explicitly configured interactive pane hands off.
+static int factory_question_runner(void) {
+  const char *root = getenv("HIDE_E2E_ROOT");
+  if (!root) return 0;
+  char filename[4096], runner[4096];
+  if (snprintf(filename, sizeof filename, "%s/factory-question-runner.config", root) >= (int)sizeof filename) return 1;
+  FILE *file = fopen(filename, "rb");
+  if (!file) return errno == ENOENT ? 0 : 1;
+  size_t count = fread(runner, 1, sizeof runner - 1, file);
+  int complete = !ferror(file) && feof(file);
+  fclose(file);
+  runner[count] = 0;
+  if (!complete || !count || strchr(runner, '\n') || strchr(runner, '\r')) return 1;
+#ifdef _WIN32
+  WCHAR executable[4096];
+  if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, runner, -1, executable, 4096)) return 1;
+  const WCHAR *arguments[] = { executable, NULL };
+  _wexecv(executable, arguments);
+#else
+  char *arguments[] = { runner, NULL };
+  execv(runner, arguments);
+#endif
+  fprintf(stderr, "fixture question runner failed: %s\n", strerror(errno));
+  return 1;
+}
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
@@ -137,6 +167,7 @@ int main(int argc, char **argv) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
     if (strcmp(argv[i], "--input-format") == 0) return models();
   }
+  if (factory_question_runner() != 0) return 1;
   const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
   int flags = O_WRONLY | O_CREAT | O_APPEND;
 #ifdef _WIN32

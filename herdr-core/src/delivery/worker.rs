@@ -681,6 +681,7 @@ fn run(
             if gone.is_empty()
                 && !state.letters.iter().any(|letter| {
                     letter.intake_overdue(now)
+                        || letter.answer_overdue(now)
                         || (!letter.open()
                             && letter.finished_at_unix_ms.is_some_and(|finished| {
                                 now.saturating_sub(finished) >= super::RETENTION_MS
@@ -692,7 +693,8 @@ fn run(
         }
         let mut candidate = (*state).clone();
         candidate.expire(now);
-        let ended = crate::coordination::end_gone(&mut candidate, &gone);
+        candidate.end_overdue_answer_waits(now);
+        let ended = crate::coordination::end_gone(&mut candidate, &gone, now);
         let mut results = Vec::with_capacity(batch.len());
         let mut transitions = !ended.is_empty();
         for request in &batch {
@@ -823,6 +825,14 @@ fn run(
                     "code":error.code(),"persistence":error.diagnostic()}));
         }
         if saved.is_ok() {
+            if changed {
+                for (letter, why) in answer_waits_ended(&state, &candidate) {
+                    crate::diagnostic!(json!({"component":"delivery","kind":"answer_wait.ended",
+                        "letter_id":letter.id,"sender":letter.sender.name,
+                        "sender_pane":letter.sender.pane_id,"recipient":letter.recipient.name,
+                        "recipient_pane":letter.recipient.pane_id,"reason":why.as_str()}));
+                }
+            }
             for (record, reason) in &ended {
                 crate::diagnostic!(json!({"component":"coordination","kind":"agent.ended",
                     "agent_id":record.id,"machine":record.machine,"pane_id":record.pane,
@@ -857,6 +867,25 @@ fn run(
     while let Ok(request) = requests.try_recv() {
         let _ = request.reply.send(Err("delivery_unavailable".into()));
     }
+}
+
+/// The letters whose answer wait `after` ended and `before` still held.
+fn answer_waits_ended<'a>(
+    before: &Ledger,
+    after: &'a Ledger,
+) -> Vec<(&'a super::ledger::Letter, super::ledger::AnswerWaitEnd)> {
+    let waiting: std::collections::HashSet<&str> = before
+        .letters
+        .iter()
+        .filter(|letter| letter.waiting_answer)
+        .map(|letter| letter.id.as_str())
+        .collect();
+    after
+        .letters
+        .iter()
+        .filter(|letter| !letter.waiting_answer && waiting.contains(letter.id.as_str()))
+        .filter_map(|letter| Some((letter, letter.answer_wait_ended?)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1363,5 +1392,125 @@ mod tests {
                 drop(worker);
             }
         }
+    }
+    /// Waits for a state the store's idle maintenance reaches by itself.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn wait_for_ledger(what: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn idle_maintenance_ends_an_overdue_answer_wait_and_persists_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, actor, target, path) = fixture(root.path());
+        let hour = 60 * 60_000;
+        let mut installed = Ledger::default();
+        let mut ask = |intent: &str, age: u64| {
+            let sent = now() - age;
+            let letter = mailbox::send(
+                &mut installed,
+                &actor,
+                &target.actor,
+                intent,
+                "body",
+                "request",
+                None,
+                sent,
+            )
+            .unwrap();
+            mailbox::apply(
+                &mut installed,
+                &target.actor,
+                None,
+                &Command::Confirm {
+                    ids: vec![letter.id.clone()],
+                },
+                sent,
+            )
+            .unwrap();
+            letter.id
+        };
+        let old = ask("old", 25 * hour);
+        let recent = ask("recent", 23 * hour);
+        ledger::save(&path, &installed).unwrap();
+        runtime
+            .lock()
+            .unwrap()
+            .publish_delivery(Arc::new(installed), false);
+        let (_worker, _client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let waiting = |id: &str| {
+            runtime
+                .lock()
+                .unwrap()
+                .delivery_state()
+                .unwrap()
+                .letters
+                .iter()
+                .find(|letter| letter.id == id)
+                .map(|letter| (letter.waiting_answer, letter.answer_wait_ended))
+                .unwrap()
+        };
+        wait_for_ledger("the overdue wait to end", || !waiting(&old).0);
+        assert_eq!(
+            waiting(&old),
+            (false, Some(super::super::ledger::AnswerWaitEnd::Deadline))
+        );
+        assert!(waiting(&recent).0);
+        let persisted = ledger::load(&path).unwrap();
+        let saved = persisted.letters.iter().find(|l| l.id == old).unwrap();
+        assert_eq!(saved.answer_wait_ended, waiting(&old).1);
+    }
+
+    #[test]
+    fn answer_waits_ended_names_only_letters_that_stopped_waiting_in_this_pass() {
+        let (a, b) = (
+            Actor {
+                pane_id: "a".into(),
+                name: "a".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: Some("session-a".into()),
+            },
+            Actor {
+                pane_id: "b".into(),
+                name: "b".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: Some("session-b".into()),
+            },
+        );
+        let mut before = Ledger::default();
+        for intent in ["one", "two"] {
+            let letter =
+                mailbox::send(&mut before, &a, &b, intent, "body", "request", None, 1).unwrap();
+            mailbox::apply(
+                &mut before,
+                &b,
+                None,
+                &Command::Confirm {
+                    ids: vec![letter.id],
+                },
+                1,
+            )
+            .unwrap();
+        }
+        let mut after = before.clone();
+        after.end_answer_waits_of(&b, 2);
+        // Only the first letter was still waiting in `before`.
+        before.letters[1].waiting_answer = false;
+        let ended = answer_waits_ended(&before, &after);
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].0.id, before.letters[0].id);
+        assert_eq!(ended[0].1.as_str(), "party_ended");
+        assert!(answer_waits_ended(&after, &after).is_empty());
     }
 }

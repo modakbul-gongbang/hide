@@ -104,6 +104,13 @@ impl Lineage {
 }
 
 enum Request {
+    /// A bounded read of an already-open engine. It never opens or ticks it.
+    QuestionGuard {
+        caller: QuestionCaller,
+        runtime: Weak<Mutex<Runtime>>,
+        deadline: Instant,
+        reply: SyncSender<Result<bool, String>>,
+    },
     Command {
         caller: FactoryCaller,
         command: Command,
@@ -143,6 +150,67 @@ pub struct PreparedFactory {
     requests: SyncSender<Request>,
     caller: FactoryCaller,
     command: Command,
+}
+
+/// Owned native execution facts captured briefly under the Runtime lock.
+pub(crate) struct QuestionCaller {
+    pub actor: delivery::Actor,
+    pub context: crate::workspace_control::Context,
+    pub raw_pane: String,
+    pub terminal_id: String,
+    pub connector: Arc<dyn hide_herdr_client::ApiConnector>,
+}
+
+/// One readonly question decision, run outside both the owner and Runtime lock.
+pub struct PreparedQuestionGuard {
+    requests: SyncSender<Request>,
+    caller: QuestionCaller,
+    runtime: Weak<Mutex<Runtime>>,
+    deadline: Instant,
+}
+
+impl PreparedQuestionGuard {
+    pub fn run(self) -> Result<bool, String> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or("factory_guard_expired")?;
+        let fresh = hide_herdr_client::request_small_response_until(
+            self.caller.connector.as_ref(),
+            "agent.get",
+            crate::wire::agent_target_params(&self.caller.raw_pane)?,
+            self.deadline,
+        )
+        .map_err(|_| "factory_guard_native_unavailable")?;
+        let fresh =
+            crate::wire::delivery_agent(fresh).map_err(|_| "factory_guard_native_unavailable")?;
+        if fresh.pane_id != self.caller.raw_pane
+            || fresh.terminal_id != self.caller.terminal_id
+            || fresh.name != self.caller.actor.name
+            || fresh.kind.as_deref() != Some(self.caller.actor.kind.as_str())
+            || fresh.session.is_none()
+            || fresh.session != self.caller.actor.session
+        {
+            return Err("factory_guard_native_changed".into());
+        }
+        let (reply, answer) = mpsc::sync_channel(1);
+        self.requests
+            .try_send(Request::QuestionGuard {
+                caller: self.caller,
+                runtime: self.runtime,
+                deadline: self.deadline,
+                reply,
+            })
+            .map_err(|_| "factory_guard_busy")?;
+        let left = self
+            .deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or("factory_guard_expired")?;
+        answer
+            .recv_timeout(left)
+            .map_err(|_| "factory_guard_expired")?
+    }
 }
 
 impl PreparedFactory {
@@ -197,6 +265,20 @@ impl FactoryHost {
             requests: self.requests.clone(),
             caller,
             command,
+        }
+    }
+
+    pub(crate) fn prepare_question_guard(
+        &self,
+        caller: QuestionCaller,
+        runtime: Weak<Mutex<Runtime>>,
+        deadline: Instant,
+    ) -> PreparedQuestionGuard {
+        PreparedQuestionGuard {
+            requests: self.requests.clone(),
+            caller,
+            runtime,
+            deadline,
         }
     }
 
@@ -456,17 +538,67 @@ fn run(
         engine = open(&mut judge);
         publish_recipients(engine.as_ref(), &runtime);
     }
+    run_requests(
+        &mut engine,
+        &mut publisher,
+        &mut sink,
+        &workers,
+        &requests,
+        &stop,
+        || open(&mut judge),
+        Instant::now,
+    );
+    drop(engine);
+    drop(judge);
+    // The stop flag is set: closing the queue ends the starter after the
+    // start it is running, and the starts still queued are dropped.
+    if let Ok(mut state) = workers.lock() {
+        state.starts.queue = None;
+    }
+    if let Ok(starter) = starter
+        && starter.join().is_err()
+    {
+        crate::diagnostic!(json!({"component":"factory","kind":"starts.join_failed"}));
+    }
+}
+
+// Keep the existing owner objects explicit; the clock controls only this
+// loop's scheduler, independently of the engine's wall clock and query expiry.
+#[allow(clippy::too_many_arguments)]
+fn run_requests(
+    engine: &mut Option<Engine>,
+    publisher: &mut Publisher,
+    sink: &mut RuntimeSink,
+    workers: &Arc<Mutex<WorkerState>>,
+    requests: &Receiver<Request>,
+    stop: &AtomicBool,
+    mut open: impl FnMut() -> Option<Engine>,
+    mut clock: impl FnMut() -> Instant,
+) {
+    let runtime = sink.runtime.clone();
     let mut waiters: Vec<Waiter> = Vec::new();
-    let mut last_tick = Instant::now();
+    let mut last_tick = clock();
     while !stop.load(Ordering::Acquire) {
-        match requests.recv_timeout(TICK) {
+        // A request cannot renew the scheduled tick's waiting time.
+        let remaining = request_wait(engine.as_ref(), last_tick, clock());
+        let read_only = match requests.recv_timeout(remaining) {
+            Ok(Request::QuestionGuard {
+                caller,
+                runtime,
+                deadline,
+                reply,
+            }) => {
+                let answer = question_guard(engine.as_ref(), &runtime, &caller, deadline);
+                let _ = reply.try_send(answer);
+                true
+            }
             Ok(Request::Command {
                 caller,
                 command,
                 reply,
             }) => {
                 if engine.is_none() {
-                    engine = open(&mut judge);
+                    *engine = open();
                 }
                 let Some(engine) = engine.as_mut() else {
                     let _ = reply.send(
@@ -489,37 +621,46 @@ fn run(
                         factory,
                         task: task.to_owned(),
                         reply,
-                        until: Instant::now() + REVIEW_WAIT,
+                        until: clock() + REVIEW_WAIT,
                     });
                     continue;
                 }
                 let _ = reply.send(answer);
+                false
             }
             Ok(Request::Screen(request)) => {
                 if engine.is_none() && !matches!(request, ScreenRequest::CloseTask) {
-                    engine = open(&mut judge);
+                    *engine = open();
                 }
-                screen_request(engine.as_mut(), &mut publisher, &mut sink, request);
+                screen_request(engine.as_mut(), publisher, sink, request);
                 publish_recipients(engine.as_ref(), &runtime);
+                false
             }
-            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Timeout) => false,
             Err(RecvTimeoutError::Disconnected) => break,
+        };
+        let now = clock();
+        let tick_due = now.saturating_duration_since(last_tick) >= TICK;
+        // Guards never open, mutate or publish on their own. An already-due
+        // tick still owns normal maintenance, even while reads keep arriving.
+        if read_only && (engine.is_none() || !tick_due) {
+            continue;
         }
         let Some(engine) = engine.as_mut() else {
-            publisher.publish(None, &mut sink);
+            publisher.publish(None, sink);
             continue;
         };
-        if last_tick.elapsed() >= TICK {
-            last_tick = Instant::now();
+        if tick_due {
+            last_tick = now;
             pump_letters(engine, &runtime);
             engine.tick();
             // A running attempt's log tail grows on the open page between
             // summary changes; an unchanged page is still dropped.
             publisher.touched();
-            settle_sleeps(&workers, &runtime);
+            settle_sleeps(workers, &runtime);
             let mut port = CoreWorkers {
                 runtime: runtime.clone(),
-                state: Arc::clone(&workers),
+                state: Arc::clone(workers),
             };
             port.deliver_woken();
             publish_recipients(Some(engine), &runtime);
@@ -534,9 +675,10 @@ fn run(
                 "error": failure.error,
             }));
         }
+        let now = clock();
         waiters.retain(|waiter| {
             let settled = engine.review_settled(&waiter.factory, &waiter.task);
-            if settled || Instant::now() >= waiter.until {
+            if settled || now >= waiter.until {
                 let _ = waiter
                     .reply
                     .send(engine.add_answer(&waiter.factory, &waiter.task));
@@ -545,20 +687,40 @@ fn run(
             true
         });
         // Off the runtime lock; an unchanged summary hands nothing over.
-        publisher.publish(Some(&*engine as &dyn ScreenSource), &mut sink);
+        publisher.publish(Some(&*engine as &dyn ScreenSource), sink);
     }
-    drop(engine);
-    drop(judge);
-    // The stop flag is set: closing the queue ends the starter after the
-    // start it is running, and the starts still queued are dropped.
-    if let Ok(mut state) = workers.lock() {
-        state.starts.queue = None;
+}
+
+fn request_wait(engine: Option<&Engine>, last_tick: Instant, now: Instant) -> Duration {
+    // There is no scheduled engine work before opening. Keep the ordinary
+    // idle wait instead of spinning on an overdue tick that cannot run.
+    if engine.is_none() {
+        TICK
+    } else {
+        TICK.saturating_sub(now.saturating_duration_since(last_tick))
     }
-    if let Ok(starter) = starter
-        && starter.join().is_err()
-    {
-        crate::diagnostic!(json!({"component":"factory","kind":"starts.join_failed"}));
+}
+
+fn question_guard(
+    engine: Option<&Engine>,
+    runtime: &Weak<Mutex<Runtime>>,
+    caller: &QuestionCaller,
+    deadline: Instant,
+) -> Result<bool, String> {
+    if Instant::now() >= deadline {
+        return Err("factory_guard_expired".into());
     }
+    let engine = engine.ok_or("factory_guard_unstarted")?;
+    let Some(worker) = engine.question_worker(&caller.actor.pane_id) else {
+        return Ok(false);
+    };
+    let runtime = runtime.upgrade().ok_or("factory_guard_unavailable")?;
+    let runtime = runtime.try_lock().map_err(|_| "factory_guard_busy")?;
+    runtime.factory_question_current(caller, worker)?;
+    if Instant::now() >= deadline {
+        return Err("factory_guard_expired".into());
+    }
+    Ok(true)
 }
 
 /// Runs one screen request with the operator role the screen holds; every
@@ -1732,6 +1894,309 @@ mod tests {
     use super::*;
     use crate::node_access::{LinkAnswer, LinkError, NodeLink};
     use std::cell::RefCell;
+
+    fn question_caller(herdr: &crate::fake_herdr::FakeHerdr) -> QuestionCaller {
+        let actor = delivery::Actor {
+            pane_id: "w1:p1".into(),
+            name: "w1:p1".into(),
+            kind: "codex".into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: crate::wire::session_digest("native-1"),
+        };
+        QuestionCaller {
+            context: crate::runtime::delivery::tests::authority(&actor).context,
+            actor,
+            raw_pane: "w1:p1".into(),
+            terminal_id: "terminal-1".into(),
+            connector: Arc::new(herdr.connector()),
+        }
+    }
+
+    fn question_herdr(native: &str) -> crate::fake_herdr::FakeHerdr {
+        let native = native.to_owned();
+        crate::fake_herdr::FakeHerdr::start("question-guard", move |method, params| {
+            assert_eq!(method, "agent.get");
+            assert_eq!(params["target"], "w1:p1");
+            json!({"type":"agent_info", "agent":{
+                "pane_id":"w1:p1", "tab_id":"w1:t1", "workspace_id":"w1",
+                "terminal_id":"terminal-1", "agent":"codex", "agent_status":"working",
+                "state_change_seq":1, "focused":false, "revision":1,
+                "agent_session":{"source":"herdr:codex", "agent":"codex", "kind":"id", "value":native},
+            }})
+        })
+    }
+
+    #[test]
+    fn a_question_cannot_start_an_unstarted_factory_or_create_its_store() {
+        let root = tempfile::tempdir().unwrap();
+        let herdr = question_herdr("native-1");
+        let mut host = FactoryHost::start(
+            root.path(),
+            Some(root.path().into()),
+            Weak::new(),
+            ChangeNotifier::noop(),
+        )
+        .unwrap();
+        let answer = host
+            .prepare_question_guard(
+                question_caller(&herdr),
+                Weak::new(),
+                Instant::now() + Duration::from_secs(5),
+            )
+            .run();
+        assert_eq!(answer, Err("factory_guard_unstarted".into()));
+        host.shutdown();
+        assert!(!hide_kit::layout::factory_store(root.path()).exists());
+        assert!(!hide_kit::layout::factory_files(root.path()).exists());
+    }
+
+    #[test]
+    fn expired_replaced_and_overloaded_question_checks_never_deny() {
+        let herdr = question_herdr("native-2");
+        let (requests, _receiver) = mpsc::sync_channel(0);
+        let prepared = |deadline| PreparedQuestionGuard {
+            requests: requests.clone(),
+            caller: question_caller(&herdr),
+            runtime: Weak::new(),
+            deadline,
+        };
+        assert_eq!(
+            prepared(Instant::now()).run(),
+            Err("factory_guard_expired".into())
+        );
+        assert!(
+            herdr.requests().is_empty(),
+            "expired work never opens a native read"
+        );
+        assert_eq!(
+            prepared(Instant::now() + Duration::from_secs(5)).run(),
+            Err("factory_guard_native_changed".into())
+        );
+        let current = question_herdr("native-1");
+        let mut stale_terminal = question_caller(&current);
+        stale_terminal.terminal_id = "replaced-terminal".into();
+        assert_eq!(
+            PreparedQuestionGuard {
+                requests: requests.clone(),
+                caller: stale_terminal,
+                runtime: Weak::new(),
+                deadline: Instant::now() + Duration::from_secs(5),
+            }
+            .run(),
+            Err("factory_guard_native_changed".into()),
+            "native session text on a reused pane cannot lend the prior terminal's authority"
+        );
+        let busy = PreparedQuestionGuard {
+            requests,
+            caller: question_caller(&current),
+            runtime: Weak::new(),
+            deadline: Instant::now() + Duration::from_secs(5),
+        };
+        assert_eq!(
+            busy.run(),
+            Err("factory_guard_busy".into()),
+            "a full queue answers immediately"
+        );
+    }
+
+    #[test]
+    fn an_unopened_factory_keeps_its_idle_wait_after_every_due_tick() {
+        let started = Instant::now();
+        for ticks in 0..100 {
+            assert_eq!(request_wait(None, started, started + TICK * ticks), TICK);
+        }
+    }
+
+    /// This node is unavailable throughout the test; the already-open engine
+    /// must still apply its completed provider answer and settle the caller.
+    struct SchedulerNode;
+
+    impl NodeLink for SchedulerNode {
+        fn call(&self, _call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
+            Err(LinkError::Busy)
+        }
+
+        fn call_with_progress(
+            &self,
+            call: Call,
+            timeout: Duration,
+            _progress: &mut dyn FnMut(Value) -> bool,
+        ) -> Result<LinkAnswer, LinkError> {
+            self.call(call, timeout)
+        }
+    }
+
+    #[test]
+    fn sustained_readonly_questions_cannot_starve_a_due_review_or_its_waiter() {
+        // A constant clock proves reads alone do not apply an available
+        // judgment. Advancing it crosses multiple ticks with no channel gap.
+        for advance in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let project = root.path().join("project").to_string_lossy().into_owned();
+            let paths = Paths {
+                store: root.path().join("factory.sqlite3"),
+                files: root.path().join("factory-files"),
+            };
+            let factory = hide_factory::model::Factory {
+                id: "f-1".into(),
+                project: project.clone(),
+                project_name: "project".into(),
+                source: hide_factory::model::SourceKind::Local,
+                repo: None,
+                default_branch: "main".into(),
+                config: Default::default(),
+                closed: false,
+                created_at: now_ms(),
+                next_task: 1,
+                next_local_issue: 1,
+                main: Default::default(),
+                outside_read_at: Some(now_ms()),
+                outside_read_failures: 0,
+                watch_day: 0,
+                watch_sent_today: 0,
+                watch_last_at: Some(now_ms()),
+                github_approval: None,
+            };
+            hide_factory::store::Store::open(&paths.store, &paths.files)
+                .unwrap()
+                .put_factory(&factory)
+                .unwrap();
+            let runtime = Weak::new();
+            let workers = Arc::new(Mutex::new(WorkerState::default()));
+            let machine = Machine::new(Arc::new(SchedulerNode), Arc::new(AtomicBool::new(false)));
+            let projects = SharedProjects::new(
+                machine.clone(),
+                Box::new(CoreIssues {
+                    runtime: runtime.clone(),
+                }),
+                paths.files.join("logs"),
+            );
+            let judgments = Arc::new(JudgeShared {
+                queue: Mutex::new(VecDeque::new()),
+                answers: Mutex::new(Vec::new()),
+                wake: std::sync::Condvar::new(),
+                stop: AtomicBool::new(false),
+                cancel: hide_ai::CancelToken::new(),
+            });
+            let mut engine = Some(
+                Engine::open(
+                    &paths.store,
+                    &paths.files,
+                    Ports {
+                        clock: Box::new(SystemClock::new(machine.clone())),
+                        source: Box::new(projects.clone()),
+                        verifier: Box::new(projects.clone()),
+                        merge: Box::new(projects),
+                        workers: Box::new(CoreWorkers {
+                            runtime: runtime.clone(),
+                            state: Arc::clone(&workers),
+                        }),
+                        judge: Box::new(JudgePort {
+                            shared: Arc::clone(&judgments),
+                            alive: true,
+                        }),
+                        environment: Box::new(MachineEnvironment(machine)),
+                        notifier: Box::new(CoreNotifier {
+                            runtime: runtime.clone(),
+                        }),
+                    },
+                )
+                .unwrap(),
+            );
+            let (send, requests) = mpsc::sync_channel(QUEUE_LIMIT);
+            let (reply, answer) = mpsc::sync_channel(1);
+            send.try_send(Request::Command {
+                caller: FactoryCaller {
+                    pane: None,
+                    cwd: Some(project.clone()),
+                    claimed: None,
+                    ancestors: Lineage::none(),
+                },
+                command: Command::Add {
+                    project: Some(project),
+                    task: None,
+                    issue: None,
+                    card: hide_factory::command::CardInput {
+                        title: Some("A scheduled review".into()),
+                        goal: Some("Settle the review while read-only questions arrive".into()),
+                        criteria: vec!["The adding caller receives its review answer".into()],
+                        ..Default::default()
+                    },
+                    producer_pane: None,
+                },
+                reply,
+            })
+            .unwrap_or_else(|_| panic!("the Add fits the queue"));
+            let herdr = question_herdr("native-1");
+            let mut guard_answers = Vec::new();
+            for _ in 0..12 {
+                let (reply, answer) = mpsc::sync_channel(1);
+                send.try_send(Request::QuestionGuard {
+                    caller: question_caller(&herdr),
+                    runtime: runtime.clone(),
+                    deadline: Instant::now() + Duration::from_secs(60),
+                    reply,
+                })
+                .unwrap_or_else(|_| panic!("the guards fit the queue"));
+                guard_answers.push(answer);
+            }
+            drop(send);
+            let base = Instant::now();
+            let mut elapsed = Duration::ZERO;
+            run_requests(
+                &mut engine,
+                &mut Publisher::default(),
+                &mut RuntimeSink {
+                    runtime,
+                    notifier: ChangeNotifier::noop(),
+                },
+                &workers,
+                &requests,
+                &AtomicBool::new(false),
+                || panic!("an already-open Factory is never reopened"),
+                || {
+                    // Release the external provider's completed intake as
+                    // soon as Add has submitted it, independently of ticks.
+                    for judgment in judgments.queue.lock().unwrap().drain(..) {
+                        judgments.answers.lock().unwrap().push(JudgmentAnswer {
+                            id: judgment.id,
+                            factory: judgment.factory,
+                            task: judgment.task,
+                            outcome: JudgmentOutcome::Answered {
+                                value: json!({
+                                    "questions": [{"text":"Which behavior?", "suggestion":"Keep the current behavior"}],
+                                    "dependencies":[], "split":[], "flags":[],
+                                }),
+                            },
+                        });
+                    }
+                    let now = base + elapsed;
+                    if advance {
+                        elapsed += TICK / 4;
+                    }
+                    now
+                },
+            );
+            for guard in guard_answers {
+                assert_eq!(guard.try_recv().unwrap(), Ok(false));
+            }
+            if advance {
+                assert!(elapsed > 2 * TICK, "reads span multiple scheduled ticks");
+                let answer = answer.try_recv().expect("the Add waiter must settle");
+                assert_eq!(answer["result"], "needs_answers", "{answer}");
+                assert_eq!(answer["questions"][0]["text"], "Which behavior?");
+            } else {
+                assert!(
+                    answer.try_recv().is_err(),
+                    "reads do not settle the review early"
+                );
+                assert!(matches!(
+                    engine.as_ref().unwrap().task("f-1", "T-1").unwrap().review,
+                    hide_factory::model::ReviewState::Requested { .. }
+                ));
+            }
+        }
+    }
 
     /// The core's own node answering the offset in turn, then busy.
     struct Offsets(Mutex<Vec<Result<i64, ()>>>);
