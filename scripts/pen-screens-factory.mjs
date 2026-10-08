@@ -774,8 +774,9 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const switchOn = (id, on) => frame(id, 'Switch', {width: 32, height: 18, cornerRadius: 9, fill: on ? '$--primary' : '$--secondary', padding: 2, layout: 'horizontal', justifyContent: on ? 'end' : 'start', alignItems: 'center'}, [
     frame(`${id}-k`, 'Knob', {width: 14, height: 14, cornerRadius: 7, fill: on ? '$--primary-foreground' : MUT}, []),
   ]);
-  const textValue = (id, value, width, {mono = true} = {}) => frame(id, 'Text field', {layout: 'horizontal', alignItems: 'center', width, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-    text(`${id}-t`, value, {size: '$--text-body', mono}),
+  // An empty field shows its placeholder in the muted colour.
+  const textValue = (id, value, width, {mono = true, placeholder} = {}) => frame(id, 'Text field', {layout: 'horizontal', alignItems: 'center', width, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    value || !placeholder ? text(`${id}-t`, value, {size: '$--text-body', mono}) : text(`${id}-t`, placeholder, {size: '$--text-body', fill: MUT}),
   ]);
   // A folded line (settings-rows.tsx Disclosure): chevron, title, a short summary of what is inside.
   const disclosure = (id, title, summary, open = false) => row(id, [
@@ -803,9 +804,15 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   // One Factory's settings, for the project the header picks. Only what the operator decides:
   // who decides what (the choice and its two lists), which agents, how merges land, and the
   // macOS line; every other engine default sits under 고급 설정 and `hide factory config`.
-  // 고급 설정 unfolded (B36): the values B36 names, editable as today; `hide factory config`
-  // takes every other key.
+  // 고급 설정 unfolded (B36): the seven rows B36 names, then every other value with the control
+  // it has today under small subheads; `hide factory config` sets any of them too.
   const unit = (id, value, label) => row(id, [numberField(`${id}-n`, value), cap(`${id}-u`, label, SUB)], {gap: '$--spacing-xs'});
+  const FIELD_W = num(tokens, '--size-settings-control-w');
+  // A small heading inside 고급 설정 and the rows it groups, hairlines between the rows only.
+  const subgroup = (id, title, rows) => col(id, [
+    row(`${id}-head`, [cap(`${id}-head-t`, title, SUB, {weight: '600'})], {width: 'fill_container', padding: ['$--spacing-md', '$--spacing-md', '$--spacing-xxs', '$--spacing-md']}),
+    ...rows.flatMap((node, i) => (i ? [rule(`${id}-r${i}`), node] : [node])),
+  ], {gap: 0, width: 'fill_container'});
   const RECOVERY = ['끝난 Task의 worktree 지우기', '멈춘 작업자 다시 시작', '입력을 기다리는 작업자 재우고 깨우기', '사용량이 막히면 런타임 바꾸기', 'GitHub 읽기 다시 시도와 다시 연결'];
   function advancedRows(id) {
     return [
@@ -821,7 +828,35 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         col(`${id}-args-list`, [['Claude Code', '--permission-mode acceptEdits'], ['Codex', ''], ['OpenCode', '']].map(([agent, args], i) => row(`${id}-args-${i}`, [
           cap(`${id}-args-${i}-a`, agent, SUB, {width: 96}), textValue(`${id}-args-${i}-v`, args, SHEET_W - 2 * PAD_MD - 96 - GAP_SM),
         ], {gap: '$--spacing-sm'})), {gap: '$--spacing-xs'})),
-      row(`${id}-cli`, [cap(`${id}-cli-t`, '나머지 값은 hide factory config로 바꿉니다', MUT)], {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-md']}),
+      subgroup(`${id}-sv`, '검증', [
+        settingsRow(`${id}-sv-ci`, '필수 체크', [textValue(`${id}-sv-ci-v`, 'web-e2e, rust-test', FIELD_W)]),
+        settingsRow(`${id}-sv-fail`, '멈추기 전 실패 횟수', [numberField(`${id}-sv-fail-v`, '3')]),
+        settingsRow(`${id}-sv-time`, '검증 시간 제한(분)', [numberField(`${id}-sv-time-v`, '30')]),
+      ]),
+      subgroup(`${id}-sm`, '머지', [
+        settingsRow(`${id}-sm-way`, '머지 방법', [screenSelect(`${id}-sm-way-v`, {content: 'squash', width: 104})]),
+        settingsRow(`${id}-sm-quick`, '머지 전 빠른 점검', [textValue(`${id}-sm-quick-v`, 'scripts/verify-web.sh', FIELD_W)]),
+      ]),
+      subgroup(`${id}-sr`, '실행', [
+        settingsRow(`${id}-sr-h`, 'harness preset', [textValue(`${id}-sr-h-v`, '', FIELD_W, {mono: false, placeholder: '이름: 작업 방식'})], cap(`${id}-sr-h-d`, '이름과 작업 방식. worker 프롬프트에 들어갑니다', MUT)),
+        settingsRow(`${id}-sr-new`, 'worker가 더할 수 있는 새 Task', [numberField(`${id}-sr-new-v`, '3')]),
+        settingsRow(`${id}-sr-disk`, '남길 디스크 공간(GB)', [numberField(`${id}-sr-disk-v`, '5')]),
+        settingsRow(`${id}-sr-prd`, 'PRD를 issue에 넣기', [switchOn(`${id}-sr-prd-sw`, false)]),
+      ]),
+      subgroup(`${id}-sc`, '점검', [
+        settingsRow(`${id}-sc-read`, 'GitHub 읽기 간격(분)', [numberField(`${id}-sc-read-v`, '5')]),
+        settingsRow(`${id}-sc-0`, 'done 직후', [cap(`${id}-sc-0-t`, '변경이 요구한 범위 밖으로 번지지 않았는지 본다', SUB)]),
+        settingsRow(`${id}-sc-add`, '점검 더하기', [
+          screenSelect(`${id}-sc-add-at`, {content: 'done 직후', width: 104}),
+          textValue(`${id}-sc-add-v`, '', FIELD_W, {mono: false, placeholder: '점검할 내용'}),
+          {...screenButton(`${id}-sc-add-b`, '더하기', {variant: 'secondary', height: controlSm}), opacity: DISABLED},
+        ]),
+      ]),
+      subgroup(`${id}-sa`, '자율 처리', [
+        settingsRow(`${id}-sa-0`, 'branch 이름을 Task 번호에 맞춘다', [switchOn(`${id}-sa-0-sw`, true)]),
+        settingsRow(`${id}-sa-diff`, '자율 변경 최대 크기(줄)', [numberField(`${id}-sa-diff-v`, '200')]),
+      ]),
+      row(`${id}-cli`, [cap(`${id}-cli-t`, '모든 값은 hide factory config로도 바꿀 수 있습니다', MUT)], {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-md']}),
     ];
   }
   function settingsBody(id, {aiOff, mode = 1, workers = WORKERS, used = 37, advanced = false}) {
@@ -1029,7 +1064,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const obsTask = windowFrame(id('obs-task'), 'Task 페이지 · 보고 없음', obsTaskMain(id('obs-task')), {count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {height: 1100, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsAll = windowFrame(id('obs-all'), '설정 · 모든 프로젝트', settingsMain(id('obs-all'), {project: null}), {height: 640, count: OBS_INBOX_COUNT, factories: sideFactories(null)});
-  const obsDirect = windowFrame(id('obs-direct'), '설정 · 직접 · 고급 설정', settingsMain(id('obs-direct'), {mode: 0, workers: WORKERS.slice(0, 1), advanced: true}), {height: 1540, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsDirect = windowFrame(id('obs-direct'), '설정 · 직접 · 고급 설정', settingsMain(id('obs-direct'), {mode: 0, workers: WORKERS.slice(0, 1), advanced: true}), {height: 2290, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsAuto = windowFrame(id('obs-auto'), '설정 · 맡김 · 후보 다섯', settingsMain(id('obs-auto'), {mode: 2, workers: WORKERS_FULL, used: 100}), {height: 1340, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsPick = windowFrame(id('obs-pick'), 'Task 페이지 · 작업자 고르기', obsPickMain(id('obs-pick')), {count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
   const obsPaused = windowFrame(id('obs-paused'), '내 차례 · 일시정지', obsPausedMain(id('obs-paused'), 'sasu'), {height: 640, count: OBS_INBOX_COUNT, factories: sideFactories('sasu')});

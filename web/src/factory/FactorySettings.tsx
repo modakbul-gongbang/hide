@@ -64,6 +64,7 @@ type ConfigAnswer = { config: FactoryConfig; machine: { max_workers: number } };
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+const GIB = 1024 * 1024 * 1024;
 /** The most worker candidates a Factory keeps (D-41). */
 const WORKER_LIMIT = 5;
 
@@ -82,6 +83,25 @@ const WATCH_LIMIT: NumberSetting = { key: "watch_daily_limit", read: plain("watc
 const CANCEL_KEEP: NumberSetting = { key: "cancel_keep_days", read: per(DAY, "cancel_keep_ms"), unit: "factory.settings.adv.cancelDays" };
 const DONE_FOLD: NumberSetting = { key: "done_fold_days", read: per(DAY, "done_fold_ms"), unit: "factory.settings.adv.doneDays" };
 const ARCHIVE_FOLD: NumberSetting = { key: "archive_fold_days", read: per(DAY, "archive_fold_ms"), unit: "factory.settings.adv.archiveDays" };
+
+/** A number whose label names its unit, as the rows under 고급 설정's subheads read (B36). */
+type LabelledNumber = { key: string; label: MessageKey; read: (answer: ConfigAnswer) => number };
+
+const VERIFY_LIMITS: LabelledNumber[] = [
+  { key: "verify_failure_limit", label: "factory.settings.verifyFailureLimit", read: plain("verify_failure_limit") },
+  { key: "verify_timeout_minutes", label: "factory.settings.verifyTimeout", read: per(MINUTE, "verify_timeout_ms") },
+];
+const NEW_TASK_LIMIT: LabelledNumber = { key: "new_task_limit", label: "factory.settings.newTaskLimit", read: plain("new_task_limit") };
+const DISK_FLOOR: LabelledNumber = { key: "disk_floor_gb", label: "factory.settings.diskFloor", read: per(GIB, "disk_floor_bytes") };
+const OUTSIDE_READ: LabelledNumber = { key: "outside_read_minutes", label: "factory.settings.outsideRead", read: per(MINUTE, "outside_read_ms") };
+const AUTONOMY_DIFF: LabelledNumber = { key: "autonomy_diff_limit", label: "factory.settings.autonomyDiffLimit", read: plain("autonomy_diff_limit") };
+
+const CHECK_POINTS = ["intake", "after_done", "periodic"] as const;
+const CHECK_LABEL: Record<(typeof CHECK_POINTS)[number], MessageKey> = {
+  intake: "factory.settings.checkAt.intake",
+  after_done: "factory.settings.checkAt.after_done",
+  periodic: "factory.settings.checkAt.periodic",
+};
 
 const RECOVERY: readonly { id: string; label: MessageKey }[] = [
   { id: "remove_finished_worktrees", label: "factory.settings.recovery.remove_finished_worktrees" },
@@ -213,11 +233,13 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
     if (read.state.phase === "taken") setAnswer(read.state.answer as unknown as ConfigAnswer);
   }, [read.state]);
   const [refusals, setRefusals] = useState(0);
+  const [writes, setWrites] = useState(0);
   useEffect(() => {
     if (write.state.phase === "refused") setRefusals((count) => count + 1);
     if (write.state.phase !== "taken") return;
-    // A config write answers with the config; a close answers with a
-    // message, so the config is read again.
+    setWrites((count) => count + 1);
+    // A config write answers with the config; a check or a close answers
+    // with a message, so the config is read again.
     const taken = write.state.answer as Record<string, unknown>;
     if ("config" in taken) setAnswer(taken as unknown as ConfigAnswer);
     else read.send({ verb: "config", project: factory.project, set: [] });
@@ -237,6 +259,13 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
       <span className="text-caption text-muted-foreground">{t(row.unit)}</span>
     </span>
   );
+  // A number whose label carries its unit: the rows under 고급 설정's subheads.
+  const number = (row: LabelledNumber) => (
+    <Row key={row.key} label={t(row.label)}>
+      <TextField reset={refusals} value={String(row.read(answer))} numeric valid={(text) => Number.isInteger(Number(text)) && Number(text) >= 0} onCommit={(value) => set(row.key, value)} data={row.key} />
+    </Row>
+  );
+  const verify = config.verification.kind === "commands" ? config.verification.commands.join(" &&& ") : "";
   // Closing follows the lifecycle states, independent of board presentation.
   const running = factory.columns.some((column) => column.cards.some((card) => !["drafting", "waiting", "done", "cancelled"].includes(card.state)));
   return (
@@ -306,6 +335,54 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
           }>
             <span className="text-caption text-muted-foreground">{t("factory.settings.adv.workerArgsCaption")}</span>
           </Row>
+          {/* Every other value keeps the control it had, grouped under small subheads (B36). */}
+          <Subgroup title={t("factory.settings.verification")} data-factory-settings-subhead="verification">
+            {config.verification.kind === "ci" ? (
+              <Row label={t("factory.settings.ciChecks")}>
+                <TextField reset={refusals} value={config.verification.checks.join(", ")} mono onCommit={(value) => set("ci", value)} data="ci" />
+              </Row>
+            ) : (
+              <Row label={t("factory.settings.verifyCommands")} detail={<Note>{t("factory.settings.verifyCommandsDetail")}</Note>}>
+                <TextField reset={refusals} value={verify} mono onCommit={(value) => set("verify", value)} data="verify" />
+              </Row>
+            )}
+            {VERIFY_LIMITS.map(number)}
+          </Subgroup>
+          <Subgroup title={t("factory.settings.merge")} data-factory-settings-subhead="merge">
+            <Row label={t("factory.settings.mergeMethod")}>
+              <Choice value={config.merge_method} options={[["merge", t("factory.settings.method.merge")], ["squash", t("factory.settings.method.squash")], ["rebase", t("factory.settings.method.rebase")]]} onChange={(value) => set("merge_method", value)} data="merge_method" />
+            </Row>
+            <Row label={t("factory.settings.quickCheck")}>
+              <TextField reset={refusals} value={config.quick_check ?? ""} mono onCommit={(value) => set("quick_check", value)} data="quick_check" />
+            </Row>
+          </Subgroup>
+          <Subgroup title={t("factory.settings.run")} data-factory-settings-subhead="run">
+            <Row label={t("factory.settings.harness")} detail={<Note>{t("factory.settings.harnessDetail")}</Note>}>
+              <TextField reset={refusals} value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
+            </Row>
+            {number(NEW_TASK_LIMIT)}
+            {number(DISK_FLOOR)}
+            <Row label={t("factory.settings.prdInIssue")}>
+              <Switch checked={config.prd_in_issue} aria-label={t("factory.settings.prdInIssue")} data-factory-setting="prd_in_issue" onCheckedChange={(on) => set("prd_in_issue", on ? "on" : "off")} />
+            </Row>
+          </Subgroup>
+          <Subgroup title={t("factory.settings.checks")} data-factory-settings-subhead="checks">
+            {number(OUTSIDE_READ)}
+            {config.checks.map((check, at) => (
+              <Row key={at} label={t(CHECK_LABEL[check.at])}>
+                <span className="min-w-0 text-body text-subtle-foreground [overflow-wrap:anywhere]">{check.instruction}</span>
+              </Row>
+            ))}
+            <AddCheck written={writes} refused={refusals} sending={write.state.phase === "sending"} onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
+          </Subgroup>
+          <Subgroup title={t("factory.settings.adv.autonomy")} data-factory-settings-subhead="autonomy">
+            {config.autonomy.map((scope) => (
+              <Row key={scope.id} label={scope.description}>
+                <Switch checked={scope.enabled} aria-label={scope.description} data-factory-setting={`autonomy:${scope.id}`} onCheckedChange={(on) => set("autonomy", `${scope.id}=${on ? "on" : "off"}`)} />
+              </Row>
+            ))}
+            {number(AUTONOMY_DIFF)}
+          </Subgroup>
           <div className="px-md py-sm">
             <Note>{t("factory.settings.adv.rest")}</Note>
           </div>
@@ -516,6 +593,59 @@ function WorkersGroup({ config, machine, reset, set, actions }: { config: Factor
 }
 
 /** `reset` changes when the engine refuses a write, which leaves the config as it was, so the draft shows it again. */
+/** A small heading inside 고급 설정 and the rows it groups, hairlines between the rows only. */
+function Subgroup({ title, children, ...data }: { title: string; children: ReactNode } & Record<`data-${string}`, string>) {
+  return (
+    <section {...data}>
+      <h4 className="px-md pt-md pb-xxs text-caption font-semibold text-subtle-foreground">{title}</h4>
+      <div className="divide-y divide-border">{children}</div>
+    </section>
+  );
+}
+
+function Choice({ value, options, onChange, data }: { value: string; options: [string, ReactNode][]; onChange: (value: string) => void; data: string }) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger size="sm" className="w-auto" data-factory-setting={data}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map(([option, label]) => (
+          <SelectItem key={option} value={option}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** The instruction stays until the engine takes the check, so a refusal keeps what was typed. */
+function AddCheck({ onAdd, written, refused, sending }: { onAdd: (at: (typeof CHECK_POINTS)[number], instruction: string) => void; written: number; refused: number; sending: boolean }) {
+  const { t } = useInterfaceTranslation();
+  const [at, setAt] = useState<(typeof CHECK_POINTS)[number]>("after_done");
+  const [instruction, setInstruction] = useState("");
+  const asked = useRef(false);
+  useEffect(() => {
+    if (!asked.current) return;
+    asked.current = false;
+    setInstruction("");
+  }, [written]);
+  // A refused check keeps its text, and a later write of another setting leaves it alone.
+  useEffect(() => {
+    asked.current = false;
+  }, [refused]);
+  return (
+    <Row label={t("factory.settings.addCheck")}>
+      <Choice value={at} options={CHECK_POINTS.map((point) => [point, t(CHECK_LABEL[point])])} onChange={(value) => setAt(value as (typeof CHECK_POINTS)[number])} data="check_at" />
+      <Input value={instruction} className="w-(--size-settings-control-w)" placeholder={t("factory.settings.checkInstruction")} aria-label={t("factory.settings.checkInstruction")} data-factory-setting="check_instruction" onChange={(event) => setInstruction(event.target.value)} />
+      <Button size="sm" variant="secondary" disabled={!instruction.trim() || sending} onClick={() => { asked.current = true; onAdd(at, instruction.trim()); }}>
+        {t("factory.settings.add")}
+      </Button>
+    </Row>
+  );
+}
+
 function TextField({ value, onCommit, placeholder, numeric = false, mono = false, wide = false, valid, data, reset }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; mono?: boolean; wide?: boolean; valid?: (text: string) => boolean; data: string; reset: number }) {
   const [draft, setDraft] = useState(value);
   // The draft last sent, so the blur after Enter does not send it again.

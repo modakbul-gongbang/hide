@@ -222,6 +222,56 @@ it("sends a setting once though Enter and leaving the field both commit, and sho
   expect(container.querySelector<HTMLInputElement>("[data-factory-setting='watch_daily_limit']")!.value).toBe(String(CONFIG.watch_daily_limit));
 });
 
+it("keeps a check's instruction until the engine takes it, then reads the config again, since a check answers with no config (B22)", async () => {
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
+  await answerConfig(summary, events);
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!;
+  await act(async () => type(field, "README가 최신인지"));
+  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
+  await act(async () => add.click());
+  const check = lastAction(events);
+  expect(check.payload.command).toMatchObject({ verb: "check", instruction: "README가 최신인지" });
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: check.payload.request_id, answer: { ok: false, reason: "instruction_required", next_action: "Give --instruction" } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("README가 최신인지");
+  await act(async () => add.click());
+  const again = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: again.payload.request_id, answer: { ok: true, message: "check added" } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("");
+  expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [] });
+  expect(container.querySelector("[data-factory-close]")).not.toBeNull();
+});
+
+it("holds Add while a check is on its way, and keeps a refused check's text through a later write of another setting (B22)", async () => {
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
+  await answerConfig(summary, events);
+  await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!, "README"));
+  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
+  await act(async () => add.click());
+  expect(add.disabled).toBe(true);
+  const check = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: check.payload.request_id, answer: { ok: false, reason: "factory_busy", next_action: "Try again in a moment" } }] } }));
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
+  await act(async () => type(field, "7"));
+  await act(async () => press(field, { key: "Enter" }));
+  const write = lastAction(events);
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: write.payload.request_id, answer: { ok: true, config: { ...CONFIG, new_task_limit: 7 }, machine: { max_workers: 5 } } }] } }));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("README");
+});
+
+it("keeps a control for every per-Factory value hide factory config sets, the rest of them under 고급 설정 (B36)", async () => {
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
+  await answerConfig(summary, events);
+  // docs/factory.md, Configuration: the keys a person sets for one Factory; CONFIG verifies through CI, so its field is `ci`.
+  const keys = ["merge_mode", "merge_method", "ci", "quick_check", "question_deadline_hours", "stall_minutes", "no_report_minutes", "watch_interval_minutes", "watch_daily_limit", "outside_read_minutes", "cancel_keep_days", "done_fold_days", "archive_fold_days", "new_task_limit", "verify_failure_limit", "autonomy_diff_limit", "verify_timeout_minutes", "disk_floor_gb", "harness", "risk_paths", "prd_in_issue", "macos_notifications", "observer_mode", "observer_daily_limit", "factory_ai", "check_instruction", "worker_args:claude", "worker_args:codex"];
+  expect(keys.filter((key) => !container.querySelector(`[data-factory-setting='${key}']`))).toEqual([]);
+  expect([...container.querySelectorAll("[data-factory-setting^='recovery:']")]).toHaveLength(5);
+  const advanced = container.querySelector("[data-factory-settings-group='advanced']")!;
+  expect([...advanced.querySelectorAll("[data-factory-settings-subhead]")].map((node) => node.getAttribute("data-factory-settings-subhead"))).toEqual(["verification", "merge", "run", "checks", "autonomy"]);
+});
+
 it("treats a Factory whose cards are all archived as empty, not as a filter that matches nothing (B15)", async () => {
   const archived = factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done", archived: true, folded: true })] }] });
   const { container } = await mount({ my_turn: 0, notices: 0, factories: [archived], inbox: [] }, { tab: "board" });
