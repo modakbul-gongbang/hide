@@ -111,6 +111,12 @@ class VerifyVerdict(unittest.TestCase):
             premerge.require_verify_passed([run(1, "2026-10-07T01:00:00Z", name="Design contract")])
 
 
+class IssueNote(unittest.TestCase):
+    def test_a_pull_request_that_closes_no_issue_gets_a_reminder_and_one_that_does_gets_none(self):
+        self.assertIn("#774 closes no issue", premerge.issue_note("774", []))
+        self.assertIsNone(premerge.issue_note("783", [{"number": 741}]))
+
+
 class PolicyLaneParity(unittest.TestCase):
     def test_every_structural_check_of_the_policy_lane_runs_before_a_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
