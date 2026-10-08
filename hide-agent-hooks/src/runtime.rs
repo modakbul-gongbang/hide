@@ -101,15 +101,24 @@ impl ForeignOrigin {
             None
         }
     }
+}
 
-    /// Whether Hide's own hook for that agent speaks in its place, so Claude
-    /// Code's says nothing at all: Cursor and Grok have hooks of their own,
-    /// and a count or a refusal from both would happen twice (PRD
-    /// grok-cursor-hooks D-05). OpenCode has none, so Claude Code's hook
-    /// still counts, reads Memory and prints its guidance there.
-    pub fn silences_claude_hook(self) -> bool {
-        matches!(self, Self::Cursor | Self::Grok)
-    }
+/// Whether Hide's own hook for the agent running this one speaks in its
+/// place, so Claude Code's hook says nothing at all: Cursor and Grok have
+/// hooks of their own, and a count or a refusal from both would happen twice
+/// (PRD grok-cursor-hooks D-05). OpenCode has none, so Claude Code's hook
+/// still counts, reads Memory and prints its guidance there.
+pub fn silences_claude_hook<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    variable("CURSOR_VERSION").is_some() || inside_grok(variable)
+}
+
+/// Whether Grok runs this hook. Grok sets `GROK_HOOK_EVENT` only for the
+/// hooks it runs, its own and the Claude Code and Cursor hooks it loads beside
+/// them; `GROK_SESSION_ID` can also reach a program a Grok session started,
+/// such as a Claude Code launched from its shell, whose own hook must still
+/// count and guard, so it does not decide this.
+pub fn inside_grok<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    variable("GROK_HOOK_EVENT").is_some()
 }
 
 /// Whether Claude Code's hook may take and confirm letters here (D-25). A
@@ -474,9 +483,12 @@ mod tests {
 
     #[test]
     fn cursor_and_grok_silence_claude_codes_hook_and_every_foreign_session_takes_no_letters() {
-        assert!(ForeignOrigin::Cursor.silences_claude_hook());
-        assert!(!ForeignOrigin::OpenCode.silences_claude_hook());
-        assert!(ForeignOrigin::Grok.silences_claude_hook());
+        let only = |name: &'static str| move |asked: &str| (asked == name).then_some("1");
+        assert!(silences_claude_hook(only("CURSOR_VERSION")));
+        assert!(silences_claude_hook(only("GROK_HOOK_EVENT")));
+        for name in ["OPENCODE", "OPENCODE_PID", "GROK_SESSION_ID"] {
+            assert!(!silences_claude_hook(only(name)), "{name}");
+        }
         assert!(takes_letters(|_: &str| None::<&str>));
         for name in ["CURSOR_VERSION", "OPENCODE", "GROK_HOOK_EVENT"] {
             assert!(!takes_letters(|asked: &str| (asked == name).then_some("1")));

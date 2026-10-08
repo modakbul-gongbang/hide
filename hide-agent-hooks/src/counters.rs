@@ -74,6 +74,12 @@ pub enum Change {
 
 impl Change {
     /// The change a six-event runtime's hook makes.
+    ///
+    /// - `SessionStart` starts the pane over: a new session in a reused pane
+    ///   must not inherit the last one's numbers.
+    /// - `Stop` sweeps `working` to zero. The turn is over, so nothing this
+    ///   session spawned is still running, and a `SubagentStop` that never
+    ///   arrived cannot leave a count behind (PRD B31).
     pub fn of(event: HookEvent) -> Self {
         match event {
             HookEvent::SessionStart => Self::Reset,
@@ -93,17 +99,6 @@ pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
         .unwrap_or_default()
 }
 
-/// Applies one hook event and returns the pane's new counts.
-///
-/// - `SessionStart` starts the pane over: a new session in a reused pane must
-///   not inherit the last one's numbers.
-/// - `Stop` sweeps `working` to zero. The turn is over, so nothing this
-///   session spawned is still running, and a `SubagentStop` that never
-///   arrived cannot leave a count behind (PRD B31).
-pub fn apply(home: &Path, pane_id: &str, event: HookEvent) -> io::Result<PaneCounters> {
-    change(home, pane_id, Change::of(event))
-}
-
 /// Applies one [`Change`] under the pane's lock and returns the new counts.
 /// The record is read, changed and written while the lock is held, so two
 /// events of one pane never both start from the same count.
@@ -113,17 +108,13 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
     }
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        hide_platform::fs::private::create_dir_all(parent)?;
     }
     // One lock file beside the records, not the record itself: Windows locks
     // a byte range against every other handle, so a record locked by one
-    // handle could not be rewritten through another.
-    let lock = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock_path(home))?;
+    // handle could not be rewritten through another. It is the account's
+    // own, so no other account can hold it and stall every count.
+    let lock = hide_platform::fs::private::open_or_create_file(&lock_path(home))?;
     let held = match hide_platform::fs::lock::lock_file(
         lock,
         hide_platform::fs::lock::Mode::Exclusive,
@@ -224,11 +215,11 @@ mod tests {
         let root = home("lifecycle");
         let pane = "w7B:pM";
         assert_eq!(
-            apply(&root, pane, HookEvent::SessionStart).unwrap(),
+            change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap(),
             PaneCounters::default()
         );
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        let two = apply(&root, pane, HookEvent::SubagentStart).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        let two = change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
         assert_eq!(
             two,
             PaneCounters {
@@ -236,7 +227,7 @@ mod tests {
                 done: 0
             }
         );
-        let one = apply(&root, pane, HookEvent::SubagentStop).unwrap();
+        let one = change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
         assert_eq!(
             one,
             PaneCounters {
@@ -251,10 +242,10 @@ mod tests {
     fn a_turn_that_ends_sweeps_a_count_a_missing_stop_left_behind() {
         let root = home("sweep");
         let pane = "w7B:pM";
-        apply(&root, pane, HookEvent::SessionStart).unwrap();
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        let swept = apply(&root, pane, HookEvent::Stop).unwrap();
+        change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        let swept = change(&root, pane, Change::of(HookEvent::Stop)).unwrap();
         assert_eq!(swept.working, 0, "no subagent outlives its turn");
         assert_eq!(swept.done, 0, "the sweep does not invent completions");
         fs::remove_dir_all(&root).unwrap();
@@ -264,8 +255,8 @@ mod tests {
     fn a_new_session_in_the_same_pane_does_not_inherit_the_last_ones_numbers() {
         let root = home("reset");
         let pane = "w7B:pM";
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        apply(&root, pane, HookEvent::SubagentStop).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
         assert_eq!(
             read(&root, pane),
             PaneCounters {
@@ -274,7 +265,7 @@ mod tests {
             }
         );
         assert_eq!(
-            apply(&root, pane, HookEvent::SessionStart).unwrap(),
+            change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap(),
             PaneCounters::default()
         );
         fs::remove_dir_all(&root).unwrap();
@@ -283,9 +274,9 @@ mod tests {
     #[test]
     fn a_sweep_drops_the_records_of_panes_that_are_gone_and_keeps_the_rest() {
         let root = home("retain");
-        apply(&root, "w1:pA", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w1:pB", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w2:pC", HookEvent::SubagentStart).unwrap();
+        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w1:pB", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w2:pC", Change::of(HookEvent::SubagentStart)).unwrap();
         // A file the sweep did not write is not its business.
         fs::write(state_directory(&root).join("notes.txt"), b"kept").unwrap();
 
@@ -345,9 +336,9 @@ mod tests {
     #[test]
     fn two_panes_keep_separate_counts() {
         let root = home("panes");
-        apply(&root, "w1:pA", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w2:pB", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w2:pB", HookEvent::SubagentStart).unwrap();
+        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart)).unwrap();
         assert_eq!(read(&root, "w1:pA").working, 1);
         assert_eq!(read(&root, "w2:pB").working, 2);
         fs::remove_dir_all(&root).unwrap();

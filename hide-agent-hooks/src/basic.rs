@@ -71,7 +71,11 @@ pub fn grok_stop(payload: &[u8], truncated: bool) -> GrokStop {
     let Ok(stop) = serde_json::from_slice::<Stop>(payload) else {
         return GrokStop::Ignore;
     };
-    if stop.subagent_type.is_some_and(|kind| !kind.is_null()) {
+    // An empty or null type is no subagent's: the main session's stop.
+    if stop
+        .subagent_type
+        .is_some_and(|kind| !kind.is_null() && kind.as_str() != Some(""))
+    {
         return GrokStop::Ignore;
     }
     let running = stop
@@ -125,6 +129,13 @@ mod tests {
         );
         let child = br#"{"sessionId":"child","subagentType":"explore","backgroundTasks":[]}"#;
         assert_eq!(grok_stop(child, false), GrokStop::Ignore);
+        assert_eq!(
+            grok_stop(
+                br#"{"sessionId":"s","subagentType":"","backgroundTasks":[]}"#,
+                false
+            ),
+            GrokStop::Running(0)
+        );
         assert_eq!(grok_stop(b"not json", false), GrokStop::Ignore);
         assert_eq!(grok_stop(stop, true), GrokStop::Ignore);
     }

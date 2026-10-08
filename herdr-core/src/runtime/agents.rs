@@ -1142,16 +1142,27 @@ impl Runtime {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
         // Grok's and Cursor's hooks are pieces of their agent rows, which the
-        // kit reads on this machine as on a device.
-        let kit = self.kit_states.get(self.node.as_str()).cloned();
+        // kit reads on this machine as on a device; read once per pass.
+        let basic: Vec<_> = hide_agent_hooks::guidance::GuidanceAgent::LIVE
+            .into_iter()
+            .map(|agent| {
+                let hook = crate::agent_hooks::CountingHook::Basic(agent);
+                let status = self
+                    .kit_states
+                    .get(self.node.as_str())
+                    .and_then(|kit| crate::agent_hooks::kit_hook_status(kit, hook));
+                (agent, status)
+            })
+            .collect();
         let status_of = |hook: crate::agent_hooks::CountingHook| match hook {
             crate::agent_hooks::CountingHook::Runtime(runtime) => diagnosis
                 .as_ref()
                 .and_then(|diagnosis| diagnosis.status_of(runtime))
                 .cloned(),
-            crate::agent_hooks::CountingHook::Basic(_) => kit
-                .as_ref()
-                .and_then(|kit| crate::agent_hooks::kit_hook_status(kit, hook)),
+            crate::agent_hooks::CountingHook::Basic(agent) => basic
+                .iter()
+                .find(|(known, _)| *known == agent)
+                .and_then(|(_, status)| status.clone()),
         };
         let codex_daemon_on = self
             .kit_states

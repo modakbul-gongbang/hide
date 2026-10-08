@@ -52,8 +52,8 @@ fn main() -> ExitCode {
         Ok(watch) => watch,
         // Exit 2 from a `PreToolUse` hook refuses the tool call. The outer hook
         // is what an agent runs, and it must never end that way; the inner one
-        // is only ever started by it. Cursor reads anything but a valid answer
-        // from a permission hook as a refusal, so it gets its allow.
+        // is only ever started by it. Cursor's permission hooks get their allow,
+        // since Cursor reads output that is not a valid answer as a refusal.
         Err(_) if arguments.first().map(String::as_str) == Some("hook") => {
             if cursor_permission_hook(&arguments) {
                 print_line(basic::CURSOR_ALLOW);
@@ -89,8 +89,7 @@ fn main() -> ExitCode {
             // takes no letters (`run_hook`).
             if argument_value("--runtime", &arguments).and_then(|value| AgentRuntime::parse(&value))
                 == Some(AgentRuntime::ClaudeCode)
-                && hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name))
-                    .is_some_and(hide_agent_hooks::runtime::ForeignOrigin::silences_claude_hook)
+                && hide_agent_hooks::runtime::silences_claude_hook(|name| std::env::var_os(name))
             {
                 return ExitCode::SUCCESS;
             }
@@ -154,11 +153,8 @@ fn cursor_permission_hook(arguments: &[String]) -> bool {
         && !inside_grok()
 }
 
-/// Grok sets this for every hook it runs, its own and the Claude Code and
-/// Cursor hooks it loads beside them (Grok's hooks guide, Environment
-/// Variables); a process a Grok session merely started does not carry it.
 fn inside_grok() -> bool {
-    std::env::var_os("GROK_HOOK_EVENT").is_some()
+    hide_agent_hooks::runtime::inside_grok(|name| std::env::var_os(name))
 }
 
 /// The hook of Grok or Cursor (PRD grok-cursor-hooks): the spawn guard on a
@@ -202,12 +198,6 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
         answer => answer,
     };
     if let Some(answer) = answer {
-        // PowerShell re-encodes what a Windows hook prints; ASCII survives it.
-        let answer = if cfg!(windows) && answer.starts_with('{') {
-            hide_agent_hooks::runtime::ascii_json(&answer)
-        } else {
-            answer
-        };
         print_line(&answer);
     }
     let _ = std::panic::catch_unwind(|| count_basic(dialect, event, started));
@@ -475,22 +465,40 @@ fn report_count(home: &std::path::Path, event: HookEvent, change: Change) {
     else {
         return;
     };
-    let Ok(counters) = counters::change(home, &pane_id, change) else {
-        return;
-    };
     // `--source` on the command line is the install marker the diagnosis
     // reads out of the hook file; the report's own source is fixed in
     // `report::metadata_source`, because Herdr refuses the marker's `@`.
     let socket_path = report::socket_path(home);
-    let outcome = match &socket_path {
-        Ok(path) => report::report(path, &pane_id, counters),
-        Err(error) => Err(error.clone()),
+    let outcome = match (counters::change(home, &pane_id, change), &socket_path) {
+        (Ok(counters), Ok(path)) => report_latest(home, path, &pane_id, counters),
+        (Err(error), _) => Err(hide_herdr_client::ApiError::Transport(format!(
+            "the pane's count could not be changed: {error}"
+        ))),
+        (_, Err(error)) => Err(error.clone()),
     };
     // The outcome is written down rather than surfaced here: a hook's
     // stderr reaches nobody, and the record is what `doctor` and Settings
     // show (engineering rule 10).
     let socket_path = socket_path.unwrap_or_default();
     let _ = report::record_outcome(home, &pane_id, event, &socket_path, &outcome);
+}
+
+/// Reports `counters` and, when another event of the pane changed the record
+/// while this report was on its way, the record as it is now: two events
+/// that report in the other order than they counted would otherwise leave
+/// Herdr with the older count until the pane's next event.
+fn report_latest(
+    home: &std::path::Path,
+    socket_path: &std::path::Path,
+    pane_id: &str,
+    counters: counters::PaneCounters,
+) -> Result<(), hide_herdr_client::ApiError> {
+    report::report(socket_path, pane_id, counters)?;
+    let now = counters::read(home, pane_id);
+    if now == counters {
+        return Ok(());
+    }
+    report::report(socket_path, pane_id, now)
 }
 
 fn memory_output_before_deadline(

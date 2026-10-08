@@ -219,6 +219,16 @@ fn inside_grok_the_whole_hook_is_silent() {
     }
     assert!(machine.calls().is_empty());
     assert!(machine.files().is_empty());
+
+    // A Claude Code started from a Grok session's shell may inherit its
+    // session id, but Grok does not run its hook: it counts, and takes no
+    // letters meant for the Grok pane.
+    let launched = Machine::new();
+    let origin = &[("GROK_SESSION_ID", "s1")][..];
+    launched.run("SubagentStart", origin);
+    assert!(!launched.files().is_empty(), "the counters wrote a record");
+    assert_eq!(launched.run("UserPromptSubmit", origin), "");
+    assert!(launched.calls().is_empty());
 }
 
 #[test]
