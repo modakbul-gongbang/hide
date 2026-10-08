@@ -1217,8 +1217,8 @@ fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmati
         "a timeout leaves the project registered"
     );
     assert_eq!(
-        runtime.snapshot.ui_state.session_open_folds,
-        [registration.id.clone()]
+        runtime.snapshot.ui_state.session_open_folds.as_slice(),
+        std::slice::from_ref(&registration.id)
     );
     let error = runtime.snapshot.status.last_error.clone().unwrap();
     assert_eq!(error.kind, "workspace.remove_failed");
