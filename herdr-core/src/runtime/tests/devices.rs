@@ -586,3 +586,68 @@ fn a_refused_device_registration_is_logged_with_its_reason() {
     assert_eq!(refusal["error_kind"], "device.duplicate");
     assert_eq!(refusal["message"], "Device studio is already registered");
 }
+
+/// A device id holding `:pane:` would let one device's pane ids read as
+/// another's (`remote:a:pane:b:pane:w1`): registering one is refused with
+/// `device.invalid`, and one already in the UI state is never connected,
+/// logged with its id and reason and shown as unavailable, while the
+/// devices beside it still connect.
+#[test]
+fn a_device_id_holding_the_pane_mark_is_refused_and_never_connected() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "a", "a-host"));
+    let (_, records) = crate::diagnostics::capture(|| {
+        assert!(register_device(&mut runtime, "a:pane:b", "b-host"));
+    });
+    assert!(records.iter().any(
+        |record| record["kind"] == "error.reported" && record["error_kind"] == "device.invalid"
+    ));
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .device_registrations
+            .iter()
+            .all(|device| device.id != "a:pane:b")
+    );
+
+    for (id, alias) in [("a:pane:b", "b-host"), ("studio", "studio-host")] {
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: id.to_owned(),
+                label: id.to_owned(),
+                ssh_alias: Some(alias.to_owned()),
+                ..Default::default()
+            });
+    }
+    runtime.rebuild_device_rows();
+    let (_, records) = crate::diagnostics::capture(|| {
+        runtime.connect_registered_devices();
+    });
+    assert!(records.iter().any(|record| {
+        record["kind"] == "device.connect_failed"
+            && record["target"] == "a:pane:b"
+            && record["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(":pane:"))
+    }));
+    assert!(!runtime.remote_connections.contains_key("a:pane:b"));
+    let row = device(&runtime, "a:pane:b");
+    assert_eq!(row.state, "unavailable");
+    assert!(
+        row.message
+            .as_deref()
+            .is_some_and(|message| message.contains(":pane:")),
+        "{:?}",
+        row.message
+    );
+    // Beside it a device is tried as any other: in this harness, as far as
+    // the missing HOME a freshly registered device also reaches.
+    assert_eq!(
+        device(&runtime, "studio").message.as_deref(),
+        Some("HOME is unavailable, so the SSH config cannot be resolved")
+    );
+}

@@ -330,6 +330,21 @@ pub fn device_pane_prefix(device: &str) -> String {
     format!("remote:{device}:pane:")
 }
 
+/// The device and its own id for a pane id the core scoped to a device
+/// ([`device_pane_id`]). The split is at the first `:pane:`, which is exact
+/// because no device id holds one ([`device_id_is_unambiguous`]).
+pub fn split_device_pane_id(pane: &str) -> Option<(&str, &str)> {
+    pane.strip_prefix("remote:")?.split_once(":pane:")
+}
+
+/// Whether `device` can name a device. An id holding `:pane:` would make
+/// `remote:a:pane:b:pane:w1` a pane of `a` and of `a:pane:b` both, so one
+/// device could speak for another's pane; the core registers and connects
+/// no such device.
+pub fn device_id_is_unambiguous(device: &str) -> bool {
+    !device.contains(":pane:")
+}
+
 impl TerminalReport {
     /// The pane the report is about, for the reports that name one.
     pub fn pane_mut(&mut self) -> Option<&mut String> {

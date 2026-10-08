@@ -2299,6 +2299,14 @@ impl Runtime {
                     );
                     return true;
                 }
+                if !hide_node_link::terminal::device_id_is_unambiguous(&id) {
+                    self.set_error(
+                        "device.invalid",
+                        "A device id cannot contain \":pane:\"",
+                        false,
+                    );
+                    return true;
+                }
                 let herdr_socket_path = payload
                     .herdr_socket_path
                     .as_deref()
