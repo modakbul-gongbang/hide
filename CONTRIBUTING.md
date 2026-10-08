@@ -58,6 +58,7 @@ The check takes about two minutes, most of it the typecheck and Clippy on a cold
 
 A refusal says what to do instead, which is to merge main into the branch, fix it there, and let `verify` run again on the push.
 A pass prints the merge command, `gh pr merge <number> --merge --match-head-commit <head>`, which GitHub refuses if the branch moved after the check.
+Above it, a pull request that closes no issue gets a reminder, not a refusal: Hide and GitHub relate a pull request to an issue only through the `Closes #N` line, so one that finishes an issue gets that line before it merges, and one that finishes none merges as it is.
 
 The check does not prove a behavior that only the two changes together break, which only the unit and end-to-end suites would see.
 Main's push run is the net for that: a push to main plans every lane, and in a burst of merges GitHub keeps one pending run, which checks the merges' combined state.
