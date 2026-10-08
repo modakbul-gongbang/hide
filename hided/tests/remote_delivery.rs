@@ -316,17 +316,15 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
         let (local, remote) = (&mut fixture.local, &fixture.remote);
         let first = std::thread::scope(|scope| {
             let reporter = scope.spawn(|| -> Result<()> {
-                let mut seen = false;
-                while !finished.load(Ordering::Relaxed) {
-                    let agents = remote.run(&["agent", "list"])?;
-                    if let Some((pane, reported)) = agent_pane(&agents, "remote-worker")
-                        && !reported
-                        && !seen
-                    {
-                        remote.report_session(&pane, "fixture-spawned-session")?;
-                        seen = true;
+                let pane = wait_for("the spawned agent's pane on the device", || {
+                    if finished.load(Ordering::Relaxed) {
+                        return Ok(Some(None));
                     }
-                    std::thread::sleep(Duration::from_millis(100));
+                    let agents = remote.run(&["agent", "list"])?;
+                    Ok(agent_pane(&agents, "remote-worker").map(|(pane, _)| Some(pane)))
+                })?;
+                if let Some(pane) = pane {
+                    remote.report_session(&pane, "fixture-spawned-session")?;
                 }
                 Ok(())
             });
@@ -399,9 +397,7 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
         let mut machines = Vec::new();
         strings_under(&snapshot, "parent_machine", &mut machines);
         ensure!(
-            machines
-                .iter()
-                .any(|machine| *machine == parent.native_machine),
+            machines.contains(&parent.native_machine),
             "device lineage token does not name the caller's machine: {machines:?} vs {}",
             parent.native_machine
         );

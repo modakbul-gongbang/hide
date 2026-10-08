@@ -740,12 +740,12 @@ mod tests {
                         authority: authority(&sender),
                         actor: sender.clone(),
                         target: Some(Box::new(recipient)),
-                        command: Command::Send {
+                        command: Box::new(Command::Send {
                             target: "recipient".into(),
                             intent: "report".into(),
                             body: "private".into(),
                             kind: "report".into(),
-                        },
+                        }),
                     },
                     Duration::from_secs(5),
                 )

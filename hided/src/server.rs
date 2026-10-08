@@ -971,7 +971,7 @@ fn delivery_next_action(code: &str) -> &'static str {
 /// reason stays the code.
 fn refusal_answer(reason: String, next_action: &'static str) -> (String, String) {
     match herdr_core::coordination::split_refusal(&reason) {
-        (code, Some(connected)) if connected.is_empty() => (
+        (code, Some("")) => (
             code.to_owned(),
             "No other device is connected; connect one in Settings > Devices, then retry"
                 .to_owned(),
