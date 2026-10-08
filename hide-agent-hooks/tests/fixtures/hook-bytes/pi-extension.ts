@@ -1,8 +1,8 @@
-// hide-extension@1 sha256=e9a8e741a259132c5ea5b44991ecabac4d00f5717cbeee864df7a0b6142149c2
+// hide-extension@1 sha256=af0808d924d7f4ad872a20df2188d2d041a1e1ddda7a7783dc996255ba91fc9c
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
-// Outside a Herdr pane Hide manages, in an agent started from another agent's shell, or when its helper is gone,
-// it does nothing.
+// Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
+// nothing; inside one it acts for the pane's own TUI session, and its spawn guard for every session in it.
 // @ts-nocheck
 
 import { spawn } from "node:child_process";
@@ -66,6 +66,7 @@ function helper(state, operation, input, budgetMs) {
     try {
       child = spawn(HELPER, [AGENT, operation], { stdio: ["pipe", "pipe", "ignore"] });
     } catch {
+      state.lost += 1;
       resolve(null);
       return;
     }
@@ -91,7 +92,11 @@ function helper(state, operation, input, budgetMs) {
       finish(null);
     }, budgetMs);
     try {
-      child.on("error", () => finish(null));
+      child.on("error", () => {
+        if (!settled) state.lost += 1;
+        finish(null);
+      });
+      child.stdout.on("error", () => finish(null));
       child.stdout.on("data", (chunk) => {
         size += chunk.length;
         if (size > OUTPUT_LIMIT) {
@@ -153,12 +158,11 @@ function subagent(ctx) {
 }
 
 /**
- * Whether `ctx` is the pane's own agent, as Herdr's integration counts it: Pi's TUI (its RPC mode reports a UI too,
- * but has no screen in the pane), and omp's session with a UI.
+ * Whether `ctx` is the pane's own agent: the host's TUI, the one session drawn in the pane. Both hosts' RPC modes
+ * report a UI too but draw nothing there, and another program in the pane may start one.
  */
 function root(ctx) {
-  if (subagent(ctx)) return false;
-  return AGENT === "pi" ? ctx?.mode === "tui" : ctx?.hasUI === true;
+  return !subagent(ctx) && ctx?.mode === "tui";
 }
 
 /** The session file Herdr's integration reports for the pane, or null for an unsaved session. */
@@ -239,9 +243,10 @@ async function onPrompt(state, event, ctx) {
   if (!session) return undefined;
   shared.rootSession = session;
   const deadline = Date.now() + PROMPT_BUDGET_MS;
-  // A session's first prompt this extension sees carries the start guidance, as Claude Code's SessionStart does
-  // for a new or resumed session.
+  // Until the host writes a message that carried it, a session's prompts carry the start guidance, as Claude Code's
+  // SessionStart does for a new or resumed session.
   const first = !state.guided.has(session);
+  if (first) state.guidance ??= startGuidance(state, ctx);
   const answer = await helper(
     state,
     "prompt",
@@ -249,11 +254,14 @@ async function onPrompt(state, event, ctx) {
     Math.max(0, deadline - Date.now()),
   );
   const sections = [];
+  let guided = false;
   if (first && answer !== null) {
-    const guidance = await withBudget(state.guidance, deadline - Date.now());
-    if (typeof guidance?.context === "string" && guidance.context) sections.push(guidance.context);
     // Guidance still on its way is given to the next prompt instead.
-    if (state.started) remember(state.guided, session);
+    const guidance = await withBudget(state.guidance, deadline - Date.now());
+    if (typeof guidance?.context === "string" && guidance.context) {
+      sections.push(guidance.context);
+      guided = true;
+    }
   }
   if (typeof answer?.context === "string" && answer.context) sections.push(answer.context);
   if (sections.length === 0) return undefined;
@@ -261,18 +269,16 @@ async function onPrompt(state, event, ctx) {
   // own id, and only the one whose message the host writes is confirmed.
   const id = randomBytes(8).toString("hex");
   const letters = Array.isArray(answer?.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
-  if (letters.length > 0) {
-    const now = Date.now();
-    for (const [key, entry] of state.pending) {
-      if (now - entry.at > PENDING_AGE_MS) state.pending.delete(key);
-    }
-    // A letter left out stays pending in Hide and reaches the next prompt.
-    if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
-    state.pending.set(id, { session, letters, at: now });
+  const now = Date.now();
+  for (const [key, entry] of state.pending) {
+    if (now - entry.at > PENDING_AGE_MS) state.pending.delete(key);
   }
+  // A letter left out stays pending in Hide and reaches the next prompt, and guidance left out comes again.
+  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
+  state.pending.set(id, { session, letters, guided, at: now });
   // Hidden: the host keeps it out of the conversation on screen and out of the title, and the reminder tags tell the
   // model it is not the operator's text. Hide writes those tags itself, so a letter cannot close them.
-  const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<​$1")}\n</system-reminder>`;
+  const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   return { message: { customType: CUSTOM_TYPE, content: text, display: false, details: { hide: id } } };
 }
 
@@ -285,7 +291,8 @@ function onMessageEnd(state, event, ctx) {
     const pending = typeof id === "string" ? state.pending.get(id) : null;
     if (pending) {
       state.pending.delete(id);
-      state.written.push(pending);
+      if (pending.guided) remember(state.guided, pending.session);
+      if (pending.letters.length > 0) state.written.push(pending);
     }
     return;
   }
@@ -294,10 +301,18 @@ function onMessageEnd(state, event, ctx) {
   const written = state.written;
   state.written = [];
   for (const { session, letters } of written) {
-    const fresh = letters.filter((letter) => !state.confirmed.has(letter));
+    const fresh = letters.filter((letter) => !state.confirmed.has(letter) && !state.confirming.has(letter));
     if (fresh.length === 0) continue;
-    for (const letter of fresh) remember(state.confirmed, letter);
-    void helper(state, "confirm", { session_id: session, letters: fresh }, CONFIRM_BUDGET_MS);
+    for (const letter of fresh) state.confirming.add(letter);
+    // Only a confirmation Hide answered counts: a letter it did not take stays pending there, rides the next prompt
+    // again and is confirmed then.
+    void helper(state, "confirm", { session_id: session, letters: fresh }, CONFIRM_BUDGET_MS).then((answer) => {
+      const confirmed = Array.isArray(answer?.confirmed) ? answer.confirmed : [];
+      for (const letter of fresh) {
+        state.confirming.delete(letter);
+        if (confirmed.includes(letter)) remember(state.confirmed, letter);
+      }
+    });
   }
 }
 
@@ -322,6 +337,15 @@ async function onTool(state, event, ctx) {
   return typeof answer?.deny === "string" && answer.deny ? answer.deny : null;
 }
 
+/** The session guidance, read once; a read that failed is asked again by the next prompt that needs it. */
+function startGuidance(state, ctx) {
+  const reading = helper(state, "start", { cwd: ctx?.cwd }, START_BUDGET_MS).then((answer) => {
+    if (answer === null && state.guidance === reading) state.guidance = null;
+    return answer;
+  });
+  return reading;
+}
+
 function onSessionStart(state, ctx) {
   if (subagent(ctx)) {
     setChild(ctx.agent.id, true);
@@ -330,10 +354,7 @@ function onSessionStart(state, ctx) {
   if (!root(ctx)) return;
   state.root = true;
   shared.rootSession = sessionFile(ctx);
-  state.guidance ??= helper(state, "start", { cwd: ctx?.cwd }, START_BUDGET_MS).then((answer) => {
-    state.started = true;
-    return answer;
-  });
+  state.guidance ??= startGuidance(state, ctx);
   if (AGENT === "omp") {
     // A new session in the pane starts its counts at zero, as Claude Code's SessionStart does.
     shared.children.clear();
@@ -361,11 +382,11 @@ export default function hide(pi) {
     closed: false,
     root: false,
     guidance: null,
-    started: false,
     guided: new Set(),
     pending: new Map(),
     written: [],
     confirmed: new Set(),
+    confirming: new Set(),
     published: null,
     counting: null,
     nextCount: null,

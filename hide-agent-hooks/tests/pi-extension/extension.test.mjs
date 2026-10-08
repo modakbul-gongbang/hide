@@ -25,8 +25,14 @@ const HERDR = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/tmp
 const NESTED = ["OMPCODE", "PI_SESSION_ID"];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sample = (name) => structuredClone(SAMPLES[name]);
+// The shell call `settled` runs to order the helper calls before it.
+const BARRIER = "herdr --barrier";
 
-function answer(answers) {
+let answers = {};
+
+/** Sets the stand-in's answers for the operations `update` names; the others keep theirs until the next load. */
+function answer(update) {
+  answers = { ...answers, ...update };
   writeFileSync(ANSWERS, JSON.stringify(answers));
 }
 
@@ -39,6 +45,20 @@ function calls() {
   } catch {
     return [];
   }
+}
+
+/** The helper calls of `operation`, the barrier's left out. */
+function made(operation) {
+  return calls().filter((call) => call.operation === operation && call.input.command !== BARRIER);
+}
+
+/**
+ * Lets every helper call started so far reach the stand-in: one more call the test awaits to its end, started after
+ * them, so a call that was going to be made has been made before a test says it was not.
+ */
+async function settled(host) {
+  await host.emit("tool_call", { type: "tool_call", toolName: "bash", toolCallId: "barrier", input: { command: BARRIER } }, context("tool_call.bash"));
+  await until("tool", 1, (input) => input.command === BARRIER);
 }
 
 /** Waits until the stand-in logged `count` calls of `operation` that `matches` accepts. */
@@ -97,6 +117,8 @@ function bind(module) {
 /** Loads the extension as the host does, in a process whose environment is `env` for Herdr's variables. */
 async function extension(env = HERDR) {
   rmSync(LOG, { force: true });
+  answers = {};
+  answer({});
   for (const key of [...Object.keys(HERDR), ...NESTED]) delete process.env[key];
   Object.assign(process.env, env);
   // A fresh module per test: omp shares the module between its sessions, and a test must not.
@@ -104,12 +126,11 @@ async function extension(env = HERDR) {
   return bind(await import(`${pathToFileURL(process.env.HIDE_EXTENSION).href}?load=${loads}`));
 }
 
-/** Starts the root session and lets the start guidance arrive. */
+/** Starts the root session, whose guidance read the next prompt waits for within its budget. */
 async function started(host, guidance = "HIDE-GUIDANCE") {
   answer({ start: { context: guidance } });
   await host.emit("session_start", sample("session_start").event, context("session_start"));
   await until("start");
-  await sleep(50);
 }
 
 function prompt(host, text = "Fix the failing parser test", ctx = context("before_agent_start")) {
@@ -146,8 +167,9 @@ test("in a managed pane it registers the handlers it works through, and starts n
     [...host.names].sort(),
     ["agent_end", "agent_start", "before_agent_start", "before_subagent_spawn", "message_end", "session_shutdown", "session_start", "session_switch", "tool_call"].sort(),
   );
-  await sleep(100);
-  assert.deepEqual(calls(), []);
+  // No session has started, so the barrier is the only call.
+  await settled(host);
+  assert.deepEqual(calls().map((call) => call.input.command), [BARRIER]);
 });
 
 test("a new session's first prompt carries the guidance and the letters in one hidden message, and later prompts no guidance", async () => {
@@ -171,6 +193,8 @@ test("a new session's first prompt carries the guidance and the letters in one h
   assert.deepEqual(input, { session_id: file, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, version: 1 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
+  // Once the host wrote it, the session's guidance is given.
+  await written(host, result.message);
   answer({ prompt: { context: "", letters: [] } });
   assert.equal(await prompt(host, "And the next one"), undefined, "nothing to attach is no message");
   const [, second] = await until("prompt", 2);
@@ -195,8 +219,8 @@ test("letters are confirmed once, only after the host wrote Hide's message and t
   // The host writes the prompt and Hide's message; until the reply, nothing is confirmed.
   await host.emit("message_end", sample("message_end.user").event, context("message_end.user"));
   await host.emit("message_end", { type: "message_end", message: { role: "custom", ...result.message } }, context("message_end.custom"));
-  await sleep(150);
-  assert.equal(calls().filter((call) => call.operation === "confirm").length, 0);
+  await settled(host);
+  assert.equal(made("confirm").length, 0);
 
   await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
   const [confirm] = await until("confirm");
@@ -205,8 +229,23 @@ test("letters are confirmed once, only after the host wrote Hide's message and t
 
   // A later reply in the same turn confirms nothing again.
   await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
-  await sleep(150);
-  assert.equal(calls().filter((call) => call.operation === "confirm").length, 1);
+  await settled(host);
+  assert.equal(made("confirm").length, 1);
+});
+
+test("a confirmation Hide did not take is made again when the letter rides the next prompt", async () => {
+  const host = await extension();
+  await started(host, "");
+  answer({ prompt: { context: "LETTER", letters: ["letter-1"] }, confirm: { exit: 1 } });
+  await written(host, (await prompt(host)).message);
+  await until("confirm");
+  // Hide still holds the letter, so the next prompt carries it again, and this time the confirmation is taken.
+  answer({ confirm: { confirmed: ["letter-1"] } });
+  const again = await prompt(host, "And the next one");
+  assert.match(again.message.content, /LETTER/);
+  await written(host, again.message);
+  const [, second] = await until("confirm", 2);
+  assert.deepEqual(second.input.letters, ["letter-1"]);
 });
 
 test("a turn that ends before any reply leaves its letters pending in Hide", async () => {
@@ -217,25 +256,43 @@ test("a turn that ends before any reply leaves its letters pending in Hide", asy
   await host.emit("message_end", { type: "message_end", message: { role: "custom", ...result.message } }, context("message_end.custom"));
   await host.emit("agent_end", sample("agent_end").event, context("agent_end"));
   await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
-  await sleep(150);
-  assert.equal(calls().filter((call) => call.operation === "confirm").length, 0);
+  await settled(host);
+  assert.equal(made("confirm").length, 0);
 });
 
 test("a submission prepared twice attaches its letters once and confirms them once (omp re-entry)", async () => {
   const host = await extension();
-  await started(host, "");
+  await started(host);
   answer({ prompt: { context: "LETTER", letters: ["letter-1"] }, confirm: { confirmed: ["letter-1"] } });
   // omp re-runs the whole chain for one submission and delivers only the last attempt.
   const discarded = await prompt(host);
   const delivered = await prompt(host);
   assert.notEqual(discarded.message.details.hide, delivered.message.details.hide);
+  // The attempt the host delivers carries the session's guidance too: preparing one is not giving it.
+  assert.match(delivered.message.content, /HIDE-GUIDANCE/);
   await written(host, delivered.message);
   const [confirm] = await until("confirm");
   assert.deepEqual(confirm.input.letters, ["letter-1"]);
   // The discarded attempt's message is never written, and a stray write of it confirms nothing twice.
   await written(host, discarded.message);
-  await sleep(150);
-  assert.equal(calls().filter((call) => call.operation === "confirm").length, 1);
+  await settled(host);
+  assert.equal(made("confirm").length, 1);
+  // Written once, the guidance does not come again.
+  answer({ prompt: { context: "", letters: [] } });
+  assert.equal(await prompt(host, "And the next one"), undefined);
+});
+
+test("guidance whose read failed or whose message was never written comes with a later prompt", async () => {
+  const host = await extension();
+  answer({ start: { exit: 1 }, prompt: { context: "", letters: [] } });
+  await host.emit("session_start", sample("session_start").event, context("session_start"));
+  await until("start");
+  assert.equal(await prompt(host), undefined, "no guidance to give yet");
+  // The next prompt reads it again, and a message the host never writes leaves it owed.
+  answer({ start: { context: "HIDE-GUIDANCE" } });
+  const unwritten = await prompt(host);
+  assert.match(unwritten.message.content, /HIDE-GUIDANCE/);
+  assert.match((await prompt(host)).message.content, /HIDE-GUIDANCE/);
 });
 
 test("a headless run and an unsaved session take no letters", async () => {
@@ -244,12 +301,10 @@ test("a headless run and an unsaved session take no letters", async () => {
   answer({ prompt: { context: "LETTER", letters: ["letter-1"] } });
   assert.equal(await prompt(host, "x", context("before_agent_start", { hasUI: false })), undefined);
   assert.equal(await prompt(host, "x", context("before_agent_start", { sessionFile: null })), undefined);
-  if (AGENT === "pi") {
-    // Pi's RPC mode reports a UI but has no screen in the pane; Herdr's integration does not count it either.
-    assert.equal(await prompt(host, "x", context("before_agent_start", { hasUI: true, mode: "rpc" })), undefined);
-  }
-  await sleep(100);
-  assert.equal(calls().filter((call) => call.operation === "prompt").length, 0);
+  // Both hosts' RPC modes report a UI but draw nothing in the pane, and another program there may start one.
+  assert.equal(await prompt(host, "x", context("before_agent_start", { hasUI: true, mode: "rpc" })), undefined);
+  await settled(host);
+  assert.equal(made("prompt").length, 0);
 });
 
 test("a slow, failing or garbled helper leaves the prompt unchanged within its budget and never throws", async () => {
@@ -288,8 +343,8 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 1 });
 
   assert.equal(await host.emit("tool_call", sample("tool_call.bash").event, context("tool_call.bash")), undefined);
-  await sleep(100);
-  assert.equal(calls().filter((call) => call.operation === "tool").length, 1, "an ordinary shell call starts no helper");
+  await settled(host);
+  assert.equal(made("tool").length, 1, "an ordinary shell call starts no helper");
 });
 
 test("a helper that fails or is late lets the shell call run, as Claude Code's guard does", async () => {
@@ -359,7 +414,7 @@ if (AGENT === "omp") {
     answer({ tool: { deny: "no" } });
     assert.equal(await host.emit("tool_call", { type: "tool_call", toolName: "ask", toolCallId: "a", input: {} }, context("tool_call.bash")), undefined);
     await host.emit("agent_end", sample("agent_end").event, context("agent_end"));
-    await sleep(150);
-    assert.deepEqual(calls().map((call) => call.operation), ["start"]);
+    await settled(host);
+    assert.deepEqual(calls().map((call) => call.operation), ["start", "tool"]);
   });
 }
