@@ -693,7 +693,14 @@ pub fn inbox_items(
                             .as_ref()
                             .is_some_and(|a| a.relayed_by == crate::model::OBSERVER)
                     });
-            if let Some(routing) = &question.routing {
+            // A notice says the kind of the decision it is about.
+            let routing = question.routing.as_ref().or_else(|| {
+                task.questions
+                    .iter()
+                    .find(|q| Some(&q.id) == question.refers_to.as_ref())
+                    .and_then(|q| q.routing.as_ref())
+            });
+            if let Some(routing) = routing {
                 item.decision_kind = routing.kind;
                 item.observer_reason = routing.reason.clone();
             }
@@ -771,6 +778,7 @@ pub fn inbox_items(
                 item.result = "같은 worktree에서 worker를 다시 시작".into();
                 item.result_code = ResultCode::RestartWorker;
                 item.stop = task.stop;
+                item.observer_reason = task.diagnosis.clone();
                 items.push(item);
             }
             // The operator closed the worker's pane: a person resumes it (D-26).

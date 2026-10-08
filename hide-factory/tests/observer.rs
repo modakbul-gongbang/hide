@@ -137,6 +137,8 @@ fn a_technical_choice_in_assist_is_answered_by_the_ai_with_a_notice_that_is_not_
     assert_eq!(inbox["items"][0]["notice"], "ai_answered");
     assert_eq!(inbox["items"][0]["refers_to"], question.id.as_str());
     assert_eq!(inbox["items"][0]["overridable"], true);
+    // The notice says the kind of decision it is about.
+    assert_eq!(inbox["items"][0]["decision_kind"], "B");
 }
 
 #[test]
@@ -622,6 +624,32 @@ fn a_diagnosis_that_finds_a_question_raises_it_for_the_worker() {
     assert_eq!(raised.choices, ["blue", "green"]);
     // A product choice in assist is a person's.
     assert_eq!(inbox(&mut h)["count"], 1);
+}
+
+#[test]
+fn a_diagnosed_stop_tells_the_person_what_factory_ai_read() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Quiet", &[]);
+    h.world()
+        .diagnosis
+        .push_back(json!({"verdict": "stuck", "reason": "테스트 실행을 기다리다 멈춤"}));
+    let since = h.world().now;
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Resting { since });
+    for _ in 0..3 {
+        h.advance(2 * MINUTE_MS);
+        h.engine.tick();
+    }
+    h.engine.tick();
+    assert_eq!(h.task(&f, &t).stop, Some(StopReason::NoReport));
+    let inbox = inbox(&mut h);
+    assert_eq!(inbox["items"][0]["stop"], "no_report", "{inbox}");
+    assert_eq!(
+        inbox["items"][0]["observer_reason"],
+        "테스트 실행을 기다리다 멈춤"
+    );
 }
 
 #[test]
