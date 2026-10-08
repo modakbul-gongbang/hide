@@ -183,7 +183,7 @@ test("the switches write Hide's Grok file and Cursor entries beside the others, 
   }
 });
 
-test("a Grok file the operator removed shows on its row until Reinstall, and an agent whose folder is missing gets none and its row says why", async ({ page }) => {
+test("a Grok file the operator removed or edited shows on its row until Reinstall, and an agent whose folder is missing gets none and its row says why", async ({ page }) => {
   const stack = await start("grok-cursor-removed", { on: true });
   const { daemon, home } = stack;
   const wire = watchWire(page);
@@ -201,6 +201,17 @@ test("a Grok file the operator removed shows on its row until Reinstall, and an 
     await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@2");
     await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
     expect(read(path.join(home, ".grok", "hooks", "herdr.json"))).toBe(HERDR_FILE);
+
+    // B8: an entry the operator edited stays theirs; the row says so with Reinstall, which puts Hide's back.
+    const edited = read(grokFile(home)).replace("--event Stop", "--event Stop --verbose");
+    fs.writeFileSync(grokFile(home), edited);
+    await list.locator("[data-agents-check]").click();
+    await expect(problem).toContainText("edited after Hide wrote them", { timeout: 60_000 });
+    await expect(list.locator("[data-agent-problem]")).toHaveCount(1);
+    expect(read(grokFile(home))).toBe(edited);
+    await problem.locator("[data-hook-reinstall]").click();
+    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).not.toContain("--verbose");
+    await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
 
     // B8: an agent that is on but has not made its folder gets nothing made, and its row says why in a quiet
     // line without Reinstall (the kit piece's reason).

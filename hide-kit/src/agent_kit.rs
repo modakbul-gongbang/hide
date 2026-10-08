@@ -161,9 +161,10 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
                     Observed::Current
                 }
                 // Hide's marker over an entry Hide did not write: the operator
-                // edited it, and the pass or Reinstall puts Hide's back.
-                Some(_) => Observed::Stale(
-                    "Hide's hook entries were edited after Hide wrote them".to_owned(),
+                // edited it, and it is theirs until Reinstall.
+                Some(_) => Observed::Edited(
+                    "Hide's hook entries were edited after Hide wrote them; Reinstall puts Hide's back"
+                        .to_owned(),
                 ),
                 None => Observed::Stale("the hook's command is not one Hide wrote".to_owned()),
             }
@@ -721,7 +722,9 @@ fn guidance_piece(
         Some(reason) => (ComponentState::Failed, Some(reason.clone())),
         None => match observe_guidance(target, adapter, agent) {
             Observed::Current => (ComponentState::Installed, None),
-            Observed::Stale(reason) => (ComponentState::Outdated, Some(reason)),
+            Observed::Stale(reason) | Observed::Edited(reason) => {
+                (ComponentState::Outdated, Some(reason))
+            }
             Observed::Missing if recorded => (
                 ComponentState::Removed,
                 Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
@@ -840,6 +843,8 @@ pub(crate) fn apply(
         let restore = scope.agent_on.contains(adapter.id);
         let install_now = match &observed {
             Observed::Stale(_) => true,
+            // The operator's edit is theirs until Reinstall.
+            Observed::Edited(_) => restore,
             Observed::Missing => restore || (!recorded && record_readable),
             _ => false,
         };

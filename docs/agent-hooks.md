@@ -306,7 +306,8 @@ Each runs only the events its documentation names: Grok `SessionStart`, `PreTool
 Grok's `SessionStart` does not fire for a subagent, so it is where the pane's count starts over and the pane first reports itself instrumented.
 
 Grok's file is Hide's own, `~/.grok/hooks/hide.json`, beside Herdr's and Orca's files in that folder (`{"hooks": {"<Event>": [{"matcher"?, "hooks": [{"type": "command", "command", "timeout"}]}]}}`, seconds); a switch-off deletes the file and nothing else there.
-The folder `~/.grok/hooks` is created when `~/.grok` exists, and nothing is created when it does not: the row says Grok has not made its folder yet.
+The folder `~/.grok/hooks` is created when `~/.grok` exists, and nothing is created when it does not: the row says Grok has not made its folder yet, and Cursor's says the same of `~/.cursor`.
+An older build's entries are replaced by the next pass; entries the operator edited read Outdated and stay until Reinstall, as OpenCode's edited plugin does.
 
 The helper (`src/bin/hide-agent-hooks.rs`, `run_basic_hook`; the payload and answer shapes in `src/basic.rs`) reads each agent's documented payload:
 
@@ -326,7 +327,7 @@ The count is the same per-pane record and the same `pane.report_metadata` report
 A subagent start adds one working, a subagent stop moves one from working to done.
 Grok's `Stop` from inside a subagent leaves the count alone, and the main session's `Stop` sets working to the number of `subagent` entries in `backgroundTasks`, so a background subagent stays counted past the turn and its own `SubagentStop` ends it (D-06); a payload that is cut off or unreadable leaves the count alone.
 Cursor's `stop` sets working to zero, since its subagents end with the turn.
-The core judges a Grok or Cursor pane instrumented by that agent's hook piece in the kit (`herdr_core::agent_hooks::CountingHook`), not by a Claude Code or Codex component.
+The core judges a Grok or Cursor pane instrumented by that agent's hook piece in the kit (`herdr_core::agent_hooks::kit_hook_status` for the agent's `HookDialect`, as for OpenCode's plugin), not by a Claude Code or Codex component.
 
 Grok's question tools `ask_user_question` and `exit_plan_mode` are in its `PreToolUse` matcher, but the hook routes them to the Factory question guard ([Native questions from Factory workers](#native-questions-from-factory-workers)) only for an agent whose `direct_ask` the adapter table declares, and Grok's stays Unconfirmed until a live Grok shows `PreToolUse` firing for them; until then Grok's questions stay native.
 

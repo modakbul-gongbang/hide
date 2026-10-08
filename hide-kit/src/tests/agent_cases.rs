@@ -899,13 +899,21 @@ fn grok_gets_its_own_hook_file_beside_the_others_and_only_inside_its_own_folder(
         herdr
     );
 
-    // An entry the operator edited reads Outdated, and the next pass puts
-    // Hide's back.
+    // An entry the operator edited reads Outdated and is theirs until
+    // Reinstall, which puts Hide's back (B8).
     let edited = std::fs::read_to_string(grok_hooks(&fixture))
         .unwrap()
         .replace("--event Stop", "--event Stop --verbose");
     std::fs::write(grok_hooks(&fixture), &edited).unwrap();
     let report = apply(&fixture.target, &Scope::automatic());
+    let hook = agent(&report, "grok").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Outdated, "{hook:?}");
+    assert!(hook.reason.unwrap().contains("edited"));
+    assert_eq!(
+        std::fs::read_to_string(grok_hooks(&fixture)).unwrap(),
+        edited
+    );
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
     assert_eq!(
         agent(&report, "grok").hook.as_ref().unwrap().state,
         ComponentState::Installed

@@ -721,8 +721,8 @@ pub fn installed_helper_path(agent: GuidanceAgent, home: &Path) -> Option<String
 /// Whether every entry of Hide's in `agent`'s file is exactly the one this
 /// build writes for `helper`: one per event, byte for byte as a value. An
 /// entry that carries Hide's marker over anything else was edited, and the
-/// kit reads it Outdated so the next pass puts Hide's back (PRD
-/// grok-cursor-hooks B8).
+/// kit reads it Outdated and leaves it until Reinstall (PRD grok-cursor-hooks
+/// B8).
 pub fn matches_install(agent: GuidanceAgent, home: &Path, helper: &Path) -> bool {
     let layout = agent.layout(home);
     let Ok(Some(mut document)) = read_document(&layout.path) else {
