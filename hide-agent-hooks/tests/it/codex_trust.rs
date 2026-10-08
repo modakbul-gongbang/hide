@@ -29,9 +29,13 @@ impl Fixture {
     fn new() -> Self {
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(home.path().join(".codex")).unwrap();
+        let codex = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex.py");
+        // Its first start in a checkout would wait inside `initialize`'s
+        // deadline (issue 824).
+        crate::stand_ins::ready(&codex);
         Self {
             home,
-            codex: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex.py"),
+            codex,
             stop: AtomicBool::new(false),
         }
     }
