@@ -3,8 +3,8 @@
 use crate::env::{self, Env};
 use herdr_core::{coordination::Command, delivery::Command as Delivery};
 use std::collections::BTreeMap;
-pub const USAGE: &str = "hide agent register [--check] [--machine <device>] --host-scope <scope> --session <session> --instance <terminal> --name <name> --pane <pane> [--parent <id>] [--project <path>]\nhide agent list\nhide agent show <id|here>\nhide agent end <id> [--actor <id>]\nhide agent spawn [--parent <here|id>] --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [-- <native args>]";
-pub const SPAWN_HELP: &str = "hide agent spawn [--parent <here|id>] --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [-- <native args>]
+pub const USAGE: &str = "hide agent register [--check] [--machine <device>] --host-scope <scope> --session <session> --instance <terminal> --name <name> --pane <pane> [--parent <id>] [--project <path>]\nhide agent list\nhide agent show <id|here>\nhide agent end <id> [--actor <id>]\nhide agent spawn [--parent <here|id>] [--machine <device id>] --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [-- <native args>]";
+pub const SPAWN_HELP: &str = "hide agent spawn [--parent <here|id>] [--machine <device id>] --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [-- <native args>]
 
 Choose responsibility when spawning:
   With --parent here (or your own id): delegate work you will supervise.
@@ -15,7 +15,14 @@ Choose responsibility when spawning:
 Both modes open their own tab without changing the current screen or keyboard focus.
 The origin field records who spawned the agent in both modes; it grants no authority.
 Use delegation for work you will collect and report, and handoff for independent work the operator will handle.
-Responsibility cannot be changed after spawn; reusing an intent with another mode is refused.";
+Responsibility cannot be changed after spawn; reusing an intent with another mode is refused.
+
+Start the agent on a connected device with --machine <device id>, from the machine that runs Hide:
+  The id is the device_id `hide workspace info` shows and the machine `hide agent list` shows for agents there.
+  --repo and --path are then paths on that device. Your own id, or no --machine, starts the agent here.
+  An agent running on a device cannot use --machine: it is refused with machine_not_permitted.
+  A device id that is unknown or not connected, a repository missing on the device or an agent not installed there is refused before anything is created.
+  Reusing an intent with another machine is refused; running the same command again returns the same agent.";
 
 pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery, String> {
     let verb = args.next().ok_or(USAGE)?.as_str();
@@ -45,7 +52,14 @@ pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery,
                     ]
                     .as_slice(),
                     "spawn" => [
-                        "--parent", "--name", "--intent", "--kind", "--repo", "--branch", "--path",
+                        "--parent",
+                        "--machine",
+                        "--name",
+                        "--intent",
+                        "--kind",
+                        "--repo",
+                        "--branch",
+                        "--path",
                     ]
                     .as_slice(),
                     "end" => ["--actor"].as_slice(),
@@ -101,6 +115,7 @@ pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery,
             let branch = take("--branch")?;
             Command::Spawn {
                 parent: flags.remove("--parent"),
+                machine: flags.remove("--machine"),
                 name,
                 intent,
                 kind,
@@ -150,9 +165,16 @@ pub fn run(env: &Env, command: Delivery) -> Result<(), String> {
             Err(code)
         }
         Err(code) => {
+            // A command that outlasts the wait may still be running; its
+            // intent makes the same command return the same result.
+            let message = if code == "request_timeout" {
+                "The request may still be running; run the same command again to get its result"
+            } else {
+                code.as_str()
+            };
             println!(
                 "{}",
-                serde_json::json!({"ok":false,"error":{"code":code,"message":code}})
+                serde_json::json!({"ok":false,"error":{"code":code,"message":message}})
             );
             Err(code)
         }
@@ -203,6 +225,53 @@ mod tests {
             assert!(line(&["spawn", flag, "value"]).is_err());
         }
     }
+    #[test]
+    fn machine_names_the_device_for_either_mode_and_is_in_every_help() {
+        let spawn = |extra: &[&str]| {
+            let mut args = vec![
+                "spawn", "--name", "worker", "--intent", "one", "--kind", "codex", "--repo",
+                "/fixture", "--branch", "topic",
+            ];
+            args.extend_from_slice(extra);
+            line(&args)
+        };
+        for (extra, parent) in [
+            (&["--machine", "mini"][..], None),
+            (&["--parent", "here", "--machine", "mini"][..], Some("here")),
+        ] {
+            let Delivery::Agents {
+                command:
+                    Command::Spawn {
+                        machine,
+                        parent: named,
+                        ..
+                    },
+            } = spawn(extra).unwrap()
+            else {
+                panic!("spawn")
+            };
+            assert_eq!(machine.as_deref(), Some("mini"));
+            assert_eq!(named.as_deref(), parent);
+        }
+        let Delivery::Agents {
+            command: Command::Spawn { machine, .. },
+        } = spawn(&[]).unwrap()
+        else {
+            panic!("spawn")
+        };
+        assert_eq!(machine, None);
+        assert!(spawn(&["--machine", "mini", "--machine", "studio"]).is_err());
+        assert!(spawn(&["--machine"]).is_err());
+        // The operator learns the flag from `hide --help` and from the spawn
+        // help, which says where its value comes from.
+        assert!(USAGE.contains("[--machine <device id>]"));
+        assert!(
+            SPAWN_HELP.starts_with("hide agent spawn [--parent <here|id>] [--machine <device id>]")
+        );
+        assert!(SPAWN_HELP.contains("`hide workspace info`"));
+        assert!(SPAWN_HELP.contains("`hide agent list`"));
+    }
+
     #[test]
     fn omitted_parent_selects_handoff() {
         let Delivery::Agents {

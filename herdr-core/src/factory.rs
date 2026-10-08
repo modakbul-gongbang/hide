@@ -1520,6 +1520,7 @@ fn start_worker(
         actor,
         crate::coordination::Command::Spawn {
             parent: Some(parent),
+            machine: None,
             name: request.name.clone(),
             intent,
             kind: request.runtime.as_str().into(),
