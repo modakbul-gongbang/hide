@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use hide_agent_hooks::guidance::{GUIDANCE_LINE, GuidanceAgent};
+use hide_agent_hooks::guidance::{GUIDANCE_LINE, GUIDANCE_VERSION, GuidanceAgent};
 use hide_platform::process::OwnedChild;
 
 fn run(home: &Path, runtime: &str, event: &str) -> String {
@@ -16,7 +16,7 @@ fn run_with(home: &Path, runtime: &str, event: &str, extra: &[(&str, &str)]) -> 
     let mut command = Command::new(env!("CARGO_BIN_EXE_hide-agent-hooks"));
     command
         .args(["hook", "--runtime", runtime, "--event", event])
-        .args(["--source", "hide-guidance@1"])
+        .args(["--source", &format!("hide-guidance@{GUIDANCE_VERSION}")])
         .env(hide_platform::host::HOME_VARIABLE, home)
         // No `hide` to ask: the guidance must not need the daemon.
         .env("PATH", home)
@@ -42,14 +42,17 @@ fn run_with(home: &Path, runtime: &str, event: &str, extra: &[(&str, &str)]) -> 
     String::from_utf8(output.stdout).unwrap()
 }
 
+/// Cursor reads the guidance from its session start; Grok's session start is
+/// passive (its hooks guide: the output is recorded, never shown to the
+/// model), so Grok's hook prints nothing there.
 #[test]
-fn every_agent_gets_the_guidance_in_its_own_field_at_session_start() {
+fn cursor_gets_the_guidance_in_its_own_field_and_grok_gets_none() {
     let home = tempfile::tempdir().unwrap();
     for agent in GuidanceAgent::LIVE {
         let stdout = run(home.path(), agent.id(), "SessionStart");
-        assert!(stdout.contains("hide browser help"), "{agent:?}: {stdout}");
         match agent {
             GuidanceAgent::Cursor => {
+                assert!(stdout.contains("hide browser help"), "{stdout}");
                 let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
                 assert!(
                     value["additional_context"]
@@ -58,15 +61,7 @@ fn every_agent_gets_the_guidance_in_its_own_field_at_session_start() {
                         .contains(GUIDANCE_LINE)
                 );
             }
-            _ => {
-                let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-                assert!(
-                    value["hookSpecificOutput"]["additionalContext"]
-                        .as_str()
-                        .unwrap()
-                        .contains(GUIDANCE_LINE)
-                );
-            }
+            _ => assert_eq!(stdout, "", "{agent:?}"),
         }
     }
 }

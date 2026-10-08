@@ -101,16 +101,28 @@ impl ForeignOrigin {
             None
         }
     }
+}
 
-    /// Whether Hide's own hook for that agent speaks in its place, so Claude
-    /// Code's says nothing at all: Cursor has a guidance hook of its own and
-    /// OpenCode Hide's plugin, which would otherwise be counted twice when an
-    /// operator's bridge plugin runs Claude Code's hooks inside OpenCode.
-    /// Grok has none, so Claude Code's hook still counts, reads Memory and
-    /// prints its guidance there.
-    pub fn silences_claude_hook(self) -> bool {
-        matches!(self, Self::Cursor | Self::OpenCode)
-    }
+/// Whether Hide's own hook for the agent running this one speaks in its
+/// place, so Claude Code's hook says nothing at all: Cursor and Grok have
+/// hooks of their own (PRD grok-cursor-hooks D-05), and OpenCode Hide's
+/// plugin, so a count or a refusal from both would happen twice when they run
+/// Claude Code's hooks too (an OpenCode bridge plugin does).
+pub fn silences_claude_hook<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    ["CURSOR_VERSION", "OPENCODE", "OPENCODE_PID"]
+        .iter()
+        .any(|name| variable(name).is_some())
+        || inside_grok(variable)
+}
+
+/// Whether Grok runs this hook. Grok sets `GROK_HOOK_EVENT` only for the
+/// hooks it runs, its own and the Claude Code and Cursor hooks it loads beside
+/// them; `GROK_SESSION_ID` can also reach a program a Grok session started,
+/// such as a Claude Code launched from its shell, whose own hook must still
+/// count, so it does not decide this. (That Claude Code's spawn guard stays
+/// out as in any foreign session, `ForeignOrigin`.)
+pub fn inside_grok<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    variable("GROK_HOOK_EVENT").is_some()
 }
 
 /// Whether Claude Code's hook may take and confirm letters here (D-25). A
@@ -268,13 +280,16 @@ impl AgentRuntime {
         }
     }
 
-    /// The settings-file runtime that speaks `dialect`; OpenCode's dialect is
-    /// spoken by Hide's plugin (`crate::opencode`), which has no settings file.
+    /// The settings-file runtime that speaks `dialect`. OpenCode's dialect is
+    /// spoken by Hide's plugin (`crate::opencode`), and Grok's and Cursor's
+    /// hooks are written by `crate::guidance`; none has a settings file.
     pub const fn from_dialect(dialect: hide_agent_adapter::HookDialect) -> Option<Self> {
         match dialect {
             hide_agent_adapter::HookDialect::ClaudeCode => Some(Self::ClaudeCode),
             hide_agent_adapter::HookDialect::Codex => Some(Self::Codex),
-            hide_agent_adapter::HookDialect::OpenCode => None,
+            hide_agent_adapter::HookDialect::OpenCode
+            | hide_agent_adapter::HookDialect::Grok
+            | hide_agent_adapter::HookDialect::Cursor => None,
         }
     }
 
@@ -482,10 +497,18 @@ mod tests {
     }
 
     #[test]
-    fn cursor_and_opencode_silence_claude_codes_hook_and_every_foreign_session_takes_no_letters() {
-        assert!(ForeignOrigin::Cursor.silences_claude_hook());
-        assert!(ForeignOrigin::OpenCode.silences_claude_hook());
-        assert!(!ForeignOrigin::Grok.silences_claude_hook());
+    fn cursor_grok_and_opencode_silence_claude_codes_hook_and_every_foreign_session_takes_no_letters()
+     {
+        let only = |name: &'static str| move |asked: &str| (asked == name).then_some("1");
+        for name in [
+            "CURSOR_VERSION",
+            "GROK_HOOK_EVENT",
+            "OPENCODE",
+            "OPENCODE_PID",
+        ] {
+            assert!(silences_claude_hook(only(name)), "{name}");
+        }
+        assert!(!silences_claude_hook(only("GROK_SESSION_ID")));
         assert!(takes_letters(|_: &str| None::<&str>));
         for name in ["CURSOR_VERSION", "OPENCODE", "GROK_HOOK_EVENT"] {
             assert!(!takes_letters(|asked: &str| (asked == name).then_some("1")));

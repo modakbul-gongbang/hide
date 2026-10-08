@@ -46,7 +46,7 @@
         "type": { "const": "factory_question_guard" },
         "request_id": { "$ref": "#/$defs/workspaceRequestId" },
         "session": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "runtime": { "enum": ["claude-code", "codex"] }
+        "runtime": { "enum": ["claude-code", "codex", "opencode"] }
       }
     },
     "linksQuery": {

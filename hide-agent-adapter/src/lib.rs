@@ -42,30 +42,54 @@ pub enum TitlePriority {
     GoalOnly,
 }
 
-/// Whose hook speaks for the agent: the settings-file runtimes' six-event
-/// hook, or OpenCode's plugin, which calls the same helper.
+/// The input and output protocol of an agent's own hook: how its payload
+/// names the shell call and session, and how a refusal is written. Claude
+/// Code's and Codex's six-event hook, OpenCode's plugin, which calls the same
+/// helper, and Grok's and Cursor's own hook files.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HookDialect {
     ClaudeCode,
     Codex,
     OpenCode,
+    Grok,
+    Cursor,
 }
 
 impl HookDialect {
-    pub const ALL: [Self; 3] = [Self::ClaudeCode, Self::Codex, Self::OpenCode];
+    pub const ALL: [Self; 5] = [
+        Self::ClaudeCode,
+        Self::Codex,
+        Self::OpenCode,
+        Self::Grok,
+        Self::Cursor,
+    ];
 
     pub const fn adapter(self) -> &'static AgentAdapter {
         match self {
             Self::ClaudeCode => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
+            Self::Grok => AgentId::Grok.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
         }
     }
 }
 
+/// Hide's own hook file for an agent of the basic tier
+/// (`hide_agent_hooks::guidance`): the events that agent documents, under
+/// one marker, beside every other tool's hooks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuidanceDialect {
     Cursor,
+    Grok,
+}
+
+impl GuidanceDialect {
+    /// Whether the file's session-start entry adds Hide's guidance to the
+    /// agent's context. Grok discards what a session-start hook prints.
+    pub const fn prints_guidance(self) -> bool {
+        matches!(self, Self::Cursor)
+    }
 }
 
 /// A plugin file Hide owns in the agent's own plugin folder.
@@ -465,7 +489,11 @@ impl AgentAdapter {
     pub const fn supports(&self, feature: Feature) -> bool {
         match feature {
             Feature::Skill | Feature::HerdrIntegration => true,
-            Feature::Guidance => !matches!(self.hook, HookInstall::None),
+            Feature::Guidance => match self.hook {
+                HookInstall::Runtime(_) | HookInstall::Plugin(_) => true,
+                HookInstall::Guidance(dialect) => dialect.prints_guidance(),
+                HookInstall::None => false,
+            },
             Feature::Letters => self.prompt_hook.is_some(),
             Feature::Bell => self.bell,
             Feature::Memory => self.memory.is_some(),

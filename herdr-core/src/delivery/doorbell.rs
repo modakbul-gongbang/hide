@@ -714,6 +714,8 @@ mod tests {
 
     /// A recipient pane at rest on a Herdr whose `agent.get` answer carries
     /// the readiness flags the test sets, with one letter pending for it.
+    /// The delivery store runs without its own doorbell, so the passes a test
+    /// drives at its chosen times are the only ones (issues 809, 814, 831).
     struct Bell {
         runtime: Arc<Mutex<Runtime>>,
         client: Client,
@@ -753,12 +755,21 @@ mod tests {
                 });
             let recipient =
                 recipient_at_rest(&mut runtime.lock().unwrap(), "recipient-native", &herdr);
-            let (worker, client) = crate::delivery::worker::Worker::spawn(
+            let (worker, client) = crate::delivery::worker::Worker::store(
                 Arc::downgrade(&runtime),
                 crate::handle::ChangeNotifier::noop(),
                 path,
             )
             .unwrap();
+            // A timed producer, the doorbell's own loop above all, would
+            // pass on the real clock beside the test's passes and add a
+            // question or a bell whenever a test outlives its cadence
+            // (issues 798, 802, 809, 814, 831).
+            assert_eq!(
+                worker.producers(),
+                0,
+                "a second doorbell would race the test's passes"
+            );
             let sent = client
                 .submit(
                     Effect::Command {
