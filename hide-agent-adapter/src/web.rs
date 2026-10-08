@@ -12,6 +12,10 @@ pub struct WebAdapter {
     pub logo_id: &'static str,
     pub can_start: bool,
     pub can_resume: bool,
+    /// Reasoning efforts the start command takes; empty means the CLI default only.
+    pub efforts: &'static [&'static str],
+    /// Whether the start command takes a model.
+    pub can_pick_model: bool,
     pub sidebar_mark: Option<super::SidebarMark>,
     /// What Settings calls the agent's hook piece: a hook entry or a plugin
     /// file; absent for an agent Hide writes no hook for.
@@ -37,6 +41,10 @@ pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
         logo_id: row.logo_id,
         can_start: row.start.is_some(),
         can_resume: row.resume.is_some(),
+        efforts: row.start.map_or(&[], |start| start.options().efforts),
+        can_pick_model: row
+            .start
+            .is_some_and(|start| !start.options().model.is_empty()),
         sidebar_mark: row.sidebar_mark,
         hook_kind: match row.hook {
             super::HookInstall::Runtime(_) | super::HookInstall::Guidance(_) => {

@@ -13,6 +13,7 @@ import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
 import { noteOperatorPointer, observeInputRequests } from "./keyTarget";
 import { OverviewModal, OverviewPage } from "./Overview";
 import { FactoryScreen } from "./factory/FactoryScreen";
+import { useFactoryNotifications } from "./factory/notify";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
@@ -43,6 +44,7 @@ export function App() {
   const dispatchRef = useRef<DispatchFn>(noop);
   const actions: Actions = useMemo(() => createActions((event) => dispatchRef.current(event)), []);
   useUsageWindowHint(actions);
+  useFactoryNotifications(actions);
 
   useEffect(() => {
     const session = connectShell({

@@ -27,7 +27,7 @@ let replayAttachments = false;
 let lastNativeEpoch: string | undefined;
 const bridge: HostBridge = {
   kind: "electron", platform: "darwin", onCommand: () => () => {}, reportBindings() {}, reportLanguage() {},
-  revealPath() {}, pickFolder: async () => null, probePaths: async () => [], openPath() {},
+  revealPath() {}, pickFolder: async () => null, probePaths: async () => [], openPath() {}, notify() {}, onNotificationOpen: () => () => {},
   browser: {
     sync: (state: BrowserSync) => {
       sent.push(state);

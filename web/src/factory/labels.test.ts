@@ -3,8 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { english } from "../i18n/catalogs";
 import { factoryCatalogs } from "../i18n/resources/factory";
-import { COLUMN_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, GATE_LABEL, KIND_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, RESULT_LABEL, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, itemWhy, refusalText, resultText, waitingText } from "./labels";
-import { type CardView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMNS, DISCOVERY_CLASSES, ENV_HOLDS, GATES, QUESTION_KINDS, QUESTION_ORIGINS, RESULT_CODES, STOP_REASONS, TASK_STATES, WAITING_FOR } from "./model";
+import { COLUMN_LABEL, DECISION_KIND_LABEL, DIAGNOSIS_SOURCE_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, GATE_LABEL, KIND_LABEL, MODE_LABEL, NOTICE_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, RESULT_LABEL, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, itemWhy, refusalText, resultText, waitingText } from "./labels";
+import { type CardView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMNS, DECISION_KINDS, DIAGNOSIS_SOURCES, DISCOVERY_CLASSES, ENV_HOLDS, GATES, NOTICES, OBSERVER_MODES, PAUSE_REASONS, QUESTION_KINDS, QUESTION_ORIGINS, RESULT_CODES, STOP_REASONS, TASK_STATES, WAITING_FOR } from "./model";
 
 // The reading side of contracts/snapshot-wire-enums.json for the Factory
 // sections: every value the core writes has a type member here and a label
@@ -26,6 +26,11 @@ const READERS: Record<string, { values: readonly string[]; labels: Record<string
   factory_stop_reason: { values: STOP_REASONS, labels: STOP_LABEL },
   factory_gate: { values: GATES, labels: GATE_LABEL },
   factory_result_code: { values: RESULT_CODES, labels: RESULT_LABEL },
+  factory_notice: { values: NOTICES, labels: NOTICE_LABEL },
+  factory_decision_kind: { values: DECISION_KINDS, labels: DECISION_KIND_LABEL },
+  factory_pause_reason: { values: PAUSE_REASONS, labels: PAUSE_REASON_LABEL },
+  factory_observer_mode: { values: OBSERVER_MODES, labels: MODE_LABEL },
+  factory_diagnosis_source: { values: DIAGNOSIS_SOURCES, labels: DIAGNOSIS_SOURCE_LABEL },
 };
 
 describe("the Factory wire enums", () => {

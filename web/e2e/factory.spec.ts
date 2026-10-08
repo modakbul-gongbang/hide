@@ -228,6 +228,10 @@ test("settings show the engine's values, a change reaches the engine, and Close 
     await seedDag(stack);
     await openFactory(page);
     await page.locator('[data-factory-tab="settings"]').click();
+    // With every project shown the tab lists the Factories; a row opens its settings, and the
+    // engine values beyond the four groups sit under 고급 설정 (B36).
+    await page.locator("[data-factory-list-open]").first().click();
+    await page.locator('[data-factory-settings-group="advanced"] > summary').click();
     const deadline = page.locator('[data-factory-setting="question_deadline_hours"]');
     await expect(deadline).toHaveValue("24", { timeout: 20_000 });
     await deadline.fill("12");
@@ -235,7 +239,7 @@ test("settings show the engine's values, a change reaches the engine, and Close 
     await expect(page.locator("[data-factory-settings-write]")).toHaveAttribute("data-factory-settings-write", "taken", { timeout: 20_000 });
     const config = (await stack.cli("config", "--project", stack.project)).config as { question_deadline_ms: number };
     expect(config.question_deadline_ms).toBe(12 * 3_600_000);
-    for (const group of ["run", "verification", "merge", "thresholds", "checks", "keep", "autonomy", "advanced"]) {
+    for (const group of ["observer", "workers", "merge", "other", "advanced"]) {
       await expect(page.locator(`[data-factory-settings-group="${group}"]`)).toBeVisible();
     }
     // No Task runs, so the Factory can be closed; the screen then offers only Create (B1).

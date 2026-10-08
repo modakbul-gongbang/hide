@@ -73,6 +73,11 @@ impl ProviderId {
     pub fn default_model(self) -> &'static str {
         self.descriptor().default_model
     }
+
+    /// The reasoning efforts a request may pick for this agent.
+    pub fn efforts(self) -> &'static [&'static str] {
+        self.descriptor().efforts
+    }
 }
 
 impl fmt::Display for ProviderId {
@@ -129,6 +134,9 @@ pub struct ProviderDescriptor {
     /// request is remembered for the cooldown, not re-tried on every probe.
     pub login_probe: bool,
     pub default_model: &'static str,
+    /// The reasoning efforts a request may pick for this agent; empty means
+    /// the agent takes none and only its CLI default runs.
+    pub efforts: &'static [&'static str],
 }
 
 const DESCRIPTORS: &[ProviderDescriptor] = &[
@@ -138,6 +146,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "claude-code",
         login_probe: true,
         default_model: crate::claude::DEFAULT_MODEL,
+        efforts: crate::claude::EFFORTS,
     },
     ProviderDescriptor {
         id: ProviderId::CODEX,
@@ -145,6 +154,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "codex",
         login_probe: true,
         default_model: crate::codex::DEFAULT_MODEL,
+        efforts: crate::codex::EFFORTS,
     },
     ProviderDescriptor {
         id: ProviderId::GEMINI,
@@ -152,6 +162,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "gemini-cli",
         login_probe: false,
         default_model: CLI_DEFAULT_MODEL,
+        efforts: &[],
     },
     ProviderDescriptor {
         id: ProviderId::GROK,
@@ -159,6 +170,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "grok",
         login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
+        efforts: &[],
     },
     ProviderDescriptor {
         id: ProviderId::OPENCODE,
@@ -166,6 +178,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "opencode",
         login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
+        efforts: &[],
     },
     ProviderDescriptor {
         id: ProviderId::PI,
@@ -173,6 +186,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "pi",
         login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
+        efforts: &[],
     },
     ProviderDescriptor {
         id: ProviderId::CURSOR,
@@ -180,6 +194,7 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         agent: "cursor",
         login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
+        efforts: &[],
     },
 ];
 

@@ -1139,7 +1139,7 @@ A Home agent reads and edits the projects through their links, the change shows 
 
 ## Factory
 
-Core owner: `herdr-core/src/factory/screen.rs`, `herdr-core/src/runtime/factory.rs` (see ARCHITECTURE.md, The Factory host). Web owner: `web/src/factory/`, the Factory and secretary rows in `web/src/components/sidebar-header.tsx` and `web/src/sidebar.tsx`.
+Core owner: `herdr-core/src/factory/screen.rs`, `herdr-core/src/runtime/factory.rs` (see ARCHITECTURE.md, The Factory host). Web owner: `web/src/factory/`, the Factory, project and secretary rows in `web/src/components/sidebar-header.tsx` and `web/src/sidebar.tsx`. Desktop owner of the macOS notifications: `desktop/src/main/notify.ts`.
 
 The Factory screens draw the Software Factory engine ([factory.md](factory.md)) and change nothing it decides.
 Every count, name, state, order and reason on them is a field of the engine's `FactorySummary` or `TaskDetail`, and every action they offer is one stage-1 command the engine may refuse.
@@ -1149,6 +1149,7 @@ An action the engine has not answered within 20 seconds reads as unanswered, say
 ### The Factory place
 
 The sidebar has a Factory row of its own beside Home, and its badge is the number of items in 내 차례, with no badge at zero.
+Under it, once a Factory is open, each open Factory has a row with its project name, a pause mark while it is paused, and its own 내 차례 number in the warning colour when above zero; the row opens the Factory screen filtered to that Factory, and the Factory row opens it for every Factory.
 The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen, except behind a dialog or another overlay (Settings, the find bar, a confirmation), where the Overview waits too; the screen is kept out of Recent Panels.
 With no open Factory the screen offers only '+ Factory 만들기'.
 Under the Factory row, once a Factory exists, is the secretary row: an ordinary agent tab in the core device's Home with the Factory's guide in its first prompt, which reads the board with `hide factory status` each time it answers, so closing the tab loses nothing.
@@ -1159,15 +1160,17 @@ A start whose default-runtime read is refused, or that gets no answer within 20 
 ### The screen
 
 The header holds the Factory name, the project filter, the flow bar and '비서에게 묻기'.
+With one Factory filtered the header also holds its pause: '일시정지' pauses the whole Factory (`pause --factory`), and a paused Factory shows the chip '일시정지됨' beside the filter and '다시 시작' in place of the button.
+While every shown Factory is paused, the flow bar's 진행 중 cell reads 재움, because its workers are asleep; a worker whose agent declares no sleep keeps its turn, though nothing it is sent reaches it before the resume.
 The flow bar shows 시작 전 · 진행 중 · 멈춤 · 완료 오늘 (today in the machine's time zone) and never a person's-turn cell; a cell opens the board filtered to that column.
 The flow bar ends with the time of the last GitHub read, which turns the warning colour after three failed reads in a row and back when a read succeeds; there is no banner.
 The tabs are 내 차례 · 보드 · 그래프 · 설정, and the screen opens on 내 차례; the project filter applies to every tab.
-The 내 차례 tab's count and the sidebar badge are the engine's `my_turn` and are always the same number.
+The 내 차례 tab's count and the sidebar badge are the engine's `my_turn`, of every Factory or of the one filtered, and are always the same number; notices are never counted in it.
 Before the core's first summary arrives the screen draws its frame and no empty state.
 
 ### 내 차례
 
-내 차례 is one column of every Factory's person-facing items in the engine's order and under its groups: 답할 것, 머지 대기, 멈춤, 알림.
+내 차례 is one column of every Factory's person-facing items in the engine's order and under its groups: 답할 것, 머지 대기, 멈춤, and, below a rule, 알림.
 The top item opens expanded with the engine's suggestion chosen and the send button focused, so ⏎ once answers.
 The send button names the answer, the line beside it the result the engine gave for its own pick (the suggestion, or a notice's first choice), the line under it the default action, the time cue at the item's right as on every item, and '자세히 →' opens the Task page.
 The other items are one line each: the id (the Task id before Ready, the issue number after), the title, the project and a time cue, with a question that blocks progress reading 'N일째 기다림' at the top.
@@ -1177,6 +1180,15 @@ An empty 내 차례 shows one line that nothing is waiting, and a Factory with n
 There is no button that adds a Task.
 Under the list, only while agents outside the Factory have requests, one line 'Factory 밖 에이전트 요청 N → 요청' opens the Overview 요청 view, and that view has one line back to the Factory while 내 차례 has items.
 Factory workers are left out of the 요청 view and the Overview's yellow count.
+
+A request Factory AI sorted and handed to the person names, under its question, the kind Factory AI gave it and why the person decides it ('기술 선택 · 직접에서는 내가 정합니다.', '권한은 어느 칸에서도 내가 정합니다.') with Factory AI's reason; where the Factory's mode attached Factory AI's fix to a wrong card, 'AI 제안 적용' is one of the choices.
+A worker whose pane the operator closed in Hide is an item in 멈춤 with '다시 시작' and cancel, and a stop the Observer diagnosed carries its reading.
+In a paused Factory an answer's result line reads '다시 시작하면 작업자에게 전합니다', because the worker gets it when the Factory resumes.
+
+알림 is headed by its count, the line '확인만 하면 되는 것 · 내 차례 숫자에 세지 않음' and '모두 확인', which clears every shown notice at once in one request: the filtered Factory's, or every Factory's, a closed one's included.
+A notice row has a sparkle for something Factory AI did (answered, fixed a card, made a Task, approved a risk-path merge) and a bell for the daily limit, its line, the decision's kind or the mode that let Factory AI act, and '다른 답' while that decision can still be changed, else '보기'.
+An open notice sends '확인' on ⏎, which marks it read; '다른 답' opens a field whose '이 답으로 바꾸기' replaces Factory AI's answer (`answer --change`) and tells the worker, and '보기' opens the Task.
+The daily-limit notice reads '오늘 AI 판단 n/n번' with '남은 결정은 내가 정합니다'.
 
 ### Board and graph
 
@@ -1211,6 +1223,11 @@ The Task page is full width: the chain (its predecessors → this Task → the T
 Verification n/3 counts the worker's resubmissions and reads '검증 실패 n/3'; a Factory without verification shows '검증 없음'.
 A done Task's completion criteria read as met, and a muted '… (줄임)' stands where the engine shortened a text, at its end or mid-sentence, instead of the store's cut mark.
 The page offers only the actions the engine allows in the Task's state: 정리 중 edit (which opens the secretary) and cancel, 대기 priority, removing a dependency and cancel, 실행 중 pause and cancel, 멈춤 retry and cancel, 머지 대기 merge, request changes and cancel, a blocked Task nothing but its answer, and a cancelled Task 되살리기 while it lasts.
+The worker line names the worker that started as agent · model · effort, or 'CLI 기본값' for a candidate without them, with 'Factory AI가 고른 후보: <설명> · <이유>' when the review picked it.
+Before a worker starts, a Factory with more than one candidate shows a worker select with Factory AI's pick marked 'Factory AI가 고름' in the menu; choosing another pins it (`hide factory worker`) and choosing Factory AI's pick again returns the choice to it.
+A stopped Task names its stop in red ('보고 없이 멈춤 · 깨웠지만 답 없음', or '작업자 사라짐 · 한 번 다시 띄웠지만 또 사라졌습니다') and the Observer's diagnosis under it with the text it read ('마지막 화면 글을 읽음'); a Task paused by a closed pane says 'Hide에서 작업자 창을 닫음'.
+A rest line records how the engine treated a quiet worker: '쉼' with how long, '깨움 1번 · 편지', '답 없음', '진단 1번' and '자동으로 다시 띄움 n번', each only when it happened.
+The decision record lists who decided (Observer, worker, Factory or 나), what, the kind and reason for Factory AI's decisions, and when, newest first; a decision Factory AI made has '다른 답' while the Task is not finished, which records the change as its own decision.
 An open question is answered only in 내 차례: '내 차례에서 답하기 →' opens that item there.
 'worker 보기' opens the worker's pane in its Workspace.
 A Task whose Factory has left the summary reads as gone rather than loading.
@@ -1223,7 +1240,17 @@ The sheet first picks what the engine lists first, the required checks before th
 The merge mode starts on auto; with no verification auto cannot be picked and says why in its place, and the Factory is made manual.
 A project with a GitHub remote shows, above the create button, the account, the repository and every GitHub read and write the engine will make; a project without one has no GitHub step.
 Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed project check shows the step that failed and the engine's next action as the engine wrote it (`gh auth login` for a logged-out `gh`), and a project that already has a Factory opens it.
-The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision, and a value the engine refuses, an emptied number or one the field cannot take goes back to the saved one.
+The settings tab for all Factories lists each open Factory on one line (its project, 돌고 있음 or 일시정지, the mode, the worker candidate count and its 내 차례 number) with a pause or resume button and a button that opens that Factory's settings, and below them 이 Mac 전체 with the worker limit every Factory shares.
+A filtered Factory's settings tab has the groups AI에게 맡기기, 작업자, 머지 and 그 밖; a changed value applies from the engine's next decision, and a value the engine refuses, an emptied number or one the field cannot take goes back to the saved one.
+AI에게 맡기기 picks who answers from three choices, 직접 (모든 결정을 내가), 함께 (기술은 AI, 제품은 내가) and 맡김 (권한만 내가), with what each hands to Factory AI and what comes to the person beneath; then the agent Factory AI runs on, 'Hide AI 설정 따름' or an agent with its model and effort; then '오늘 AI 판단' against the daily limit, whose number turns the warning colour at the limit with a note that the rest of the day comes to the person.
+With Hide AI off the three choices dim, the agent reads '없음', today's count is hidden, and one note says every decision comes to the person until Hide AI is turned on.
+작업자 lists the one to five worker candidates, each an agent, model, effort and a line saying when to use it, the first marked 기본, with '후보 추가' up to five and '후보 빼기'; its caption says Factory AI picks one per Task, or with Hide AI off that the default starts, and that a candidate whose usage is used up hands over to the next.
+머지 holds the auto-merge switch, the verification as read-only text, and the risk paths, whose note says Factory AI approves a risk-path merge only in 맡김 with Hide AI on, and that the person merges it otherwise.
+그 밖 holds the macOS notifications (off by default), 고급 설정 and 'Factory 닫기'.
+고급 설정 is folded under a summary of its seven rows: 질문 기한, 멈춤 판단 시간 (stall and no-report minutes), AI 판단 상한, 점검 (interval and daily limit), 보관 기간 (cancel keep, done fold and list days), 복구 범위 as checkboxes, and 작업자 인자 for each agent Factory can start.
+Below them every other value keeps the control it had, under the subheads 검증 (the required checks or the verify commands, the failure limit and the time limit), 머지 (the merge method and the quick check), 실행 (the harness preset, the new-Task limit, the disk floor and the PRD in the issue), 점검 (the GitHub read interval, the natural-language checks and a form that adds one, whose text stays until the engine takes it) and 자율 처리 (each autonomy scope and the autonomous diff limit); the section ends saying every value can also be set with `hide factory config`.
+With the macOS notifications on and the desktop app running, an item that newly enters 내 차례 (답할 것, 머지 대기 or 멈춤) or a main that newly broke becomes one macOS notification titled with the project and the group, in the interface language; a notice never does, and the app's first summary is the baseline, so opening the app announces nothing already waiting.
+Clicking a notification brings the window forward and opens its item in 내 차례, or its Task when the item was answered meanwhile, or the Factory whose main broke.
 'Factory 닫기' can be pressed only while the 실행 중 column is empty, a paused, verifying or merge-waiting Task included, because the engine refuses to close the Factory until then.
 
 ## Recent navigation

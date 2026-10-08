@@ -398,5 +398,222 @@
       "Does the hatched current cell read as stopped at that stage without a word, in Light and Dark?",
       "Long Korean titles and long English identifiers: does each size cut them at its line count without overlap, breaking Korean between words rather than inside one?"
     ]
+  },
+  "factory-observer": {
+    "description": "The Factory with Factory AI as Observer (PRD factory-observer): 내 차례 with notices, the settings in each mode, all projects, a paused Factory, the quiet Task page, picking the worker, and the cards the Observer changes.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-factory",
+    "scene": "factory",
+    "selector": "[data-gallery-scene=\"factory\"]",
+    "measurement": "web/e2e/factory-geometry.mjs",
+    "frames": [
+      {
+        "node": "fx-obs-turn-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-turn"
+      },
+      {
+        "node": "fx-obs-turn-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-turn"
+      },
+      {
+        "node": "fx-obs-set-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-set"
+      },
+      {
+        "node": "fx-obs-set-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-set"
+      },
+      {
+        "node": "fx-obs-direct-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-direct"
+      },
+      {
+        "node": "fx-obs-direct-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-direct"
+      },
+      {
+        "node": "fx-obs-auto-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-auto"
+      },
+      {
+        "node": "fx-obs-auto-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-auto"
+      },
+      {
+        "node": "fx-obs-off-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-off"
+      },
+      {
+        "node": "fx-obs-off-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-off"
+      },
+      {
+        "node": "fx-obs-all-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-all"
+      },
+      {
+        "node": "fx-obs-all-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-all"
+      },
+      {
+        "node": "fx-obs-paused-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-paused"
+      },
+      {
+        "node": "fx-obs-paused-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-paused"
+      },
+      {
+        "node": "fx-obs-task-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-task"
+      },
+      {
+        "node": "fx-obs-task-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-task"
+      },
+      {
+        "node": "fx-obs-pick-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-pick"
+      },
+      {
+        "node": "fx-obs-pick-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-pick"
+      },
+      {
+        "node": "fx-obs-cards-l",
+        "theme": "light",
+        "width": 1232,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-cards"
+      },
+      {
+        "node": "fx-obs-cards-d",
+        "theme": "dark",
+        "width": 1232,
+        "scale": 1,
+        "content": "reference",
+        "state": "obs-cards"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1440
+      ],
+      "contents": [
+        "reference"
+      ]
+    },
+    "urlStates": [
+      "obs-turn",
+      "obs-set",
+      "obs-direct",
+      "obs-auto",
+      "obs-off",
+      "obs-all",
+      "obs-paused",
+      "obs-task",
+      "obs-pick",
+      "obs-cards"
+    ],
+    "states": {
+      "obs-turn": "내 차례 with Factory AI: the count holds answers, merges and stops only; what Factory AI handled sits below the line as notices with 다른 답.",
+      "obs-set": "설정 · herdr-ide with 함께: the three mode cards, the table of who answers, Factory AI's agent and today's use, three worker candidates.",
+      "obs-direct": "설정 · 직접 with one candidate and 고급 설정 open.",
+      "obs-auto": "설정 · 맡김 with five candidates, today's AI use at 100/100.",
+      "obs-off": "설정 with Hide AI off: the modes dimmed with the note that every decision comes to the person.",
+      "obs-all": "설정 · 모든 프로젝트: one row per Factory with state, mode and worker, and the machine's worker total.",
+      "obs-paused": "내 차례 · sasu paused: the paused chip and 다시 시작 in the header, 잠듦 in the flow bar.",
+      "obs-task": "The Task page of a worker that went quiet: the stop line, Factory AI's diagnosis, and its decisions with 다른 답.",
+      "obs-pick": "The Task page before it starts, with the worker menu open and Factory AI's pick marked.",
+      "obs-cards": "The five cards the Observer changes (answer, wrong card, no report, worker gone, paused) at 210, 300 and 470 px."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Does 내 차례's count leave out what Factory AI already handled, with those notices quiet below the line and 다른 답 one click away?",
+      "Do the three mode cards and the table say who answers each kind of decision without reading a paragraph?",
+      "With Hide AI off or the day's use full, is it plain that every decision comes to the person?",
+      "Does a paused Factory read as asleep in the header, the flow bar and its cards, while its questions still wait?",
+      "On the Task page, is Factory AI's diagnosis and pick one quiet line under what it explains?"
+    ]
   }
 }

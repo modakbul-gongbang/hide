@@ -136,6 +136,168 @@ Run it only in an agreed foreground QA slot, using `pnpm --dir desktop exec play
 Record the candidate PID/window, private daemon/server/profile and build head beside the captures.
 Compare any temporary weak-blur proposal against the readable treatment in the actual terminal, document and native page, with idle and driven measurements, before choosing it.
 
+## Local agent bell measurement
+
+Run `python3 scripts/agent-live-check.py --agents codex --model codex=gpt-6-luna` before proposing a new bell target, after changing the pinned Herdr, and after a substantial agent CLI update.
+Omitting `--agents` selects every adapter declared by the current source.
+Confirm the cheapest suitable model for the logged-in account and pass `--model ID=MODEL`; recipe defaults can become unavailable.
+Fetch the pinned binary with `scripts/fetch-herdr-runtime.sh` first, and build this worktree's `hided` and `hide` with `bash scripts/verify-cargo.sh build -p hided`.
+The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
+An unclassified startup menu remains measurable when the pinned CLI's readiness wait expires: its pane, workspace, cwd, agent kind and actual menu must match the owned launch before observation continues.
+Registration may still be absent after that timeout; if an agent name is present, it must match the requested name.
+Other startup refusals retain their screen and agent evidence without being counted as arrival.
+The startup scene never auto-selects trust, and a blocked startup receives no bell input.
+For other scenes, an observed recipe may prepare the owned folder by selecting its explicit trust option with Down and Enter before the scene baseline.
+Each key requires fresh matching pane, workspace, cwd, agent kind and selection evidence; an unknown option, changed identity, login prompt or missing ready composer prevents the scene from proceeding.
+Preparation has one scene deadline, two key attempts at most and at most four retained frames, saved separately from bell observations.
+The deadline starts before its first screen read; every screen query, identity query and key command receives only the remaining time, and late responses cannot authorize another key or readiness.
+Each command retains the 15-second cap and the same absolute launch deadline through receipt checks, registry setup and the guardian's child admission.
+Required teardown may finish after that deadline, but never renews permission to start another command.
+An actual received screen is retained immediately, even when its following deadline or identity check fails; unavailable identity remains null and never authorizes input.
+Scene arrival and post-bell observations likewise retain their latest received frame before authentication or identity checks, within the existing two-frame bound.
+The controller never writes shared operator trust files; any native-agent private probe key follows the shared-file observer and leftover policy below.
+
+The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
+It never opens a renderer or controls the installed app.
+Native agents keep the operator HOME for existing login.
+Supported per-command config roots use bounded private copies of existing authentication, with source/version provenance in each provider row.
+Private copies have mode 0600, never update the account's login, and are removed on controlled exit even if another teardown step fails.
+An uncatchable controller kill can retain private copies in the ignored run directory; remove a stale run only after confirming its owned processes have ended.
+Authenticated probing currently requires macOS `sandbox-exec`; a real declared-file write denial, permitted native-state write and socket denial self-test must pass before a provider starts.
+Unsupported hosts fail closed.
+The process guardian supports macOS and the trusted Linux fixture lane; Linux authenticated probing remains unsupported.
+Every direct child starts in its own session and process group.
+The successful `start_new_session` spawn establishes its reserved group; the guardian confirms membership through its complete group snapshot.
+It does not use `getpgid` as a liveness check, because Darwin returns ESRCH for an unreaped zombie that remains visible in that snapshot.
+An EOF guardian sends CONT and TERM to that group, allows a bounded grace period, then sends KILL and requires the kernel to report the group absent.
+It retains the direct child's unreaped identity until the last group signal, so its group ID cannot be reused during signalling.
+No group signal is sent after that child is reaped.
+If a group signal is denied with EPERM, a fresh complete group snapshot may confirm that only zombies or no members remain; this ends that signal obligation, while reaping and final absence checks remain required.
+A live member or unavailable group metadata retains the signal failure, and bounded diagnostics record the original errno and refresh result.
+Process queries classify the expected birth as live, vanished (ESRCH or a replacement birth), or zombie; denied identity and same-birth UID inconsistency remain failures.
+Group enrollment takes membership and birth from the same kernel record, so a PID reused outside the reserved group cannot inherit its ownership.
+Individual signals recheck the proven birth and UID, and refresh once after permission refusal; only a positively terminal identity ends that signal obligation.
+A changed argument pointer width makes a stale token read unknown without ending established birth ownership.
+A zombie prior guardian has ended supervision; an unavailable prior guardian grants no authority to adopt its marked helper.
+A final group probe denied for a zombie-only group continues bounded absence polling, because zombies remain present until reaped.
+Guardian and cleanup failures end the measurement as failures rather than being reported as scene timeouts.
+Per-scene integration observation and workspace close are attempted independently; their failures are reported beside any original scene failure without replacing it.
+Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
+If Darwin's RSS read fails, one fresh BSD identity read distinguishes a vanished or replaced subject, a zombie and a still-live unreadable process.
+An observed replacement in the owned group retains unknown RSS; a host-wide replacement requires its own ownership proof, and a replacement outside the sampled group never inherits the old identity's ownership.
+RSS measures resource use independently of ownership; a missing sample never removes a live identity from process counts, signalling or cleanup.
+Vanished subjects and zombies need no RSS sample.
+A still-live unreadable PID and birth counts as a missed sample and is measured again on the existing next polling cycle.
+Three consecutive missed samples of that same live identity fail; a successful read, disappearance, zombie or replacement birth resets its streak.
+Available samples still enforce the unchanged RSS cap immediately, and an incomplete sum is explicitly marked as such in the resource summary.
+Guardian receipts and the final report record total missed samples, the largest consecutive streak and its fixed limit of three.
+The final report separates controller and guardian observations and also totals them, including the last failed observation when resource sampling raises.
+If receipt validation fails, cleanup still fails and the resource report retains known controller counters while marking guardian and combined totals unavailable.
+A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
+A different live guardian's marker belongs to concurrent work and is excluded.
+Private issued marker families are retained under `agents/runs/process-owner-families/` so a fabricated scope prefix cannot claim a previous run.
+The registry has a locked 4096-family cap; exhausting it is a reported failure rather than an unbounded directory.
+The private Herdr server and hided also receive their protocol close before process teardown.
+Unrelated orphans whose environment is empty or unreadable are neither signalled nor treated as cleanup failures.
+The report lists these as "출처 확인 못 함" with only PID, birth and executable name, within a declared record cap.
+A known owned identity that becomes uninspectable still makes cleanup unconfirmed.
+Every launched guardian must produce a confirmed cleanup receipt; a missing receipt, an unconfirmed receipt or a diagnostic write failure fails cleanup.
+Once every owned process and guardian is positively confirmed ended, the probe and short socket directories are removed independently even if a protocol close or log write failed.
+Those errors remain failures with exit 2; missing process confirmation retains the directories.
+An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution; record this limitation in the PR's Review section.
+This ownership boundary follows the explicitly recorded B8/D-09 scope decision; it does not claim complete workstation process attribution.
+Linux fixture supervision uses a child subreaper and validates its procfs namespace and visibility before using process identities.
+Darwin group enumeration uses Apple's [process-group API](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c).
+Token lookup preserves the existing target-width alignment and birth checks and records no argument, environment or marker contents.
+Each Darwin token scan reuses one buffer of at most 1 MiB, supplies its full capacity for every query and interprets only that query's returned prefix.
+Bytes retained from a previous PID never establish another process's ownership.
+`--socket` and `--state-dir` cannot select operator routing, existing sockets, or state outside the new run.
+
+Every recipe retains rest, working, shell approval, file approval, question, plan approval, model picker, resume picker, MCP approval and startup rows.
+MCP registration uses each CLI's documented project file or per-command override only for its MCP scene; recipe data records that source.
+Rest and resume share a disposable checkout and private session catalog.
+Supported native readers first observe a real previous user/assistant turn.
+Other providers seed a real prompt and require a positive native identity and a working-to-ready transition; that weaker history evidence cannot verify assistant text or mail.
+Resume arrival additionally requires that owned session's label, filename or identity on the picker screen.
+Missing history, an empty picker or an unobserved native transition remains unknown.
+The tool checks scene arrival independently of Herdr status, types the exact current bell and Enter only when the observed status is not `blocked`, then observes the effect.
+Approval work stays within `probe-N.txt` in the disposable checkout.
+A confirmed selection, approval, session replacement, settings write or unsubmitted draft is unsafe, even when other scenes remain unknown.
+An unrecognized, inaccessible or timed-out scene never counts as safe.
+These direct input experiments measure the CLI and Herdr detection boundary; they do not replace the core's draft, session, identity or plan-approval guards.
+
+Each new private `agents/runs/live-check-<timestamp>-<id>/` contains `report.md`, `report.json`, screen reads and private configuration backups.
+Reports record the actual binary digests, Herdr version, active server manifest versions and sources, CLI versions, selected models and positively observed native integration provenance.
+The verified pinned binary generates its own integration assets in a disposable HOME, then the tool routes them through documented provider settings while preserving the authenticated provider's operator HOME.
+The loaded-version claim requires an isolated configuration route, unchanged prepared artifact hashes, one common version across its possible native emitters and a native session report, sampled again after the first turn.
+Prepared files are inventoried separately; the claim does not say every prepared frontend asset loaded.
+A stable change to an ordinary bounded private integration artifact invalidates loaded-version provenance for the rest of that provider run, including after the original bytes return or native session visibility disappears.
+The report retains the relative artifact name and changed stamp fields, without changed contents or their hashes, and refuses a positive safety aggregate while preserving any confirmed unsafe scene.
+Known integrity loss is published even if a later artifact refusal or native query stops that observation; the original fatal error and cleanup failure ordering remain intact.
+Artifact reads open ancestor directories without following links; path, alias, file type, owner, link count, size, missing-artifact and unstable-read failures still stop the run.
+Each integration observation reserves its remaining read budget before opening content: generated originals and routed copies each retain their own 16 MiB aggregate cap, including raced growth.
+A prepared file alone never proves load; Cursor's project hooks and copied OpenCode configuration cannot exclude external-hook or plugin ambiguity, so their loaded versions remain unproven.
+Only adapter-listed configuration/trust files are read and backed up with private permissions, with a 16 MiB per-file and 256 MiB total backup limit.
+Nonshared declared files retain exact byte guards.
+The declared shared Claude JSON and Codex TOML files are compared read-only and are never restored or rewritten, preserving other live sessions' updates.
+Shared-file changes are reported as other-session changes without failure, and entries in their `projects` tables keyed by this run or its probe descendants are reported by file and key as B6 leftovers without failure.
+Shared parsing uses Python 3.11 or later's standard TOML reader, rejects unreadable tables and caps each project table at 50,000 entries.
+Shared-file version races receive at most three immediate read attempts; persistent races report an unavailable comparison without failure or a claim of absence.
+Unavailable initial observations mark final observed private keys as not compared, while unavailable final observations cannot establish which keys remain.
+File type, ownership, link-count and size refusals remain errors, as do stable unreadable project tables.
+The remaining configuration trees use path, kind, size and mtime metadata only; file contents and link targets are never read or hashed.
+Installation subtrees named `node_modules`, `extensions`, `marketplace`, `marketplaces`, `bundled`, names containing `cache`, and code directories directly beneath `plugins` are excluded; plugin registry files remain observable.
+The inventory stops at 50,000 scanned entries and reports partial coverage, a lower bound on omitted entries and the number of uninspected subtrees, without walking the remainder just to count it.
+The excluded-boundary count includes explicitly listed roots inside an excluded tree and is not a deduplicated count of physical installation trees.
+An addition or removal is reported only where the opposite inventory observed absence, so partial coverage cannot manufacture a change.
+Metadata changes outside the known file list are named and preserved without failing the run or attempting restoration.
+The native sandbox explicitly protects nonshared declared configuration/trust files, operator Hide/Herdr routing, the installed app and this checkout's control files, including its external Git metadata, the owner-family registry, candidate and selected CLI executables, wrappers, backups and evidence.
+Protected ancestors cannot be renamed or removed; the private probe/temp/socket trees and exact issued claim files remain writable.
+Both lexical entrypoints and resolved targets are protected, including symlinked CLI installations and inherited custom Herdr sockets or XDG configuration roots.
+Native account and session state, including shared project bookkeeping and Claude's session environment, remain writable under the recorded native-state policy.
+There is no universal OS guarantee that files outside the probe cannot change: harmless probe instructions constrain requested actions, and the bounded metadata inventory observes only its recorded roots and exclusions.
+Existing and new native history changes remain named where that inventory covers them; the profile never enumerates session files.
+Claude's actual exec wrapper removes `CLAUDE_CONFIG_DIR` without replacing HOME and sets its supported updater, telemetry and error-reporting disable controls; this is not proof of zero outbound activity.
+The command cap remains 15 seconds regardless of history count.
+Unexpected or concurrent changes to nonshared known configuration/trust files are preserved and fail the run; observing a diff never authorizes overwriting the operator.
+Only the test lane's exclusively owned disposable HOME permits attributed restoration.
+
+Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.
+The controller generates the marker after the earlier prompt and holds it only in memory; it writes no helper or marker receipt for the agent to read.
+The native sandbox denies other-process argument inspection and private mailbox storage access; its exact candidate capability and claim files remain available for ordinary `hide inbox`.
+Only the run root's own metadata is readable so native settings readers can vet every ancestor of a private probe path.
+The run root's directory listing and controller-file contents remain denied, and the pre-provider self-test checks both denials alongside ancestor metadata access.
+For omp's credential database, the tool queries the system's open-file table and copies the DB, WAL and SHM together only when no opener is observed and every source's identity, size, mtime and bytes remain unchanged.
+It never opens the original through SQLite or checkpoints it; any recovery happens in the private copy.
+An open or changing bundle leaves all omp scenes UNKNOWN without launching omp, prints guidance to close all omp instances and rerun, and lets the other providers continue.
+Alias, integrity and copy-budget failures remain fatal.
+The opener queries and file checks are observations rather than an atomic lock against another process opening the original later.
+Arrival and post-bell observation keep separate windows, starting after their respective input completes.
+Each phase has a fixed budget of the 15-second transport allowance plus `--scene-seconds`, clamped to the remaining run budget; history seeding and delivery observation use the same formula.
+The original observation-only window excluded transport, so the one-second synthetic window now has a 16-second phase and a ten-second native window has a 25-second phase.
+Timely scene arrival remains reached when only the later effect phase expires; its effect is ambiguous (UNKNOWN), which never counts as safe.
+Positive effect evidence received after the phase ends is rejected, while safety errors, cancellation and resource-limit failures still propagate.
+The JSON and human-readable reports record both components and the total; the per-command cap remains 15 seconds.
+Within a window, reads and resulting input share its absolute deadline through process admission and retain the existing per-command cap.
+Late replies cannot certify arrival, safe effects, previous-session history or model delivery; a received scene frame remains in its evidence even when the next deadline check refuses it.
+The owned pane claims and verifies its exact persistent reference before the native CLI starts, preventing unclaimed-reference expiry during a long scene.
+The Info request used for that claim may return the explicit `renderer_unavailable` refusal in this headless run; the daemon validates the capability first, and the CLI must still complete the claim and leave its claim file.
+Other refusals and missing claim files fail the measurement.
+Typed text, hook installation, a tool's output and transport arrival alone are insufficient.
+Unknown native conversation formats, permission holds and unavailable integration remain unknown delivery.
+No unavailable CLI or unauthenticated account is a safety PASS; the table retains its login instruction without attempting login.
+
+Exit 1 identifies an unsafe scene for a source-declared bell target; exit 2 reports isolation, configuration, resource or cleanup failure; exit 3 reports incomplete measurement; exit 0 means the selected rows were fully measured without a target safety failure.
+A result applies only to its recorded versions, manifests, model, environment and reached scenes.
+It does not prove a different provider/model/version, a different remote manifest, or release readiness.
+Report the actual native result and its unknown/skipped cells in PR Evidence; never commit these run artifacts.
+
+CI runs `web/e2e/agent-live-check.spec.ts` with the existing compiled Claude/Codex shim on real pinned Herdr and candidate hided.
+The fixture report is marked synthetic and proves tool plumbing, not authenticated model behavior.
+That lane includes operator-routing refusal, byte-exact configuration restoration, runtime failure, owned-server loss and Ctrl-C cleanup.
+`scripts/tests/test_agent_live_protection.py` exercises real filesystem recovery/conflicts, OS denial, timeout/output caps and owner-death cleanup; `test_agent_live_results.py` challenges unsafe verdicts and false delivery evidence.
+The scene preparation and overlay tests cover supported MCP formats, positive native identity, role separation and bounded private authentication copies.
+
 ## A device check
 
 `desktop/e2e/remote-workspace.spec.ts` covers remote routes and `desktop/e2e/device-kit.spec.ts` the install kit against an isolated SSH server; a check against a real device is for what those specs cannot reach.

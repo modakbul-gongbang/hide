@@ -126,6 +126,7 @@ fn request() -> AiRequest {
         output_schema: schema(),
         deadline: Duration::from_secs(30),
         schema_version: "fixture.v1".into(),
+        pick: None,
     }
 }
 

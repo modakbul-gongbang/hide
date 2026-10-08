@@ -12,9 +12,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
@@ -43,6 +43,7 @@ import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { openRoute, probe, probeRequest } from "./localPath";
 import { revealTarget } from "./reveal";
+import { KeptNotifications, notifyRequest } from "./notify";
 import { fromPage, toPage, WirePathError } from "./wirePath";
 
 declare const __HIDE_BACKGROUND__: string;
@@ -121,6 +122,8 @@ export class DesktopHost {
   private browserControlFlight: Promise<void> | null = null;
   private browserControlShutdown: Promise<void> | null = null;
   private browserControlClosed = false;
+  /** Shown Factory notifications, kept so their click still reaches the shell. */
+  private readonly notifications = new KeptNotifications<Notification>();
 
   constructor(
     private readonly env: DesktopEnv,
@@ -153,6 +156,7 @@ export class DesktopHost {
     this.listenReveal();
     this.listenPickFolder();
     this.listenLocalPaths();
+    this.listenNotify();
     this.openWindow();
     void this.discover("launch");
   }
@@ -241,6 +245,43 @@ export class DesktopHost {
         shell.showItemInFolder(target.path);
         this.log.event("reveal.shown", { kind: target.kind });
       }).catch(() => this.log.event("reveal.failed", {}));
+    });
+  }
+
+  /**
+   * The Factory's macOS notifications (D-50): only this window's page on the
+   * daemon origin is heard. A click brings the window forward and hands the
+   * item's id to the shell, which opens it; the log records the outcome,
+   * never the words.
+   */
+  private listenNotify(): void {
+    ipcMain.on(NOTIFY_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("notify.refused", { reason: "sender" });
+        return;
+      }
+      const request = notifyRequest(reported);
+      if ("refused" in request) {
+        this.log.event("notify.refused", { reason: request.refused });
+        return;
+      }
+      if (!Notification.isSupported()) {
+        this.log.event("notify.unsupported", {});
+        return;
+      }
+      const shown = new Notification({ title: request.title, body: request.body });
+      shown.on("click", () => {
+        this.notifications.forget(request.id);
+        this.log.event("notify.clicked", {});
+        if (!this.window || this.window.isDestroyed()) return;
+        if (this.window.isMinimized()) this.window.restore();
+        this.present(this.window, true);
+        this.window.webContents.send(NOTIFY_OPEN_CHANNEL, request.id);
+      });
+      shown.on("close", () => this.notifications.forget(request.id));
+      this.notifications.keep(request.id, shown)?.removeAllListeners("click");
+      shown.show();
+      this.log.event("notify.shown", {});
     });
   }
 

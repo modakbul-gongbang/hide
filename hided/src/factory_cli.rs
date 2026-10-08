@@ -178,6 +178,27 @@ fn parse_words(words: &[&str], cwd: &Path) -> Option<Command> {
             }
             _ => None,
         },
+        "pause" | "resume" if rest.first() == Some(&"--factory") => {
+            let project = project_only(&rest[1..], cwd)?;
+            Some(if *verb == "pause" {
+                Command::PauseFactory { project }
+            } else {
+                Command::ResumeFactory { project }
+            })
+        }
+        "ack-notices" => Some(Command::AckNotices {
+            project: project_only(rest, cwd)?,
+        }),
+        "worker" => match rest {
+            [task, choice] if !task.starts_with("--") => Some(Command::Worker {
+                task: (*task).to_owned(),
+                worker: match *choice {
+                    "auto" => None,
+                    number => Some(number.parse().ok().filter(|n| *n > 0)?),
+                },
+            }),
+            _ => None,
+        },
         "pause" | "resume" | "retry" | "merge" | "cancel" | "revive" => {
             let [task] = rest else { return None };
             if task.starts_with("--") {
@@ -320,6 +341,10 @@ fn card_flag(flag: &str, flags: &mut Flags<'_>, card: &mut CardInput, cwd: &Path
             card.runtime = Some(Runtime::parse(&flags.value()?)?);
             Some(())
         }
+        "--worker" if card.worker.is_none() => {
+            card.worker = Some(flags.value()?.parse().ok().filter(|n| *n > 0)?);
+            Some(())
+        }
         _ => None,
     }
 }
@@ -361,11 +386,13 @@ fn parse_answer(rest: &[&str]) -> Option<Command> {
     let mut question = None;
     let mut choice = None;
     let mut text = None;
+    let mut change = false;
     while let Some(flag) = flags.next() {
         match flag {
             "--question" => once(&mut question, flags.value())?,
             "--choose" => once(&mut choice, flags.value())?,
             "--text" => once(&mut text, flags.value())?,
+            "--change" if !change => change = true,
             _ => return None,
         }
     }
@@ -377,6 +404,7 @@ fn parse_answer(rest: &[&str]) -> Option<Command> {
         question,
         choice,
         text,
+        change,
     })
 }
 
@@ -386,12 +414,15 @@ fn parse_question(verb: &str, rest: &[&str]) -> Option<Command> {
     let mut suggestion = None;
     let mut default_action = None;
     let mut deadline = None;
+    let mut choices = Vec::new();
     while let Some(flag) = flags.next() {
         match flag {
             "--question" => once(&mut text, flags.value())?,
             "--suggestion" => once(&mut suggestion, flags.value())?,
             "--default" if verb == "ask" => once(&mut default_action, flags.value())?,
             "--deadline-hours" => once(&mut deadline, flags.value())?,
+            // Their count and length are the engine's to refuse (B1).
+            "--choice" => choices.push(flags.value()?),
             _ => return None,
         }
     }
@@ -406,6 +437,7 @@ fn parse_question(verb: &str, rest: &[&str]) -> Option<Command> {
             default_action: default_action?,
             deadline_hours,
             letter: None,
+            choices,
         }
     } else {
         Command::Block {
@@ -413,6 +445,7 @@ fn parse_question(verb: &str, rest: &[&str]) -> Option<Command> {
             suggestion: suggestion?,
             deadline_hours,
             letter: None,
+            choices,
         }
     })
 }
@@ -496,6 +529,7 @@ mod tests {
             "init /p --ci build test",
             "init /p --no-verification",
             "add --title t --goal g --criterion c --after T-1 --runtime codex --priority 2",
+            "add --title t --worker 2",
             "add 12 --title t",
             "add --task T-3 --goal better",
             "status",
@@ -504,8 +538,10 @@ mod tests {
             "inbox",
             "answer T-1 --choose suggestion",
             "answer T-1 --question q-1 --text yes",
+            "answer T-1 --question q-1 --text no --change",
             "ask --question q --suggestion s --default d --deadline-hours 4",
             "block --question q --suggestion s",
+            "block --question q --suggestion s --choice a --choice b",
             "propose --class prerequisite --text t --title a --goal b --criterion c",
             "propose --class decision --text t --reclassify d-1",
             "done --summary s --breaking",
@@ -515,6 +551,11 @@ mod tests {
             "dep add T-2 --on T-1",
             "dep remove T-2 --on T-1",
             "pause T-1",
+            "pause --factory",
+            "resume --factory --project /p",
+            "worker T-1 2",
+            "worker T-1 auto",
+            "ack-notices",
             "revive T-1",
             "request-changes T-1 --comment c",
             "check --at after-done --instruction i",
@@ -539,6 +580,11 @@ mod tests {
             "config --set novalue",
             "dep add T-2",
             "pause",
+            "pause --factory T-1",
+            "worker T-1 0",
+            "worker T-1",
+            "add --worker first",
+            "ask --question q --suggestion s --default d --choice",
             "check --at weekly --instruction i",
             "show",
             "unknown",

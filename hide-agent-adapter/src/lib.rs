@@ -130,6 +130,29 @@ impl LaunchDialect {
         }
     }
 
+    /// How the CLI takes a model and a reasoning effort at launch; `{}` is
+    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160;
+    /// the other agents declare neither, so a start of theirs takes none.
+    pub const fn options(self) -> LaunchOptions {
+        match self {
+            Self::Claude => LaunchOptions {
+                model: &["--model", "{}"],
+                effort: &["--effort", "{}"],
+                efforts: &["low", "medium", "high", "xhigh", "max"],
+            },
+            Self::Codex => LaunchOptions {
+                model: &["-m", "{}"],
+                effort: &["-c", "model_reasoning_effort={}"],
+                efforts: &["minimal", "low", "medium", "high", "xhigh"],
+            },
+            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp | Self::Cursor => LaunchOptions {
+                model: &[],
+                effort: &[],
+                efforts: &[],
+            },
+        }
+    }
+
     /// The first interactive prompt is an argument, held by the native CLI
     /// through startup questions. OpenCode's positional argument is a project.
     pub const fn prompt_flag(self) -> &'static str {
@@ -147,6 +170,59 @@ impl LaunchDialect {
 
     pub const fn closes_pane_when_sleeping(self) -> bool {
         !matches!(self, Self::Claude | Self::Codex)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LaunchOptions {
+    pub model: &'static [&'static str],
+    pub effort: &'static [&'static str],
+    pub efforts: &'static [&'static str],
+}
+
+/// A model name reaches a command line, so it is held to the characters
+/// model ids use; anything else is refused rather than quoted.
+pub fn valid_model(model: &str) -> bool {
+    // A leading dash would read as an option to the agent's CLI.
+    !model.is_empty()
+        && !model.starts_with('-')
+        && model.len() <= 80
+        && model
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._:/[]".contains(&byte))
+}
+
+impl LaunchOptions {
+    /// The launch arguments for a model and an effort, refused with the
+    /// reason when either is not something this CLI declares.
+    pub fn arguments(
+        self,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let mut arguments = Vec::new();
+        if let Some(model) = model {
+            if self.model.is_empty() {
+                return Err("this agent takes no model at launch".to_owned());
+            }
+            if !valid_model(model) {
+                return Err(format!("model `{model}` is not a model name"));
+            }
+            arguments.extend(self.model.iter().map(|part| part.replace("{}", model)));
+        }
+        if let Some(effort) = effort {
+            if self.efforts.is_empty() {
+                return Err("this agent takes no effort at launch".to_owned());
+            }
+            if !self.efforts.contains(&effort) {
+                return Err(format!(
+                    "effort `{effort}` is not one of {}",
+                    self.efforts.join(", ")
+                ));
+            }
+            arguments.extend(self.effort.iter().map(|part| part.replace("{}", effort)));
+        }
+        Ok(arguments)
     }
 }
 
