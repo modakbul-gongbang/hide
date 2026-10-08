@@ -22,7 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::ORIGIN;
 
-use crate::support::private_herdr::{PrivateHerdr, herdr_command};
+use crate::private_herdr::{PrivateHerdr, herdr_command};
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;

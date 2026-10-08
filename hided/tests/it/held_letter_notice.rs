@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::support::private_herdr::PrivateHerdr;
+use crate::private_herdr::PrivateHerdr;
 
 const BODY: &str = "report the operator never saw";
 
