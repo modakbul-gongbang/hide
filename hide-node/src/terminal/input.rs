@@ -19,6 +19,7 @@
 //! holder and the byte count, never the content. So does each key held
 //! longer than [`HELD_INPUT_MAX_AGE`] when its pane could take it.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -419,24 +420,123 @@ impl PaneHold {
     }
 }
 
-/// When each pane last had a key refused, by kind, so a key flood into a
-/// pane that cannot take it, known to this node or not, reports at most
-/// once a window. An entry is dropped once its window has passed, so the
-/// map holds only the refusals of the last window.
+/// Refusals of one kind for one subject (a pane, or a device's lines), at
+/// most one reported a window: a flood into a pane that cannot take it,
+/// known to this node or not, reports once, and the refusals after it in
+/// the same window are counted and handed back by [`Refusals::due`] once the
+/// window has passed, so none is refused without a record. A window ends
+/// when it passes, so the map holds only the refusals of the last window,
+/// and past [`REFUSAL_SUBJECTS`] subjects a new one shares the window of
+/// [`OTHER_SUBJECTS`].
 #[derive(Default)]
-pub(super) struct Refusals(HashMap<(String, &'static str), Instant>);
+pub(super) struct Refusals {
+    windows: HashMap<(String, &'static str), RefusalWindow>,
+    passed: Vec<Unreported>,
+}
+
+/// Subjects with an open refusal window of their own.
+const REFUSAL_SUBJECTS: usize = 256;
+/// The subject the refusals past [`REFUSAL_SUBJECTS`] are counted under.
+const OTHER_SUBJECTS: &str = "*";
+
+struct RefusalWindow {
+    opened: Instant,
+    unreported: u64,
+}
+
+/// The refusals one window counted after the one it reported.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct Unreported {
+    pub(super) subject: String,
+    pub(super) kind: &'static str,
+    pub(super) count: u64,
+}
+
+impl Unreported {
+    /// The record of them, for the log; the first refusal of the window
+    /// was reported with its reason.
+    pub(super) fn log(&self, component: &str) {
+        crate::diagnostic!(json!({
+            "component": component,
+            "kind": "terminal.refusals_unreported",
+            "refusal": self.kind,
+            "subject": self.subject,
+            "count": self.count,
+        }));
+    }
+}
+
+/// What becomes of one refusal.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Refusal {
+    /// The first of its window: report it with its reason.
+    Report,
+    /// Counted for [`Refusals::due`]; `first` when it is the window's first
+    /// count, which gives [`Refusals::deadline`] a new time.
+    Count { first: bool },
+}
 
 impl Refusals {
-    /// Whether a refusal of `kind` for `pane` is reported now.
-    pub(super) fn report(&mut self, pane: &str, kind: &'static str, now: Instant) -> bool {
-        self.0
-            .retain(|_, last| now.saturating_duration_since(*last) < INPUT_REPORT_WINDOW);
-        let key = (pane.to_owned(), kind);
-        if self.0.contains_key(&key) {
-            return false;
+    /// Whether a refusal of `kind` for `subject` is reported now or counted.
+    pub(super) fn refuse(&mut self, subject: &str, kind: &'static str, now: Instant) -> Refusal {
+        self.close_passed(now);
+        let mut key = (subject.to_owned(), kind);
+        if self.windows.len() >= REFUSAL_SUBJECTS && !self.windows.contains_key(&key) {
+            key.0 = OTHER_SUBJECTS.to_owned();
         }
-        self.0.insert(key, now);
-        true
+        match self.windows.entry(key) {
+            Entry::Occupied(mut window) => {
+                let window = window.get_mut();
+                window.unreported += 1;
+                Refusal::Count {
+                    first: window.unreported == 1,
+                }
+            }
+            Entry::Vacant(window) => {
+                window.insert(RefusalWindow {
+                    opened: now,
+                    unreported: 0,
+                });
+                Refusal::Report
+            }
+        }
+    }
+
+    /// No window is open and no count waits.
+    pub(super) fn is_empty(&self) -> bool {
+        self.windows.is_empty() && self.passed.is_empty()
+    }
+
+    /// The unreported refusals of every window that has passed.
+    pub(super) fn due(&mut self, now: Instant) -> Vec<Unreported> {
+        if !self.windows.is_empty() {
+            self.close_passed(now);
+        }
+        std::mem::take(&mut self.passed)
+    }
+
+    /// When the first window holding unreported refusals passes.
+    pub(super) fn deadline(&self) -> Option<Instant> {
+        self.windows
+            .values()
+            .filter(|window| window.unreported > 0)
+            .map(|window| window.opened + INPUT_REPORT_WINDOW)
+            .min()
+    }
+
+    fn close_passed(&mut self, now: Instant) {
+        let passed = &mut self.passed;
+        self.windows.retain(|(subject, kind), window| {
+            let open = now.saturating_duration_since(window.opened) < INPUT_REPORT_WINDOW;
+            if !open && window.unreported > 0 {
+                passed.push(Unreported {
+                    subject: subject.clone(),
+                    kind,
+                    count: window.unreported,
+                });
+            }
+            open
+        });
     }
 }
 
@@ -691,6 +791,97 @@ mod tests {
             facts
                 .key(start + Duration::from_secs(5), 5_000, false, false)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn a_refusal_flood_is_reported_once_a_window_and_the_rest_counted_when_it_passes() {
+        let start = Instant::now();
+        let mut refusals = Refusals::default();
+        assert_eq!(
+            refusals.refuse("w1:p1", "terminal.x", start),
+            Refusal::Report
+        );
+        assert_eq!(refusals.deadline(), None, "nothing counted yet");
+        let at = |ms| start + Duration::from_millis(ms);
+        assert_eq!(
+            refusals.refuse("w1:p1", "terminal.x", at(10)),
+            Refusal::Count { first: true }
+        );
+        for ms in 11..=12 {
+            assert_eq!(
+                refusals.refuse("w1:p1", "terminal.x", at(ms)),
+                Refusal::Count { first: false }
+            );
+        }
+        assert_eq!(
+            refusals.refuse("w1:p2", "terminal.x", at(20)),
+            Refusal::Report,
+            "another pane has its own window"
+        );
+        assert_eq!(refusals.deadline(), Some(start + INPUT_REPORT_WINDOW));
+        assert!(refusals.due(at(999)).is_empty());
+        assert_eq!(
+            refusals.due(start + INPUT_REPORT_WINDOW),
+            [Unreported {
+                subject: "w1:p1".to_owned(),
+                kind: "terminal.x",
+                count: 3,
+            }]
+        );
+        assert!(refusals.due(at(1_100)).is_empty(), "handed back once");
+        assert_eq!(
+            refusals.refuse("w1:p1", "terminal.x", at(1_100)),
+            Refusal::Report
+        );
+        assert!(refusals.due(at(3_000)).is_empty());
+        assert!(refusals.is_empty());
+    }
+
+    #[test]
+    fn a_window_that_passes_inside_a_refusal_keeps_its_count() {
+        let start = Instant::now();
+        let mut refusals = Refusals::default();
+        refusals.refuse("w1:p1", "terminal.x", start);
+        refusals.refuse("w1:p1", "terminal.x", start);
+        let later = start + INPUT_REPORT_WINDOW;
+        assert_eq!(
+            refusals.refuse("w1:p1", "terminal.x", later),
+            Refusal::Report
+        );
+        assert_eq!(
+            refusals.due(later),
+            [Unreported {
+                subject: "w1:p1".to_owned(),
+                kind: "terminal.x",
+                count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn refusals_past_the_subject_cap_share_one_window() {
+        let start = Instant::now();
+        let mut refusals = Refusals::default();
+        for pane in 0..REFUSAL_SUBJECTS {
+            refusals.refuse(&format!("w1:p{pane}"), "terminal.x", start);
+        }
+        assert_eq!(
+            refusals.refuse("w9:p1", "terminal.x", start),
+            Refusal::Report
+        );
+        assert_eq!(
+            refusals.refuse("w9:p2", "terminal.x", start),
+            Refusal::Count { first: true }
+        );
+        assert_eq!(refusals.windows.len(), REFUSAL_SUBJECTS + 1);
+        assert_eq!(
+            refusals.due(start + INPUT_REPORT_WINDOW),
+            [Unreported {
+                subject: OTHER_SUBJECTS.to_owned(),
+                kind: "terminal.x",
+                count: 1,
+            }]
         );
     }
 }

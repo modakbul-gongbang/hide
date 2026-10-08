@@ -11,11 +11,15 @@
 //! taken only where the core asked for it: output for a pane the core
 //! attached on that device, a report about such a pane or one on screen, and
 //! a paste's outcome for a paste held on that device. Its word that a key
-//! moved the keyboard counts only for the pane the last screen key went to.
+//! moved the keyboard counts only for the pane the last screen key went
+//! to, within [`KEY_FOCUS_WINDOW`] of that key. What it says is bounded
+//! before the core reads it: every name is a short plain name, a message is
+//! cut to [`DEVICE_MESSAGE_CHARS`], and at most
+//! [`DEVICE_REPORTS_PER_WINDOW`] reports a window are taken.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use hide_node_link::terminal::{
     GridSize, KeyTarget, PaneTerminalState, ReportSink, TerminalControl, TerminalNode,
@@ -25,7 +29,21 @@ use serde_json::json;
 
 use super::OutputSink;
 use super::device::DeviceSink;
-use super::input::Refusals;
+use super::input::{INPUT_REPORT_WINDOW, Refusal, Refusals, Unreported};
+
+/// How long after a screen key a device's word that the key moved the
+/// keyboard is believed; its node reports that at once.
+const KEY_FOCUS_WINDOW: Duration = Duration::from_secs(2);
+/// The longest message a device's report carries to the core, in
+/// characters.
+const DEVICE_MESSAGE_CHARS: usize = 512;
+/// The longest name (a state, a mode, a decision, a kind) a device's report
+/// may carry.
+const DEVICE_NAME_BYTES: usize = 64;
+/// Reports one device's node may send the core in one
+/// [`INPUT_REPORT_WINDOW`]; past it they are refused, far above what its
+/// panes' attaches and keys make.
+const DEVICE_REPORTS_PER_WINDOW: u32 = 1024;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -57,11 +75,18 @@ struct Routes {
     /// only their output reaches the screen's hub, and a device that leaves
     /// takes their output with it.
     attached: HashMap<String, HashSet<String>>,
-    /// The pane the last screen key went to, by the core's ids.
-    keyed: Option<String>,
-    /// Lines each device sent that were not taken, since the log last said.
-    unadmitted: HashMap<String, u64>,
+    /// The pane the last screen key went to, by the core's ids, and when.
+    keyed: Option<(String, Instant)>,
+    /// Each device's reports in its current window.
+    rates: HashMap<String, ReportRate>,
+    /// Keys refused for a device with no link, and lines a device sent
+    /// that were not taken, logged once a window and counted after that.
     refusals: Refusals,
+}
+
+struct ReportRate {
+    opened: Instant,
+    reports: u32,
 }
 
 impl Routes {
@@ -71,30 +96,111 @@ impl Routes {
             .is_some_and(|panes| panes.contains(pane))
     }
 
-    /// Counts a line `device` sent that was not taken, and says how many
-    /// there were once a window, for the log.
-    fn unadmitted(&mut self, device: &str) -> Option<u64> {
-        let count = self.unadmitted.entry(device.to_owned()).or_default();
-        *count += 1;
-        let count = *count;
-        self.refusals
-            .report(device, "terminal.device_line_unadmitted", Instant::now())
-            .then(|| {
-                self.unadmitted.remove(device);
-                count
-            })
+    /// Whether the screen's last key went to `pane` recently enough for a
+    /// device's word that it moved the keyboard.
+    fn keyed_recently(&self, pane: &str, now: Instant) -> bool {
+        self.keyed.as_ref().is_some_and(|(keyed, at)| {
+            keyed == pane && now.saturating_duration_since(*at) < KEY_FOCUS_WINDOW
+        })
+    }
+
+    /// Whether `device` may send one more report in its window.
+    fn within_rate(&mut self, device: &str, now: Instant) -> bool {
+        let rate = self.rates.entry(device.to_owned()).or_insert(ReportRate {
+            opened: now,
+            reports: 0,
+        });
+        if now.saturating_duration_since(rate.opened) >= INPUT_REPORT_WINDOW {
+            *rate = ReportRate {
+                opened: now,
+                reports: 0,
+            };
+        }
+        rate.reports += 1;
+        rate.reports <= DEVICE_REPORTS_PER_WINDOW
+    }
+
+    /// Whether a line `device` sent that was not taken, for `kind`, is
+    /// logged now; the rest of its window's are counted.
+    fn refused_line(&mut self, device: &str, kind: &'static str) -> bool {
+        self.refusals.refuse(device, kind, Instant::now()) == Refusal::Report
+    }
+
+    /// The counts of every refusal window that has passed. The router has
+    /// no clock, so they are taken on its next key or device line.
+    fn due(&mut self) -> Vec<Unreported> {
+        if self.refusals.is_empty() {
+            return Vec::new();
+        }
+        self.refusals.due(Instant::now())
     }
 }
 
-fn log_unadmitted(device: &str, what: &str, lines: Option<u64>) {
-    if let Some(lines) = lines {
-        crate::diagnostic!(json!({
-            "component": "terminal_router",
-            "kind": "terminal.device_line_unadmitted",
-            "device": device,
-            "line": what,
-            "lines": lines,
-        }));
+/// Why a device's line was not taken, as the log names it.
+const LINE_UNADMITTED: &str = "terminal.device_line_unadmitted";
+const REPORT_MALFORMED: &str = "terminal.device_report_malformed";
+const REPORTS_OVER_RATE: &str = "terminal.device_reports_over_rate";
+
+fn log_due(due: Vec<Unreported>) {
+    for unreported in due {
+        unreported.log("terminal_router");
+    }
+}
+
+fn log_refused_line(device: &str, kind: &str, what: &str) {
+    crate::diagnostic!(json!({
+        "component": "terminal_router",
+        "kind": kind,
+        "device": device,
+        "line": what,
+    }));
+}
+
+/// A name a device's report may carry: short, lowercase, digits, `_`, `.`.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= DEVICE_NAME_BYTES
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'.')
+        })
+}
+
+fn cut(message: &mut String) {
+    if let Some((at, _)) = message.char_indices().nth(DEVICE_MESSAGE_CHARS) {
+        message.truncate(at);
+    }
+}
+
+/// Bounds a device's report before the core reads it: false when a name in
+/// it is not a plain name, else its messages cut to size.
+fn bound_device_report(report: &mut TerminalReport) -> bool {
+    match report {
+        TerminalReport::State { state, .. } => {
+            let names = [
+                Some(&state.state),
+                state.mode.as_ref(),
+                Some(&state.retry_decision),
+            ]
+            .into_iter()
+            .chain([state.exit_category.as_ref()])
+            .flatten();
+            if !names.into_iter().all(|name| plain_name(name)) {
+                return false;
+            }
+            if let Some(message) = &mut state.message {
+                cut(message);
+            }
+            true
+        }
+        TerminalReport::Error { kind, message, .. }
+        | TerminalReport::Note { kind, message, .. } => {
+            if !plain_name(kind) {
+                return false;
+            }
+            cut(message);
+            true
+        }
+        _ => true,
     }
 }
 
@@ -291,18 +397,24 @@ impl TerminalNode for Router {
         };
         let route = {
             let mut routes = lock(&self.routes);
-            if routes.keyed.as_deref() != Some(scoped.as_str()) {
-                routes.keyed = Some(scoped.clone());
+            let now = Instant::now();
+            match &mut routes.keyed {
+                Some((keyed, at)) if *keyed == scoped => *at = now,
+                keyed => *keyed = Some((scoped.clone(), now)),
             }
             let route = Self::route_in(&routes, &scoped);
             // A key for a device with no link is refused, never kept for a
-            // later link (D-19, B17), and a flood of them is refused once a
-            // window, like a node's own refusals.
-            if matches!(route, Route::Unrouted)
-                && !routes
+            // later link (D-19, B17), and a flood of them is reported once
+            // a window and counted after that, like a node's own refusals.
+            let counted = matches!(route, Route::Unrouted)
+                && routes
                     .refusals
-                    .report(&scoped, "terminal.device_disconnected", Instant::now())
-            {
+                    .refuse(&scoped, "terminal.device_disconnected", now)
+                    != Refusal::Report;
+            let due = routes.due();
+            drop(routes);
+            log_due(due);
+            if counted {
                 return;
             }
             route
@@ -359,7 +471,7 @@ impl TerminalRoutes for Router {
         let mut routes = lock(&self.routes);
         let removed = routes.devices.remove(device);
         let panes = routes.attached.remove(device).unwrap_or_default();
-        routes.unadmitted.remove(device);
+        routes.rates.remove(device);
         routes
             .intents
             .retain(|_, holder| holder.as_deref() != Some(device));
@@ -383,14 +495,25 @@ impl DeviceSink for Router {
         let scoped = device_pane_id(device, pane);
         {
             let mut routes = lock(&self.routes);
-            if !routes.attached(device, &scoped) {
-                let lines = routes.unadmitted(device);
-                drop(routes);
-                log_unadmitted(device, "output", lines);
+            let due = routes.due();
+            let attached = routes.attached(device, &scoped);
+            let logged = !attached && routes.refused_line(device, LINE_UNADMITTED);
+            drop(routes);
+            log_due(due);
+            if logged {
+                log_refused_line(device, LINE_UNADMITTED, "output");
+            }
+            if !attached {
                 return;
             }
         }
         self.hub.output(&scoped, bytes, full);
+        // A release that ran while the output was on its way to the hub has
+        // forgotten the pane there already; what this output put back goes
+        // the same way.
+        if !lock(&self.routes).attached(device, &scoped) {
+            self.hub.forget(&scoped);
+        }
     }
 
     fn report(&self, device: &str, mut report: TerminalReport) {
@@ -398,6 +521,8 @@ impl DeviceSink for Router {
             *pane = device_pane_id(device, pane);
         }
         let mut routes = lock(&self.routes);
+        let now = Instant::now();
+        let due = routes.due();
         let admitted = match &mut report {
             // The core opens creation requests for this machine's panes only.
             TerminalReport::RequestDiscarded { .. } => false,
@@ -407,21 +532,31 @@ impl DeviceSink for Router {
                 .get(intent.as_str())
                 .is_some_and(|holder| holder.as_deref() == Some(device)),
             TerminalReport::Input { pane, focus, .. } => {
-                *focus &= routes.keyed.as_deref() == Some(pane.as_str());
+                *focus &= routes.keyed_recently(pane, now);
                 routes.attached(device, pane) || routes.shown.contains(pane)
             }
             other => other
                 .pane_mut()
                 .is_some_and(|pane| routes.attached(device, pane) || routes.shown.contains(pane)),
         };
-        if !admitted {
-            let lines = routes.unadmitted(device);
-            drop(routes);
-            log_unadmitted(device, "report", lines);
-            return;
-        }
+        let refused = if !admitted {
+            Some(LINE_UNADMITTED)
+        } else if !bound_device_report(&mut report) {
+            Some(REPORT_MALFORMED)
+        } else if !routes.within_rate(device, now) {
+            Some(REPORTS_OVER_RATE)
+        } else {
+            None
+        };
+        let logged = refused.filter(|&kind| routes.refused_line(device, kind));
         drop(routes);
-        self.reports.report(report);
+        log_due(due);
+        if let Some(kind) = logged {
+            log_refused_line(device, kind, "report");
+        }
+        if refused.is_none() {
+            self.reports.report(report);
+        }
     }
 }
 
@@ -711,6 +846,16 @@ mod tests {
         );
         DeviceSink::report(&router, "mini", input("w2:p3"));
         DeviceSink::report(&router, "mini", input("w2:p4"));
+        // Long after the key, the device's word no longer moves the keyboard.
+        lock(&router.routes).keyed.as_mut().expect("keyed").1 = Instant::now()
+            .checked_sub(KEY_FOCUS_WINDOW)
+            .expect("an instant that long ago");
+        DeviceSink::report(&router, "mini", input("w2:p3"));
+        router.key(
+            KeyTarget::Pane("remote:mini:pane:w2:p3".into()),
+            b"a".to_vec(),
+            1,
+        );
         router.key(KeyTarget::Pane("w1:p1".into()), b"b".to_vec(), 2);
         DeviceSink::report(&router, "mini", input("w2:p3"));
         let focus = reports
@@ -729,7 +874,107 @@ mod tests {
                 ("remote:mini:pane:w2:p3".to_owned(), true),
                 ("remote:mini:pane:w2:p4".to_owned(), false),
                 ("remote:mini:pane:w2:p3".to_owned(), false),
+                ("remote:mini:pane:w2:p3".to_owned(), false),
             ]
+        );
+    }
+
+    /// What a device says is bounded before the core keeps it: a message
+    /// is cut, a report naming something no node names is refused, and a
+    /// flood of reports past the rate is refused.
+    #[test]
+    fn a_devices_reports_are_bounded_before_the_core_reads_them() {
+        let (router, _local, _hub, reports) = router();
+        let mini = Arc::new(Recorder::default());
+        router.install_device("mini", Arc::clone(&mini) as Arc<dyn TerminalNode>);
+        router.control(attach("remote:mini:pane:w2:p3"));
+        let error = |kind: &str, message: String| TerminalReport::Error {
+            pane: "w2:p3".into(),
+            kind: kind.into(),
+            message,
+        };
+        DeviceSink::report(&router, "mini", error("terminal.x", "é".repeat(8 << 20)));
+        DeviceSink::report(&router, "mini", error("Not a name", "m".into()));
+        let mut state = PaneTerminalState {
+            state: "controlling".into(),
+            mode: Some("control".into()),
+            generation: 1,
+            attempt: 1,
+            message: Some("m".repeat(4_000)),
+            exit_category: None,
+            retry_decision: "none".into(),
+            last_attempt_at_unix_ms: None,
+        };
+        let report_state = |state: &PaneTerminalState| TerminalReport::State {
+            pane: "w2:p3".into(),
+            state: state.clone(),
+        };
+        DeviceSink::report(&router, "mini", report_state(&state));
+        state.state = "x".repeat(DEVICE_NAME_BYTES + 1);
+        DeviceSink::report(&router, "mini", report_state(&state));
+        {
+            let reports = reports.0.lock().unwrap();
+            let [
+                TerminalReport::Error { message, .. },
+                TerminalReport::State { state, .. },
+            ] = reports.as_slice()
+            else {
+                panic!("one error and one state are taken: {reports:?}");
+            };
+            assert_eq!(message.chars().count(), DEVICE_MESSAGE_CHARS);
+            assert_eq!(state.message.as_ref().unwrap().len(), DEVICE_MESSAGE_CHARS);
+        }
+        for _ in 0..DEVICE_REPORTS_PER_WINDOW * 2 {
+            DeviceSink::report(&router, "mini", error("terminal.x", "m".into()));
+        }
+        let taken = reports.0.lock().unwrap().len() as u32;
+        assert!(
+            (DEVICE_REPORTS_PER_WINDOW..=DEVICE_REPORTS_PER_WINDOW * 2).contains(&taken),
+            "{taken} reports taken"
+        );
+        assert!(
+            taken < DEVICE_REPORTS_PER_WINDOW * 2 + 2,
+            "the rate refused some"
+        );
+    }
+
+    /// A release that runs while a device's output is on its way to the
+    /// hub leaves no ring there for the released pane.
+    #[test]
+    fn a_release_racing_a_devices_output_leaves_nothing_in_the_hub() {
+        #[derive(Default)]
+        struct RacingHub {
+            router: std::sync::OnceLock<std::sync::Weak<Router>>,
+            events: Mutex<Vec<String>>,
+        }
+        impl OutputSink for RacingHub {
+            fn output(&self, pane: &str, _bytes: &[u8], _full: bool) {
+                // The release lands between the router's check and here.
+                if let Some(router) = self.router.get().and_then(std::sync::Weak::upgrade) {
+                    router.control(TerminalControl::Forget { pane: pane.into() });
+                }
+                self.events.lock().unwrap().push(format!("output {pane}"));
+            }
+            fn forget(&self, pane: &str) {
+                self.events.lock().unwrap().push(format!("forget {pane}"));
+            }
+        }
+        let hub = Arc::new(RacingHub::default());
+        let router = Arc::new(Router::new(
+            Arc::new(Recorder::default()) as Arc<dyn TerminalNode>,
+            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            Arc::new(Reports::default()) as Arc<dyn ReportSink>,
+        ));
+        hub.router.set(Arc::downgrade(&router)).ok();
+        router.install_device(
+            "mini",
+            Arc::new(Recorder::default()) as Arc<dyn TerminalNode>,
+        );
+        router.control(attach("remote:mini:pane:w2:p3"));
+        router.output("mini", "w2:p3", b"frame", true);
+        assert_eq!(
+            hub.events.lock().unwrap().last().map(String::as_str),
+            Some("forget remote:mini:pane:w2:p3")
         );
     }
 

@@ -37,7 +37,9 @@ use hide_node_link::terminal::{
 };
 use serde_json::json;
 
-use self::input::{AttachmentHold, HeldChunk, InputFacts, KeyRoute, PaneHold, Refusals, Requests};
+use self::input::{
+    AttachmentHold, HeldChunk, InputFacts, KeyRoute, PaneHold, Refusal, Refusals, Requests,
+};
 pub use self::protocol::Mode;
 use self::protocol::SessionEvent;
 use self::session::Session;
@@ -495,11 +497,13 @@ impl Inner {
         });
     }
 
-    /// A refusal of a key, at most once a window per pane and kind, whether
-    /// this node knows the pane or not.
+    /// A refusal of a key, reported at most once a window per pane and
+    /// kind, whether this node knows the pane or not; the rest of the
+    /// window's are counted and logged when it passes ([`Inner::tick`]).
     fn refuse(&mut self, pane: &str, kind: &'static str, message: String, now: Instant) {
-        if self.refusals.report(pane, kind, now) {
-            self.error(pane, kind, message);
+        match self.refusals.refuse(pane, kind, now) {
+            Refusal::Report => self.error(pane, kind, message),
+            Refusal::Count { first } => self.wake_clock |= first,
         }
     }
 
@@ -1749,6 +1753,9 @@ impl Inner {
                 focus: fact.focus,
             });
         }
+        for unreported in self.refusals.due(now) {
+            unreported.log("terminal_service");
+        }
         self.next_deadline()
     }
 
@@ -1810,7 +1817,11 @@ impl Inner {
             [retry, observer]
         });
         let facts = self.facts.values().map(InputFacts::deadline);
-        panes.chain(facts).flatten().min()
+        panes
+            .chain(facts)
+            .chain([self.refusals.deadline()])
+            .flatten()
+            .min()
     }
 }
 

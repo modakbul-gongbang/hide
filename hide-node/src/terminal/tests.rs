@@ -367,7 +367,13 @@ fn keys_typed_while_the_session_opens_are_written_first_in_order() {
     harness.key("w1:p1", b"one");
     harness.key("w1:p1", b"two");
     let opened = harness.opened();
-    assert_eq!(opened.next_input(), b"onetwo");
+    // The session may open on its own thread before or between the keys;
+    // either way they are written first and in order.
+    let mut written = Vec::new();
+    while written.len() < b"onetwo".len() {
+        written.extend(opened.next_input());
+    }
+    assert_eq!(written, b"onetwo");
     harness.key("w1:p1", b"three");
     assert_eq!(opened.next_input(), b"three");
 }
