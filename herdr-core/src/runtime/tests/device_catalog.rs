@@ -465,11 +465,14 @@ impl crate::node_access::NodeLink for CatalogDevice {
 fn a_reconnected_device_keeps_its_panes_in_their_checkouts_until_its_helper_answers_again() {
     let t = tree();
     let mut runtime = runtime();
-    runtime.snapshot.status.remote.push(connected_status(TARGET));
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status(TARGET));
     let views = tempfile::tempdir().unwrap();
-    runtime.workspace_views = Some(
-        WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0,
-    );
+    runtime.workspace_views =
+        Some(WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0);
     let device = CatalogDevice::new();
     runtime.device_hosts.insert(
         TARGET.to_owned(),

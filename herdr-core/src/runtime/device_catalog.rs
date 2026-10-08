@@ -325,7 +325,9 @@ impl Runtime {
         let missing = device_catalog::needed_paths(raw)
             .into_iter()
             .chain(registered)
-            .filter(|path| known.is_none_or(|facts| facts.reread || !facts.facts.contains_key(path)))
+            .filter(|path| {
+                known.is_none_or(|facts| facts.reread || !facts.facts.contains_key(path))
+            })
             .collect::<Vec<_>>();
         if missing.is_empty() {
             return self.refresh_device_catalog(target);
