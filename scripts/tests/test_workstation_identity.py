@@ -352,12 +352,13 @@ class WorkstationIdentityTests(unittest.TestCase):
 
     def test_blob_limit_fails_with_value_free_diagnostic(self):
         self.tracked("fixture.txt", "neutral\n")
+        checker = self.checker_with_limit("MAX_BYTES", 1024)
         with (self.root / "fixture.txt").open("r+b") as target:
-            target.truncate(16 * 1024 * 1024 + 1)
-        result = self.check()
+            target.truncate(1024 + 1)
+        result = self.check("checkout", checker)
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.classes(result), ["tracked_blob_too_large"])
-        self.assertEqual(self.check("index").returncode, 0)
+        self.assertEqual(self.check("index", checker).returncode, 0)
 
     def test_diagnostic_limit_is_reported_instead_of_truncated_success(self):
         self.tracked("fixture.txt", (home("macos", "private-fixture-person") + "\n") * 201)

@@ -20,7 +20,10 @@ import sys
 import threading
 
 
-MAX_BYTES = 16 * 1024 * 1024
+# One tracked file is read whole, so it is bounded. The bound is above the
+# largest tracked source, `design/hide-screens.pen`, which the screen builders
+# regenerate and which passed 16 MiB once the Factory AI screens joined it.
+MAX_BYTES = 32 * 1024 * 1024
 MAX_DIAGNOSTICS = 200
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 MAX_TRACKED_FILES = 100000
