@@ -79,10 +79,12 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
            "effect": "not_tested", "reason": "scene_not_observed", "evidence": evidence.name}
     samples = []
     before = None
-    deadline = time.monotonic() + seconds
     try:
         if data["send"]:
             runtime.send(pane, data["send"])
+        # Observe after the trigger has been submitted. Guarded transport
+        # startup must not consume the window before its first screen read.
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             screen = runtime.screen(pane)
             require_no_login(screen)

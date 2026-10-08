@@ -326,6 +326,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
     omitted = False
     failed = False
     confirmed = False
+    root_exited = False
     initial = snapshot()
     identity = initial[os.getpid()]
     # Neither the controller nor its ancestors were started by this guardian.
@@ -461,6 +462,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
             if root is None:
                 raise ProcessError("unreaped_owned_root_missing")
             if root.zombie:
+                root_exited = True
                 break
             if time.monotonic() >= deadline:
                 raise ProcessError("guardian_run_timeout")
@@ -472,7 +474,11 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
         try:
             if child is not None:
                 try:
-                    current = collect()
+                    # Normal exit was just positively sampled. Reuse only
+                    # that decision table, avoiding a duplicate whole-host
+                    # scan per short command. Signals still collect afresh,
+                    # and the post-wait absence scan remains mandatory.
+                    current = dict(observed) if root_exited else collect()
                     active = any(not process.zombie for process in current.values())
                 except BaseException:
                     active = True

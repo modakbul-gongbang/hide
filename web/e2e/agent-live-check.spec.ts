@@ -23,12 +23,18 @@ def initialize(self,*args,**kwargs):
  file=self.home/'.claude.json'
  file.write_bytes(${JSON.stringify(originalConfig)}.encode())
  file.chmod(0o640)
+ peer=self.home/'.claude/settings.local.json'
+ peer.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+ peer.write_bytes(${JSON.stringify(originalConfig)}.encode())
 def fail(self,*args,**kwargs):
  original_workspace(self,*args,**kwargs)
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='configuration':
+  (self.home/'.claude/settings.local.json').write_bytes(b'owned temporary settings')
+  os.link(self.home/'.claude.json',self.home/'.claude/unexpected-link')
  raise RuntimeError('injected_after_registered_private_workspace')
 original_workspace=Runtime.new_workspace
 with patch.object(Runtime,'__init__',initialize):
- if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='failure':
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in ('failure','configuration'):
   with patch.object(Runtime,'new_workspace',fail): raise SystemExit(main(sys.argv[1:]))
  raise SystemExit(main(sys.argv[1:]))
 `;
@@ -54,13 +60,21 @@ function assertEnded(pid: number) {
   expect(() => process.kill(pid, 0), `owned process ${pid} survived cleanup`).toThrow();
 }
 
-function assertClean(run: string) {
+function assertClean(run: string, configurationFailure = false) {
   const report = JSON.parse(fs.readFileSync(path.join(run, "report.json"), "utf8"));
-  expect(report.configuration.failures).toEqual([]);
+  if (configurationFailure) {
+    expect(report.configuration.failures).toContainEqual({ path: path.join(run, "daemon-home", ".claude.json"),
+      reason: "config_not_private_regular_file" });
+    expect(report.configuration.inventory_checked).toBe(false);
+    expect(report.configuration.directory_changes).toBeNull();
+    expect(report.configuration.restored).toContainEqual({ path: path.join(run, "daemon-home", ".claude", "settings.local.json"),
+      result: "restored" });
+  } else expect(report.configuration.failures).toEqual([]);
   expect(report.cleanup).toMatchObject({ confirmed: true, probe_removed: true, socket_removed: true });
   expect(fs.existsSync(path.join(run, "probe"))).toBe(false);
   expect(fs.readFileSync(path.join(run, "daemon-home", ".claude.json"), "utf8")).toBe(originalConfig);
   expect(fs.statSync(path.join(run, "daemon-home", ".claude.json")).mode & 0o777).toBe(0o640);
+  expect(fs.readFileSync(path.join(run, "daemon-home", ".claude", "settings.local.json"), "utf8")).toBe(originalConfig);
   return report;
 }
 
@@ -138,17 +152,17 @@ test("live check refuses operator socket and state before a server starts", asyn
 test("live check tears down a started runtime on failure and Ctrl-C", async () => {
   test.skip(process.platform === "win32", "Unix signal and private socket contract");
   test.setTimeout(120_000);
-  for (const scenario of ["failure", "hold"]) {
+  for (const scenario of ["failure", "configuration", "hold"]) {
     const { root, run, args } = fixtureRoot();
     let running: ReturnType<typeof startPython> | undefined;
     let clean = false;
     try {
       const env = { ...process.env, LIVE_CHECK_FIXTURE_CASE: scenario };
-      if (scenario === "failure") {
+      if (scenario !== "hold") {
         const result = await runPython(args, { env, timeout: 45_000 });
         expect(result.error, result.stderr).toBeUndefined();
         expect(result.status, result.stdout + result.stderr).toBe(2);
-        const report = assertClean(run);
+        const report = assertClean(run, scenario === "configuration");
         expect(report.herdr.version).toContain("herdr");
         expect(report.failures[0].reason).toBe("injected_after_registered_private_workspace");
         clean = true;

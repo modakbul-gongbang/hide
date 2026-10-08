@@ -251,17 +251,22 @@ def main(argv=None):
             report["cleanup"]["confirmed"] = False
             report["failures"].append({"type": type(error).__name__, "reason": str(error)})
         if guard:
+            attribution_failures = []
             try:
                 if args.fixture_bin:
                     # Only a sole-owned disposable HOME may claim all its
                     # writers. Native runs never infer operator ownership.
                     for path, before in guard.before.items():
-                        current = stamp(path)
-                        if current != before:
-                            guard.record_write(path, before, current)
+                        try:
+                            current = stamp(path)
+                            if current != before:
+                                guard.record_write(path, before, current)
+                        except (OSError, ProtectionError) as error:
+                            attribution_failures.append({"path": str(path), "reason": str(error)})
                 report["configuration"] = guard.finish()
             except Exception as error:
                 report["configuration"] = {"failures": [{"reason": str(error)}]}
+            report["configuration"]["failures"].extend(attribution_failures)
         for signum, handler in previous_signals.items():
             signal.signal(signum, handler)
     code = save(run, report)
