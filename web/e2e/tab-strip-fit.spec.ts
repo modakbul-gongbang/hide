@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
+import { dumpOnFailure, tabsBothSides } from "./failure-dump";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot, showExplorer } from "./wire";
@@ -74,10 +75,10 @@ async function startStrip(page: Page, count: number) {
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const tabs = page.locator("[data-agent-tab-bar] [role=tab]");
-    await expect(tabs).toHaveCount(Math.min(count, 3));
+    await dumpOnFailure("tab-strip-fit tabs", () => tabsBothSides(herdr, page), () => expect(tabs).toHaveCount(Math.min(count, 3)));
     // The first screen is drawn before the rest are made, so a tab Herdr makes later is one the page had to take in.
     for (let made = 3; made < count; made += 1) herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]);
-    await expect(tabs).toHaveCount(count);
+    await dumpOnFailure("tab-strip-fit tabs", () => tabsBothSides(herdr, page), () => expect(tabs).toHaveCount(count));
     return { tabs, stop };
   } catch (error) {
     stop();
