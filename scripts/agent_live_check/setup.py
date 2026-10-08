@@ -16,10 +16,6 @@ def prepare_startup(runtime, pane, recipe, scene, cwd, workspace, seconds, evide
     data = recipe.get("startup_preparation")
     if scene == "startup" or runtime.fixture_bin or not data:
         return False
-    screen = runtime.screen(pane)
-    require_no_login(screen)
-    if not matches(data["prompt"], screen, ""):
-        return False
     record = {"scene": scene, "purpose": "owned_folder_trust_preparation", "outcome": "unknown", "key_attempts": []}
     samples = {}
     deadline = min(runtime.owner.deadline, time.monotonic() + seconds)
@@ -31,9 +27,10 @@ def prepare_startup(runtime, pane, recipe, scene, cwd, workspace, seconds, evide
         return value
 
     def frame(phase):
-        screen = runtime.screen(pane)
-        actual = runtime.agent(pane)
+        screen = runtime.screen(pane, seconds=remaining())
+        actual = runtime.agent(pane, seconds=remaining())
         samples[phase] = {"phase": phase, "screen": screen, "agent": actual}
+        remaining()
         require_no_login(screen)
         if (workspace not in runtime.workspaces or pane not in runtime.pane_credentials
                 or cwd not in runtime.checkout_directories or not beneath(cwd, runtime.probe)
@@ -47,18 +44,24 @@ def prepare_startup(runtime, pane, recipe, scene, cwd, workspace, seconds, evide
                 and not matches(data[other], screen, ""))
 
     try:
+        screen = runtime.screen(pane, seconds=remaining())
+        remaining()
+        require_no_login(screen)
+        if not matches(data["prompt"], screen, ""):
+            record["outcome"] = "not_required"
+            return False
         if not selected("before", "default", "selected"):
             raise ProcessError("startup_preparation_default_not_observed")
         remaining()
         record["key_attempts"].append("down")
-        runtime.command(["pane", "send-keys", pane, "down"])
+        runtime.command(["pane", "send-keys", pane, "down"], seconds=remaining())
         runtime.wait(lambda: selected("selected", "selected", "default"), remaining())
         # Re-read immediately before Enter; never confirm a stale selection.
         if not selected("confirmation", "selected", "default"):
             raise ProcessError("startup_preparation_selection_changed")
         remaining()
         record["key_attempts"].append("enter")
-        runtime.command(["pane", "send-keys", pane, "enter"])
+        runtime.command(["pane", "send-keys", pane, "enter"], seconds=remaining())
 
         def ready():
             screen, actual = frame("ready")

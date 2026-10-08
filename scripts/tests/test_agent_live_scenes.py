@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_live_check.contracts import recipes, source_contract
@@ -34,17 +35,46 @@ class ScenePreparation(unittest.TestCase):
                    prompt + "  No, exit\n❯ Yes, I trust this folder\n", "❯ \n"]
         actual = {"pane_id": "owned", "workspace_id": "owned-workspace", "cwd": str(cwd),
                   "agent": "claude", "name": "live-claude-code-rest"}
-        def command(args):
+        def command(args, **kwargs):
             commands.append(args)
             state[0] += 1
         runtime = SimpleNamespace(fixture_bin=None, probe=root, workspaces={"owned-workspace"},
                                   checkout_directories={cwd}, pane_credentials={"owned": object()},
-                                  screen=lambda pane: screens[state[0]], command=command,
-                                  agent=lambda pane: {**actual, "agent_status": "idle" if state[0] == 2 else "blocked",
+                                  screen=lambda pane, **kwargs: screens[state[0]], command=command,
+                                  agent=lambda pane, **kwargs: {**actual, "agent_status": "idle" if state[0] == 2 else "blocked",
                                                       "launch_pending": state[0] != 2},
                                   owner=SimpleNamespace(deadline=time.monotonic() + 5, cancelled=threading.Event()))
         runtime.wait = lambda predicate, seconds: Runtime.wait(runtime, predicate, seconds)
         return runtime, recipe, cwd, state, commands, screens, actual
+
+    def test_preparation_uses_one_deadline_for_initial_queries_keys_and_ready(self):
+        for operation, ordinal, expected_keys in (("screen", 1, []), ("screen", 3, ["down"]),
+                ("agent", 2, ["down"]), ("screen", 4, ["down"]), ("command", 1, ["down"]),
+                ("command", 2, ["down", "enter"]), ("screen", 5, ["down", "enter"])):
+            with self.subTest(operation=operation, ordinal=ordinal), tempfile.TemporaryDirectory() as name:
+                root = Path(name).resolve()
+                runtime, recipe, cwd, _, commands, _, _ = self.trust_fixture(root)
+                clock, counts, budgets = [100.0], {}, []
+                runtime.owner.deadline = 200
+                def transport(kind, original):
+                    def call(*args, seconds):
+                        self.assertGreater(seconds, 0)
+                        self.assertLessEqual(seconds, 101.0 - clock[0])
+                        budgets.append((kind, seconds))
+                        counts[kind] = counts.get(kind, 0) + 1
+                        clock[0] += 1.1 if (kind, counts[kind]) == (operation, ordinal) else 0.025
+                        return original(*args)
+                    return call
+                for kind in ("screen", "agent", "command"):
+                    setattr(runtime, kind, transport(kind, getattr(runtime, kind)))
+                evidence = root / "preparation.json"
+                with patch("agent_live_check.setup.time.monotonic", lambda: clock[0]):
+                    with self.assertRaisesRegex(ProcessError, "scene_timeout"):
+                        prepare_startup(runtime, "owned", recipe, "rest", cwd, "owned-workspace", 1, evidence)
+                self.assertEqual([args[-1] for args in commands], expected_keys)
+                self.assertEqual(json.loads(evidence.read_text())["outcome"], "unknown")
+                self.assertEqual(counts[operation], ordinal, "no transport call may start after expiration")
+                self.assertTrue(budgets)
 
     def test_nonstartup_trust_preparation_confirms_each_owned_selection_before_ready(self):
         with tempfile.TemporaryDirectory() as name:

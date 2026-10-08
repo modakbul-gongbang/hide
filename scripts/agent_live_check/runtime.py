@@ -139,8 +139,8 @@ class Runtime:
             raise ProcessError(f"herdr_command_exit_{code}")
         return code, out, err
 
-    def json(self, args):
-        _, out, _ = self.command(args)
+    def json(self, args, *, seconds=15):
+        _, out, _ = self.command(args, seconds=seconds)
         value = json.loads(out)
         if "error" in value or not isinstance(value.get("result"), dict):
             raise ProcessError("herdr_refused_request")
@@ -275,11 +275,11 @@ class Runtime:
             raise ProtectionError("private_pane_reference_not_claimed")
         return workspace, pane, cwd
 
-    def screen(self, pane):
-        return self.command(["pane", "read", pane, "--source", "detection", "--lines", "120"])[1]
+    def screen(self, pane, *, seconds=15):
+        return self.command(["pane", "read", pane, "--source", "detection", "--lines", "120"], seconds=seconds)[1]
 
-    def agent(self, pane):
-        agents = self.json(["agent", "list"])["agents"]
+    def agent(self, pane, *, seconds=15):
+        agents = self.json(["agent", "list"], seconds=seconds)["agents"]
         return next((agent for agent in agents if agent["pane_id"] == pane), None)
 
     def send(self, pane, text):
