@@ -18,7 +18,7 @@ from agent_live_check.scenes import transcript
 from agent_live_check.setup import configure, prepare_startup
 from agent_live_check.runtime import Runtime
 from agent_live_check.authentication import AuthenticationRequired
-from agent_live_check.processes import ProcessError
+from agent_live_check.processes import OwnedProcesses, ProcessError
 from agent_live_check.history import LABEL, seed
 from agent_live_check.scenes import observe, startup_blocker
 
@@ -92,7 +92,7 @@ class ScenePreparation(unittest.TestCase):
                 clock, counts, budgets = [100.0], {}, []
                 runtime.owner.deadline = 200
                 def transport(kind, original):
-                    def call(*args, seconds):
+                    def call(*args, seconds, **kwargs):
                         self.assertGreater(seconds, 0)
                         self.assertLessEqual(seconds, 101.0 - clock[0])
                         budgets.append((kind, seconds))
@@ -122,7 +122,7 @@ class ScenePreparation(unittest.TestCase):
             runtime.owner.deadline = 500
             budgets = []
             def transport(original):
-                def call(*args, seconds):
+                def call(*args, seconds, **kwargs):
                     budgets.append(seconds)
                     return original(*args)
                 return call
@@ -133,6 +133,35 @@ class ScenePreparation(unittest.TestCase):
                                                 "owned-workspace", 120, root / "prep.json"))
             self.assertTrue(budgets)
             self.assertTrue(all(value == 15 for value in budgets))
+
+    def test_trust_keys_keep_original_deadline_through_real_process_admission(self):
+        for key in ("down", "enter"):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as name:
+                root = Path(name).resolve()
+                runtime, recipe, cwd, _, commands, _, _ = self.trust_fixture(root)
+                clock, emitted = [100.0], []
+                runtime.owner = OwnedProcesses()
+                runtime.owner.deadline = 500
+                runtime.owner.family = "finite-preparation-admission-fixture"
+                runtime.herdr_bin, runtime.env = Path("/external/herdr"), {}
+                external_command = runtime.command
+                def command(args, **kwargs):
+                    if args[-1] == key:
+                        clock[0] = 101.1  # after the caller computed remaining
+                        return Runtime.command(runtime, args, **kwargs)
+                    return external_command(args, **kwargs)
+                def launch(*args, **kwargs):
+                    emitted.append(args)
+                    raise AssertionError("expired trust key reached OS spawn")
+                runtime.command = command
+                evidence = root / "prep.json"
+                with patch("time.monotonic", lambda: clock[0]), patch("subprocess.Popen", launch):
+                    with self.assertRaisesRegex(ProcessError, "command_timeout"):
+                        prepare_startup(runtime, "owned", recipe, "rest", cwd, "owned-workspace", 1, evidence)
+                self.assertEqual(emitted, [])
+                self.assertEqual([args[-1] for args in commands], [] if key == "down" else ["down"])
+                self.assertEqual(json.loads(evidence.read_text())["outcome"], "unknown")
+                self.assertEqual(runtime.owner.children, {})
 
     def test_received_screen_survives_a_failed_following_identity_query(self):
         for ordinal, phase in ((1, "before"), (2, "selected")):
