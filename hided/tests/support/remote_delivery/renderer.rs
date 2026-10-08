@@ -78,7 +78,30 @@ impl Renderer {
         self.send(
             1,
             &serde_json::to_vec(&json!({"schema_version":2,"kind":kind,"payload":payload}))?,
-        )
+        )?;
+        // The server reads frames in order. Keep this connection alive until
+        // its Pong proves it read the preceding event, instead of dropping
+        // the socket while a concurrent snapshot write is still pending.
+        self.send(9, b"event")?;
+        for _ in 0..8 {
+            let (opcode, data) = self.read_frame()?;
+            match opcode {
+                10 if data == b"event" => return Ok(()),
+                1 => {
+                    let frame: Value =
+                        serde_json::from_slice(&data).context("private renderer JSON")?;
+                    ensure!(
+                        frame["type"] != "error",
+                        "private renderer event {kind} refused: {}",
+                        frame["message"]
+                    );
+                }
+                9 => self.send(10, &data)?,
+                8 => bail!("private renderer closed before event receipt"),
+                _ => bail!("unexpected private renderer event opcode"),
+            }
+        }
+        bail!("private renderer event receipt frame cap")
     }
 
     fn send(&mut self, opcode: u8, bytes: &[u8]) -> Result<()> {
@@ -104,29 +127,8 @@ impl Renderer {
 
     fn read(&mut self) -> Result<Value> {
         for _ in 0..8 {
-            let mut header = [0; 2];
-            self.stream.read_exact(&mut header)?;
-            ensure!(
-                header[0] & 0x80 != 0 && header[1] & 0x80 == 0,
-                "unexpected private renderer frame"
-            );
-            let length = match header[1] {
-                126 => {
-                    let mut size = [0; 2];
-                    self.stream.read_exact(&mut size)?;
-                    u16::from_be_bytes(size).into()
-                }
-                127 => {
-                    let mut size = [0; 8];
-                    self.stream.read_exact(&mut size)?;
-                    u64::from_be_bytes(size)
-                }
-                size => u64::from(size),
-            };
-            ensure!(length <= 8 * 1024 * 1024, "private renderer input cap");
-            let mut data = vec![0; length as usize];
-            self.stream.read_exact(&mut data)?;
-            match header[0] & 15 {
+            let (opcode, data) = self.read_frame()?;
+            match opcode {
                 1 => return serde_json::from_slice(&data).context("private renderer JSON"),
                 9 => self.send(10, &data)?,
                 8 => bail!("private renderer closed before snapshot"),
@@ -134,6 +136,32 @@ impl Renderer {
             }
         }
         bail!("private renderer ping cap")
+    }
+
+    fn read_frame(&mut self) -> Result<(u8, Vec<u8>)> {
+        let mut header = [0; 2];
+        self.stream.read_exact(&mut header)?;
+        ensure!(
+            header[0] & 0x80 != 0 && header[1] & 0x80 == 0,
+            "unexpected private renderer frame"
+        );
+        let length = match header[1] {
+            126 => {
+                let mut size = [0; 2];
+                self.stream.read_exact(&mut size)?;
+                u16::from_be_bytes(size).into()
+            }
+            127 => {
+                let mut size = [0; 8];
+                self.stream.read_exact(&mut size)?;
+                u64::from_be_bytes(size)
+            }
+            size => u64::from(size),
+        };
+        ensure!(length <= 8 * 1024 * 1024, "private renderer input cap");
+        let mut data = vec![0; length as usize];
+        self.stream.read_exact(&mut data)?;
+        Ok((header[0] & 15, data))
     }
 }
 

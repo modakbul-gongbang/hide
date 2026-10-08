@@ -5,14 +5,13 @@
 
 import type { TFunction } from "i18next";
 import type { Notice, StartCatalog, StartKind, StartKindEntry, StartTarget } from "./protocol";
+import { PROVIDER_KINDS, providerLabel } from "../agentPicker";
 
 /** The longest instruction hided starts an agent with (hided/src/mobile/start.rs MAX_PROMPT_CHARS). */
 export const MAX_START_CHARS = 4000;
 
-export const START_KINDS: readonly { id: StartKind; label: string }[] = [
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-];
+export const START_KINDS: readonly { id: StartKind; label: string }[] = PROVIDER_KINDS
+  .map((id) => ({ id, label: providerLabel(id) }));
 
 /** What the operator changed in the sheet; anything not changed follows the remembered choice. */
 export type StartChoice = { target: string | null; kind: StartKind | null; model: string | undefined };
@@ -46,7 +45,8 @@ export function targetText(t: TFunction<"translation">, target: StartTarget): st
 export function selectionOf(catalog: StartCatalog | null, choice: StartChoice): StartSelection {
   const targets = catalog?.targets ?? [];
   const target = targets.find((candidate) => candidate.id === choice.target) ?? targets[0] ?? null;
-  const kind = choice.kind ?? catalog?.remembered.kind ?? "claude";
+  const kind = choice.kind ?? catalog?.remembered.kind ?? START_KINDS[0]?.id;
+  if (!kind) throw new Error("No start adapter declared");
   const entry = catalog?.kinds.find((candidate) => candidate.id === kind) ?? null;
   const wanted = choice.model ?? catalog?.remembered.models[kind] ?? "";
   // A remembered model the catalog does not list is still the one sent: the CLI decides, never a quiet swap (B32).

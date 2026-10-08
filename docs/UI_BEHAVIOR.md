@@ -1506,8 +1506,11 @@ A row is the agent's official mark (the same in light and dark), its name and a 
 The switch is that machine's: turning an agent on installs its skill and hook and the Herdr integration there, turning it off takes out only what Hide installed (docs/agent-hooks.md), and an agent that is off wears no status.
 An agent that is on says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
-Grok, OpenCode, Pi, omp and Cursor wear a `Partial` chip, on or off, and show no counts; the chip opens a popover with every feature of the kit's feature table, `✓ Works` or `– Not available`.
-Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row an older device helper still reports for an agent Hide no longer supports (Gemini CLI) is not drawn.
+Grok, OpenCode, Pi, omp and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off, and show no counts; Claude Code and Codex have both prompt intake and spawn refusal and wear no chip.
+The chip opens a popover with every feature of the kit's feature table, grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
+The chip, headings and feature text wrap within the popover in every interface language.
+Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row whose id this build does not know is omitted and its id and device are diagnosed once.
+The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
 A switch-off whose removal did not finish keeps the row from reading Off and says so in its own line.

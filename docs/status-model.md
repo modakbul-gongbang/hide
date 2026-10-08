@@ -483,6 +483,7 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, the Overview agent line and the request view.
+The provider fallback reads the shared adapter's sidebar label or canonical Herdr kind after common alias normalization, preserving a raw unknown kind and `Agent` for no kind.
 `sidebar.rs` owns the ladder (PRD overview-request-view D-13): the label's `goal` (laid on the row as `task`), then the agent's own title for the session (Claude Code's `/rename` over its `ai-title`, Codex's `thread_name`, OpenCode's session title, read by the session adapter), then the provider's name (`Claude`, `Codex`, `OpenCode`, the kind Herdr reports, or `Agent` when it reports none).
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.

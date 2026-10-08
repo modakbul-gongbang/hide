@@ -11,6 +11,7 @@ publish = false
 # two machines get the same kit (PRD device-parity D-09, D-10).
 
 [dependencies]
+hide-agent-adapter = { path = "../hide-agent-adapter" }
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-platform = { path = "../hide-platform" }

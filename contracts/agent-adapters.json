@@ -1,0 +1,96 @@
+[
+  {
+    "id": "claude-code",
+    "aliases": [
+      "claude",
+      "claude_code"
+    ],
+    "label": "Claude Code",
+    "picker_label": "Claude",
+    "herdr_kind": "claude",
+    "doc_url": "https://code.claude.com/docs/en/skills",
+    "install_url": "https://code.claude.com/docs/en/setup",
+    "logo_id": "claude-code",
+    "can_start": true,
+    "can_resume": true,
+    "sidebar_mark": "claude"
+  },
+  {
+    "id": "codex",
+    "aliases": [],
+    "label": "Codex",
+    "picker_label": "Codex",
+    "herdr_kind": "codex",
+    "doc_url": "https://learn.chatgpt.com/docs/build-skills",
+    "install_url": "https://learn.chatgpt.com/docs/codex/cli",
+    "logo_id": "codex",
+    "can_start": true,
+    "can_resume": true,
+    "sidebar_mark": "codex"
+  },
+  {
+    "id": "grok",
+    "aliases": [],
+    "label": "Grok",
+    "picker_label": "Grok",
+    "herdr_kind": "grok",
+    "doc_url": "https://docs.x.ai/build/features/skills-plugins-marketplaces",
+    "install_url": "https://github.com/xai-org/grok-build",
+    "logo_id": "grok",
+    "can_start": false,
+    "can_resume": false,
+    "sidebar_mark": null
+  },
+  {
+    "id": "opencode",
+    "aliases": [],
+    "label": "OpenCode",
+    "picker_label": "OpenCode",
+    "herdr_kind": "opencode",
+    "doc_url": "https://opencode.ai/docs/skills/",
+    "install_url": "https://opencode.ai/docs/",
+    "logo_id": "opencode",
+    "can_start": false,
+    "can_resume": false,
+    "sidebar_mark": null
+  },
+  {
+    "id": "pi",
+    "aliases": [],
+    "label": "Pi",
+    "picker_label": "Pi",
+    "herdr_kind": "pi",
+    "doc_url": "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
+    "install_url": "https://pi.dev/",
+    "logo_id": "pi",
+    "can_start": false,
+    "can_resume": false,
+    "sidebar_mark": null
+  },
+  {
+    "id": "omp",
+    "aliases": [],
+    "label": "omp",
+    "picker_label": "omp",
+    "herdr_kind": "omp",
+    "doc_url": "https://omp.sh/docs/skills",
+    "install_url": "https://omp.sh/docs/quickstart",
+    "logo_id": "omp",
+    "can_start": false,
+    "can_resume": false,
+    "sidebar_mark": null
+  },
+  {
+    "id": "cursor",
+    "aliases": [],
+    "label": "Cursor",
+    "picker_label": "Cursor",
+    "herdr_kind": "cursor",
+    "doc_url": "https://cursor.com/docs/context/skills",
+    "install_url": "https://cursor.com/docs/cli/installation",
+    "logo_id": "cursor",
+    "can_start": false,
+    "can_resume": false,
+    "sidebar_mark": null
+  }
+]

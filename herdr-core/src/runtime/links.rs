@@ -119,12 +119,9 @@ pub(crate) fn spawn_worker(
 
 /// A session file's agent name for a Hide agent kind.
 fn session_agent(kind: &str) -> Option<&'static str> {
-    match kind.to_ascii_lowercase().as_str() {
-        "claude" | "claude-code" => Some("claude"),
-        "codex" => Some("codex"),
-        "opencode" => Some("opencode"),
-        _ => None,
-    }
+    hide_agent_adapter::adapter(kind)?
+        .session
+        .map(|format| format.adapter().herdr.name)
 }
 
 impl Runtime {

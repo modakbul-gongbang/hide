@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "hide-agent-adapter",
     "herdr-core",
     "hide-herdr-client",
     "hide-host",
@@ -68,6 +69,9 @@ debug = "line-tables-only"
 debug = "line-tables-only"
 
 [profile.dev.package.hided]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-agent-adapter]
 debug = "line-tables-only"
 
 # A device's node is installed and spoken to over SSH, and every byte of

@@ -66,6 +66,13 @@ fn agents_with_timeout(
     .map_err(|error| format!("{error}"))?;
     crate::wire::agents_response(result).map_err(|_| "native_identity_unavailable".into())
 }
+fn native_matches(agent: &ProjectedAgent, pane: &str, name: Option<&str>, kind: &str) -> bool {
+    agent.pane_id == pane
+        && name.is_none_or(|name| agent.name.as_deref() == Some(name))
+        && agent.agent.as_deref().is_some_and(|observed| {
+            hide_agent_adapter::canonical_kind(observed) == hide_agent_adapter::canonical_kind(kind)
+        })
+}
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_native_identity(
     connector: &dyn ApiConnector,
@@ -84,9 +91,7 @@ fn wait_native_identity(
         }
         let observed = agents_with_timeout(connector, remaining.min(Duration::from_secs(2)))?;
         if let Some(agent) = observed.into_iter().find(|agent| {
-            agent.pane_id == pane
-                && name.is_none_or(|name| agent.name.as_deref() == Some(name))
-                && agent.agent.as_deref() == Some(kind)
+            native_matches(agent, pane, name, kind)
                 && agent.lineage_session.is_some()
                 && agent.agent_session.is_some()
         }) {
@@ -563,11 +568,9 @@ fn spawn(
     }
     let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
     let observed = agents(connector.as_ref())?;
-    let live = observed.iter().find(|agent| {
-        agent.pane_id == pane
-            && agent.agent.as_deref() == Some(kind)
-            && agent.name.as_deref() == Some(name)
-    });
+    let live = observed
+        .iter()
+        .find(|agent| native_matches(agent, pane, Some(name), kind));
     if live.is_none() {
         // A changed session in an already registered child is refused. A
         // retry never launches over a replacement occupant.
@@ -745,6 +748,34 @@ mod tests {
             registration_machine(Some(String::new()), crate::node::TEST_NODE),
             Err("invalid_registration".into())
         );
+    }
+
+    #[test]
+    fn native_identity_accepts_known_agent_spellings() {
+        // B5/D-08: spelling does not change the native agent's identity.
+        for (requested, reported, session_agent) in [
+            ("CODEX", "codex", "codex"),
+            ("codex", " Codex", "codex"),
+            ("claude_code", "claude", "claude"),
+        ] {
+            let herdr = FakeHerdr::start("coordination-native-alias", move |method, _| {
+                assert_eq!(method, "agent.list");
+                json!({"type":"agent_list","agents":[{
+                    "pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1",
+                    "terminal_id":"fixture-child-terminal","revision":1,
+                    "focused":false,"agent_status":"idle","agent":reported,"name":"child",
+                    "agent_session":{"source":format!("herdr:{session_agent}"),
+                        "agent":session_agent,"kind":"id","value":"fixture-child-session"}
+                }]})
+            });
+            let child = wait_native_identity(&herdr.connector(), "w2:p1", Some("child"), requested)
+                .unwrap();
+            assert_eq!(child.agent.as_deref(), Some(reported));
+            assert_eq!(
+                child.lineage_session,
+                crate::wire::session_digest("fixture-child-session")
+            );
+        }
     }
 
     #[test]

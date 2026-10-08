@@ -589,6 +589,10 @@ pub(crate) fn write_document(path: &Path, document: &Value) -> Result<(), Instal
 }
 
 #[cfg(test)]
+#[path = "install/byte_contract_tests.rs"]
+mod byte_contract_tests;
+
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 

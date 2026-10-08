@@ -5,10 +5,19 @@
 // their own; `components/agent-picker.tsx` draws them.
 
 import type { AgentStartChoice, AiProvider, BackgroundAi } from "./snapshot";
+import { AGENT_ADAPTERS } from "./agentAdapters";
 
 /** The kinds hide starts with a model choice; `terminal` is a tab alone and has no model. */
-export type ProviderKind = "claude" | "codex";
-export const PROVIDER_KINDS: readonly ProviderKind[] = ["claude", "codex"];
+export type ProviderKind = NonNullable<AgentStartChoice["kind"]>;
+export const PROVIDER_KINDS: readonly ProviderKind[] = AGENT_ADAPTERS
+  .filter((row) => row.can_start)
+  .map((row) => row.herdr_kind as ProviderKind);
+
+export function providerLabel(kind: ProviderKind): string {
+  const row = AGENT_ADAPTERS.find((row) => row.can_start && row.herdr_kind === kind);
+  if (!row) throw new Error(`Missing start adapter: ${kind}`);
+  return row.picker_label;
+}
 
 export type AgentKind = ProviderKind | "terminal";
 
@@ -20,7 +29,8 @@ const NOTHING_REMEMBERED: AgentStartChoice = { kind: null, models: {} };
 /** The kind a picker opens on: the last one a start named, Claude before any. */
 export function rememberedSelection(start: AgentStartChoice | undefined): AgentSelection {
   const remembered = start ?? NOTHING_REMEMBERED;
-  const kind = remembered.kind ?? "claude";
+  const kind = remembered.kind ?? PROVIDER_KINDS[0];
+  if (!kind) throw new Error("No start adapter declared");
   return { kind, model: remembered.models[kind] ?? null };
 }
 

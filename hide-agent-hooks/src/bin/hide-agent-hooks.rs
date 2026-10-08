@@ -81,7 +81,8 @@ fn main() -> ExitCode {
             // (`docs/agent-hooks.md`, Other agents). Grok and OpenCode run it
             // too and have no hook of Hide's: it still speaks there, but takes
             // no letters (`run_hook`).
-            if argument_value("--runtime", &arguments).as_deref() == Some("claude-code")
+            if argument_value("--runtime", &arguments).and_then(|value| AgentRuntime::parse(&value))
+                == Some(AgentRuntime::ClaudeCode)
                 && hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name))
                     .is_some_and(hide_agent_hooks::runtime::ForeignOrigin::silences_claude_hook)
             {
@@ -167,6 +168,9 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     else {
         return;
     };
+    if runtime.dialect().adapter().spawn_guard.is_none() {
+        return;
+    }
     // Another agent that runs Claude Code's hooks (Grok, OpenCode, Cursor) has
     // its own pre-tool contract, which Hide has not verified.
     if hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name)).is_some() {
@@ -254,7 +258,10 @@ fn run_hook(arguments: &[String], started: Instant) {
     let delivery_deadline = started + INTAKE_BUDGET;
     let memory_injection = arguments
         .iter()
-        .any(|argument| argument == "--memory-injection");
+        .any(|argument| argument == "--memory-injection")
+        && runtime.is_some_and(|runtime| runtime.dialect().adapter().memory.is_some());
+    let prompt_hook =
+        runtime.is_some_and(|runtime| runtime.dialect().adapter().prompt_hook.is_some());
     // The prompt event reads its payload for the bell test even without
     // Memory; a Memory read that follows works from the same bytes.
     let payload = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
@@ -292,7 +299,7 @@ fn run_hook(arguments: &[String], started: Instant) {
     // they are: the session that runs it is not the pane's Claude Code.
     let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
         || hide_agent_hooks::runtime::takes_letters(|name| std::env::var_os(name));
-    let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() && takes_letters {
+    let intake = if event == HookEvent::UserPromptSubmit && prompt_hook && takes_letters {
         match hide_agent_hooks::delivery::pull(delivery_deadline, &prompt) {
             Ok(intake) => intake,
             Err(failure) => {
@@ -343,6 +350,9 @@ fn run_hook(arguments: &[String], started: Instant) {
                 hide_agent_hooks::delivery::diagnose(&home, "stdout");
             }
         }
+        return;
+    }
+    if runtime.is_some_and(|runtime| runtime.dialect().adapter().subagent_counts.is_none()) {
         return;
     }
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")

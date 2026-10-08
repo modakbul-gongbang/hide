@@ -15,7 +15,9 @@ use serde_json::Value;
 
 const CODEX_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 /// The name the CLI is looked up by on `PATH`.
-const CLAUDE_BINARY: &str = "claude";
+const CLAUDE_BINARY: &str = hide_agent_adapter::AgentId::ClaudeCode
+    .adapter()
+    .executables[0];
 
 /// The token and account in `<codex_home>/auth.json`.
 pub fn codex_credentials(codex_home: &Path) -> CredentialsAnswer {

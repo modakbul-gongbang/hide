@@ -3014,7 +3014,9 @@ impl Runtime {
                     .agents
                     .iter()
                     .find(|agent| agent.pane_id == payload.pane_id);
-                let report = agent.is_some_and(|agent| agent.agent_kind == "claude");
+                let report = agent
+                    .and_then(|agent| hide_agent_adapter::adapter(&agent.agent_kind))
+                    .is_some_and(|row| row.terminal_click);
                 crate::diagnostic!(serde_json::json!({
                     "component": "terminal", "kind": "terminal.click_routed",
                     "pane_id": payload.pane_id,

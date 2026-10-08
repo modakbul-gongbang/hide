@@ -488,15 +488,16 @@ impl Runtime {
     /// pull request's branch with the operator's first prompt, or, with no
     /// checkout here, in a new worktree of that existing branch. Both report
     /// through the task-operation slot, as every start does.
-    pub(super) fn delegate_pr(&mut self, payload: PrDelegatePayload) -> bool {
-        if !matches!(payload.provider.as_str(), "claude" | "codex") {
+    pub(super) fn delegate_pr(&mut self, mut payload: PrDelegatePayload) -> bool {
+        let Some(provider) = hide_agent_adapter::start_kind(&payload.provider) else {
             self.set_error(
                 "pr_delegate.unknown_provider",
                 format!("No agent provider named {}", payload.provider),
                 false,
             );
             return true;
-        }
+        };
+        payload.provider = provider.to_owned();
         let (workspace, pull_request) =
             match self.open_pull_request(&payload.workspace_id, payload.pr_number) {
                 Ok(target) => target,

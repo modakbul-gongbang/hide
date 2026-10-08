@@ -9,6 +9,9 @@
 //! the tracker beside its read checkpoint and hands it back on the next read,
 //! so an incremental read continues the turn it was in.
 
+mod content;
+pub use content::{UserTurnContent, UserTurnFact, UserTurnKind};
+
 use serde::{Deserialize, Serialize};
 
 /// What the last turn leaves the operator to do.
@@ -97,6 +100,18 @@ pub struct TurnTracker {
 }
 
 impl TurnTracker {
+    /// Existing records establish the kind of wait, never invented text.
+    /// This adds no serialized field to the tracker or helper protocol.
+    pub fn user_turn(&self) -> Option<UserTurnFact> {
+        match self.waiting()? {
+            Waiting::Nothing => None,
+            Waiting::PlanApproval => Some(UserTurnFact {
+                kind: UserTurnKind::PlanApproval,
+                content: None,
+            }),
+        }
+    }
+
     /// Folds the mark of the record at `offset`; a record before what was
     /// already folded is ignored.
     pub fn fold(&mut self, offset: u64, mark: &TurnMark) {
