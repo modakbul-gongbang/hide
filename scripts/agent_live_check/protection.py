@@ -114,18 +114,20 @@ def configuration_bytes(path: Path) -> tuple[FileStamp, bytes] | None:
     with os.fdopen(fd, "rb") as stream:
         opened = os.fstat(stream.fileno())
         if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid()
-                or opened.st_nlink != 1):
+                or opened.st_nlink not in {0, 1}):
             raise ProtectionError("config_not_private_regular_file")
-        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-            raise ConfigurationChanged("config_changed_during_open")
         if opened.st_size > MAX_BACKUP_BYTES:
             raise ProtectionError("config_file_over_budget")
+        if opened.st_nlink == 0 or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise ConfigurationChanged("config_changed_during_open")
         data = stream.read(MAX_BACKUP_BYTES + 1)
         after = os.fstat(stream.fileno())
-    if len(data) > MAX_BACKUP_BYTES:
+    if len(data) > MAX_BACKUP_BYTES or after.st_size > MAX_BACKUP_BYTES:
         raise ProtectionError("config_file_over_budget")
-    if not stat.S_ISREG(after.st_mode) or after.st_uid != os.getuid() or after.st_nlink != 1:
+    if not stat.S_ISREG(after.st_mode) or after.st_uid != os.getuid() or after.st_nlink not in {0, 1}:
         raise ProtectionError("config_not_private_regular_file")
+    if after.st_nlink == 0:
+        raise ConfigurationChanged("config_changed_during_read")
     if ((opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns, opened.st_mode, opened.st_nlink)
             != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode, after.st_nlink)):
         raise ConfigurationChanged("config_changed_during_read")
