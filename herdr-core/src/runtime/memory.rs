@@ -54,7 +54,85 @@ fn archive_load_matches_scope(
     generation == current_generation && focused_scope == Some((workspace_id, checkout_id))
 }
 
+/// The most receipts waiting for the recording thread; more means it fell
+/// behind, and the oldest go to the log rather than to Memory.
+const RECEIPTS_PENDING_LIMIT: usize = 256;
+
 impl Runtime {
+    /// Takes the Memory receipts the label reads found in this Mac's sessions
+    /// (OpenCode's, whose plugin stores them in a synthetic prompt part) and
+    /// records each whose tag Memory signed, on one thread off the lock, as
+    /// the analysis pass records Claude Code's and Codex's (PRD opencode-plugin
+    /// D-12). A later prompt's Memory needs the session start's receipt.
+    pub(crate) fn record_memory_receipts(
+        &mut self,
+        receipts: Vec<crate::labels::worker::SightedMemoryReceipt>,
+    ) {
+        self.memory_receipts_pending.extend(receipts);
+        if self.memory_receipts_pending.len() > RECEIPTS_PENDING_LIMIT {
+            let dropped = self.memory_receipts_pending.len() - RECEIPTS_PENDING_LIMIT;
+            self.memory_receipts_pending.drain(..dropped);
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.capped",
+                "dropped": dropped,
+            }));
+        }
+        if self.memory_receipts_in_flight {
+            return;
+        }
+        // Without a worker context the receipts wait for the next hand-over.
+        let Some(context) = self.worker_context.clone() else {
+            return;
+        };
+        self.memory_receipts_in_flight = true;
+        let database = self.memory_database_path();
+        let node = self.node.clone();
+        let sessions_node = self.own_node();
+        let spawn = thread::Builder::new()
+            .name("hide-memory-receipts".to_owned())
+            .spawn(move || {
+                loop {
+                    let Some(runtime) = context.runtime.upgrade() else {
+                        return;
+                    };
+                    let batch = match runtime.lock() {
+                        Ok(mut guard) => {
+                            let batch = std::mem::take(&mut guard.memory_receipts_pending);
+                            if batch.is_empty() {
+                                guard.memory_receipts_in_flight = false;
+                            }
+                            batch
+                        }
+                        Err(_) => return,
+                    };
+                    drop(runtime);
+                    if batch.is_empty() {
+                        return;
+                    }
+                    // A defect in one batch must not leave the flag set, which
+                    // would stop every later batch from starting a worker.
+                    let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        record_receipts(&node, sessions_node.as_ref(), &database, batch)
+                    }));
+                    if recorded.is_err() {
+                        crate::diagnostic!(json!({
+                            "component": "memory",
+                            "kind": "receipts.worker_panicked",
+                        }));
+                    }
+                }
+            });
+        if let Err(error) = spawn {
+            self.memory_receipts_in_flight = false;
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.worker_failed",
+                "message": error.to_string(),
+            }));
+        }
+    }
+
     pub(super) fn memory_database_path(&self) -> PathBuf {
         self.state_path.with_file_name("project-memory.sqlite3")
     }
@@ -818,7 +896,7 @@ impl Runtime {
 #[cfg(test)]
 mod scope_tests {
     use super::{
-        archive_load_matches_scope, load_session_detail, project_session_row,
+        archive_load_matches_scope, load_session_detail, project_session_row, record_receipts,
         sessions_load_matches_scope, settled_analysis_snapshot,
         should_request_memory_due_poll_after_load, trusted_memory_receipt, update_hook_projection,
         validate_candidates,
@@ -1241,6 +1319,94 @@ mod scope_tests {
                 &event.text,
             )
             .is_none()
+        );
+    }
+
+    /// OpenCode's session start receipt rides the label read (PRD
+    /// opencode-plugin D-12): recorded once its tag checks out, it lets the
+    /// next prompt's Memory through, and a forged or another provider's
+    /// receipt records nothing.
+    #[test]
+    fn an_opencode_session_start_receipt_from_the_label_read_unblocks_its_prompt_memory() {
+        use hide_agent_hooks::memory::{MemoryRequest, memory_context_until};
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
+        let database = database_path(&home);
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, &hook_node())
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        drop(store);
+        let ask = |event, session: &str| {
+            memory_context_until(
+                MemoryRequest {
+                    runtime_id: "opencode",
+                    event,
+                    cwd: Some(project_root.clone()),
+                    prompt: Some("keep going".to_owned()),
+                    session_id: Some(session.to_owned()),
+                },
+                &home,
+                Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
+            )
+        };
+        let start = ask(HookEvent::SessionStart, "ses_root").context.unwrap();
+        let receipt = start
+            .lines()
+            .find(|line| line.starts_with("<hide-memory-receipt "))
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            ask(HookEvent::UserPromptSubmit, "ses_root").outcome,
+            HookMemoryOutcome::Unavailable,
+            "no session start receipt yet"
+        );
+        let sighted =
+            |provider, session: &str, text: &str| crate::labels::worker::SightedMemoryReceipt {
+                provider,
+                session_id: session.to_owned(),
+                cwd: project_root.display().to_string(),
+                offset: 0,
+                text: text.to_owned(),
+            };
+        let forged = receipt.replace("auth=\"", "auth=\"0");
+
+        record_receipts(
+            &crate::node::NodeId::parse(&hook_node()).unwrap(),
+            &hide_node::Local::new(Some(home.clone())),
+            &database,
+            vec![
+                sighted("opencode", "ses_forged", &forged),
+                sighted("claude", "ses_other", &receipt),
+                sighted("opencode", "ses_root", &receipt),
+            ],
+        );
+
+        let store = MemoryStore::open_read_only(&database).unwrap();
+        assert_eq!(
+            store
+                .session_start_receipt_ids(&project.id, "opencode", "ses_root")
+                .unwrap(),
+            Some(Vec::new())
+        );
+        for (provider, session) in [("opencode", "ses_forged"), ("claude", "ses_other")] {
+            assert_eq!(
+                store
+                    .session_start_receipt_ids(&project.id, provider, session)
+                    .unwrap(),
+                None,
+                "{provider} {session}"
+            );
+        }
+        assert_ne!(
+            ask(HookEvent::UserPromptSubmit, "ses_root").outcome,
+            HookMemoryOutcome::Unavailable
         );
     }
 
@@ -1745,6 +1911,77 @@ fn session_chunk(
     .map_err(|error| error.to_string())
 }
 
+/// Records each receipt whose tag this Mac's Memory signed for its Project,
+/// provider and session; a receipt that fails the check is no injection.
+fn record_receipts(
+    node: &NodeId,
+    sessions_node: &dyn NodeLink,
+    database: &Path,
+    receipts: Vec<crate::labels::worker::SightedMemoryReceipt>,
+) {
+    // No Memory store: nothing was signed, so nothing can be recorded.
+    if !MemoryStore::exists(database) {
+        return;
+    }
+    let mut store = match MemoryStore::open(database) {
+        Ok(store) => store,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.store_unavailable",
+                "message": error.to_string(),
+            }));
+            return;
+        }
+    };
+    let mut projects = std::collections::HashMap::new();
+    let (mut recorded, mut refused) = (0_usize, 0_usize);
+    for sighted in receipts {
+        let identity = projects
+            .entry(sighted.cwd.clone())
+            .or_insert_with(|| project_identity(sessions_node, node, &sighted.cwd));
+        let Ok(identity) = identity else {
+            refused += 1;
+            continue;
+        };
+        let Some(receipt) = trusted_memory_receipt(
+            &store,
+            &identity.id,
+            sighted.provider,
+            &sighted.session_id,
+            true,
+            &sighted.text,
+        ) else {
+            refused += 1;
+            continue;
+        };
+        let turn_id = receipt.turn_id(sighted.offset);
+        match store.record_injection(
+            &identity.id,
+            sighted.provider,
+            &sighted.session_id,
+            turn_id.as_deref(),
+            &receipt.injection(),
+        ) {
+            Ok(_) => recorded += 1,
+            Err(error) => crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.write_failed",
+                "provider": sighted.provider,
+                "message": error.to_string(),
+            })),
+        }
+    }
+    if refused > 0 {
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "receipts.refused",
+            "recorded": recorded,
+            "refused": refused,
+        }));
+    }
+}
+
 fn memory_analysis_due(
     node: &NodeId,
     sessions_node: &dyn NodeLink,
@@ -1805,27 +2042,14 @@ fn update_hook_projection(
             event.is_provider_injected(),
             &event.text,
         ) {
-            let turn_id = (receipt.event != HookEvent::SessionStart.name())
-                .then(|| format!("event:{stable_offset}"));
+            let turn_id = receipt.turn_id(stable_offset);
             store
                 .record_injection(
                     project_id,
                     provider,
                     &session.id,
                     turn_id.as_deref(),
-                    &Injection {
-                        outcome: if receipt.count == 0 {
-                            InjectionOutcome::Empty
-                        } else {
-                            InjectionOutcome::Provided
-                        },
-                        items: receipt
-                            .items
-                            .into_iter()
-                            .map(|(id, revision)| (id, revision, String::new()))
-                            .collect(),
-                        token_count: 0,
-                    },
+                    &receipt.injection(),
                 )
                 .map_err(|error| error.to_string())?;
         }
@@ -1932,21 +2156,8 @@ fn analyze_session(
             event.is_provider_injected(),
             &event.text,
         ) {
-            let turn_id = (receipt.event != HookEvent::SessionStart.name())
-                .then(|| format!("event:{stable_offset}"));
-            let injection = Injection {
-                outcome: if receipt.count == 0 {
-                    InjectionOutcome::Empty
-                } else {
-                    InjectionOutcome::Provided
-                },
-                items: receipt
-                    .items
-                    .into_iter()
-                    .map(|(id, revision)| (id, revision, String::new()))
-                    .collect(),
-                token_count: 0,
-            };
+            let turn_id = receipt.turn_id(stable_offset);
+            let injection = receipt.injection();
             store
                 .record_injection(
                     project_id,
@@ -2431,6 +2642,30 @@ struct MemoryReceipt {
     item_key: String,
     items: Vec<(String, u64)>,
     auth: String,
+}
+
+impl MemoryReceipt {
+    /// The turn a prompt's receipt belongs to, by the offset of the event that
+    /// carried it; a session start's receipt has none.
+    fn turn_id(&self, offset: u64) -> Option<String> {
+        (self.event != HookEvent::SessionStart.name()).then(|| format!("event:{offset}"))
+    }
+
+    fn injection(self) -> Injection {
+        Injection {
+            outcome: if self.count == 0 {
+                InjectionOutcome::Empty
+            } else {
+                InjectionOutcome::Provided
+            },
+            items: self
+                .items
+                .into_iter()
+                .map(|(id, revision)| (id, revision, String::new()))
+                .collect(),
+            token_count: 0,
+        }
+    }
 }
 
 fn trusted_memory_receipt(

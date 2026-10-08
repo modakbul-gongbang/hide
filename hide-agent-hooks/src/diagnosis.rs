@@ -104,9 +104,10 @@ impl UninstrumentedReason {
 /// pane on a device is observed the same way, against that device's hooks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PaneObservation {
-    /// The runtime Herdr detected in this pane, when Hide has an adapter for
-    /// it. `None` is an agent Hide cannot instrument.
-    pub runtime: Option<AgentRuntime>,
+    /// The hook dialect of the agent Herdr detected in this pane, when Hide
+    /// instruments it (Claude Code's and Codex's hooks, OpenCode's plugin).
+    /// `None` is an agent Hide cannot instrument.
+    pub dialect: Option<hide_agent_adapter::HookDialect>,
     /// The version carried by the pane's `hide_hooks` token, when the hook
     /// reported at all.
     pub token_version: Option<u32>,
@@ -445,7 +446,7 @@ mod tests {
 
     fn observation(token_version: Option<u32>) -> PaneObservation {
         PaneObservation {
-            runtime: Some(AgentRuntime::ClaudeCode),
+            dialect: Some(hide_agent_adapter::HookDialect::ClaudeCode),
             token_version,
             working: Some(2),
             done: Some(3),
@@ -512,7 +513,7 @@ mod tests {
     #[test]
     fn an_agent_with_no_adapter_says_so_rather_than_guessing() {
         let mut unknown = observation(Some(HOOK_VERSION));
-        unknown.runtime = None;
+        unknown.dialect = None;
         let result = instrumentation(unknown, None);
         assert_eq!(result.reason, Some(UninstrumentedReason::Unknown));
         assert!(result.working.is_none(), "an unknown count is never a zero");

@@ -103,11 +103,13 @@ impl ForeignOrigin {
     }
 
     /// Whether Hide's own hook for that agent speaks in its place, so Claude
-    /// Code's says nothing at all: Cursor has a guidance hook of its own.
-    /// Grok and OpenCode have none, so Claude Code's hook still counts,
-    /// reads Memory and prints its guidance there.
+    /// Code's says nothing at all: Cursor has a guidance hook of its own and
+    /// OpenCode Hide's plugin, which would otherwise be counted twice when an
+    /// operator's bridge plugin runs Claude Code's hooks inside OpenCode.
+    /// Grok has none, so Claude Code's hook still counts, reads Memory and
+    /// prints its guidance there.
     pub fn silences_claude_hook(self) -> bool {
-        self == Self::Cursor
+        matches!(self, Self::Cursor | Self::OpenCode)
     }
 }
 
@@ -245,7 +247,7 @@ impl AgentRuntime {
     /// that turns it into a runtime rather than each caller matching strings.
     pub fn from_id(id: &str) -> Option<Self> {
         match hide_agent_adapter::adapter(id)?.hook {
-            hide_agent_adapter::HookInstall::Runtime(dialect) => Some(Self::from_dialect(dialect)),
+            hide_agent_adapter::HookInstall::Runtime(dialect) => Self::from_dialect(dialect),
             _ => None,
         }
     }
@@ -266,10 +268,21 @@ impl AgentRuntime {
         }
     }
 
-    pub const fn from_dialect(dialect: hide_agent_adapter::HookDialect) -> Self {
+    /// The settings-file runtime that speaks `dialect`; OpenCode's dialect is
+    /// spoken by Hide's plugin (`crate::opencode`), which has no settings file.
+    pub const fn from_dialect(dialect: hide_agent_adapter::HookDialect) -> Option<Self> {
         match dialect {
-            hide_agent_adapter::HookDialect::ClaudeCode => Self::ClaudeCode,
-            hide_agent_adapter::HookDialect::Codex => Self::Codex,
+            hide_agent_adapter::HookDialect::ClaudeCode => Some(Self::ClaudeCode),
+            hide_agent_adapter::HookDialect::Codex => Some(Self::Codex),
+            hide_agent_adapter::HookDialect::OpenCode => None,
+        }
+    }
+
+    /// The provider id Project Memory keys this runtime's sessions by.
+    pub fn memory_id(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude",
+            Self::Codex => "codex",
         }
     }
 
@@ -469,9 +482,9 @@ mod tests {
     }
 
     #[test]
-    fn only_cursor_silences_claude_codes_hook_and_every_foreign_session_takes_no_letters() {
+    fn cursor_and_opencode_silence_claude_codes_hook_and_every_foreign_session_takes_no_letters() {
         assert!(ForeignOrigin::Cursor.silences_claude_hook());
-        assert!(!ForeignOrigin::OpenCode.silences_claude_hook());
+        assert!(ForeignOrigin::OpenCode.silences_claude_hook());
         assert!(!ForeignOrigin::Grok.silences_claude_hook());
         assert!(takes_letters(|_: &str| None::<&str>));
         for name in ["CURSOR_VERSION", "OPENCODE", "GROK_HOOK_EVENT"] {

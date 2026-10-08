@@ -10,6 +10,8 @@ mod guidance_hook;
 mod hook_deadline;
 mod letter_origin;
 mod lossless_install;
+mod opencode_helper;
+mod opencode_plugin;
 mod programs;
 mod spawn_guard;
 #[path = "../../../hide-platform/tests/it/stand_ins.rs"]

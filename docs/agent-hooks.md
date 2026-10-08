@@ -14,8 +14,9 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 | --- | --- |
 | Claude Code | `~/.claude/settings.json` |
 | Codex | `~/.codex/hooks.json` |
+| OpenCode | `~/.config/opencode/plugins/hide.js` (macOS, Linux; see [OpenCode: Hide's plugin](#opencode-hides-plugin)) |
 
-On Windows `~` is the account's profile folder (`%USERPROFILE%`), where both runtimes keep these files.
+On Windows `~` is the account's profile folder (`%USERPROFILE%`), where Claude Code and Codex keep these files; OpenCode's plugin is not written there.
 
 One entry is appended per registered event, and nothing else in the file is touched.
 The common writer retains JSON source spans through `serde_json::value::RawValue`, splicing only owned changes so unrelated members, groups and handlers retain their literal whitespace, ordering and escapes.
@@ -176,12 +177,44 @@ Any other outcome, a `hide` that is missing, a bridge to a device that is gone, 
 The line goes to the log only: a hook's standard error reaches nobody the operator or the agent could act on.
 A pane of a Herdr server Hide does not attach to, whose working directory is inside a registered checkout, is bound by `hide workspace bootstrap` to that checkout and so reads as registered too; the guard is guidance, not a boundary, and the Hide commands it offers cannot spawn from such an unattached pane (known limitation, PRD D-03 reads the pane and the checkout, not whose Herdr it is).
 `--repo` is the repository's main root and `--branch` the caller's current branch, both read from the call's `cwd` through the repository's own files (`hide_project::git`), with no git process; a detached HEAD leaves `<branch>` for the agent to fill.
-The guard stays silent inside a Grok, OpenCode or Cursor session (`ForeignOrigin`), where Claude Code's hook runs but its deny handling is unverified.
+The guard stays silent inside a Grok, OpenCode or Cursor session (`ForeignOrigin`), where Claude Code's hook runs but its deny handling is unverified; OpenCode gets the same guard from Hide's own plugin instead.
 Claude Code and Codex share one deny envelope, `hookSpecificOutput.permissionDecision = "deny"` with `permissionDecisionReason`; every other path prints nothing and exits 0, and the whole entry runs inside `catch_unwind`, so a defect allows the call rather than refusing an ordinary one; a failed owner handshake in the environment ends the outer hook with 0 as well, since exit 2 from a pre-tool hook would refuse the call.
 
 Each refusal appends one JSON line (pane id, agent kind, shape, runtime; never the command text, and the same file holds the `daemon.unreachable` lines) to `~/.hide/agent-hooks/spawn-guard.log` (private, capped at 256 KiB with one rotation) and echoes it on standard error, where a hook run by hand shows it.
 The per-call cost is what an ordinary shell call pays: the payload is read within 0.5 seconds and a byte test for `herdr` over the whole payload runs before anything is parsed or spawned, so a call whose payload does not mention `herdr` (its working directory and transcript path included, which a checkout named `herdr-ide` does, and then the call pays one JSON parse and the lexer as well) costs one process start (numbers in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-spawn-guard-hook-on-a-shell-call)).
 `hide-agent-hooks/tests/it/spawn_guard.rs` runs the helper beside a stand-in `hide` for each outcome above, and `src/spawn_guard.rs` holds the parser's table tests.
+
+## OpenCode: Hide's plugin
+
+OpenCode has no command hook; its official extension point is a JavaScript plugin whose hooks the SDK types (`@opencode-ai/plugin`) declare ([plugins](https://opencode.ai/docs/plugins/)).
+Hide writes one plugin file, `hide.js`, into OpenCode's global plugin folder `~/.config/opencode/plugins/`, beside Herdr's `herdr-agent-state.js`, and nothing else of OpenCode's.
+`hide-agent-hooks/src/opencode.rs` writes and removes it, as it does every other runtime's hook, and its source is `hide-agent-hooks/src/opencode/plugin.js` with this build's helper path filled in.
+The first line, `// hide-opencode-plugin@<version> sha256=<hash of the rest>`, proves the file is Hide's, carries its version and shows whether it was edited; the body holds `const HELPER = "<absolute path of this build's hide-agent-hooks>";`.
+OpenCode's configuration folder is never created: with no `~/.config/opencode` the row reads Absent and says OpenCode has not created it yet, and only the `plugins/` folder inside an existing one is made.
+
+The plugin does nothing outside a pane Hide manages: with no `HERDR_ENV=1`, `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`, or no helper at its path, it registers no hook and starts no process, so OpenCode in an ordinary terminal runs as if the file were not there.
+Inside one it uses three hooks, each calling `hide-agent-hooks opencode <start|prompt|confirm|tool|subagents>` with one JSON object on stdin and one answered on stdout; the helper always exits 0 and a failure answers `{}`:
+
+- `chat.message` adds Hide's text to a root session's prompt as one synthetic text part wrapped in `<system-reminder>`: the session guidance (the same text the `SessionStart` hook gives, read once when OpenCode loads the plugin) on the session's first prompt, then Project Memory under Claude Code's rules (`SessionStart` on the first prompt, `UserPromptSubmit` after), then the pane's waiting letters ([docs/delivery.md](delivery.md)).
+  OpenCode's TUI does not show a synthetic part, and the title and label readers skip it, so the operator's text stays theirs; a subagent's prompt and a prompt of only synthetic text get nothing.
+  The part's id is made the way OpenCode makes its own (`prt_` and a time-ordered id), so it sorts after the operator's text.
+- `event` confirms letters once `message.part.updated` reports Hide's part stored, and counts subagents: a `session.created` with a parent is a child, `session.status` busy and idle move it between working and done, and a root that goes idle while a child still runs in the background keeps it counted (OpenCode's `session.status` list is read then).
+  The counts go to the pane's counter file and to Herdr as the Claude Code and Codex hooks report theirs.
+- `tool.execute.before` sends a `bash` call whose command mentions `herdr` or `HERDR_BIN_PATH` to the spawn guard and every `question` call to the Factory question guard (runtime `opencode`), and throws the deny reason; OpenCode hands a thrown error to the model as the tool's error, so the model reads the same reason Claude Code's model does.
+  Any other tool call never reaches the helper.
+
+Each hook has a budget: 1.85 seconds for a prompt (the Claude Code prompt hook's), 2.5 seconds for a tool call (the spawn guard's), 2 seconds for a confirmation or a count and 8 seconds for the one guidance read at load.
+OpenCode waits on a hook without a limit, so the plugin enforces them: past the budget the helper is killed, the prompt goes on unchanged and the tool call runs.
+At most eight helpers run at once; a call skipped at that cap or given up on is counted and passed on the next call, which records it in the private delivery diagnostic (cause `plugin`), since the plugin has no log of its own and a hook's output reaches nobody who could act on it.
+
+No bell rings for OpenCode: on 2026-10-07 its previous-session picker read `done` and a bell's Enter there opened another session, so its letters ride its next prompt instead and are confirmed only once OpenCode stored that prompt ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)).
+Claude Code's hook run inside OpenCode, through an operator plugin that bridges `~/.claude/settings.json`, ends silently (`ForeignOrigin::OpenCode`), so letters and counts are never taken twice.
+
+The kit row reads the plugin as Claude Code's hook part is read: Installed when the file is this build's and unedited; Outdated with the reason when it is another build's, names a helper that is gone, is an older version or was edited; Removed when it was installed and taken out; Off when OpenCode is switched off.
+An older or another build's unedited plugin is replaced by the next pass; an edited one is replaced only by Reinstall, and a switch-off removes only an unedited file that carries Hide's marker.
+A `hide.js` without the marker is not Hide's and is never replaced or removed.
+The plugin is not written on Windows, since it has not been checked there.
+Memory receipts are read back from the OpenCode session's synthetic user parts by the label read (`hide-session`, `LabelTranscript.memory_receipts`) and recorded off the core lock, as the Claude and Codex transcripts' are.
 
 ## Other agents: skill and guidance hook
 
@@ -191,7 +224,7 @@ An explicit agent choice in the same pass wins over the hold, and any explicit c
 The mark lives in the same record as the choices, so it outlasts a quit between the hold and the answer, and `held_for_onboarding` in the report reads it on every pass.
 The core follows it (`ui_state.agent_onboarding`), applies the answer to this Mac and to every device whose own record waits, and sends the saved choice once per run to a device that reports waiting later; one that still waits afterwards is logged, not asked again on every report.
 
-Claude Code and Codex are the agents the kit has always had a hook for.
+Claude Code and Codex are the agents the kit has always had a hook for; OpenCode has Hide's plugin.
 Hide supports seven agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order.
 Every agent is one row of `hide-agent-adapter/src/declarations.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
 `hide-kit/src/agents.rs` projects those declarations into installation pieces; it does not maintain a second support table.
@@ -203,7 +236,7 @@ A test fails a row with no `https` `doc_url`, and a row with no program, so a cl
 Hide supports an agent only when the pinned Herdr ships an integration for it (`herdr integration install <target>`, listed by `herdr integration status`).
 Lineage, the mailbox identity, labels and sleep all read the session id that integration gives Herdr, and an agent without one could only have its state judged from its screen, a second kind of row that behaves unlike every other; so the support list follows Herdr's, and an agent Herdr has no target for is not listed (Gemini CLI left for that reason and is retired below).
 `AgentAdapter::herdr` is therefore required, not optional.
-Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook.
+Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, and OpenCode, through Hide's plugin.
 Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook that adds context, the guidance hook.
 Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
 It is then one shared declaration, its contract fixtures, the logo manifest, and the expected kit case; the web shell reads the generated `contracts/agent-adapters.json` rather than maintaining its own order, names or links.
@@ -233,7 +266,7 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   A stub with Hide's marker over text that is not Hide's was edited by the operator: no pass rewrites it and a switch-off leaves it, the row reads Outdated with that reason, and only Reinstall puts Hide's text back.
   A stub of an older marker version is Hide's own and is replaced by the next pass.
   An agent's own folder (`~/.claude`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
-- The guidance hook, for the agents below marked as done.
+- The guidance hook, for the agents below marked as done; for OpenCode this piece is Hide's plugin, which carries the guidance with the rest ([OpenCode: Hide's plugin](#opencode-hides-plugin)).
   It is one `SessionStart` entry, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event SessionStart`.
   `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@1` that proves an entry is Hide's and separates a current one from an older one.
   Its output is the worktree-purpose instruction, including the sentence that points at `hide factory add`, one fixed line that points at `hide browser help`, and the live Workspace guidance when the daemon answers, in the field the agent documents.
@@ -252,8 +285,10 @@ Cursor also loads Claude Code's hooks from `~/.claude/settings.json` (and the pr
 So on a machine where Claude Code is on in Hide a Cursor session would also run Hide's instrumented Claude Code hook (the pane counters and reports as `claude-code`, Memory), which is not what a Cursor session is.
 Hide keeps the Cursor guidance hook and makes the Claude Code hook stay out: `hide-agent-hooks hook --runtime claude-code` prints nothing and counts nothing when `CURSOR_VERSION` is in its environment, the variable Cursor documents as set for every hook it runs.
 Cursor's page on third-party hooks does not say whether those get the variable, so this rests on the documented one; a session where it is missing would run both hooks, which print different fields and count only for `claude-code`.
-Grok and OpenCode can run the hooks in `~/.claude/settings.json` too, and Hide writes no hook for either, so Claude Code's hook still speaks there: its pane counters, its Memory and its guidance are what they are anywhere else.
-What it does not do inside them is take or confirm letters: a letter is addressed to the pane's own session and is confirmed once that session has seen it, so a hook that runs inside another agent's session would take the letter and confirm it to nobody who reads it (PRD settings-cleanup D-25).
+Grok and OpenCode can run the hooks in `~/.claude/settings.json` too.
+Hide writes no hook for Grok, so Claude Code's hook still speaks there: its pane counters, its Memory and its guidance are what they are anywhere else.
+Inside OpenCode, which has Hide's own plugin, it ends silently as a whole, as it does in Cursor, so nothing is counted or delivered twice (PRD opencode-plugin D-10).
+What it does not do inside Grok is take or confirm letters: a letter is addressed to the pane's own session and is confirmed once that session has seen it, so a hook that runs inside another agent's session would take the letter and confirm it to nobody who reads it (PRD settings-cleanup D-25).
 `hide_agent_hooks::runtime::ForeignOrigin` finds such a session by what its agent sets for the processes it starts: `CURSOR_VERSION` for Cursor, `OPENCODE` or `OPENCODE_PID` for OpenCode, and `GROK_HOOK_EVENT` or `GROK_SESSION_ID` for Grok.
 `hide-agent-hooks/tests/it/letter_origin.rs` runs the built helper beside a stand-in `hide` that answers `inbox` with one letter and records its calls, once outside and once inside each of them.
 The guidance hook is not written on Windows, because its command is a shell command and Cursor's documentation names no Windows form.
@@ -300,7 +335,7 @@ Every row gets the skill stub where the system column says so.
 | Claude Code | `~/.claude/skills` (all) | done: six-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
 | Codex | `~/.agents/skills` (macOS, Linux) | done: six-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
 | Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | `grok` | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
-| OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything | `opencode` | [skills](https://opencode.ai/docs/skills/) |
+| OpenCode | `~/.agents/skills` (macOS, Linux) | done: Hide's plugin in `~/.config/opencode/plugins/` (macOS, Linux), not a command hook; OpenCode has none, only JS plugins (<https://opencode.ai/docs/plugins/>), whose `chat.message` hook adds a synthetic part to the prompt and whose `tool.execute.before` refuses a call by throwing ([OpenCode: Hide's plugin](#opencode-hides-plugin)) | `opencode` | [skills](https://opencode.ai/docs/skills/) |
 | Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
 | omp | `~/.agents/skills` (macOS, Linux) | none: TS extensions like Pi's, which a later change gives Hide's letters and guard; no command hook | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
 | Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
@@ -309,14 +344,14 @@ Each row also carries what Hide can do for that agent as a list of features (`hi
 An agent without both prompt intake and spawn refusal wears the Basic chip, regardless of other missing features.
 Its popover groups the feature table into Herdr basics, session reading and multi-agent collaboration, retaining a mark and a supported/unavailable word for every feature:
 
-| Feature | Supported when | Claude Code, Codex | Grok, OpenCode, Pi, omp | Cursor |
-| --- | --- | --- | --- | --- |
-| `skill` | always | yes | yes | yes |
-| `guidance` | Hide writes a guidance hook | yes | no | yes |
-| `letters`, `memory`, `subagents`, `spawn_guard` | their independent prompt, Memory, counter and refusal dialect declarations | yes | no | no |
-| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no |
-| `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes |
-| `sleep`, `fork`, `start`, `titles` | their independent launch and conversation/title declarations | yes | no | no |
+| Feature | Supported when | Claude Code, Codex | OpenCode | Grok, Pi, omp | Cursor |
+| --- | --- | --- | --- | --- | --- |
+| `skill` | always | yes | yes | yes | yes |
+| `guidance` | Hide writes a guidance hook or plugin | yes | yes | no | yes |
+| `letters`, `memory`, `subagents`, `spawn_guard` | their independent prompt, Memory, counter and refusal dialect declarations | yes | yes | no | no |
+| `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no |
+| `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes |
+| `sleep`, `fork`, `start`, `titles` | their independent launch and conversation/title declarations | yes | no | no | no |
 
 Claude Code and Codex are the only agents whose session files Hide reads for these features, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
 OpenCode retains its existing title reader without gaining session-file, sleep, fork or conversation features.
@@ -481,3 +516,8 @@ Install and remove are deliberately not CLI subcommands: writing to the operator
 
 The operator's real `~/.claude/settings.json` and `~/.codex/hooks.json` are never a test target.
 Every test in this crate builds its own `HOME` fixture and asserts against that.
+
+OpenCode's plugin is tested at three layers, none of which runs the operator's OpenCode.
+`hide-agent-hooks/src/opencode/tests.rs` writes, judges and removes the file in a fixture `HOME`, and `tests/it/opencode_helper.rs` runs the built helper beside a stand-in `hide` that records each call.
+`tests/it/opencode_plugin.rs` runs `tests/opencode/plugin.test.mjs` in Node 22, which loads the generated plugin as OpenCode does and calls its hooks with OpenCode 1.18.30's event and hook shapes (`tests/fixtures/opencode/events-1.18.30.json`) against a stand-in helper; the rust lane installs Node for it.
+`web/e2e/opencode-plugin.spec.ts` lets the kit write the plugin into a private `HOME`, runs a small OpenCode stand-in (`web/e2e/opencode-host.ts`) that loads it in two panes of the pinned Herdr, reports itself the way Herdr's OpenCode integration does, and checks a letter on the next prompt and its confirmation once stored, the spawn guard's refusal, and the subagent counts Herdr receives.

@@ -21,7 +21,8 @@
       "max"
     ],
     "can_pick_model": true,
-    "sidebar_mark": "claude"
+    "sidebar_mark": "claude",
+    "hook_kind": "hook"
   },
   {
     "id": "codex",
@@ -42,7 +43,8 @@
       "xhigh"
     ],
     "can_pick_model": true,
-    "sidebar_mark": "codex"
+    "sidebar_mark": "codex",
+    "hook_kind": "hook"
   },
   {
     "id": "grok",
@@ -57,7 +59,8 @@
     "can_resume": false,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": null
   },
   {
     "id": "opencode",
@@ -72,7 +75,8 @@
     "can_resume": false,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": "plugin"
   },
   {
     "id": "pi",
@@ -87,7 +91,8 @@
     "can_resume": false,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": null
   },
   {
     "id": "omp",
@@ -102,7 +107,8 @@
     "can_resume": false,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": null
   },
   {
     "id": "cursor",
@@ -117,6 +123,7 @@
     "can_resume": false,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null
+    "sidebar_mark": null,
+    "hook_kind": "hook"
   }
 ]
