@@ -107,6 +107,7 @@ def resources(path):
         "hided_cpu_median_percent": percentile(cpu, 0.50),
         "hided_cpu_p95_percent": percentile(cpu, 0.95),
         "hided_rss_max_kb": max((int(s["rss_kb"]) for s in samples), default=None),
+        "hided_self_rss_max_kb": max((int(s["self_rss_kb"]) for s in samples if "self_rss_kb" in s), default=None),
         "method": doc.get("method"),
     }
 

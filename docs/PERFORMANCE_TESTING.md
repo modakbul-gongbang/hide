@@ -348,6 +348,7 @@ Use that same browser mode for baseline and candidate, and report it with the re
 `MEASURE_SCENARIO=areas2` or `areas3` shows two or three Agent tabs through the real area menu, each with one pane.
 All shown panes receive the same line-every-8-ms driver; the measured pane also receives fifty echo markers during that load, recorded in `echo-driven-summary.json` separately from its idle echo trials.
 `resources-idle.json` and `resources-driven.json` record twenty one-second CPU-time deltas and RSS sums for the owned hided, Herdr and Chrome process trees, independently of the echo and frame samples.
+Each sample also keeps the root's own RSS and each child's RSS by its accounting name, because a child caught between fork and exec reads as a second copy of its parent's pages: a bound on hided's memory reads `hided_self_rss_max_kb` (hided alone), and the tree sum says what its children add.
 For an RSS comparison, append `--memory-series` after `--isolated-headless` to extend the driven window to ten minutes and collect eleven one-minute process-tree RSS samples in `memory-series.json`.
 A first run opens on Main (PRD S6), so the harness uses the Projects sidebar to open its linked fixture checkout before measuring.
 The fixture workspace reports the checkout's `hide_owner` token before startup so the core reuses the prepared pane rather than creating a different workspace.

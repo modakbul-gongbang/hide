@@ -5,7 +5,9 @@ usage: resources.py <hided-pid> <herdr-pid> <chrome-pid> [--memory-series]
 MEASURE_RESOURCE_SECONDS sets how many one-second samples (20 by default).
 A chrome pid of 0 samples no browser (a windowless window).
 CPU is one-core percent from process CPU-time deltas, not ps's lifetime average.
-No command line, environment, or operator socket is read.
+Each one-second sample also keeps the root's own RSS and each child's, named
+by its accounting name (ps ucomm), so a short child is told apart from the
+root growing. No command line, environment, or operator socket is read.
 """
 import json
 import os
@@ -15,17 +17,17 @@ import time
 
 
 def snapshot():
-    raw = subprocess.check_output(["ps", "-axo", "pid=,ppid=,time=,rss="], text=True)
+    raw = subprocess.check_output(["ps", "-axo", "pid=,ppid=,time=,rss=,ucomm="], text=True)
     rows = {}
     for line in raw.splitlines():
-        pid, parent, cpu, rss = line.split()
+        pid, parent, cpu, rss, *name = line.split(None, 4)
         days, separator, clock = cpu.partition("-")
         seconds = 0.0
         for part in (clock if separator else cpu).split(":"):
             seconds = seconds * 60 + float(part)
         if separator:
             seconds += int(days) * 86400
-        rows[int(pid)] = (int(parent), seconds, int(rss))
+        rows[int(pid)] = (int(parent), seconds, int(rss), name[0].strip() if name else "")
     return rows
 
 
@@ -65,9 +67,12 @@ for _ in range(seconds):
     sample = {"seconds": ended - started}
     for name, root in roots.items():
         pids = tree(root, after)
-        cpu = sum(max(0, after[pid][1] - before.get(pid, (0, 0, 0))[1]) for pid in pids)
+        cpu = sum(max(0, after[pid][1] - before.get(pid, (0, 0, 0, ""))[1]) for pid in pids)
         sample[name] = {"cpu_percent": cpu / (ended - started) * 100,
-                        "rss_kb": sum(after[pid][2] for pid in pids), "processes": len(pids)}
+                        "rss_kb": sum(after[pid][2] for pid in pids), "processes": len(pids),
+                        "self_rss_kb": after[root][2],
+                        "children": [{"pid": pid, "name": after[pid][3], "rss_kb": after[pid][2]}
+                                     for pid in sorted(pids - {root})]}
     samples.append(sample)
     before, started = after, ended
-print(json.dumps({"method": f"{seconds} one-second CPU-time deltas; RSS sums; owned process trees", "samples": samples}))
+print(json.dumps({"method": f"{seconds} one-second CPU-time deltas; RSS sums, the root's own RSS and each child's; owned process trees", "samples": samples}))
