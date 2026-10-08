@@ -185,7 +185,7 @@ impl Prepared {
                 authority: self.authority,
                 actor: self.actor,
                 target: self.target.map(Box::new),
-                command: self.command,
+                command: Box::new(self.command),
             },
             timeout,
         )
@@ -224,7 +224,7 @@ pub(crate) enum Effect {
         authority: Authority,
         actor: Actor,
         target: Option<Box<Observation>>,
-        command: Command,
+        command: Box<Command>,
     },
     Tick(Vec<watch::Reading>),
     BellAttempt {
@@ -595,7 +595,7 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             target,
             command,
             ..
-        } => (actor, target, command),
+        } => (actor, target, &**command),
     };
     let value = match command {
         Command::WatchStart { .. } => {
@@ -766,6 +766,7 @@ fn run(
                     target,
                     command,
                 } => {
+                    let command: &Command = command;
                     // The intent lookup uses the owned candidate outside Runtime.
                     // Replays converge even after the original recipient leaves.
                     let target_required = matches!(
@@ -1295,7 +1296,7 @@ mod tests {
                             authority: authority(&target.actor),
                             actor: target.actor.clone(),
                             target: Some(Box::new(target.clone())),
-                            command
+                            command: Box::new(command)
                         },
                         Duration::from_secs(5)
                     )
@@ -1350,7 +1351,7 @@ mod tests {
                             authority: authority(&actor),
                             actor: actor.clone(),
                             target: Some(Box::new(target.clone())),
-                            command: command.clone()
+                            command: Box::new(command.clone())
                         },
                         Duration::from_secs(5)
                     )
@@ -1381,7 +1382,7 @@ mod tests {
                         authority: authority(&actor),
                         actor: actor.clone(),
                         target: Some(Box::new(target)),
-                        command: command.clone(),
+                        command: Box::new(command.clone()),
                     },
                     Duration::from_secs(5),
                 )
@@ -1398,7 +1399,7 @@ mod tests {
                         authority: authority(&actor),
                         actor,
                         target: None,
-                        command,
+                        command: Box::new(command),
                     },
                     Duration::from_secs(5),
                 )
@@ -1432,12 +1433,12 @@ mod tests {
                     authority: authority(&actor),
                     actor,
                     target: Some(Box::new(target)),
-                    command: Command::Send {
+                    command: Box::new(Command::Send {
                         target: "recipient".into(),
                         intent: "send-once".into(),
                         body: "private fixture".into(),
                         kind: "request".into(),
-                    },
+                    }),
                 },
                 Duration::from_secs(5),
             );

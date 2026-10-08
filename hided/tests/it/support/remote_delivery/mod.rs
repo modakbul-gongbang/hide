@@ -314,6 +314,25 @@ impl Herdr {
         successful(self.command(args)).map(|_| ())
     }
 
+    /// What the provider's own hook reports for a pane it runs in: the native
+    /// session Hide waits for before it calls a spawned agent started. The
+    /// fixture's provider is a shim that reports nothing by itself.
+    pub fn report_session(&self, pane: &str, session: &str) -> Result<()> {
+        self.write(&[
+            "pane",
+            "report-agent-session",
+            pane,
+            "--source",
+            "herdr:claude",
+            "--agent",
+            "claude",
+            "--agent-session-id",
+            session,
+            "--seq",
+            "1",
+        ])
+    }
+
     fn text(&self) -> Result<String> {
         Ok(String::from_utf8(successful(self.command(&[
             "pane", "read", &self.pane, "--source", "visible", "--format", "text",
@@ -321,6 +340,13 @@ impl Herdr {
     }
 
     pub fn run_in_pane(&mut self, command: &str) -> Result<PaneOutput> {
+        let pane = self.pane.clone();
+        self.run_in(&pane, command)
+    }
+
+    /// Runs a command in another pane of this server whose provider is the
+    /// fixture shim, such as the pane of an agent Hide spawned here.
+    pub fn run_in(&mut self, pane: &str, command: &str) -> Result<PaneOutput> {
         ensure!(self.sequence < 32, "private pane command cap");
         self.sequence += 1;
         let base = self.root.join(format!("command-{}", self.sequence));
@@ -341,7 +367,7 @@ impl Herdr {
         self.write(&[
             "pane",
             "send-text",
-            &self.pane,
+            pane,
             &format!("RUN {}\n", script.display()),
         ])?;
         wait_for("attested pane command status", || {
@@ -648,6 +674,25 @@ impl Fixture {
         })?;
         fixture.wait_bridge(1)?;
         Ok(fixture)
+    }
+
+    /// The device's project folder as a repository a worktree can branch from.
+    pub fn commit_remote_project(&self) -> Result<PathBuf> {
+        let project = self.remote.environment.home.join("project");
+        let mut commit = self.remote.environment.command("/usr/bin/git");
+        commit.arg("-C").arg(&project).args([
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ]);
+        successful(commit)?;
+        Ok(project)
     }
 
     pub fn snapshot(&self) -> Result<Value> {

@@ -9,6 +9,27 @@ use crate::delivery::{Actor, ledger::Ledger, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Separates a refusal code from the detail its next action names. A control
+/// character, because no code and no sentence of a refusal holds one.
+const DETAIL: char = '\u{1f}';
+
+/// A refusal code with the detail its next action names (the device ids a
+/// caller could have used); the daemon splits them again with
+/// [`split_refusal`] and answers the code alone.
+pub(crate) fn refusal(code: &str, detail: &str) -> String {
+    format!("{code}{DETAIL}{detail}")
+}
+
+/// The code of a refusal and the detail it carries, if any.
+pub fn split_refusal(refusal: &str) -> (&str, Option<&str>) {
+    // Only the refusals that build a detail carry one, so text from a device
+    // that happens to hold the separator is never read as a next action.
+    match refusal.split_once(DETAIL) {
+        Some((code @ "machine_unknown", detail)) => (code, Some(detail)),
+        _ => (refusal, None),
+    }
+}
+
 pub(crate) const AGENT_LIMIT: usize = 2048;
 pub(crate) const SPAWN_LIMIT: usize = 4096;
 
@@ -38,6 +59,9 @@ pub enum Command {
     },
     Spawn {
         parent: Option<String>,
+        /// The device the child is created on; absent means the caller's own.
+        /// `repo` and `path` are that device's paths.
+        machine: Option<String>,
         name: String,
         intent: String,
         kind: String,
@@ -92,6 +116,10 @@ pub struct SpawnRecord {
     pub parent: String,
     #[serde(default)]
     pub mode: SpawnMode,
+    /// The device the child lives on when it is not the caller's own. It is
+    /// part of the intent: the same intent never reaches two devices.
+    #[serde(default)]
+    pub machine: Option<String>,
     pub intent: String,
     pub name: String,
     pub kind: String,
@@ -286,6 +314,10 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             ]
             .into_iter()
             .all(|s| key(s))
+            || record
+                .machine
+                .as_deref()
+                .is_some_and(|machine| !key(machine))
             || !ledger
                 .agents
                 .iter()
@@ -296,6 +328,7 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
                         && child.parent == record.mode.responsibility(&record.parent)
                         && child.origin == record.mode.origin(&record.parent)
                         && record.pane.as_ref() == Some(&child.pane)
+                        && Some(child.machine.as_str()) == spawn_machine(ledger, record)
                 })
             })
             || (record.completed
@@ -379,6 +412,7 @@ pub(crate) fn apply(
         }
         Mutation::Reserve { parent, command } => {
             let Command::Spawn {
+                machine,
                 name,
                 intent,
                 kind,
@@ -410,7 +444,8 @@ pub(crate) fn apply(
                 .iter()
                 .find(|record| &record.parent == parent && &record.intent == intent)
             {
-                if record.name != *name
+                if record.machine != *machine
+                    || record.name != *name
                     || hide_agent_adapter::canonical_kind(&record.kind)
                         != hide_agent_adapter::canonical_kind(kind)
                     || record.repo != *repo
@@ -430,6 +465,7 @@ pub(crate) fn apply(
                 id: allocate(ledger, "spawn")?,
                 parent: parent.clone(),
                 mode,
+                machine: machine.clone(),
                 intent: intent.clone(),
                 name: name.clone(),
                 kind: kind.clone(),
@@ -505,6 +541,7 @@ pub(crate) fn apply(
             }
             if record.parent != spawn.mode.responsibility(&spawn.parent)
                 || record.origin != spawn.mode.origin(&spawn.parent)
+                || Some(record.machine.as_str()) != spawn_machine(ledger, &spawn)
                 || spawn.pane.as_ref() != Some(&record.pane)
                 || record.name != spawn.name
                 || hide_agent_adapter::canonical_kind(&record.actor.kind)
@@ -605,6 +642,18 @@ pub(crate) fn apply(
             Ok(json!(spawn))
         }
     }
+}
+
+/// The device a spawn's child lives on: the one the caller named, else the
+/// caller's own, which its parent registration names.
+fn spawn_machine<'a>(ledger: &'a Ledger, spawn: &'a SpawnRecord) -> Option<&'a str> {
+    spawn.machine.as_deref().or_else(|| {
+        ledger
+            .agents
+            .iter()
+            .find(|parent| parent.id == spawn.parent)
+            .map(|parent| parent.machine.as_str())
+    })
 }
 
 fn validate_registration_name(caller: &Actor, record: &AgentRecord) -> Result<(), String> {
@@ -780,6 +829,8 @@ fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
     Ok(format!("{prefix}-{id}"))
 }
 
+#[cfg(test)]
+pub(crate) use executor::{SPAWN, SPAWN_TURN};
 pub(crate) use executor::{link_fork, register_code_owned, run};
 
 #[cfg(test)]
@@ -826,6 +877,7 @@ mod tests {
     fn command(intent: &str) -> Command {
         Command::Spawn {
             parent: Some("here".into()),
+            machine: None,
             name: "worker".into(),
             intent: intent.into(),
             kind: "codex".into(),
