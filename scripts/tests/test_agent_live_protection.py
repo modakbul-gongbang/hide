@@ -102,8 +102,9 @@ class ConfigurationProtection(unittest.TestCase):
     def test_alias_cannot_be_a_recovery_target(self):
         self.config.unlink()
         self.config.symlink_to(self.home / "other")
-        with self.assertRaises(ProtectionError):
+        with self.assertRaises(ProtectionError) as caught:
             self.guard()
+        self.assertEqual(caught.exception.path, str(self.config))
 
     def test_unknown_configuration_is_metadata_only_and_preserved(self):
         # Lead letter 2686: only adapter-listed files have a byte guard.
@@ -147,7 +148,7 @@ class ConfigurationProtection(unittest.TestCase):
         result = guard.finish()
         self.assertEqual(result["failures"], [])
         self.assertEqual(result["directory_changes"], [{"path": str(registry), "kind": "changed"}])
-        self.assertEqual(result["inventory"]["after"]["excluded_subtrees"], 5)
+        self.assertEqual(result["inventory"]["after"]["excluded_boundaries"], 5)
 
     def test_inventory_entry_cap_reports_partial_counts_without_failing_byte_guard(self):
         # A real bounded directory covers the unchanged 50,000-entry boundary.
@@ -192,7 +193,7 @@ class ConfigurationProtection(unittest.TestCase):
         result = guard.finish()
         self.assertEqual(result["failures"], [])
         self.assertEqual(result["directory_changes"], [])
-        self.assertEqual(result["inventory"]["after"]["excluded_subtrees"], 3)
+        self.assertEqual(result["inventory"]["after"]["excluded_boundaries"], 3)
 
     def test_invalid_known_file_keeps_named_failure_and_independent_recovery(self):
         peer = self.home / "peer.json"

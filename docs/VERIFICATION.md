@@ -202,6 +202,7 @@ Only adapter-listed configuration/trust files are backed up and compared byte fo
 The remaining configuration trees use path, kind, size and mtime metadata only; file contents and link targets are never read or hashed.
 Installation subtrees named `node_modules`, `extensions`, `marketplace`, `marketplaces`, `bundled`, names containing `cache`, and code directories directly beneath `plugins` are excluded; plugin registry files remain observable.
 The inventory stops at 50,000 scanned entries and reports partial coverage, a lower bound on omitted entries and the number of uninspected subtrees, without walking the remainder just to count it.
+The excluded-boundary count includes explicitly listed roots inside an excluded tree and is not a deduplicated count of physical installation trees.
 An addition or removal is reported only where the opposite inventory observed absence, so partial coverage cannot manufacture a change.
 Metadata changes outside the known file list are named and preserved without failing the run or attempting restoration.
 The native sandbox denies operator configuration writes and modification of preexisting histories.

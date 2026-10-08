@@ -15,6 +15,10 @@ MAX_BACKUP_BYTES = 16 * 1024 * 1024
 class ProtectionError(RuntimeError):
     """A guard failed before permission to launch or restore was established."""
 
+    def __init__(self, reason: str, *, path: Path | None = None):
+        super().__init__(reason)
+        self.path = str(path) if path is not None else None
+
 
 def beneath(path: Path, root: Path) -> bool:
     return path.resolve().is_relative_to(root.resolve())
@@ -137,7 +141,7 @@ class ConfigInventory:
     def summary(self) -> dict:
         return {"complete": not self.uninspected_subtrees,
                 "scanned_entries": self.scanned,
-                "excluded_subtrees": self.excluded_subtrees,
+                "excluded_boundaries": self.excluded_subtrees,
                 "omitted_entries_lower_bound": self.omitted_entries_lower_bound,
                 "uninspected_subtrees": self.uninspected_subtrees}
 
@@ -240,13 +244,11 @@ class ConfigGuard:
     """
 
     def __init__(self, backup: Path, known: list[Path], roots: list[Path], *,
-                 histories: list[Path] | None = None,
                  exclusive_root: Path | None = None):
         private_directory(backup)
         self.backup = backup
         self.known = list(dict.fromkeys(known))
         self.roots = roots
-        self.histories = histories or []
         self.exclusive_root = exclusive_root
         if exclusive_root is not None and (not beneath(exclusive_root, backup.parent)
                                            or exclusive_root == backup.parent):
@@ -256,14 +258,17 @@ class ConfigGuard:
         self.inventory = fingerprint(roots)
         total = 0
         for index, path in enumerate(self.known):
-            value = configuration_bytes(path)
-            before = value[0] if value is not None else None
-            self.before[path] = before
-            if value is not None:
-                total += value[0].size
-                if total > MAX_CONFIG_BYTES:
-                    raise ProtectionError("config_backup_byte_budget")
-                write_private(backup / str(index), value[1])
+            try:
+                value = configuration_bytes(path)
+                before = value[0] if value is not None else None
+                self.before[path] = before
+                if value is not None:
+                    total += value[0].size
+                    if total > MAX_CONFIG_BYTES:
+                        raise ProtectionError("config_backup_byte_budget")
+                    write_private(backup / str(index), value[1])
+            except (OSError, ProtectionError) as error:
+                raise ProtectionError(str(error), path=path) from error
         write_private(backup / "index.json", json.dumps([
             {"path": str(path), "backup": str(index),
              "existed": self.before[path] is not None}

@@ -111,7 +111,7 @@ def main(argv=None):
         known = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["known"]))
         roots = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["roots"]))
         histories = list(dict.fromkeys(agent_home / relative for recipe in all_recipes for relative in recipe["histories"]))
-        guard = ConfigGuard(run / "configuration-backup", known, roots, histories=histories,
+        guard = ConfigGuard(run / "configuration-backup", known, roots,
                             exclusive_root=agent_home if args.fixture_bin else None)
         sandbox = None if args.fixture_bin else WriteSandbox(run, runtime.short, operator, histories, runtime.state)
         runtime.sandbox = sandbox
@@ -232,6 +232,8 @@ def main(argv=None):
             report["resources"] = owner.usage()
     except Exception as error:
         report["failures"].append({"type": type(error).__name__, "reason": str(error)})
+        if isinstance(error, ProtectionError) and error.path is not None:
+            report["failures"][-1]["path"] = error.path
     finally:
         try:
             if runtime:
