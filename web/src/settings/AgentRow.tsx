@@ -7,7 +7,7 @@ import { Switch } from "../components/ui/switch";
 import { useInterfaceTranslation } from "../i18n/client";
 import { kitPartText } from "../settings";
 import type { Device, KitAgent } from "../snapshot";
-import { agentLeftover, agentProblems, agentStatus, docsUrl, installDocUrl } from "./agentRows";
+import { agentHookWait, agentLeftover, agentProblems, agentStatus, docsUrl, installDocUrl } from "./agentRows";
 import { PartialChip } from "./PartialChip";
 
 /** The link an agent row offers, as the row words it: a label and the arrow that says it leaves the app. */
@@ -64,6 +64,7 @@ export function AgentRow({ device, agent, actions, onAct }: { device: Device; ag
   const status = agentStatus(agent);
   const problems = agentProblems(agent);
   const leftover = agentLeftover(agent);
+  const waiting = agentHookWait(agent);
   const docs = docsUrl(agent.id);
   const worst = problems.some(({ piece }) => piece.state === "failed") ? "error" : "warn";
   return (
@@ -104,6 +105,11 @@ export function AgentRow({ device, agent, actions, onAct }: { device: Device; ag
                 {busy ? t("settings.reinstalling") : t("settings.reinstall")}
               </Button>
             </div>
+          ) : null}
+          {waiting ? (
+            <Note data-agent-hook-wait={`${device.id}:${agent.id}`}>
+              {t("agents.problem", { part: t(`agents.part.${waiting.part}`), state: waiting.piece.reason ?? "" })}
+            </Note>
           ) : null}
           {leftover ? (
             <Note tone="error" data-agent-leftover={`${device.id}:${agent.id}`}>
