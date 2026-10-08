@@ -161,6 +161,8 @@ An EOF guardian sends CONT and TERM to that group, allows a bounded grace period
 It retains the direct child's unreaped identity until the last group signal, so its group ID cannot be reused during signalling.
 No group signal is sent after that child is reaped.
 Group metadata and RSS enforce the process and memory caps; a partial host-wide resource summary never proves cleanup.
+If Darwin's RSS read fails, one fresh BSD identity read distinguishes a vanished or replaced subject, a zombie and a still-live unreadable process.
+Only positively ended subjects leave the active RSS calculation; an unreadable live subject still fails, without a delayed retry or a larger cap.
 A readable, birth-rechecked owner marker also identifies helpers that left the group, including markers from an earlier run of this checkout whose guardian has ended.
 A different live guardian's marker belongs to concurrent work and is excluded.
 Private issued marker families are retained under `agents/runs/process-owner-families/` so a fabricated scope prefix cannot claim a previous run.

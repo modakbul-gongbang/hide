@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent_live_check.process_table import (Process, ProcessTable, descendants, marked_descendants,
+from agent_live_check.process_table import (BsdInfo, Process, ProcessTable, descendants, marked_descendants,
                                            procargs_owned, require_complete, snapshot, validate_linux_procfs)
 from agent_live_check.processes import OwnedProcesses, ProcessError, control_plane, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
@@ -434,6 +434,57 @@ raise SystemExit('FIFO was accepted as configuration')
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_failed_rss_read_distinguishes_exit_from_live_measurement_failure(self):
+        # B8 requires a live unreadable subject to fail, while a kernel-proven
+        # exit is no longer resident work. Inject only libproc's read boundary.
+        import errno
+        for outcome in ("gone", "zombie", "replaced", "live", "unreadable", "uid_changed"):
+            with self.subTest(outcome=outcome):
+                library = Mock()
+                pid = 24680
+                bsd_reads = 0
+
+                def list_group(group, pids, size):
+                    pids[0] = pid
+                    return 1
+
+                def read_process(subject, flavor, argument, pointer, size):
+                    nonlocal bsd_reads
+                    if flavor == 4:
+                        ctypes.set_errno(errno.ESRCH)
+                        return 0
+                    self.assertEqual(flavor, 3)
+                    bsd_reads += 1
+                    if bsd_reads > 1 and outcome in ("gone", "unreadable"):
+                        ctypes.set_errno(errno.ESRCH if outcome == "gone" else errno.EPERM)
+                        return 0
+                    info = ctypes.cast(pointer, ctypes.POINTER(BsdInfo)).contents
+                    info.pid, info.ppid, info.pgid, info.uid = pid, 2, pid, os.getuid()
+                    info.sec, info.usec, info.flags = 100, 2, 0x10
+                    info.status = 5 if bsd_reads > 1 and outcome == "zombie" else 1
+                    if bsd_reads > 1 and outcome == "replaced":
+                        info.sec = 101
+                    if bsd_reads > 1 and outcome == "uid_changed":
+                        info.uid += 1
+                    return ctypes.sizeof(BsdInfo)
+
+                library.proc_listpgrppids.side_effect = list_group
+                library.proc_pidinfo.side_effect = read_process
+                with patch("agent_live_check.process_table.sys.platform", "darwin"), \
+                        patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
+                    table = snapshot(pid)
+                if outcome in ("gone", "replaced"):
+                    self.assertNotIn(pid, table)
+                    self.assertEqual(table.vanished, [pid])
+                    require_complete(table)
+                elif outcome in ("unreadable", "uid_changed"):
+                    with self.assertRaisesRegex(RuntimeError, "subjects_unavailable"):
+                        require_complete(table)
+                else:
+                    self.assertEqual(table[pid].rss, -1)
+                    self.assertEqual(table[pid].zombie, outcome == "zombie")
+                    self.assertEqual(table[pid].birth, 100_000_002)
+
     def test_unavailable_controller_ancestry_refuses_prelaunch_exclusion(self):
         table = ProcessTable()
         table[100] = Process(100, 200, 100, 10, 0, False, os.getuid())

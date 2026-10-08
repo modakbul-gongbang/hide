@@ -155,6 +155,27 @@ def snapshot(group: int | None = None) -> dict[int, Process]:
                     result.unavailable.append({"pid": pid, "errno": error})
                 continue
             read = library.proc_pidinfo(pid, 4, 0, ctypes.byref(task), ctypes.sizeof(task))
+            if read != ctypes.sizeof(task):
+                # A process can exit between the BSD and task reads. One
+                # fresh kernel identity distinguishes that terminal state
+                # from an active process whose RSS cannot be measured.
+                later = BsdInfo()
+                ctypes.set_errno(0)
+                refreshed = library.proc_pidinfo(pid, 3, 1, ctypes.byref(later), ctypes.sizeof(later))
+                refresh_error = ctypes.get_errno()
+                if ((refreshed == ctypes.sizeof(later)
+                     and (later.sec, later.usec) != (info.sec, info.usec))
+                        or (refreshed != ctypes.sizeof(later) and refresh_error == errno.ESRCH)):
+                    result.vanished.append(pid)
+                    continue
+                if refreshed != ctypes.sizeof(later):
+                    result.unavailable.append({"pid": pid, "errno": refresh_error})
+                    continue
+                if later.uid != info.uid:
+                    result.unavailable.append({"pid": pid, "errno": errno.EPERM,
+                                               "reason": "uid_changed_during_rss_read"})
+                    continue
+                info = later
             result[pid] = Process(pid, info.ppid, info.pgid,
                                   info.sec * 1_000_000 + info.usec,
                                   task.resident if read == ctypes.sizeof(task) else -1,
