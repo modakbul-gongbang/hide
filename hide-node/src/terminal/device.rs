@@ -481,6 +481,10 @@ pub(super) const MAX_WAITING_BYTES: usize = 8 * 1024 * 1024;
 /// passing one ends only that pane.
 pub(super) const MAX_PANE_KEY_LINES: usize = 2048;
 pub(super) const MAX_KEY_PANES: usize = hide_node_link::terminal::MAX_ATTACHED_PANES;
+/// The panes a report-once set remembers by name; past it the rest share
+/// [`OTHER_PANES`], so keys to made-up pane ids cannot grow the set.
+pub(super) const REMEMBERED_PANES: usize = 256;
+const OTHER_PANES: &str = "*";
 const STALLED: &str =
     "terminal lines waited past what one device link may hold, so the link is treated as stalled";
 
@@ -512,15 +516,30 @@ struct ProxyState {
     /// The keys each pane has waiting in `lines`.
     keys: HashMap<String, PaneKeys>,
     /// Panes whose keys passed the cap: they refuse keys until attached.
+    /// Remembered by [`first_told`].
     overflowed: HashSet<String>,
     /// Why the link took no more; every key after it is refused.
     failed: Option<String>,
     /// Panes already told the link failed, so a key flood reports once.
+    /// Remembered by [`first_told`].
     told_failed: HashSet<String>,
     /// Each pane the core attached here, with its state as the device last
     /// reported it.
     states: HashMap<String, Option<PaneTerminalState>>,
     stopping: bool,
+}
+
+/// Notes in a report-once set that `pane` was told: true the first time.
+/// At most [`REMEMBERED_PANES`] panes are remembered by name and the rest
+/// share one entry, so keys to made-up pane ids are told once between them.
+fn first_told(set: &mut HashSet<String>, pane: &str) -> bool {
+    if set.contains(pane) {
+        return false;
+    }
+    if set.len() >= REMEMBERED_PANES {
+        return set.insert(OTHER_PANES.to_owned());
+    }
+    set.insert(pane.to_owned())
 }
 
 /// One pane's keys waiting for the link: their bytes and the runs they
@@ -743,7 +762,10 @@ impl TerminalNode for DeviceTerminals {
             state.states.entry(pane.clone()).or_default();
         }
         if let TerminalControl::Forget { pane } = &control {
-            lock(&self.shared.state).states.remove(pane);
+            let mut state = lock(&self.shared.state);
+            state.states.remove(pane);
+            state.overflowed.remove(pane);
+            state.told_failed.remove(pane);
         }
         self.send(TerminalDown::Control { control });
     }
@@ -762,7 +784,7 @@ impl TerminalNode for DeviceTerminals {
         let refusal = {
             let mut state = lock(&self.shared.state);
             if let Some(reason) = state.failed.clone() {
-                if !state.told_failed.insert(pane.clone()) {
+                if !first_told(&mut state.told_failed, &pane) {
                     return;
                 }
                 Some(("terminal.device_disconnected", reason, None, "link"))
@@ -773,7 +795,11 @@ impl TerminalNode for DeviceTerminals {
                 return;
             } else {
                 if let Some(cap) = state.pane_cap_passed(&pane, &bytes) {
-                    state.overflowed.insert(pane.clone());
+                    if !first_told(&mut state.overflowed, &pane) {
+                        // A pane past what the set remembers: refused, and
+                        // reported once with the others past it.
+                        return;
+                    }
                     let ended = state.states.get(&pane).cloned().flatten().map(|mut ended| {
                         ended.state = "ended".to_owned();
                         ended.retry_decision = "manual".to_owned();

@@ -547,6 +547,9 @@ fn a_waiting_run_of_keys_stops_at_a_pane_a_control_an_enter_and_an_escape() {
 fn a_stalled_link_past_what_may_wait_is_ended_rather_than_grown() {
     let (views, link, heard) = proxy();
     stall(&views);
+    // The writer holds the stalling line before the flood starts, so the
+    // line on its way is that one.
+    wait_for(|| lock(&views.shared.state).lines.is_empty());
     let mut most = 0;
     for _ in 0..MAX_WAITING_LINES + 100 {
         views.view("w1:p1", SIZE, false);
@@ -639,6 +642,9 @@ fn every_panes_keys_at_their_caps_end_no_link_and_refuse_only_their_pane() {
     wait_for(|| arrived("w1:p63") == keys.len());
     assert_eq!(arrived("w1:p0"), keys.len() + enters);
     assert_eq!(arrived("w1:p1"), keys.len() + 1);
+    for pane in 2..MAX_KEY_PANES {
+        assert_eq!(arrived(&format!("w1:p{pane}")), keys.len(), "w1:p{pane}");
+    }
     assert!(link.ended.lock().unwrap().is_none());
 }
 
@@ -663,6 +669,43 @@ fn a_failed_link_refuses_keys_once_per_pane_and_never_keeps_them() {
         })
         .count();
     assert_eq!(errors, 1);
+    assert!(link.lines().is_empty());
+}
+
+/// Keys to more panes than a report-once set remembers are all refused,
+/// the panes past it are told once between them, and the set stays bounded
+/// whatever pane ids the keys name; a forgotten pane leaves it.
+#[test]
+fn a_failed_link_tells_a_bounded_set_of_panes() {
+    let (proxy, link, heard) = proxy();
+    *link.fail.lock().unwrap() = Some(LineRefused::Ended("the link closed".into()));
+    proxy.key(KeyTarget::Pane("w1:p1".into()), b"lost".to_vec(), 1);
+    link.release();
+    wait_for(|| lock(&proxy.shared.state).failed.is_some());
+    for pane in 0..REMEMBERED_PANES + 100 {
+        proxy.key(KeyTarget::Pane(format!("w9:p{pane}")), b"k".to_vec(), 1);
+    }
+    let errors = heard
+        .reports
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, report)| {
+            matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.device_disconnected")
+        })
+        .count();
+    assert_eq!(errors, REMEMBERED_PANES + 1);
+    assert_eq!(
+        lock(&proxy.shared.state).told_failed.len(),
+        REMEMBERED_PANES + 1
+    );
+    proxy.control(TerminalControl::Forget {
+        pane: "w9:p0".into(),
+    });
+    assert_eq!(
+        lock(&proxy.shared.state).told_failed.len(),
+        REMEMBERED_PANES
+    );
     assert!(link.lines().is_empty());
 }
 
