@@ -886,12 +886,17 @@ else:raise RuntimeError("group_survived_reap")
 
     def test_unreadable_foreign_orphan_is_diagnostic_and_not_owned(self):
         orphan = Process(111, 1, 111, 10, 0, False, os.getuid(), name="fixture")
-        library = Mock()
-        library.sysctl.return_value = -1
-        unknown = []
-        with patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
-            self.assertEqual(marked_descendants({111: orphan}, "fixture", unknown=unknown.append), {})
-        self.assertEqual(unknown, [orphan])
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform):
+                library = Mock()
+                library.sysctl.return_value = -1
+                unknown = []
+                with patch("agent_live_check.process_table.sys.platform", platform), \
+                        patch("agent_live_check.process_table.ctypes.CDLL", return_value=library), \
+                        patch("agent_live_check.process_table.ctypes.get_errno", return_value=errno.EACCES), \
+                        patch.object(Path, "open", side_effect=PermissionError(errno.EACCES, "fixture environ")):
+                    self.assertEqual(marked_descendants({111: orphan}, "fixture", unknown=unknown.append), {})
+                self.assertEqual(unknown, [orphan])
 
     def test_term_ignoring_group_is_killed_without_ending_a_peer(self):
         with tempfile.TemporaryDirectory(prefix="agent-group-") as name:
