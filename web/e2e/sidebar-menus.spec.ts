@@ -24,7 +24,7 @@ const BRANCH = "feature/menus";
 const SESSION = "5b0c7e2a-menu-e2e-session";
 
 function git(cwd: string, args: string[]): void {
-  execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "ignore" });
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
