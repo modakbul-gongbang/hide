@@ -143,7 +143,8 @@ Omitting `--agents` selects every adapter declared by the current source.
 Confirm the cheapest suitable model for the logged-in account and pass `--model ID=MODEL`; recipe defaults can become unavailable.
 Fetch the pinned binary with `scripts/fetch-herdr-runtime.sh` first, and build this worktree's `hided` and `hide` with `bash scripts/verify-cargo.sh build -p hided`.
 The tool never builds, upgrades a CLI, logs in, or changes bell declarations.
-An unclassified startup menu remains measurable when the pinned CLI's readiness wait expires: the exact owned agent identity and its actual menu must both match before observation continues.
+An unclassified startup menu remains measurable when the pinned CLI's readiness wait expires: its pane, workspace, cwd, agent kind and actual menu must match the owned launch before observation continues.
+Registration may still be absent after that timeout; if an agent name is present, it must match the requested name.
 Other startup refusals retain their screen and agent evidence without being counted as arrival.
 
 The command starts the verified pinned Herdr on a private socket and this worktree's hided on private state, creates disposable Git checkouts, and attests their actual shells through the candidate `hide workspace bootstrap`.
@@ -169,6 +170,8 @@ Unrelated orphans whose environment is empty or unreadable are neither signalled
 The report lists these as "출처 확인 못 함" with only PID, birth and executable name, within a declared record cap.
 A known owned identity that becomes uninspectable still makes cleanup unconfirmed.
 Every launched guardian must produce a confirmed cleanup receipt; a missing receipt, an unconfirmed receipt or a diagnostic write failure fails cleanup.
+Once every owned process and guardian is positively confirmed ended, the probe and short socket directories are removed independently even if a protocol close or log write failed.
+Those errors remain failures with exit 2; missing process confirmation retains the directories.
 An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution; record this limitation in the PR's Review section.
 This ownership boundary follows the explicitly recorded B8/D-09 scope decision; it does not claim complete workstation process attribution.
 Linux fixture supervision uses a child subreaper and validates its procfs namespace and visibility before using process identities.
@@ -218,7 +221,7 @@ Report the actual native result and its unknown/skipped cells in PR Evidence; ne
 
 CI runs `web/e2e/agent-live-check.spec.ts` with the existing compiled Claude/Codex shim on real pinned Herdr and candidate hided.
 The fixture report is marked synthetic and proves tool plumbing, not authenticated model behavior.
-That lane includes operator-routing refusal, byte-exact configuration restoration, runtime failure and Ctrl-C cleanup.
+That lane includes operator-routing refusal, byte-exact configuration restoration, runtime failure, owned-server loss and Ctrl-C cleanup.
 `scripts/tests/test_agent_live_protection.py` exercises real filesystem recovery/conflicts, OS denial, timeout/output caps and owner-death cleanup; `test_agent_live_results.py` challenges unsafe verdicts and false delivery evidence.
 The scene preparation and overlay tests cover supported MCP formats, positive native identity, role separation and bounded private authentication copies.
 

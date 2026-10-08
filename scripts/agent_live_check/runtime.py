@@ -307,6 +307,7 @@ class Runtime:
 
     def close(self) -> dict:
         failures = []
+        processes_confirmed = False
         # A cancellation stops work, but must not disable protocol teardown.
         original_cancelled = self.owner.cancelled.is_set()
         self.owner.cancelled.clear()
@@ -330,6 +331,11 @@ class Runtime:
                     failures.append(str(error))
             try:
                 self.owner.close()
+                # A later empty close cannot erase a prior missing or failed
+                # receipt. Check every launched guardian before deleting its
+                # private runtime directories, including already-ended ones.
+                self.owner.attribution_report()
+                processes_confirmed = True
             except Exception as error:
                 failures.append(str(error))
             for _, output, _ in self.servers:
@@ -348,7 +354,7 @@ class Runtime:
                         shutil.rmtree(root)
                 except Exception as error:
                     failures.append(str(error))
-            if not failures:
+            if processes_confirmed:
                 for directory in (self.probe, self.short):
                     try:
                         shutil.rmtree(directory)
@@ -358,7 +364,7 @@ class Runtime:
             self.owner.deadline = original_deadline
             if original_cancelled:
                 self.owner.cancelled.set()
-        return {"confirmed": not failures, "failures": failures,
+        return {"confirmed": not failures, "processes_confirmed": processes_confirmed, "failures": failures,
                 "probe_removed": not self.probe.exists(), "socket_removed": not self.short.exists(),
                 "credential_copies_removed": all(not root.exists() and not root.is_symlink()
                                                   for root in self.credential_roots)}

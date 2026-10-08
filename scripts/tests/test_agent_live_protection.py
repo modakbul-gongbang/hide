@@ -173,6 +173,24 @@ raise SystemExit('FIFO was accepted as configuration')
         self.assertTrue(runtime.owner.cancelled.is_set())
         self.assertEqual(runtime.owner.deadline, deadline)
 
+    def test_prior_missing_guardian_receipt_retains_runtime_folders(self):
+        runtime = Runtime.__new__(Runtime)
+        runtime.owner = OwnedProcesses(diagnostics=self.run / "guardians")
+        runtime.state = self.run / "state"
+        runtime.probe, runtime.short = self.run / "probe", self.run / "short"
+        runtime.probe.mkdir()
+        runtime.short.mkdir()
+        runtime.workspaces, runtime.credential_roots = set(), set()
+        runtime.servers, runtime.started = [], False
+        runtime.owner.run([sys.executable, "-c", "pass"], env=dict(os.environ), seconds=3)
+        (self.run / "guardians/1.json").unlink()
+        result = runtime.close()
+        self.assertFalse(result["confirmed"])
+        self.assertFalse(result["processes_confirmed"])
+        self.assertIn("guardian_cleanup_receipt_missing", result["failures"])
+        self.assertTrue(runtime.probe.exists())
+        self.assertTrue(runtime.short.exists())
+
     def test_refuses_operator_socket_state_home_and_unowned_short_directory(self):
         daemon_home = self.run / "home"
         state = self.run / "state"

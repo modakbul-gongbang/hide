@@ -184,7 +184,8 @@ def main(argv=None):
                                 actual = runtime.agent(pane)
                                 refused_screen = runtime.screen(pane)
                                 require_no_login(refused_screen)
-                                if not startup_blocker(scene, recipe, pane, (code, output, err), actual, refused_screen):
+                                if not startup_blocker(scene, recipe, pane, (code, output, err), actual, refused_screen,
+                                                       cwd=cwd, workspace=workspace):
                                     write_private(evidence, json.dumps({"reason": "agent_start_refused_" + str(code),
                                         "samples": [{"phase": "startup_refusal", "screen": refused_screen,
                                                      "agent": actual}]}).encode())

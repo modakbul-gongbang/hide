@@ -21,20 +21,26 @@ from agent_live_check.scenes import startup_blocker
 class ScenePreparation(unittest.TestCase):
     def test_blocked_startup_is_observed_only_for_the_owned_matching_native_agent(self):
         recipe = {"id": "pi", "kind": "pi", "scenes": {"startup": {"arrived": "Do you trust"}}}
-        actual = {"pane_id": "owned", "agent": "pi", "name": "live-pi-startup", "agent_status": "blocked"}
+        actual = {"pane_id": "owned", "workspace_id": "owned-workspace", "cwd": "/owned/probe",
+                  "agent": "pi", "name": "live-pi-startup", "agent_status": "blocked"}
         error = json.dumps({"error": {"code": "agent_not_ready"}})
         result = (1, "", error)  # Pinned CLI puts structured failures on stderr.
         screen = "Do you trust this folder?"
-        self.assertTrue(startup_blocker("startup", recipe, "owned", result, actual, screen))
-        self.assertTrue(startup_blocker("startup", recipe, "owned", (1, "", '{"error":{"code":"timeout"}}'),
-                                        {**actual, "agent_status": "unknown"}, screen))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", result, actual, "ordinary input"))
-        self.assertFalse(startup_blocker("rest", recipe, "owned", result, actual, screen))
-        self.assertFalse(startup_blocker("startup", recipe, "other", result, actual, screen))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", result, {**actual, "agent": "codex"}, screen))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", (0, error, ""), actual, screen))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, error, "not JSON"), actual, screen))
-        self.assertFalse(startup_blocker("startup", recipe, "owned", (1, "", '{"error":{"code":"agent_pane_busy"}}'), actual, screen))
+        def observed(scene="startup", pane="owned", response=result, identity=actual, frame=screen):
+            return startup_blocker(scene, recipe, pane, response, identity, frame,
+                                   cwd=Path("/owned/probe"), workspace="owned-workspace")
+        self.assertTrue(observed())
+        unregistered = {key: value for key, value in actual.items() if key != "name"}
+        self.assertTrue(observed(response=(1, "", '{"error":{"code":"timeout"}}'),
+                                 identity={**unregistered, "agent_status": "unknown"}))
+        self.assertFalse(observed(frame="ordinary input"))
+        self.assertFalse(observed(scene="rest"))
+        self.assertFalse(observed(pane="other"))
+        for field, value in (("agent", "codex"), ("cwd", "/other"), ("workspace_id", "other"), ("name", "other")):
+            self.assertFalse(observed(identity={**actual, field: value}))
+        self.assertFalse(observed(response=(0, error, "")))
+        self.assertFalse(observed(response=(1, error, "not JSON")))
+        self.assertFalse(observed(response=(1, "", '{"error":{"code":"agent_pane_busy"}}')))
 
     def test_non_jsonl_providers_seed_real_completed_native_prompts_for_resume(self):
         checkout = Path(__file__).resolve().parents[2]
