@@ -27,6 +27,9 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// arrives rather than a local timeout.
 const FACTORY_TIMEOUT: Duration = Duration::from_secs(110);
 const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
+/// A spawn on another device: its checks, worktree, tab and agent start are
+/// each a round trip over SSH.
+const REMOTE_SPAWN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
 struct OneShotReference(PathBuf);
@@ -342,10 +345,22 @@ pub fn request_delivery(
     command: herdr_core::delivery::Command,
     hint: Option<&str>,
 ) -> Result<Value, String> {
+    // A spawn on another device makes several calls over SSH, so its answer
+    // has longer than a local command's; running it again after a timeout
+    // returns the same agent either way.
+    let timeout = match &command {
+        herdr_core::delivery::Command::Agents {
+            command:
+                herdr_core::coordination::Command::Spawn {
+                    machine: Some(_), ..
+                },
+        } => REMOTE_SPAWN_TIMEOUT,
+        _ => TIMEOUT,
+    };
     credential.run(|path| {
         let reference = read_reference(path)?;
         let request_id = fresh_request_id()?;
-        run_exchange(
+        run_exchange_within(
             path,
             &reference,
             json!({
@@ -353,6 +368,7 @@ pub fn request_delivery(
             }),
             &request_id,
             true,
+            timeout,
         )
     })
 }

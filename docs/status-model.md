@@ -178,6 +178,7 @@ A changed parent session cannot adopt the previous session's children, and an ab
 A missing or unknown remote machine identity leaves the child a root until its matching device connects.
 The operating-system identity is the platform UUID on macOS and the machine-id on Linux; cloned machines need distinct identities before they can safely resolve different parents.
 `hide agent register`, delegated `hide agent spawn` and Hide's fork record the relationship in the core's coordination ledger.
+A delegated `hide agent spawn --machine <device id>` child is a remote child of a local parent: its tokens are written on the device's pane and `parent_machine` names the spawner's machine, the same resolution as any cross-machine relationship above.
 The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
 `wire.rs` and `agent_state/axes.rs` remain the readers of this contract.
 A connected device's immutable machine identity comes from its consented helper's connection greeting, outside the runtime mutex; an unavailable identity leaves the parent unresolved and records a diagnostic.

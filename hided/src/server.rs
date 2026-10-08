@@ -948,10 +948,48 @@ const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
 
 /// What a refused delivery or agent command asks of its caller.
 fn delivery_next_action(code: &str) -> &'static str {
-    if code == "agent_pane_required" {
-        "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
-    } else {
-        "Check the current agent pane and retry the same intent"
+    match herdr_core::coordination::split_refusal(code).0 {
+        "agent_pane_required" => {
+            "Run the command inside a pane where the agent is running; an agent on Codex's shared daemon needs a session started with --no-daemon"
+        }
+        "machine_unknown" => {
+            "Use the device id from hide workspace info or hide agent list with --machine, then retry"
+        }
+        "machine_unavailable" => {
+            "Check that the device is connected in Settings > Devices and its helper is allowed, then run the same command again"
+        }
+        "repository_unavailable" => {
+            "Pass --repo as the repository's path on that device, then run the command again"
+        }
+        "agent_not_installed" => {
+            "Install the agent CLI on the device so it is on the device's PATH, then run the command again"
+        }
+        "spawn_busy" => "The first request is still running; wait, then run the same command again",
+        "machine_not_permitted" => {
+            "Run the command from an agent on the machine that runs Hide, or leave out --machine"
+        }
+        "intent_conflict" => {
+            "Use a new intent, or repeat the request this intent was first used for"
+        }
+        _ => "Check the current agent pane and retry the same intent",
+    }
+}
+
+/// The reason and next action of a refused command. A refusal that names the
+/// devices the caller could have used says so in its next action, and its
+/// reason stays the code.
+fn refusal_answer(reason: String, next_action: &'static str) -> (String, String) {
+    match herdr_core::coordination::split_refusal(&reason) {
+        (code, Some("")) => (
+            code.to_owned(),
+            "No other device is connected; connect one in Settings > Devices, then retry"
+                .to_owned(),
+        ),
+        (code, Some(connected)) => (
+            code.to_owned(),
+            format!("Use one of the connected device ids with --machine: {connected}"),
+        ),
+        (_, None) => (reason, next_action.to_owned()),
     }
 }
 
@@ -1352,6 +1390,7 @@ async fn scoped_client_loop(
                                 json!({"type":"workspace_result","request_id":request_id,"ok":true,"result":result})
                             }
                             Ok(Err((reason, next_action))) => {
+                                let (reason, next_action) = refusal_answer(reason, next_action);
                                 json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":reason,"next_action":next_action})
                             }
                             Err(_) => {
@@ -3300,6 +3339,33 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refusal that lists the devices the caller could have named answers
+    /// with that list; one without a list keeps the static advice.
+    #[test]
+    fn a_device_refusal_names_what_the_caller_can_do() {
+        let reason = "machine_unknown\u{1f}mini, studio".to_owned();
+        let (code, next) = refusal_answer(reason, delivery_next_action("machine_unknown"));
+        assert_eq!(code, "machine_unknown");
+        assert!(next.ends_with("--machine: mini, studio"), "{next}");
+        let (_, none) = refusal_answer(
+            "machine_unknown\u{1f}".to_owned(),
+            delivery_next_action("machine_unknown"),
+        );
+        assert!(none.contains("No other device is connected"), "{none}");
+        for code in [
+            "spawn_busy",
+            "machine_not_permitted",
+            "machine_unavailable",
+            "repository_unavailable",
+            "agent_not_installed",
+            "intent_conflict",
+        ] {
+            let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
+            assert_eq!(reason, code);
+            assert_ne!(next, delivery_next_action("other"), "{code}");
+        }
+    }
 
     /// A caller refused for lacking an agent pane is told where to run the
     /// command; every other delivery refusal keeps the retry advice.
