@@ -151,9 +151,13 @@ function subagent(ctx) {
   return ctx?.agent?.kind === "sub";
 }
 
-/** Whether `ctx` is the pane's own agent: its interactive session, as Herdr's integration counts it. */
+/**
+ * Whether `ctx` is the pane's own agent, as Herdr's integration counts it: Pi's TUI (its RPC mode reports a UI too,
+ * but has no screen in the pane), and omp's session with a UI.
+ */
 function root(ctx) {
-  return !subagent(ctx) && ctx?.hasUI === true;
+  if (subagent(ctx)) return false;
+  return AGENT === "pi" ? ctx?.mode === "tui" : ctx?.hasUI === true;
 }
 
 /** The session file Herdr's integration reports for the pane, or null for an unsaved session. */

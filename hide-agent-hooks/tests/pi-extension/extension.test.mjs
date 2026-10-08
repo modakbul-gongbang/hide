@@ -59,7 +59,7 @@ function context(name, overrides = {}) {
   const file = overrides.sessionFile === undefined ? facts.sessionFile : overrides.sessionFile;
   return {
     hasUI: ui,
-    mode: ui ? "tui" : facts.mode,
+    mode: overrides.mode ?? (ui ? "tui" : facts.mode),
     cwd: "/checkouts/fixture",
     ...(facts.agent ? { agent: facts.agent } : {}),
     sessionManager: {
@@ -238,12 +238,16 @@ test("a submission prepared twice attaches its letters once and confirms them on
   assert.equal(calls().filter((call) => call.operation === "confirm").length, 1);
 });
 
-test("a print-mode run and an unsaved session take no letters", async () => {
+test("a headless run and an unsaved session take no letters", async () => {
   const host = await extension();
   await started(host, "");
   answer({ prompt: { context: "LETTER", letters: ["letter-1"] } });
   assert.equal(await prompt(host, "x", context("before_agent_start", { hasUI: false })), undefined);
   assert.equal(await prompt(host, "x", context("before_agent_start", { sessionFile: null })), undefined);
+  if (AGENT === "pi") {
+    // Pi's RPC mode reports a UI but has no screen in the pane; Herdr's integration does not count it either.
+    assert.equal(await prompt(host, "x", context("before_agent_start", { hasUI: true, mode: "rpc" })), undefined);
+  }
   await sleep(100);
   assert.equal(calls().filter((call) => call.operation === "prompt").length, 0);
 });

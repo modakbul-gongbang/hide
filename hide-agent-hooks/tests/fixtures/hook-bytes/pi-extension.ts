@@ -1,4 +1,4 @@
-// hide-extension@1 sha256=f897dab56b6637d5899dc69d89ff163afb55a34c41713ab47bf24afbdebf490b
+// hide-extension@1 sha256=e9a8e741a259132c5ea5b44991ecabac4d00f5717cbeee864df7a0b6142149c2
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, in an agent started from another agent's shell, or when its helper is gone,
@@ -152,9 +152,13 @@ function subagent(ctx) {
   return ctx?.agent?.kind === "sub";
 }
 
-/** Whether `ctx` is the pane's own agent: its interactive session, as Herdr's integration counts it. */
+/**
+ * Whether `ctx` is the pane's own agent, as Herdr's integration counts it: Pi's TUI (its RPC mode reports a UI too,
+ * but has no screen in the pane), and omp's session with a UI.
+ */
 function root(ctx) {
-  return !subagent(ctx) && ctx?.hasUI === true;
+  if (subagent(ctx)) return false;
+  return AGENT === "pi" ? ctx?.mode === "tui" : ctx?.hasUI === true;
 }
 
 /** The session file Herdr's integration reports for the pane, or null for an unsaved session. */
