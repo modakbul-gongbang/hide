@@ -1305,6 +1305,11 @@ pub(crate) mod tests {
         );
         assert_eq!(
             observe(&mut guard, "claude", 2, "recipient-native", None),
+            Turn::Unread,
+            "a supported question reader must finish before the bell rings"
+        );
+        assert_eq!(
+            observe(&mut guard, "opencode", 2, "recipient-native", None),
             Turn::NotReported
         );
         // Adapter D-08/B5: every spelling of one agent reads the same turn.
@@ -1989,6 +1994,73 @@ pub(crate) mod tests {
         assert!(guard.delivery_registrations_gone().is_empty());
         assert!(crate::coordination::resolve_actor(&persisted, "child").is_none());
         drop(guard);
+        drop(worker);
+    }
+
+    /// The same close ends the answer wait of a request the closed pane's agent
+    /// held, in the durable ledger, and its sender reads why through `show`.
+    #[test]
+    fn herdr_closing_a_pane_ends_the_answer_wait_of_the_requests_it_held() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let (lead, child, request) = {
+            let mut guard = runtime.lock().unwrap();
+            let mut ledger = registered_pair(&mut guard);
+            let lead = ledger.agents[0].actor.clone();
+            let child = ledger.agents[1].actor.clone();
+            let at = crate::delivery::worker::now();
+            let sent = crate::delivery::mailbox::send(
+                &mut ledger,
+                &lead,
+                &child,
+                "ask",
+                "body",
+                "request",
+                None,
+                at,
+            )
+            .unwrap();
+            crate::delivery::mailbox::apply(
+                &mut ledger,
+                &child,
+                None,
+                &crate::delivery::Command::Confirm {
+                    ids: vec![sent.id.clone()],
+                },
+                at,
+            )
+            .unwrap();
+            guard.delivery_ledger = Ok(Arc::new(ledger));
+            guard.observe_delivery(crate::node::TEST_NODE, &only_lead(), Some("scope"), None);
+            (lead, child, sent.id)
+        };
+        client
+            .submit(
+                crate::delivery::worker::Effect::HumanClaim,
+                Duration::from_secs(5),
+            )
+            .unwrap();
+        let mut persisted = crate::delivery::ledger::load(&path).unwrap();
+        let shown = crate::delivery::mailbox::apply(
+            &mut persisted,
+            &lead,
+            None,
+            &crate::delivery::Command::Show { id: request },
+            2,
+        )
+        .unwrap();
+        assert_eq!(shown["waiting_answer"], false);
+        assert_eq!(shown["answer_wait_ended"], "party_ended");
+        assert_eq!(shown["state"], "delivered");
+        assert!(!persisted.letters[0].open());
+        // The ended agent can no longer be the one who answers it.
+        assert!(crate::coordination::resolve_actor(&persisted, &child.name).is_none());
         drop(worker);
     }
 

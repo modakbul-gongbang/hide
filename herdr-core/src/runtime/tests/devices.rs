@@ -547,3 +547,20 @@ fn a_consent_from_before_the_hide_command_asks_again() {
         Some(crate::remote::DEFAULT_CLI_DIR)
     );
 }
+
+/// A refusal reaches the log with its kind, not only `last_error`, which the
+/// next event clears before anything headless has read it.
+#[test]
+fn a_refused_device_registration_is_logged_with_its_reason() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    let (_, records) = crate::diagnostics::capture(|| {
+        assert!(register_device(&mut runtime, "studio", "studio-host"));
+    });
+    let refusal = records
+        .iter()
+        .find(|record| record["kind"] == "error.reported")
+        .expect("refusal logged");
+    assert_eq!(refusal["error_kind"], "device.duplicate");
+    assert_eq!(refusal["message"], "Device studio is already registered");
+}

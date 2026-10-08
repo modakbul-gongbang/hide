@@ -176,7 +176,10 @@ impl ConversationCursor {
                 if retained < fragment.len() {
                     // Continue a bounded structural scan across chunks. Only
                     // JSON discriminators survive a checkpoint, never bodies.
-                    let mut scan = LargeRecord::default();
+                    let mut scan = LargeRecord {
+                        user_turn_scanned: true,
+                        ..LargeRecord::default()
+                    };
                     scan.feed(&pending)?;
                     scan.feed(&fragment[retained..])?;
                     classifier = Some(scan);
@@ -302,6 +305,18 @@ struct LargeRecord {
     content_array: bool,
     conversation: bool,
     invalid: bool,
+    // An older checkpoint retained none of the native-turn discriminators.
+    // Its already-discarded prefix cannot safely authorize another discard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    user_turn_scanned: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    user_turn: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    payload_question: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    payload_call_id: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    plan_item: bool,
 }
 #[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 enum Scope {
@@ -320,6 +335,16 @@ struct JsonFrame {
     key: String,
     expecting_key: bool,
     block_kind: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    block_use: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    block_question: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    block_result: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    result_id: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    plan_item: bool,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct JsonString {
@@ -353,12 +378,21 @@ impl LargeRecord {
                     }
                     token.escaped = false;
                 } else if byte == b'\\' {
-                    self.invalid |= token.key || token.field == "type";
+                    self.invalid |= token.key
+                        || token.field == "type"
+                        || (token.field == "name"
+                            && matches!(token.scope, Scope::Payload | Scope::Block));
                     token.escaped = true;
                 } else if byte == b'"' {
                     let token = self.token.take().unwrap();
                     if token.key {
                         if let Some(frame) = self.frames.last_mut() {
+                            if frame.scope == Scope::Payload && token.value == "call_id" {
+                                self.payload_call_id = true;
+                            }
+                            if frame.scope == Scope::Block && token.value == "tool_use_id" {
+                                frame.result_id = true;
+                            }
                             frame.key = token.value;
                             frame.expecting_key = false;
                         }
@@ -374,12 +408,32 @@ impl LargeRecord {
                                 self.conversation |= !tool;
                                 if let Some(frame) = self.frames.last_mut() {
                                     frame.block_kind = tool;
+                                    frame.block_use = token.value == "tool_use";
+                                    frame.block_result = token.value == "tool_result";
+                                }
+                            }
+                            _ => {
+                                if self.frames.last().is_some_and(|frame| frame.plan_item) {
+                                    self.plan_item = token.value == "Plan";
+                                }
+                            }
+                        }
+                    } else if token.field == "name" {
+                        match token.scope {
+                            Scope::Payload => {
+                                self.payload_question = token.value == "request_user_input"
+                            }
+                            Scope::Block => {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    frame.block_question = token.value == "AskUserQuestion";
                                 }
                             }
                             _ => (),
                         }
                     }
-                } else if token.value.len() < 64 && (token.key || token.field == "type") {
+                } else if token.value.len() < 64
+                    && (token.key || matches!(token.field.as_str(), "type" | "name"))
+                {
                     token.value.push(byte as char);
                 }
                 continue;
@@ -409,6 +463,10 @@ impl LargeRecord {
                         });
                     }
                     let scope = self.value_scope();
+                    let plan_item = self
+                        .frames
+                        .last()
+                        .is_some_and(|frame| frame.scope == Scope::Payload && frame.key == "item");
                     let object = byte == b'{';
                     if scope == Scope::Content {
                         self.content_array = !object;
@@ -420,6 +478,11 @@ impl LargeRecord {
                         key: String::new(),
                         expecting_key: object,
                         block_kind: false,
+                        block_use: false,
+                        block_question: false,
+                        block_result: false,
+                        result_id: false,
+                        plan_item,
                     });
                 }
                 b'}' | b']' => {
@@ -427,6 +490,8 @@ impl LargeRecord {
                         self.invalid |= frame.object != (byte == b'}');
                         if frame.scope == Scope::Block {
                             self.conversation |= !frame.block_kind;
+                            self.user_turn |= (frame.block_use && frame.block_question)
+                                || (frame.block_result && frame.result_id);
                         }
                     } else {
                         self.invalid = true;
@@ -448,18 +513,30 @@ impl LargeRecord {
     }
 
     fn tool_only(self, agent: Agent) -> bool {
-        if self.invalid || !self.frames.is_empty() || self.token.is_some() {
+        if !self.user_turn_scanned
+            || self.invalid
+            || !self.frames.is_empty()
+            || self.token.is_some()
+        {
             return false;
         }
         match agent {
             Agent::OpenCode => false,
             Agent::Codex => {
-                !self.root_kind.is_empty()
+                let native_turn = match (self.root_kind.as_str(), self.payload_kind.as_str()) {
+                    ("response_item", "function_call") => self.payload_question,
+                    ("response_item", "function_call_output") => self.payload_call_id,
+                    ("event_msg", "item_completed") => self.plan_item,
+                    ("event_msg", "task_started" | "task_complete" | "turn_aborted") => true,
+                    _ => false,
+                };
+                !native_turn
+                    && !self.root_kind.is_empty()
                     && (self.root_kind != "response_item"
                         || (!self.payload_kind.is_empty() && self.payload_kind != "message"))
             }
             Agent::Claude => match self.root_kind.as_str() {
-                "user" | "assistant" => self.content_array && !self.conversation,
+                "user" | "assistant" => self.content_array && !self.conversation && !self.user_turn,
                 "" | "ai-title" => false,
                 _ => true,
             },

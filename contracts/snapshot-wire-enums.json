@@ -34,6 +34,7 @@
   "pull_request_checks": ["unknown", "none", "pending", "failed", "passing"],
   "label_end": ["working", "question", "done", "waiting", "unfinished"],
   "request_verb": ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"],
+  "user_turn_kind": ["plan_approval", "question"],
   "review_decision": ["review_required", "changes_requested", "approved"],
   "session_group": ["my_turn", "review_merge", "in_progress", "resting", "resolved_today"],
   "session_tag": ["answer", "approval", "fix", "review", "merge", "stopped", "result", "working", "ci_wait", "waiting", "idle"],

@@ -4,9 +4,9 @@
 //! same questions through here.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use hide_herdr_client::{LocalSocketConnector, request_with_connector};
+use hide_herdr_client::{LocalSocketConnector, request_small_response_until};
 use hide_platform::process;
 use serde_json::{Value, json};
 
@@ -36,15 +36,24 @@ pub fn process_cwd(pid: i32) -> Option<PathBuf> {
 
 /// The identity of the pane `pane_id` of the Herdr listening at `socket`.
 pub fn inspect(socket: &Path, pane_id: &str) -> Result<PaneIdentity, &'static str> {
+    inspect_until(socket, pane_id, Instant::now() + HERDR_TIMEOUT * 2)
+}
+
+/// The same pane proof under one caller-owned deadline, shared by both reads.
+pub fn inspect_until(
+    socket: &Path,
+    pane_id: &str,
+    deadline: Instant,
+) -> Result<PaneIdentity, &'static str> {
     if !socket.is_absolute() || pane_id.is_empty() || pane_id.len() > 256 {
         return Err("invalid_request");
     }
     let connector = LocalSocketConnector::new(socket);
-    let process = request_with_connector(
+    let process = request_small_response_until(
         &connector,
         "pane.process_info",
         json!({"pane_id":pane_id}),
-        HERDR_TIMEOUT,
+        stage_deadline(deadline)?,
     )
     .map_err(|_| "pane_unavailable")?;
     let shell = process
@@ -53,11 +62,11 @@ pub fn inspect(socket: &Path, pane_id: &str) -> Result<PaneIdentity, &'static st
         .filter(|pid| *pid > 0 && *pid <= i32::MAX as u64)
         .ok_or("pane_unavailable")? as i32;
     let started = process_start(shell).ok_or("pane_unavailable")?;
-    let pane = request_with_connector(
+    let pane = request_small_response_until(
         &connector,
         "pane.get",
         json!({"pane_id":pane_id}),
-        HERDR_TIMEOUT,
+        stage_deadline(deadline)?,
     )
     .map_err(|_| "pane_unavailable")?;
     let terminal_id = pane
@@ -71,4 +80,12 @@ pub fn inspect(socket: &Path, pane_id: &str) -> Result<PaneIdentity, &'static st
         shell_pid: shell,
         shell_started: started,
     })
+}
+
+fn stage_deadline(deadline: Instant) -> Result<Instant, &'static str> {
+    let now = Instant::now();
+    if deadline <= now {
+        return Err("pane_inspection_expired");
+    }
+    Ok(deadline.min(now + HERDR_TIMEOUT))
 }

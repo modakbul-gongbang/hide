@@ -11,6 +11,9 @@ pub mod answer;
 pub use mailbox::Command;
 
 pub const DELIVERY_EXPIRY_MS: u64 = 60 * 60 * 1_000;
+/// How long a `request` or `block` letter waits for its answer, from the time
+/// it was sent, before the wait ends as `deadline`.
+pub const ANSWER_WAIT_MS: u64 = 24 * 60 * 60 * 1_000;
 pub const INPUT_QUIET_MS: u64 = 30_000;
 pub const TICK_MS: u64 = 60_000;
 pub const INACTIVITY_MS: u64 = 20 * 60_000;

@@ -18,17 +18,23 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 On Windows `~` is the account's profile folder (`%USERPROFILE%`), where both runtimes keep these files.
 
 One entry is appended per registered event, and nothing else in the file is touched.
-The write is atomic - a temporary file beside the target, created private to the account (0600 on macOS and Linux, an access list naming only the account on Windows), that replaces the target in one step (`hide_platform::fs::atomic::write_file`) - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
+The common writer retains JSON source spans through `serde_json::value::RawValue`, splicing only owned changes so unrelated members, groups and handlers retain their literal whitespace, ordering and escapes.
+Removing a Hide handler from a mixed group keeps every unowned sibling.
+Duplicate decoded member names, malformed JSON, nesting beyond serde's limit, or input/output beyond 16 MiB are refused without replacement.
+The write is atomic - a temporary file beside the target, created private to the account (0600 on macOS and Linux, an access list naming only the account on Windows), that replaces the target in one step (`hide_platform::fs::atomic::write_file`).
+The kit holds its account lock around the pass, and the writer refuses an observed source edit or resolved-link change before replacement.
+That comparison is not an operating-system compare-and-swap: an arbitrary editor can still race after it.
 The file keeps its mode, a new one is created 0600, and a file that is a symlink stays one: the write lands at the file the link resolves to, so a settings file kept in a dotfiles repository is edited there.
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
 Six events are registered: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
-`PreToolUse` is the one entry with a matcher: it selects only the `Bash` tool in both runtimes (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
-An install made before `PreToolUse` existed has the other five entries and reads Outdated until the kit's next pass, which adds the missing entry; the marker stays `hide-subagents@6`.
+`PreToolUse` selects `Bash|AskUserQuestion|ExitPlanMode` in Claude Code and `Bash|request_user_input` in Codex (`install::hook_matcher`, the one function the writer and Codex's trust check both read), so a file edit or a search never starts the helper.
+The version-seven marker makes earlier entries Outdated until the normal kit pass at launch, connection or Reinstall replaces Hide's entries and records their exact Codex trust.
+Already-running sessions pick up the changed hooks when restarted.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command (in Claude Code's Windows entry, inside its `args`).
-The runtime argument selects that runtime's stdout envelope; the version-6 marker makes an installation whose command is not guarded against a missing helper outdated, so the next launch or connection replaces it.
+The runtime argument selects that runtime's stdout envelope; the current marker also replaces commands not guarded against a missing helper.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing else is read from the command but the helper's quoted path, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
@@ -131,6 +137,20 @@ The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-fail
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
 The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
 
+## Native questions from Factory workers
+
+The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input`, only after the core proves the caller is the current Task-held Factory worker.
+The model receives a deny reason directing it to `hide factory ask`; an operator-started session and every other pane retain their native question UI.
+Pinned Codex 0.160.1 was exercised with a trusted Bash positive control and a genuine plan-mode `request_user_input`: both reached PreToolUse and the question's native tool result and model reply carried the denial.
+The ordinary launch mode remains unchanged.
+
+`hide workspace factory-question-guard --session <native-id> --runtime <runtime>` uses the authenticated pane-scoped route, a bounded fresh native identity read and the already-open Factory's current Task worker.
+Environment, display name, cwd, descendants and a historical registration alone confer no worker authority.
+An ended registration retained across cancel/revive counts only when its accepted spawn still joins the current independently attested native execution.
+Missing identity, an unopened Factory, a changed connection, overload, timeout or any other unavailable proof allows the tool call and records a bounded diagnostic.
+Factory starts currently belong to the core's own node; foreign-device callers cannot borrow its worker identity, while a device running its own Factory uses the same local route.
+This read starts no Factory, judgment, tick or store write and publishes no snapshot.
+
 ## The spawn guard
 
 `PreToolUse` carries the spawn guard: a shell call that starts an agent through Herdr is refused before it runs because it bypasses Hide's responsibility record.
@@ -160,7 +180,7 @@ Claude Code and Codex share one deny envelope, `hookSpecificOutput.permissionDec
 
 Each refusal appends one JSON line (pane id, agent kind, shape, runtime; never the command text, and the same file holds the `daemon.unreachable` lines) to `~/.hide/agent-hooks/spawn-guard.log` (private, capped at 256 KiB with one rotation) and echoes it on standard error, where a hook run by hand shows it.
 The per-call cost is what an ordinary shell call pays: the payload is read within 0.5 seconds and a byte test for `herdr` over the whole payload runs before anything is parsed or spawned, so a call whose payload does not mention `herdr` (its working directory and transcript path included, which a checkout named `herdr-ide` does, and then the call pays one JSON parse and the lexer as well) costs one process start (numbers in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-spawn-guard-hook-on-a-shell-call)).
-`hide-agent-hooks/tests/spawn_guard.rs` runs the helper beside a stand-in `hide` for each outcome above, and `src/spawn_guard.rs` holds the parser's table tests.
+`hide-agent-hooks/tests/it/spawn_guard.rs` runs the helper beside a stand-in `hide` for each outcome above, and `src/spawn_guard.rs` holds the parser's table tests.
 
 ## Other agents: skill and guidance hook
 
@@ -234,7 +254,7 @@ Cursor's page on third-party hooks does not say whether those get the variable, 
 Grok and OpenCode can run the hooks in `~/.claude/settings.json` too, and Hide writes no hook for either, so Claude Code's hook still speaks there: its pane counters, its Memory and its guidance are what they are anywhere else.
 What it does not do inside them is take or confirm letters: a letter is addressed to the pane's own session and is confirmed once that session has seen it, so a hook that runs inside another agent's session would take the letter and confirm it to nobody who reads it (PRD settings-cleanup D-25).
 `hide_agent_hooks::runtime::ForeignOrigin` finds such a session by what its agent sets for the processes it starts: `CURSOR_VERSION` for Cursor, `OPENCODE` or `OPENCODE_PID` for OpenCode, and `GROK_HOOK_EVENT` or `GROK_SESSION_ID` for Grok.
-`hide-agent-hooks/tests/letter_origin.rs` runs the built helper beside a stand-in `hide` that answers `inbox` with one letter and records its calls, once outside and once inside each of them.
+`hide-agent-hooks/tests/it/letter_origin.rs` runs the built helper beside a stand-in `hide` that answers `inbox` with one letter and records its calls, once outside and once inside each of them.
 The guidance hook is not written on Windows, because its command is a shell command and Cursor's documentation names no Windows form.
 
 The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`, `herdr:<agent>`), and an older build ignores them.
@@ -359,7 +379,7 @@ Starting the app-server also makes Codex do its own bookkeeping in `~/.codex` (i
 What is trusted is exactly the entry Hide wrote, or the entry the kit recorded Herdr writing, and nothing else (`select_targets`, one function for both):
 
 - Codex lists it from this account's `~/.codex/hooks.json` as a user hook that is not managed, so a project's hook, a plugin's and a managed one with the same command are not it;
-- its event, handler type, `command` and matcher are, byte for byte, those of one of Hide's six entries (the command Hide writes for that event with this kit's helper, a command hook, and the matcher Hide writes for it: `Bash` for `PreToolUse`, none for the other five; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind), or of one entry in the kit record's Herdr entries for Codex (below);
+- its event, handler type, `command` and matcher are, byte for byte, those of one of Hide's six entries (the command Hide writes for that event with this kit's helper, a command hook, and `install::hook_matcher` for that runtime/event; the writer and this check read it from one function, so a matcher that changed is a `modified` entry trusted again, never one trusted blind), or of one entry in the kit record's Herdr entries for Codex (below);
 - Codex does not trust it yet (`untrusted`, or `modified` after a change).
 
 The Herdr entries are learned, never written down in Hide: the kit reads the command entries of `~/.codex/hooks.json` before its own `herdr integration install codex` call and again as soon as the call returns, under the account lock, and records the entries that call added (event, matcher, handler type, command) as `herdr_hooks.codex` in `~/.hide/kit/installed.json`, once Herdr reports the integration `current`.
@@ -384,7 +404,7 @@ Codex's `--dangerously-bypass-hook-trust` and `bypass_hook_trust` skip the revie
 The app-server is one child per check, started through the one spawn helper, bounded by a 15 second overall and 5 second per-request deadline, by caps on what it may print, and by the kit's stop flag, and ended with its whole process tree on success, failure and timeout alike (a process that left that tree and holds its output open is not waited for: the reader thread ends when it lets go); it runs on the kit worker or the device helper, never under the runtime lock.
 When Codex is there and the trust cannot be recorded, the Codex hook part reads Failed with one line, "Codex has not trusted Hide's hook: …; it will ask you to review it", the cause class goes to the diagnostic log with the pass's record (`kit apply.completed` names each part's reason), Codex's own words go to the kit's standard error as `codex_trust_failed` (seen where the kit runs in a terminal, and in a device helper's log, but not from the packaged app's detached daemon), the other parts are installed as usual, and the next pass tries again.
 `status` runs every few seconds while Settings is open and starts no process, so it repeats what the last pass in this process found; a failure the operator fixed by approving the hook in Codex clears at the next pass or Reinstall, which Failed offers.
-`hide-agent-hooks/tests/codex_trust.rs` runs the module against a stand-in app-server (`tests/fixtures/fake-codex.py`), and `hide-kit`'s `codex_trust_cases` runs the passes.
+`hide-agent-hooks/tests/it/codex_trust.rs` runs the module against a stand-in app-server (`tests/fixtures/fake-codex.py`), and `hide-kit`'s `codex_trust_cases` runs the passes.
 Codex's app-server interface is marked experimental; a method or field that changes ends as the Failed line above, and Codex shows its screen, never a wrong trust.
 
 ## Judging what is installed
@@ -423,7 +443,7 @@ PowerShell starts before the helper on every Windows hook, which Codex does for 
 PowerShell can read what the helper prints in the console code page and write it out again (no runtime documents whether it does), so on Windows the helper prints its JSON in ASCII, every other character as a `\u` escape that decodes to the same text.
 The marker is looked for in an entry's `command` and in each of its `args`, where Claude Code's Windows entry carries it, so a second install on Windows recognises its entries and converges as it does elsewhere.
 The marker stays at version 6: the macOS and Linux bytes are the ones version 6 wrote (`the_posix_entry_is_exactly_what_macos_and_linux_have_installed` pins them), and no earlier build installed anything on Windows.
-`hide-agent-hooks/tests/windows_hook_command.rs` runs both Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space, a quote, brackets and a `$`, and proves stdin reached the helper by the Memory receipt only the session it read can produce, in the `windows check` lane.
+`hide-agent-hooks/tests/it/windows_hook_command.rs` runs both Windows entries the way their runtimes start them, under Windows PowerShell and PowerShell 7, with the real helper in a folder whose name has a space, a quote, brackets and a `$`, and proves stdin reached the helper by the Memory receipt only the session it read can produce, in the `windows check` lane.
 Version 6 is the first guarded command, so an older entry reads outdated and the next launch or connection replaces it.
 The kit folder is a path that survives a rebuild: the installed app bundle's `Contents/Resources` on macOS, the unpacked package's `resources` on Windows/Linux, and the helper root's `current` link on a device, which each new build of the helper points at itself.
 

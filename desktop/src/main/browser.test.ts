@@ -53,6 +53,21 @@ describe("native browser load generations", () => {
   });
 });
 
+describe("native browser CDP inventory", () => {
+  it("stops notifying a CDP owner that leaves while it is told a page became ineligible", () => {
+    const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, vi.fn(), vi.fn(), vi.fn(), () => english);
+    const told: unknown[] = [];
+    // The gateway closes its session on the first retirement, and with it its observation.
+    const stop = subject.observeCdp((retirement) => { told.push(retirement); stop(); });
+    // A page the inventory reported, still alive but no longer eligible for CDP.
+    const page = { key: "fixture\u0000manual", workspace: "fixture", id: "manual", view: { webContents: { id: 7, isDestroyed: () => false, getURL: () => "file:///manual.html" } }, state: { url: "file:///manual.html" } };
+    (Reflect.get(subject, "pages") as Map<string, unknown>).set("manual", page);
+    Reflect.set(subject, "cdpObserved", [{ key: page.key, area: "a1", contents: 7, url: "file:///manual.html", title: "" }]);
+    expect(() => Reflect.get(subject, "publishCdp").call(subject)).not.toThrow();
+    expect(told).toEqual([{ contentsId: 7, reason: "replaced" }]);
+  });
+});
+
 function candidate() {
   const send = vi.fn();
   const shellFocus = vi.fn();

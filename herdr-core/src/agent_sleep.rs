@@ -539,6 +539,7 @@ mod tests {
             expected_reply: None,
             detail: None,
             message: None,
+            user_turn: None,
             status_word_visible: true,
             changed_at_unix_ms: Some(1_788_871_000_000),
             last_activity: "1788871000000".to_owned(),

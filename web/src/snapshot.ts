@@ -53,6 +53,8 @@ export type AgentRow = {
   detail?: string | null;
   /** Everything the agent last said through its hooks, uncut: the request, then the progress, one per line; absent when it said nothing. */
   message?: string | null;
+  /** Native unanswered question/plan, bounded and session/state-proven by the core. */
+  user_turn?: UserTurnFact;
   /** When the core last saw this agent change state (epoch ms); the shell counts the elapsed time from it. `null` before the core observed it. */
   changed_at_unix_ms: number | null;
   /** The core's ordering key: `changed_at_unix_ms` as thirteen digits, else Herdr's state sequence zero-padded, so it sorts as text. */
@@ -89,6 +91,12 @@ export type AgentRow = {
   own_find?: boolean;
   /** The request view's block (`AgentRequestSnapshot`); absent on a row the core has not laid it on. */
   request?: AgentRequest;
+};
+
+export const USER_TURN_KINDS = ["plan_approval", "question"] as const;
+export type UserTurnFact = {
+  kind: typeof USER_TURN_KINDS[number];
+  content: { text: string; choices: string[]; truncated: boolean } | null;
 };
 
 /** How the label read a turn's end (`LabelEnd`). */

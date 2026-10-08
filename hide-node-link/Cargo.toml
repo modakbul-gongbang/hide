@@ -27,3 +27,4 @@ libc = "=0.2.189"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }
 sha2 = "=0.10.9"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }

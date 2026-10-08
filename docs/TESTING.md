@@ -29,16 +29,16 @@ Pick the cheapest layer that can observe the result.
 | Layer | Use it for | Where |
 | --- | --- | --- |
 | Unit | A decision that takes values and returns a result: policy, parsing, serialization, layout math, a rejected transition | Beside the owning module: `#[cfg(test)] mod tests` in Rust, `*.test.ts` or `*.test.tsx` in `web/` and `desktop/` |
-| Core runtime and crate boundary | State the core owns, reached through a dispatched event and the snapshot it publishes; a Herdr fixture; the hided wire; an OS contract | `herdr-core/src/runtime/tests/` and the other suites the core's modules include, `hided/tests/`, `hide-platform/tests/` |
+| Core runtime and crate boundary | State the core owns, reached through a dispatched event and the snapshot it publishes; a Herdr fixture; the hided wire; an OS contract | `herdr-core/src/runtime/tests/` and the other suites the core's modules include, `hided/tests/it/`, `hide-platform/tests/it/` |
 | End to end | A flow that crosses a process boundary a user depends on: browser to hided to the core to Herdr to the PTY, or the desktop window and its native integration | `web/e2e/`, `desktop/e2e/` |
 
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
-The external crate-boundary lane in `hided/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
+The external crate-boundary lane in `hided/tests/it/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
 It verifies real helper attestation and mailbox intake over the device's node link, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
 Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned for a change to a crate it builds and tests) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
 A pull request runs it on Linux only: SSH, the helper's attestation and the mailbox are the same code on every system, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
 The fixture's macOS branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP server path) and the usual remote device being a Mac are why the nightly runs the lane on macOS too (`remote mailbox (macOS)`).
-The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory.
+The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory, which it removes once the journey passed and every process confirmed its exit and keeps after a failure for the lane to upload.
 Each spec starts its own Herdr, hided and browser, so a rule restated end to end costs runner minutes on every pull request and fails for reasons that have nothing to do with the rule.
 Keep one representative journey per user-visible flow; when a long spec carries an independent contract, split that contract into a small spec that still runs against the real pinned Herdr and hided rather than adding steps to the journey.
 
@@ -95,6 +95,7 @@ When the behavior depends on the order of two events, the test fixes that order;
 - The private SSH mailbox fixture stages candidate executable copies without debug symbols, as shipped binaries are, and ad-hoc signs those copies on macOS.
   The original build output, setup deadlines, real helper upload and mailbox assertions remain unchanged; terminal helper refusal reports its state message instead of waiting out the readiness deadline.
   Its setup WebSocket keeps each event connection open through the following Ping/Pong exchange, so a concurrent snapshot cannot lose an unread event when the client disconnects; daemon error frames fail setup at that event.
+  Without the wait the lane lost `register_device` on Linux about two runs in three: the client closed with the daemon's snapshot frames unread, the kernel reset the connection, and the unread event vanished with no refusal anywhere (`status.last_error` null, no `device.registered`); issues 766 and 770.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
 - Offline kit fixtures clear an inherited XDG config override in an owned subprocess, preserving both their private HOME registry and parallel test isolation.
 - The Linux and Windows package smoke places state beneath its private HOME, matching the shipped default and preserving the retirement preflight's HOME authority.
@@ -255,6 +256,8 @@ A piece that another open change is still building is marked as pending with the
 
 Pick the layer first with [the table above](#choose-what-to-test-and-where), then follow the rules below.
 The crate's own `AGENTS.md` says where the file goes; this section says how the test is built.
+An integration test is a module of its crate's one test binary, `tests/it/main.rs`, never a `tests/*.rs` file of its own: each file was a binary that linked every crate again ([BUILD.md: One integration test binary per crate](BUILD.md#one-integration-test-binary-per-crate)).
+Its tests share a process with the other modules' under `cargo test`, so a test that changes process-wide state, such as an environment variable its fake reads, holds the lock the binary's `main.rs` declares for it.
 
 1. **Unit test the decision, runtime-test the rule that crosses components.**
    A function that takes values and returns a result is tested beside its module (`usage.rs`'s `can_attempt` and `record_failure`).
@@ -277,12 +280,12 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    New code with a deadline takes the clock from the start.
 5. **Never bound a test by a short wall-clock.**
    `clippy.toml` refuses `std::thread::sleep`; the sleeps that remain carry an `#[allow(clippy::disallowed_methods)]` with the reason: a bounded polling helper, a production wait, a sleep that is the subject of the test or keeps a child process alive, or a stand-in for a state that a tracking issue lists.
-   A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
+   A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/it/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
    Assert the counted result (how many requests, how many attempts, which one won) or observe the event, with a generous deadline that is only a hang guard.
    A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.
    A sleep that is the subject of the test, such as a fake peer that answers late, is the exception and says so in a comment.
 6. **Poll the state, once, with a named condition.**
-   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `hided/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
+   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `hided/tests/it/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
    The helper fails with the name of the thing it waited for, so a hang is readable.
 7. **Own and remove what the test starts.**
    Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.
@@ -298,7 +301,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
    `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
-   The `ci` profile also ends a test still running at 120 s (`slow-timeout`; 240 s for the remote mailbox binary), so a hang fails with the test's name, is retried and is filed like any other flaky failure, instead of holding the lane until a step or job limit cancels it with no test named.
+   The `ci` profile also ends a test still running at 120 s (`slow-timeout`; 240 s for the remote mailbox test), so a hang fails with the test's name, is retried and is filed like any other flaky failure, instead of holding the lane until a step or job limit cancels it with no test named.
    That limit is a hang guard set well above the slowest test each lane measures, and the comment beside it in `.config/nextest.toml` says how it was measured; a test that needs more is the finding, not the limit.
    A flaky OS-contract test is fixed or deleted by its issue's deadline like any other; it is not ignored.
    The rule against raising a deadline to pass is unchanged.
@@ -323,7 +326,7 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs) and `windows-e2e`; no macOS job but `package` for the package inputs among them |
 | `hide-platform`, `hide-herdr-client` | also `os-contract-macos`, the OS contract's macOS leg, which tests exactly these two crates |
 | What goes into a package (`PACKAGE_PATHS` in the script): `desktop/scripts`, `desktop/package.json`, `desktop/resources`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh`, `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit`, `hide-agent-hooks`, `package.yml` and `release.yml` | also `package`: `package.yml`'s Windows and Linux packages, and the macOS archive with the packaged app's own specs |
-| The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts and the design, release and measurement scripts, and Markdown below a folder no rule claims | `policy` alone |
+| The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts, the design, release and measurement scripts and the pre-merge check, and Markdown below a folder no rule claims | `policy` alone |
 | The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts`, `package.yml` and `release.yml` | the lanes that read it, listed in the script and its test; never `rust`, `os-contract` or `os-contract-macos` |
 | `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane but `package`, which only the package inputs add |
 
@@ -410,6 +413,7 @@ CI retries a failed test once, for classification and for the report, and for no
   The issue names the first run, the change and the system, and carries a deadline seven days out.
   The report step also sets its `flaky` output, and a lane that keeps its e2e logs for a failure keeps them for a flaky run too, under the same artifact name, because the first attempt's daemon, Herdr and input logs are the only evidence the issue gets; a run with no flaky and no failed test uploads nothing.
   On Windows CI the web suite also logs, for each failed attempt and at that moment, what holds TCP connections (count by state and by process name, `[windows sockets]` lines from `web/e2e/windows-sockets-reporter.ts`), because a Chromium `ERR_NO_BUFFER_SPACE` on a loopback connect left nothing saying who held the sockets; a passing attempt runs nothing.
+  A wait that gives up on a race between Herdr and the page (the agent tab count in `checkout-owner.spec.ts` and `tab-strip-fit.spec.ts`, the dropped file's paste in `s3.spec.ts`) records both sides at that moment through `dumpOnFailure` in `web/e2e/failure-dump.ts`: a `[failure dump]` line in the log and an attachment in the attempt's `test-results` folder. It rethrows the wait's own error unchanged, so it explains a flake and never absorbs one.
   The desktop suite keeps, for each failed attempt, the end of each private daemon's `Logs/core.jsonl` (at most 256 KiB, whole records) as `hided-<n>.jsonl` in that attempt's `test-results` folder, which the same artifact carries, with the run's folders, the repository, the home and the temporary folder written as placeholders, because the host log alone could not show the order of the core's focus records behind a flaky ⌃Tab cycle (issue 629); a passing attempt copies nothing.
   A test that fails its retry too fails the lane; nothing else is retried anywhere.
   The report step writes it on the job as an error annotation titled `Failed test` (its file and line, and its name on the first line of the message), which the run's summary page shows and the nightly report files (below).

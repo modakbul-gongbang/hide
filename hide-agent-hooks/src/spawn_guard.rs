@@ -133,6 +133,53 @@ struct Payload {
     cwd: Option<String>,
 }
 
+/// A native question tool call. Its text is never sent to the guard or log.
+pub struct QuestionCall {
+    pub session: String,
+    pub tool: &'static str,
+}
+
+pub fn may_hold_question(payload: &[u8]) -> bool {
+    [
+        b"AskUserQuestion".as_slice(),
+        b"ExitPlanMode".as_slice(),
+        b"request_user_input".as_slice(),
+    ]
+    .iter()
+    .any(|tool| payload.windows(tool.len()).any(|window| window == *tool))
+}
+
+pub fn read_question(payload: &[u8], truncated: bool, runtime: &str) -> Option<QuestionCall> {
+    if truncated {
+        return None;
+    }
+    #[derive(Deserialize)]
+    struct QuestionPayload {
+        tool_name: String,
+        session_id: String,
+    }
+    let payload: QuestionPayload = serde_json::from_slice(payload).ok()?;
+    let tool = match (runtime, payload.tool_name.as_str()) {
+        ("claude-code", "AskUserQuestion") => "AskUserQuestion",
+        ("claude-code", "ExitPlanMode") => "ExitPlanMode",
+        ("codex", "request_user_input") => "request_user_input",
+        _ => return None,
+    };
+    if payload.session_id.is_empty()
+        || payload.session_id.len() > 256
+        || payload.session_id.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(QuestionCall {
+        session: payload.session_id,
+        tool,
+    })
+}
+
+/// The fixed actionable reason contains no private question or plan text.
+pub const QUESTION_REASON: &str = "This pane is the current Software Factory worker. Ask the operator through hide factory ask so Factory can show the question and return the answer. Do not use the runtime's direct question or plan approval tool.";
+
 #[derive(Deserialize)]
 struct ToolInput {
     command: Option<serde_json::Value>,
@@ -880,6 +927,68 @@ pub enum Registration {
     Unreachable(&'static str),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuestionDecision {
+    Worker,
+    Allow,
+    Unreachable(&'static str),
+}
+
+/// One owned CLI child performs bootstrap and the authenticated readonly query.
+/// Its single capture deadline covers both, and Drop ends it on every path.
+pub fn question_decision(
+    program: &OsStr,
+    runtime: &str,
+    session: &str,
+    deadline: Instant,
+) -> QuestionDecision {
+    if Instant::now() >= deadline {
+        return QuestionDecision::Unreachable("deadline");
+    }
+    let mut command = Command::new(program);
+    command
+        .args([
+            "workspace",
+            "factory-question-guard",
+            "--session",
+            session,
+            "--runtime",
+            runtime,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let Ok(mut child) = OwnedChild::spawn(&mut command) else {
+        return QuestionDecision::Unreachable("cli");
+    };
+    let output = match child.capture_until(deadline, 16 * 1024) {
+        Ok(output) => output,
+        Err(failure) => {
+            return QuestionDecision::Unreachable(match failure.kind {
+                CaptureFailureKind::Deadline => "deadline",
+                _ => "cli",
+            });
+        }
+    };
+    if Instant::now() >= deadline {
+        return QuestionDecision::Unreachable("deadline");
+    }
+    if !output.status.success() {
+        return QuestionDecision::Unreachable("daemon");
+    }
+    match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+        Ok(answer) if answer["type"] == "workspace_result" && answer["ok"] == true => {
+            match answer["result"]["deny"].as_bool() {
+                Some(true) => QuestionDecision::Worker,
+                Some(false) => QuestionDecision::Allow,
+                _ => QuestionDecision::Unreachable("format"),
+            }
+        }
+        Ok(_) => QuestionDecision::Unreachable("daemon"),
+        Err(_) => QuestionDecision::Unreachable("format"),
+    }
+}
+
 /// Asks `hide workspace bootstrap`, the daemon-owned call a session start makes
 /// too: it needs no open window and succeeds only for a caller inside a
 /// registered checkout. A refusal with a reason is the daemon answering; a
@@ -958,6 +1067,15 @@ pub fn record_refusal(home: &Path, runtime: &str, pane: &str, launch: &Launch) {
     })
     .to_string();
     eprintln!("{line}");
+    let _ = append_line(&log_path(home), &line);
+}
+
+pub fn record_question_refusal(home: &Path, runtime: &str, pane: &str, tool: &str) {
+    let line = serde_json::json!({
+        "component":"spawn_guard", "kind":"factory_question.refused",
+        "runtime":runtime, "pane":pane, "tool":tool, "at_unix_ms":now_ms(),
+    })
+    .to_string();
     let _ = append_line(&log_path(home), &line);
 }
 

@@ -674,7 +674,13 @@ pub(crate) fn derive_read_state(
 /// The demand axis. A question outranks an approval, so the worse thing
 /// waiting is the one the row names.
 pub(crate) fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
-    if agent.label.as_ref().is_some_and(|label| label.question) {
+    if agent
+        .facts
+        .as_ref()
+        .and_then(|facts| facts.user_turn.as_ref())
+        .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question)
+        || agent.label.as_ref().is_some_and(|label| label.question)
+    {
         AgentDemand::Question
     } else if agent_blocked(agent) {
         AgentDemand::Approval

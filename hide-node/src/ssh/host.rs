@@ -478,8 +478,9 @@ impl RemoteHost {
 
     /// A link with no device behind it: it has an identity and can be
     /// closed, and every call on it times out. For tests of what a link's
-    /// identity decides.
-    #[cfg(any(test, feature = "test-support"))]
+    /// identity decides, in this crate and in hided; a feature that compiled
+    /// it only for them built hide-node and every crate above it twice.
+    #[doc(hidden)]
     pub fn detached(target: &str) -> Self {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

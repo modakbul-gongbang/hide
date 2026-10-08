@@ -45,6 +45,9 @@ pub struct RowFacts {
     /// approve it, as read for the agent's current Herdr state (PRD
     /// codex-plan-approval-hold D-05).
     pub(crate) awaiting_operator: bool,
+    /// A native unanswered question or plan, proven for this current session
+    /// and Herdr state. Absence conveys no invented question text.
+    pub(crate) user_turn: Option<hide_session::turns::UserTurnFact>,
 }
 
 /// Who sent the request a row shows.
