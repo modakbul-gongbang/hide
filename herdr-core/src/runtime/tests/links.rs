@@ -305,12 +305,42 @@ fn resume_event(provider: &str, session: &str) -> Vec<u8> {
     .unwrap()
 }
 
+/// The external Herdr connect finishes with a usable old stream while the
+/// current execution changes. Its preceding response orders the transition.
+#[cfg(unix)]
+struct HerdrConnectTransition {
+    connector: hide_herdr_client::LocalSocketConnector,
+    armed: Arc<std::sync::atomic::AtomicBool>,
+    transition: Box<dyn Fn() + Send + Sync>,
+}
+
+#[cfg(unix)]
+impl hide_herdr_client::ApiConnector for HerdrConnectTransition {
+    fn connect(
+        &self,
+    ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
+        let stream = self.connector.connect()?;
+        if self.armed.swap(false, Ordering::SeqCst) {
+            (self.transition)();
+        }
+        Ok(stream)
+    }
+}
+
 /// A retired external server stays usable, but cannot borrow the current
 /// file node's proof to create or launch a queued archived conversation.
 #[test]
 #[cfg(unix)]
 fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
-    for case in ["local-before", "remote-before", "local-after-tab"] {
+    for case in [
+        "current",
+        "local-before",
+        "remote-before",
+        "local-after-tab",
+        "local-during-start-connect",
+        "reader-during-start-connect",
+        "intent-during-start-connect",
+    ] {
         let home = tempfile::tempdir().unwrap();
         let cwd = home.path().canonicalize().unwrap().display().to_string();
         let native_folder = home.path().join(".pi/agent/sessions").join(format!(
@@ -342,7 +372,7 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
             value: native.display().to_string(),
         };
         runtime.task_agent_launch.as_mut().unwrap().resume_reference = Some(reference.clone());
-        let shared = Arc::new(Mutex::new(runtime));
+        let shared = SharedRuntime::new(runtime);
         let replacement = FakeHerdr::start("pi-resume-current", |method, _| {
             panic!("unexpected current-server request: {method}")
         });
@@ -350,26 +380,69 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
             Arc::new(replacement.connector());
         let changed_runtime = Arc::downgrade(&shared);
         let changed_connector = Arc::clone(&replacement_connector);
-        let old = FakeHerdr::start("pi-resume-retired", move |method, _| {
-            assert_eq!(
-                case, "local-after-tab",
-                "no retired effect is permitted before creation"
-            );
-            assert_eq!(method, "tab.create");
-            let runtime = changed_runtime.upgrade().unwrap();
-            let mut runtime = runtime.lock().unwrap();
-            let mut next = runtime.live.as_ref().unwrap().clone();
-            next.api_connector = Arc::clone(&changed_connector);
-            runtime.set_live(next);
-            serde_json::json!({"type":"tab_created", "tab":{
+        let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let arm_start = Arc::clone(&armed);
+        let old = FakeHerdr::start("pi-resume-retired", move |method, _| match method {
+            "tab.create" => {
+                if case == "local-after-tab" {
+                    let runtime = changed_runtime.upgrade().unwrap();
+                    let mut runtime = runtime.lock().unwrap();
+                    let mut next = runtime.live.as_ref().unwrap().clone();
+                    next.api_connector = Arc::clone(&changed_connector);
+                    runtime.set_live(next);
+                }
+                serde_json::json!({"type":"tab_created", "tab":{
                 "tab_id":"w-order:t3","workspace_id":"w-order","number":3,"label":"resume","focused":true,"pane_count":1,"agent_status":"idle"
             },"root_pane":{"pane_id":"wake-pane","terminal_id":"wake-terminal","workspace_id":"w-order","tab_id":"w-order:t3","focused":true,"agent_status":"idle","revision":0}})
+            }
+            "pane.process_info" => {
+                if case.ends_with("during-start-connect") {
+                    arm_start.store(true, Ordering::SeqCst);
+                }
+                serde_json::json!({"type":"pane_process_info","process_info":{
+                        "pane_id":"wake-pane","shell_pid":4100,"foreground_process_group_id":4100,
+                        "foreground_processes":[{"pid":4100,"name":"zsh"}]}})
+            }
+            "agent.start" => serde_json::json!({"type":"agent_started","argv":[],"agent":{
+                    "pane_id":"wake-pane","terminal_id":"wake-terminal","workspace_id":"w-order",
+                    "tab_id":"w-order:t3","focused":true,"agent_status":"idle","revision":1}}),
+            other => panic!("unexpected retired-server request: {other}"),
+        });
+        let connect_runtime = shared.weak();
+        let connect_replacement = Arc::clone(&replacement_connector);
+        let reader_home = home.path().to_path_buf();
+        let old_connector = Arc::new(HerdrConnectTransition {
+            connector: old.connector(),
+            armed,
+            transition: Box::new(move || {
+                let runtime = connect_runtime.upgrade().unwrap();
+                let mut runtime = runtime.lock().unwrap();
+                match case {
+                    "reader-during-start-connect" => {
+                        runtime.own_node =
+                            Arc::new(hide_node::Local::new(Some(reader_home.clone())));
+                    }
+                    "intent-during-start-connect" => {
+                        runtime
+                            .task_agent_launch
+                            .as_mut()
+                            .unwrap()
+                            .args
+                            .push("replacement-intent".into());
+                    }
+                    _ => {
+                        let mut next = runtime.live.as_ref().unwrap().clone();
+                        next.api_connector = Arc::clone(&connect_replacement);
+                        runtime.set_live(next);
+                    }
+                }
+            }),
         });
         let target = {
             let mut runtime = shared.lock().unwrap();
             let mut context = runtime.live.as_ref().unwrap().clone();
             context.runtime = Arc::downgrade(&shared);
-            context.api_connector = Arc::new(old.connector());
+            context.api_connector = old_connector;
             runtime.set_live(context.clone());
             if case == "remote-before" {
                 runtime.snapshot.task_operation.as_mut().unwrap().device_id = Some("remote".into());
@@ -412,29 +485,210 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
             },
         )
         .unwrap();
-        wait_for("retired archive control refusal", || {
+        wait_for("archive worker settles its start", || {
             let runtime = shared.lock().unwrap();
             let operation = runtime.snapshot.task_operation.as_ref().unwrap();
-            operation.phase == "failed" || operation.agent_phase.as_deref() == Some("failed")
+            operation.phase == "failed"
+                || matches!(operation.agent_phase.as_deref(), Some("failed" | "started"))
         });
         let runtime = shared.lock().unwrap();
         let operation = runtime.snapshot.task_operation.as_ref().unwrap();
-        let reason = operation
-            .agent_message
-            .as_deref()
-            .or(operation.message.as_deref())
-            .unwrap();
-        assert_eq!(reason, "session_resume_control_changed", "{case}");
+        if case == "current" {
+            assert_eq!(operation.agent_phase.as_deref(), Some("started"));
+        } else {
+            let reason = operation
+                .agent_message
+                .as_deref()
+                .or(operation.message.as_deref())
+                .expect("retired execution must refuse the start");
+            assert!(
+                reason.contains(
+                    if case.starts_with("reader-") || case.starts_with("intent-") {
+                        "session_resume_intent_changed"
+                    } else {
+                        "session_resume_control_changed"
+                    }
+                ),
+                "{case}: {reason}"
+            );
+        }
         assert_eq!(
             old.methods(),
-            if case == "local-after-tab" {
+            if case == "current" {
+                vec!["tab.create", "pane.process_info", "agent.start"]
+            } else if case.ends_with("during-start-connect") {
+                vec!["tab.create", "pane.process_info"]
+            } else if case == "local-after-tab" {
                 vec!["tab.create"]
             } else {
                 vec![]
             }
         );
         assert!(replacement.methods().is_empty());
+        if case == "intent-during-start-connect" {
+            assert_eq!(
+                runtime
+                    .task_agent_launch
+                    .as_ref()
+                    .unwrap()
+                    .args
+                    .last()
+                    .map(String::as_str),
+                Some("replacement-intent")
+            );
+        }
         assert_eq!(std::fs::read_to_string(&native).unwrap(), bytes);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn a_pi_fork_worker_refuses_control_retired_during_create_or_start_connect() {
+    for case in ["current", "during-tab-connect", "during-start-connect"] {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().canonicalize().unwrap().display().to_string();
+        let folder = home.path().join(".pi/agent/sessions").join(format!(
+            "--{}--",
+            cwd.trim_start_matches('/').replace(['/', '\\', ':'], "-")
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let source = folder.join("native.jsonl");
+        let bytes = format!(
+            "{}\n",
+            serde_json::json!({
+                "type":"session", "version":3, "id":"native-pi", "cwd":cwd
+            })
+        );
+        std::fs::write(&source, &bytes).unwrap();
+        let parent = "w-order:t1:p";
+        let (mut runtime, _) = live_tab_order_runtime(&cwd);
+        runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
+        runtime.live.as_mut().unwrap().node = runtime.own_node();
+        let mut initial = tab_order_payload(&cwd, &["w-order:t1"], &["w-order:t1"], "w-order:t1");
+        let mut owned: SessionSnapshotPayload =
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents":[{
+                "pane_id":parent,"agent":"pi","agent_status":"idle","state_change_seq":4,"cwd":cwd,
+                "agent_session":{"kind":"path","value":source.display().to_string()}
+            }]}))
+            .unwrap();
+        owned.agents[0].facts = Some(crate::request_view::RowFacts {
+            native_session_id: Some("native-pi".into()),
+            native_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+                kind: "path".into(),
+                value: source.display().to_string(),
+            }),
+            ..Default::default()
+        });
+        initial.agents = owned.agents;
+        runtime.ingest_session(Ok(initial));
+        let shared = SharedRuntime::new(runtime);
+        let replacement = FakeHerdr::start("pi-fork-current", |method, _| {
+            panic!("unexpected replacement-server request: {method}")
+        });
+        let replacement_connector: Arc<dyn hide_herdr_client::ApiConnector> =
+            Arc::new(replacement.connector());
+        let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let arm_connect = Arc::clone(&armed);
+        let old = FakeHerdr::start("pi-fork-retired", move |method, _| match method {
+            "session.snapshot" => {
+                if case == "during-tab-connect" {
+                    arm_connect.store(true, Ordering::SeqCst);
+                }
+                serde_json::json!({"type":"session_snapshot","snapshot":{
+                    "version":"fixture","protocol":hide_herdr_client::HERDR_PROTOCOL_REVISION,
+                    "workspaces":[],"tabs":[],"panes":[],"agents":[],
+                    "layouts":[{"workspace_id":"w-order","tab_id":"w-order:t1","zoomed":false,
+                        "area":{"x":0,"y":0,"width":80,"height":24},"focused_pane_id":parent,
+                        "panes":[{"pane_id":parent,"focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}]
+                }})
+            }
+            "tab.create" => serde_json::json!({"type":"tab_created",
+                "tab":{"tab_id":"w-order:t2","workspace_id":"w-order","number":2,"label":"fork","focused":false,"pane_count":1,"agent_status":"idle"},
+                "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w-order","tab_id":"w-order:t2","focused":false,"agent_status":"idle","revision":1}}),
+            "pane.process_info" => {
+                if case == "during-start-connect" {
+                    arm_connect.store(true, Ordering::SeqCst);
+                }
+                serde_json::json!({"type":"pane_process_info","process_info":{
+                    "pane_id":"child-pane","shell_pid":4100,"foreground_process_group_id":4100,
+                    "foreground_processes":[{"pid":4100,"name":"zsh"}]}})
+            }
+            "agent.start" => serde_json::json!({"type":"agent_started","argv":[],"agent":{
+                "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w-order",
+                "tab_id":"w-order:t2","focused":false,"agent_status":"idle","revision":2}}),
+            "pane.close" => serde_json::json!({"type":"ok"}),
+            other => panic!("unexpected original-server request: {other}"),
+        });
+        let connect_runtime = shared.weak();
+        let connector = Arc::new(HerdrConnectTransition {
+            connector: old.connector(),
+            armed,
+            transition: Box::new(move || {
+                let runtime = connect_runtime.upgrade().unwrap();
+                let mut runtime = runtime.lock().unwrap();
+                let mut next = runtime.live.as_ref().unwrap().clone();
+                next.api_connector = Arc::clone(&replacement_connector);
+                runtime.set_live(next);
+            }),
+        });
+        {
+            let mut runtime = shared.lock().unwrap();
+            let mut context = runtime.live.as_ref().unwrap().clone();
+            context.runtime = shared.weak();
+            context.api_connector = connector;
+            runtime.set_live(context);
+            assert!(runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
+                "schema_version":SCHEMA_VERSION,"kind":"fork_pane","payload":{"pane_id":parent}
+            })).unwrap()));
+        }
+        wait_for("actual fork worker settles", || {
+            !shared.lock().unwrap().forks_in_flight.contains(parent)
+        });
+        let runtime = shared.lock().unwrap();
+        if case == "current" {
+            assert!(runtime.snapshot.status.last_error.is_none());
+        } else {
+            let failure = runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .expect("retired fork must fail");
+            assert_eq!(failure.kind, "pane.fork_failed");
+            assert!(
+                failure.message.contains("session_fork_execution_changed"),
+                "{}",
+                failure.message
+            );
+        }
+        assert_eq!(
+            old.methods(),
+            match case {
+                "current" => vec![
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "agent.start"
+                ],
+                "during-tab-connect" => vec!["session.snapshot"],
+                _ => vec![
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "pane.close"
+                ],
+            },
+            "{case}"
+        );
+        if case == "during-start-connect" {
+            assert_eq!(
+                old.calls().last().unwrap().1["pane_id"],
+                "child-pane",
+                "cleanup owns only the created child"
+            );
+        }
+        assert!(replacement.methods().is_empty());
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), bytes);
     }
 }
 

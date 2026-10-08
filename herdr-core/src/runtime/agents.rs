@@ -1943,9 +1943,16 @@ impl Runtime {
 
     /// A Pi fork is bound to the admitted live execution, not just its pane.
     /// The worker checks this without doing file I/O under Runtime.
-    pub(crate) fn fork_request_is_current(&self, request: &ForkRequest) -> bool {
+    pub(crate) fn fork_request_is_current(
+        &self,
+        request: &ForkRequest,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+    ) -> bool {
         request.connection_generation == self.live_generation
-            && self.live.is_some()
+            && self
+                .live
+                .as_ref()
+                .is_some_and(|live| Arc::ptr_eq(&live.api_connector, connector))
             && request.parent_state_change_seq.is_some()
             && self.snapshot.navigator.agents.iter().any(|agent| {
                 agent.pane_id == request.parent_pane_id

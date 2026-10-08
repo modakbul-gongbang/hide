@@ -964,7 +964,7 @@ fn start_task_agent(
     notifier: &ChangeNotifier,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
-    current: &dyn Fn() -> Result<(), String>,
+    current: &(dyn Fn() -> Result<(), String> + Sync),
 ) {
     let Some(runtime) = runtime.upgrade() else {
         return;
@@ -989,33 +989,43 @@ fn start_task_agent(
         Err(reason) => TaskAgentOutcome::Failed(reason),
         Ok(reader) => {
             let expected = start.clone();
+            let current_start = || {
+                if let Some(reader) = reader.as_ref() {
+                    current()?;
+                    if !runtime
+                        .lock()
+                        .map_err(|_| "runtime unavailable")?
+                        .task_session_control_is_current(id, connector, generation)
+                    {
+                        return Err("session_resume_control_changed".into());
+                    }
+                    let pending = runtime
+                        .lock()
+                        .map_err(|_| "runtime unavailable")?
+                        .pending_task_agent_start(id);
+                    if pending.as_ref() != Some(&expected)
+                        || !Arc::ptr_eq(&task_session_node(&runtime, id)?, reader)
+                    {
+                        return Err("session_resume_intent_changed".into());
+                    }
+                }
+                Ok(())
+            };
+            let checked = CurrentSessionConnector {
+                connector: connector.as_ref(),
+                current: &current_start,
+            };
+            let launch_connector: &dyn ApiConnector = if reader.is_some() {
+                &checked
+            } else {
+                connector.as_ref()
+            };
             launch_with_prompt_checked(
-                connector.as_ref(),
+                launch_connector,
                 reader.as_deref().or(agent_node),
                 id,
                 start,
-                &|| {
-                    if let Some(reader) = reader.as_ref() {
-                        current()?;
-                        if !runtime
-                            .lock()
-                            .map_err(|_| "runtime unavailable")?
-                            .task_session_control_is_current(id, connector, generation)
-                        {
-                            return Err("session_resume_control_changed".into());
-                        }
-                        let pending = runtime
-                            .lock()
-                            .map_err(|_| "runtime unavailable")?
-                            .pending_task_agent_start(id);
-                        if pending.as_ref() != Some(&expected)
-                            || !Arc::ptr_eq(&task_session_node(&runtime, id)?, reader)
-                        {
-                            return Err("session_resume_intent_changed".into());
-                        }
-                    }
-                    Ok(())
-                },
+                &current_start,
             )
         }
     };
@@ -1282,11 +1292,17 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
                 return Err("session_resume_reader_changed".into());
             }
             target.check_current(request.id)?;
+            let current = || {
+                target.check_current(request.id)?;
+                if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+                    return Err("session_resume_reader_changed".into());
+                }
+                Ok(())
+            };
             return create_checkout_tab(
-                &CurrentTaskConnector {
-                    target: target.clone(),
-                    id: request.id,
-                    node,
+                &CurrentSessionConnector {
+                    connector: target.connector.as_ref(),
+                    current: &current,
                 },
                 request,
             );
@@ -1311,41 +1327,6 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
         request.id,
         &|| target.check_current(request.id),
     );
-}
-
-/// Topology reads and opening an SSH stream can wait. Recheck the same
-/// control and file-node pair before and after every connection, including
-/// the mutation request after those reads. These checks do no file I/O.
-struct CurrentTaskConnector {
-    target: TabTarget,
-    id: u64,
-    node: Arc<dyn crate::node_access::NodeLink>,
-}
-
-impl CurrentTaskConnector {
-    fn check(&self) -> Result<(), ApiError> {
-        let check = || -> Result<(), String> {
-            self.target.check_current(self.id)?;
-            let runtime = self.target.runtime.upgrade().ok_or("runtime stopped")?;
-            if !Arc::ptr_eq(&self.node, &task_session_node(&runtime, self.id)?) {
-                return Err("session_resume_reader_changed".into());
-            }
-            Ok(())
-        };
-        check().map_err(|code| ApiError::Remote {
-            code,
-            message: "The session execution changed; refresh before retrying".into(),
-        })
-    }
-}
-
-impl ApiConnector for CurrentTaskConnector {
-    fn connect(&self) -> Result<Box<dyn hide_herdr_client::ApiStream>, ApiError> {
-        self.check()?;
-        let stream = self.target.connector.connect()?;
-        self.check()?;
-        Ok(stream)
-    }
 }
 
 fn task_session_node(

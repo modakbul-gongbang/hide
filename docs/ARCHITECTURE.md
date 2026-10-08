@@ -648,6 +648,8 @@ Fork, sleeping records and queued archive resumes retain that original path with
 The action-only audit shares the discovery entry cap and a 1 MiB aggregate header budget; duplicate IDs, linked entries and uninspectable native-resolver candidates refuse the effect.
 Queued starts repeat the route proof after shell readiness and before each actual start attempt; fork execution and task/helper identity must still match their admitted intent.
 Archive resume also checks the actual current control connector, local connection generation and file-node identity before creating topology and each start attempt; a retained retired connector cannot acquire authority from a replacement reader.
+The shared session connector repeats the captured current control, file-node and exact task/fork-intent check after each potentially waiting connection, before archive start or Pi fork tab/start requests can be written.
+An already-created failed fork child is still cleaned up through its original connector; that cleanup cannot target a replacement server.
 Search, archive detail and Memory reads carry the catalog row's expected native ID and checkout, and refuse a replacement rather than deriving their requested owner from the new file.
 Labels, activity, project catalog, content search, archive detail, link sightings and local phone pages use the same before/after native proof; a phone idle poll and a cloned older-page reader cannot retain a replaced owner's history.
 Same-length reads compare the physical file stamp, failed Pi label reads revoke cached native authority, and link identity comes only from the proven first header even across incremental chunks.

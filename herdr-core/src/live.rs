@@ -2892,6 +2892,32 @@ fn read_pane_text(
     wire::pane_text(response)
 }
 
+/// Topology reads and opening an SSH stream can wait. Recheck the same
+/// control, file node and admitted intent on both sides of every connection.
+/// The callback reads only current runtime facts, never files or sockets.
+struct CurrentSessionConnector<'a> {
+    connector: &'a dyn ApiConnector,
+    current: &'a (dyn Fn() -> Result<(), String> + Sync),
+}
+
+impl CurrentSessionConnector<'_> {
+    fn check(&self) -> Result<(), ApiError> {
+        (self.current)().map_err(|code| ApiError::Remote {
+            code,
+            message: "The session execution changed; refresh before retrying".into(),
+        })
+    }
+}
+
+impl ApiConnector for CurrentSessionConnector<'_> {
+    fn connect(&self) -> Result<Box<dyn hide_herdr_client::ApiStream>, ApiError> {
+        self.check()?;
+        let stream = self.connector.connect()?;
+        self.check()?;
+        Ok(stream)
+    }
+}
+
 pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-agent-fork".to_owned())
@@ -2931,7 +2957,8 @@ fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Resul
     }
     let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
     let runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
-    if !runtime.fork_request_is_current(request) || !Arc::ptr_eq(&runtime.own_node(), &context.node)
+    if !runtime.fork_request_is_current(request, &context.api_connector)
+        || !Arc::ptr_eq(&runtime.own_node(), &context.node)
     {
         return Err("session_fork_execution_changed".into());
     }
@@ -2945,9 +2972,15 @@ fn run_agent_fork_with_registration(
     connector: &dyn ApiConnector,
     node: &dyn crate::node_access::NodeLink,
     request: &ForkRequest,
-    current: &dyn Fn() -> Result<(), String>,
+    current: &(dyn Fn() -> Result<(), String> + Sync),
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
+    let checked = CurrentSessionConnector { connector, current };
+    let mutation_connector: &dyn ApiConnector = if request.agent == crate::fork::ForkableAgent::Pi {
+        &checked
+    } else {
+        connector
+    };
     let check = || {
         current()?;
         confirm_session_launch(
@@ -2965,8 +2998,8 @@ fn run_agent_fork_with_registration(
             .cwd
             .as_deref()
             .ok_or("Pi fork has no confirmed checkout")?;
-        let snapshot =
-            fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
+        let snapshot = fetch_session_with_connector(mutation_connector)
+            .map_err(|error| error.message().to_owned())?;
         let mut parents = snapshot.layouts.iter().filter(|layout| {
             layout
                 .panes
@@ -2981,7 +3014,7 @@ fn run_agent_fork_with_registration(
         }
         check()?;
         create_tab_in(
-            connector,
+            mutation_connector,
             &parent.workspace_id,
             cwd,
             &request.name,
@@ -2999,7 +3032,7 @@ fn run_agent_fork_with_registration(
         .and_then(wire::split_pane)?
     };
     let started = start_agent_checked(
-        connector,
+        mutation_connector,
         &format!("herdr-core:fork:{}:start", request.name),
         &child_pane_id,
         &request.name,
@@ -3022,6 +3055,8 @@ fn run_agent_fork_with_registration(
             Ok(pane_id)
         }
         Err(error) => {
+            // This child is already ours on the original server. Cleanup is
+            // not a new fork effect and must not target its replacement.
             let closed = control_request(
                 connector,
                 "pane.close",
