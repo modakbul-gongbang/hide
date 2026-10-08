@@ -292,7 +292,7 @@ pub fn hook_entries(home: &Path) -> Result<BTreeSet<HookEntry>, String> {
     let path = AgentRuntime::Codex.config_path(home);
     let document = crate::install::read_document(&path)
         .map_err(|failure| failure.message())?
-        .unwrap_or(Value::Null);
+        .unwrap_or_else(|| crate::install::HookDocument::new(Value::Null));
     let mut found = BTreeSet::new();
     let Some(events) = document.get("hooks").and_then(Value::as_object) else {
         return Ok(found);

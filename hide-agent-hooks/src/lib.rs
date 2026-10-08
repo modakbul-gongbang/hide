@@ -25,6 +25,7 @@ pub mod delivery;
 pub mod diagnosis;
 pub mod guidance;
 pub mod install;
+mod lossless_json;
 pub mod memory;
 pub mod report;
 pub mod runtime;
