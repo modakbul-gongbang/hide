@@ -51,8 +51,6 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
-# A link with no device behind it, for tests of what a link's identity decides.
-hide-node = { path = "../hide-node", features = ["test-support"] }
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 # The loopback SSH server of the device link's tests (tests/support).

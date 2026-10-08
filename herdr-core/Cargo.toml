@@ -44,7 +44,6 @@ serde_json = "=1.0.151"
 typify = "=0.7.0"
 
 [dev-dependencies]
-hide-host = { path = "../hide-host", features = ["call-log"] }
 hide-node = { path = "../hide-node" }
 
 [lints.rust]
