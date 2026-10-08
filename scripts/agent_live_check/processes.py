@@ -313,10 +313,15 @@ class OwnedProcesses:
                         records[key] = item
             if count != self.sequence:
                 raise ProcessError("guardian_cleanup_receipt_missing")
+        controller = self.rss_samples.summary()
+        guardians = {"missed": rss_missed, "max_consecutive_misses": rss_max_consecutive,
+                     "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT}
         return {"status": "출처 확인 못 함", "processes": list(records.values()),
                 "limit": MAX_DESCENDANTS, "additional_records_omitted": omitted,
-                "rss_samples": {"missed": rss_missed, "max_consecutive_misses": rss_max_consecutive,
-                                "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT},
+                "rss_samples": {"missed": controller["missed"] + rss_missed,
+                                "max_consecutive_misses": max(controller["max_consecutive_misses"], rss_max_consecutive),
+                                "consecutive_miss_limit": RSS_CONSECUTIVE_MISS_LIMIT,
+                                "controller": controller, "guardians": guardians},
                 "limitation": "An unseen double-fork descendant that clears its marker and leaves the owned group may escape attribution."}
 
     def __enter__(self):

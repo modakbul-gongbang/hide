@@ -24,6 +24,7 @@ from agent_live_check.processes import OwnedProcesses, ProcessError, RssSamples,
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
 from agent_live_check.runtime import Runtime
+from agent_live_check.report import save
 
 
 def procargs(*environment, argv=(b"fixture",), pointer_width=8):
@@ -434,6 +435,37 @@ raise SystemExit('FIFO was accepted as configuration')
 @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"),
                      "process guardian supports macOS and Linux")
 class ProcessProtection(unittest.TestCase):
+    def test_final_report_retains_controller_and_guardian_rss_misses_after_failure(self):
+        # Letter 2709 requires all missed observations in the final report,
+        # including the controller's failed sample, independently of cleanup.
+        for controller_misses, guardian_misses in ((2, 0), (3, 1)):
+            with self.subTest(controller_misses=controller_misses), tempfile.TemporaryDirectory() as name:
+                run = Path(name)
+                owner = OwnedProcesses(diagnostics=run / "diagnostics")
+                subject = Process(123, 2, 123, 10, -1, False, os.getuid())
+                for index in range(controller_misses):
+                    if index == 2:
+                        with self.assertRaisesRegex(ProcessError, "rss_samples_unavailable"):
+                            owner.rss_samples.measure({123: subject})
+                    else:
+                        owner.rss_samples.measure({123: subject})
+                # A real private receipt file is the guardian/report boundary.
+                receipt = {"confirmed": True, "unattributed": [], "additional_records_omitted": False,
+                           "rss_samples": {"missed": guardian_misses, "max_consecutive_misses": guardian_misses,
+                                           "consecutive_miss_limit": 3}}
+                (run / "diagnostics/1.json").write_text(json.dumps(receipt))
+                owner.sequence = 1
+                report = {"herdr": {}, "agents": [], "configuration": {}, "failures": [], "resources": {},
+                          "cleanup": {"confirmed": True, "attribution": owner.attribution_report()}}
+                self.assertEqual(save(run, report), 3)
+                samples = json.loads((run / "report.json").read_text())["cleanup"]["attribution"]["rss_samples"]
+                self.assertEqual(samples["missed"], controller_misses + guardian_misses)
+                self.assertEqual(samples["max_consecutive_misses"], controller_misses)
+                self.assertEqual(samples["controller"]["missed"], controller_misses)
+                self.assertEqual(samples["guardians"]["missed"], guardian_misses)
+                self.assertEqual(samples["consecutive_miss_limit"], 3)
+                self.assertIn('"controller"', (run / "report.md").read_text())
+
     def test_rss_samples_bound_consecutive_misses_by_live_identity(self):
         # Letter 2709 supplies the oracle: two misses may recover, the third
         # consecutive miss of the same live birth fails. Pure policy input
