@@ -3200,17 +3200,33 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
 }
 
-/// How long a refusal's close frame may take to leave.
-const REFUSE_SEND_LIMIT: Duration = Duration::from_secs(10);
+/// How long a refusal's closing handshake may take.
+const REFUSE_LIMIT: Duration = Duration::from_secs(10);
 
+/// Sends the refusal's close frame and reads what the client sent until its
+/// own close or the end of its stream. A client may already have sent its
+/// request behind the handshake; dropping the socket with that unread resets
+/// the connection, and a reset can discard the close frame before the client
+/// reads it, which Windows does (issue 785), so the client would read a lost
+/// daemon instead of the refusal.
 async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize>) {
     log_refusal(reason, extra);
     // Bounded: a stalled tailnet socket must not hold this task open.
-    let close = socket.send(Message::Close(Some(CloseFrame {
-        code: reason.code(),
-        reason: reason.name().into(),
-    })));
-    let _ = tokio::time::timeout(REFUSE_SEND_LIMIT, close).await;
+    let _ = tokio::time::timeout(REFUSE_LIMIT, async {
+        let close = Message::Close(Some(CloseFrame {
+            code: reason.code(),
+            reason: reason.name().into(),
+        }));
+        if socket.send(close).await.is_err() {
+            return;
+        }
+        while let Some(Ok(message)) = socket.recv().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
 }
 
 fn log_refusal(reason: CloseReason, extra: Option<usize>) {
