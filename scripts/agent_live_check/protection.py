@@ -273,7 +273,12 @@ class ConfigGuard:
                 # An alias, unreadable file or failed restore names its
                 # subject and cannot skip the other safe comparisons.
                 failures.append({"path": str(path), "reason": str(error)})
-        after = fingerprint(self.roots, self.histories)
+        try:
+            after = fingerprint(self.roots, self.histories)
+        except (OSError, ProtectionError) as error:
+            failures.append({"reason": "configuration_inventory_unavailable", "detail": str(error)})
+            return {"restored": changes, "failures": failures,
+                    "directory_changes": None, "inventory_checked": False}
         directory_changes = [{"path": key, "kind": "added" if key not in self.inventory else "removed" if key not in after else "changed"}
                              for key in sorted(self.inventory.keys() | after.keys())
                              if self.inventory.get(key) != after.get(key)]
@@ -284,4 +289,4 @@ class ConfigGuard:
                     and not any(beneath(path, history) for history in self.histories)):
                 failures.append({"path": change["path"], "reason": "configuration_tree_change_preserved"})
         return {"restored": changes, "failures": failures,
-                "directory_changes": directory_changes}
+                "directory_changes": directory_changes, "inventory_checked": True}

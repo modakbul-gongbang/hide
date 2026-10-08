@@ -122,6 +122,7 @@ test("live check refuses operator socket and state before a server starts", asyn
       const modified = [...args];
       modified[modified.indexOf("--run-dir") + 1] = destination;
       const result = await runPython([...modified, flag, value], { timeout: 10_000 });
+      expect(result.error, result.stderr).toBeUndefined();
       expect(result.status, result.stdout + result.stderr).toBe(2);
       const report = JSON.parse(fs.readFileSync(path.join(destination, "report.json"), "utf8"));
       expect(report.herdr).toEqual({});
@@ -145,6 +146,7 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
       const env = { ...process.env, LIVE_CHECK_FIXTURE_CASE: scenario };
       if (scenario === "failure") {
         const result = await runPython(args, { env, timeout: 45_000 });
+        expect(result.error, result.stderr).toBeUndefined();
         expect(result.status, result.stdout + result.stderr).toBe(2);
         const report = assertClean(run);
         expect(report.herdr.version).toContain("herdr");
@@ -161,6 +163,7 @@ test("live check tears down a started runtime on failure and Ctrl-C", async () =
         const daemon = JSON.parse(fs.readFileSync(state, "utf8"));
         running.child.kill("SIGINT");
         const result = await running.completed;
+        expect(result.error, result.stderr).toBeUndefined();
         expect(result.status, result.stdout + result.stderr).toBe(2);
         assertClean(run);
         assertEnded(fixture.pid);

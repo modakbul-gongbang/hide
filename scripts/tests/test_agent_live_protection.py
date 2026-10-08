@@ -23,6 +23,7 @@ from agent_live_check.process_table import (Process, ProcessTable, descendants, 
 from agent_live_check.processes import OwnedProcesses, ProcessError, control_plane, linux_children_remain
 from agent_live_check.protection import ConfigGuard, ProtectionError, stamp, validate_isolation
 from agent_live_check.sandbox import WriteSandbox
+from agent_live_check.runtime import Runtime
 
 
 def procargs(*environment, argv=(b"fixture",), pointer_width=8):
@@ -103,6 +104,74 @@ class ConfigurationProtection(unittest.TestCase):
         self.config.symlink_to(self.home / "other")
         with self.assertRaises(ProtectionError):
             self.guard()
+
+    def test_invalid_known_file_keeps_named_failure_and_independent_recovery(self):
+        peer = self.home / "peer.json"
+        peer.write_bytes(b"original-peer")
+        guard = ConfigGuard(self.run / "backup", [self.config, peer], [self.home],
+                            exclusive_root=self.home)
+        before = stamp(peer)
+        peer.write_bytes(b"owned-peer")
+        guard.record_write(peer, before, stamp(peer))
+        # An unexpected hard link makes both its recovery and the final
+        # inventory unavailable. Neither failure may erase a peer's result.
+        os.link(self.config, self.home / "unexpected-link")
+        result = guard.finish()
+        self.assertEqual(peer.read_bytes(), b"original-peer")
+        self.assertIn({"path": str(peer), "result": "restored"}, result["restored"])
+        self.assertIn({"path": str(self.config), "reason": "config_not_private_regular_file"}, result["failures"])
+        self.assertFalse(result["inventory_checked"])
+        self.assertIsNone(result["directory_changes"])
+        self.assertTrue(any(row["reason"] == "configuration_inventory_unavailable" for row in result["failures"]))
+
+    def test_fifo_replacement_during_open_refuses_without_blocking(self):
+        program = f"""
+import os,sys
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0,{str(Path(__file__).resolve().parents[1])!r})
+from agent_live_check.protection import configuration_bytes,ProtectionError
+target=Path({str(self.config)!r})
+original=os.open
+def replaced(path,*args,**kwargs):
+ if Path(path)==target:
+  target.unlink()
+  os.mkfifo(target,0o600)
+ return original(path,*args,**kwargs)
+with patch.object(os,'open',replaced):
+ try: configuration_bytes(target)
+ except ProtectionError: raise SystemExit(0)
+raise SystemExit('FIFO was accepted as configuration')
+"""
+        with OwnedProcesses() as owner:
+            code, _, _ = owner.run([sys.executable, "-c", program], env=dict(os.environ), seconds=2)
+        self.assertEqual(code, 0)
+
+    def test_directory_cleanup_failure_still_removes_peer_and_restores_owner_limits(self):
+        runtime = Runtime.__new__(Runtime)
+        runtime.owner = OwnedProcesses()
+        runtime.owner.cancelled.set()
+        deadline = runtime.owner.deadline
+        runtime.state = self.run / "state"
+        runtime.probe, runtime.short = self.run / "probe", self.run / "short"
+        runtime.probe.mkdir()
+        runtime.short.mkdir()
+        runtime.workspaces, runtime.credential_roots = set(), set()
+        runtime.servers, runtime.started = [], False
+        import shutil
+        original = shutil.rmtree
+        def remove(path, *args, **kwargs):
+            if path == runtime.probe:
+                raise PermissionError("injected_probe_removal_refused")
+            return original(path, *args, **kwargs)
+        with patch.object(shutil, "rmtree", remove):
+            result = runtime.close()
+        self.assertFalse(result["confirmed"])
+        self.assertIn("injected_probe_removal_refused", result["failures"])
+        self.assertTrue(runtime.probe.exists())
+        self.assertFalse(runtime.short.exists())
+        self.assertTrue(runtime.owner.cancelled.is_set())
+        self.assertEqual(runtime.owner.deadline, deadline)
 
     def test_refuses_operator_socket_state_home_and_unowned_short_directory(self):
         daemon_home = self.run / "home"

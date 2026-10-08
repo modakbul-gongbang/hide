@@ -6,7 +6,9 @@ import { ownUntilWorkerExit } from "./worker-owned";
 const ownerRunner = `
 import os,runpy,signal,sys,threading
 def lost_owner():
- sys.stdin.buffer.read()
+ try:
+  while os.read(0,1): pass
+ except OSError: pass
  os.kill(os.getpid(),signal.SIGTERM)
 threading.Thread(target=lost_owner,daemon=True).start()
 mode,subject,*arguments=sys.argv[1:]
