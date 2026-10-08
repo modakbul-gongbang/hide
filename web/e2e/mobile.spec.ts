@@ -159,7 +159,7 @@ async function openMobileSettings(page: Page, daemon: Daemon): Promise<void> {
   // A fresh document: the same address with only a new fragment would not reload.
   await page.goto("about:blank");
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-  await expect(page.locator("[data-sidebar-mode]").first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("[data-sidebar-overview]")).toBeVisible({ timeout: 20_000 });
   await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="mobile"]').click();
   await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
@@ -484,8 +484,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect.poll(() => coreLog(daemon as Daemon)).toContain('"mode":"app_closed","renderers":1');
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-mobile-tab="true"]')).toHaveCount(0);
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await page.locator(`[data-agent-list] [data-agent-open="${two}"]`).click();
+    await page.locator(`nav[data-sidebar] [data-project-list] [data-agent-open="${two}"]`).click();
     await expect(phone.locator('[data-phone-group="seen"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible({ timeout: 20_000 });
     await page.close();
     await work(herdr, one);

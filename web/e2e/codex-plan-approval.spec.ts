@@ -19,7 +19,7 @@ import path from "node:path";
 import { sessionOf, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { fixtureExecutable } from "./platform-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { enterWorkspace, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -104,8 +104,8 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     fs.writeFileSync(rollout, planWaiting(cwd));
 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
-    const row = page.locator(`[data-agent-list] [data-pane="${pane}"]`);
+    await enterWorkspace(page, "plan");
+    const row = page.locator(`nav[data-sidebar] [data-project] [data-pane="${pane}"]`);
     await expect(row).toBeVisible({ timeout: 20_000 });
 
     // B1: the turn that proposed the plan has ended, as Herdr's next state
@@ -121,7 +121,7 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     // leaves Needs You.
     fs.appendFileSync(rollout, event("task_started", "turn-2", { collaboration_mode_kind: "default" }) + person("Implement the plan."));
     await moveState(herdr, pane, "working");
-    await expect(page.locator(`[data-agent-group="working"] [data-pane="${pane}"]`)).toBeVisible({ timeout: 20_000 });
+    await expect(row.locator('[data-mark="●"]')).toBeVisible({ timeout: 20_000 });
     await moveState(herdr, pane, "unknown");
     // A state not read yet shows no wait either, so the row's absence counts
     // only once the read for this state has folded the approving turn.

@@ -132,9 +132,10 @@ test("A new tab in a linked worktree with no workspace opens one bound to it, na
     daemon = await startHided(herdr, "checkout-owner-linked");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^fixture/ }) });
     const feature = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="feature"]') });
+    // Session UI B9: a clean worktree with no agent starts in this fold.
+    await project.getByRole("button", { name: /^No agents/ }).click();
     await expect(feature).toBeVisible({ timeout: 30_000 });
     const newTabHere = async () => {
       await feature.locator("[data-checkout-menu]").click({ button: "right" });

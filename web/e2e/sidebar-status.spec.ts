@@ -1,168 +1,85 @@
-// The sidebar agent status flow on an isolated pinned Herdr and hided (PRD
-// sidebar-agent-status B1-B7): a root that finished its turn while its child
-// works waits on it in Working with a ring and a badge; the child's question
-// keeps it there and turns it unread; the badge opens the child list by
-// keyboard and pointer, Enter opens the child, Esc hands focus back to the
-// row, the last item unfolds the children in the list; the request line
-// stays under the child; once both are quiet the root moves to Done; and a
-// child that goes away while the list is open leaves it.
-
-import { expect, test, type Page } from "@playwright/test";
+// Session-first sidebar and shared child badge on an isolated real daemon.
+// Ordinary questions remain the parent's responsibility; children never
+// unfold into the sidebar. The same badge drives pane-header navigation.
+import { expect, test } from "@playwright/test";
 import { continueFixtureTranscript, declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow } from "./wire";
+import { countSent, screenshot, sidebarOverflow } from "./wire";
 
 test.describe.configure({ timeout: 150_000 });
-
-// A title within the core's 30 characters that is still wider than a row,
-// also where no Korean font is installed (the Linux runner draws Hangul as
-// narrow boxes): its Latin half carries the width.
 const LONG_TITLE = "행 높이 WIDE TITLE MUST CUT HERE";
 const QUESTION = "PR 병합 전 검증을 다시 돌려도 될까요?";
 
-async function open(page: Page, daemon: Daemon): Promise<void> {
-  await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-}
-
-test("a root waiting on its child, the badge's child list, and the progress line rules", async ({ page }) => {
+test("roots stay in one sidebar and both badges open direct children by pointer and keyboard", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
     const [parent, child] = herdr.panes;
-    daemon = await startHided(herdr, "sidebar-status");
-    const last = new Map<string, Record<string, unknown>>();
-    const sent = countSent(page, last);
-    await open(page, daemon);
-    // The sidebar opens on Projects; these rows are the Agents list's.
-    await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
-    await expect(page.locator('[data-sidebar="agents"]')).toBeVisible();
-
-    // B1: the parent finished its own turn and its child is working.
     labelAgent(herdr, parent, { task: "Agent one", progress: "하위 작업 위임 후 대기" });
     await finishFixtureTurn(herdr, parent, elsewhereTab(herdr));
-    // The child's title is the longest the core keeps, for the readability
-    // checks below; a task is named when a turn starts, so it is named here.
     const childSession = labelAgent(herdr, child, { task: LONG_TITLE, progress: "계보 투영 구현 중" });
     await setFixtureLifecycle(herdr, child, "working");
     declareParent(herdr, child, parent);
-    const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
+    daemon = await startHided(herdr, "sidebar-status");
+    const last = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, last);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`).first();
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
-    await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();
-    const workingPart = parentRow.locator('[data-badge-part="working"]');
-    await expect(workingPart).toHaveText("1");
-    // One mark size: the waiting root's ring and the badge's working dot are
-    // drawn shapes of one diameter, not two glyphs that render apart.
-    const ring = await parentRow.locator('[data-agent-status-mark="waiting"][data-mark="○"] > span').boundingBox();
-    const dot = await workingPart.locator('[data-mark="●"] > span').boundingBox();
-    expect(ring && [ring.width, ring.height]).toEqual(dot && [dot.width, dot.height]);
-    // The heading counts the folded child with its parent.
-    await expect(page.locator("#agent-group-working")).toHaveText(/· 2$/);
-    // Folded by default: the delegated child is drawn under its parent only once unfolded.
-    await expect(page.locator(`[data-agent-list] [data-pane="${child}"]`)).toHaveCount(0);
-    await screenshot(page, "sidebar-status-waiting");
-
-    // B2: the child asks. The parent keeps waiting in Working, the badge
-    // carries the question, and the row turns unread - never Needs You.
-    // The child's own session asks, so the relationship declared for it holds.
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`)).toHaveCount(0);
+    await expect(parentRow.locator('[data-badge-part="working"]')).toHaveText("1");
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
     await expect(parentRow.locator('[data-badge-part="question"]')).toHaveText("?1", { timeout: 20_000 });
     await expect(parentRow).toHaveAttribute("data-waiting", "true");
-    await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();
-    await expect(page.locator('[data-agent-group="needs_you"]')).toHaveCount(0);
-    await expect(parentRow).toHaveAttribute("data-attention", "true");
-    await screenshot(page, "sidebar-status-child-asks");
-
-    // B5: the badge opens by keyboard; Esc closes and focus is back on the row.
+    await expect(page.locator('[data-raised-group="needs_you"]')).toHaveCount(0);
+    await expect(page.locator("[data-agent-tree-toggle]")).toHaveCount(0);
     const badge = parentRow.locator("[data-descendant-badge]");
     await badge.focus();
     await page.keyboard.press("Enter");
     const list = page.locator(`[data-agent-children="${parent}"]`);
-    await expect(list).toBeVisible();
     const item = list.locator(`[data-agent-child="${child}"]`);
     await expect(item).toContainText(LONG_TITLE);
-    await expect(item).toContainText("Question");
+    await expect(item).toContainText(QUESTION);
     await expect(item).toHaveAttribute("data-selected", "true");
-    await expect(list.getByText("Stop")).toHaveCount(0);
-    await screenshot(page, "sidebar-status-popover");
     await page.keyboard.press("ArrowDown");
     await expect(list.locator("[data-agent-children-unfold]")).toHaveAttribute("data-selected", "true");
-    await page.keyboard.press("ArrowUp");
-    await expect(item).toHaveAttribute("data-selected", "true");
     await page.keyboard.press("Escape");
     await expect(list).toHaveCount(0);
-    await expect(parentRow.locator(`[data-agent-open="${parent}"]`)).toBeFocused();
-
-    // Enter opens the highlighted child's pane.
-    await badge.click();
-    await expect(list).toBeVisible();
-    const focusesBefore = sent.get("focus_pane") ?? 0;
-    await page.keyboard.press("Enter");
-    await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(focusesBefore + 1);
-    expect(last.get("focus_pane")?.pane_id).toBe(child);
-    await expect(list).toHaveCount(0);
-
-    // B6: the last item unfolds the children in the list; the child's
-    // request stays on its own line in the warning colour (B7).
-    await badge.click();
-    await list.locator("[data-agent-children-unfold]").click();
-    await expect.poll(() => last.get("agent_tree_toggle")?.pane_id).toBe(parent);
-    const childRow = page.locator(`[data-agent-list] [data-pane="${child}"]`);
-    await expect(childRow).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
-    await expect(childRow.locator('[data-agent-line="request"]')).toHaveText(QUESTION);
-    await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
-    await screenshot(page, "sidebar-status-unfolded");
-
-    // sidebar-readability B2, B4, B14, B25: a long Korean and English title is
-    // cut on one line; the pointer and the keyboard move neither row, the
-    // child's request keeps its one line, and the unfolded chevron waits in
-    // a slot kept at rest until the pointer or the keyboard reaches the row.
-    const childTitle = childRow.locator("[data-agent-title]");
-    await expect(childTitle).toHaveText(LONG_TITLE, { timeout: 20_000 });
-    const parts = [parentRow.locator("[data-agent-title]"), parentRow.locator("[data-agent-elapsed]"), childTitle, childRow.locator("[data-agent-elapsed]")];
-    const geometry = async () => [...(await rowGeometry(parentRow, childRow, parts)), Math.round((await childRow.boundingBox())!.height)];
-    const toggle = parentRow.locator(`[data-agent-tree-toggle="${parent}"]`);
-    await rest(page);
-    const atRest = await geometry();
-    await expect(toggle).toHaveCSS("opacity", "0");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await parentRow.hover();
-    await expect(toggle).toHaveCSS("opacity", "1");
-    expect(await geometry()).toEqual(atRest);
-    await childRow.hover();
-    expect(await geometry()).toEqual(atRest);
-    await rest(page);
-    await keyboardFocus(page, toggle);
-    await expect(toggle).toHaveCSS("opacity", "1");
-    expect(await geometry()).toEqual(atRest);
-    await keyboardFocus(page, childRow.locator(`[data-agent-open="${child}"]`));
-    expect(await geometry()).toEqual(atRest);
-    await rest(page);
-    expect(await childTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-    await expect(childRow.locator('[data-agent-line="request"]')).toHaveCSS("white-space", "nowrap");
+    await expect(badge).toBeFocused();
+    await screenshot(page, "sessions-sidebar-child-question");
     for (const width of ["calc(240px + var(--size-rail))", "calc(var(--size-sidebar-min) + var(--size-rail))"]) expect(await sidebarOverflow(page, width)).toEqual([]);
-    await screenshot(page, "sidebar-status-narrow");
     await sidebarOverflow(page, "");
-    // The chevron folds them away again.
-    await parentRow.locator(`[data-agent-tree-toggle="${parent}"]`).click();
-    await expect(childRow).toHaveCount(0, { timeout: 15_000 });
 
-    // B3: the child answers and finishes; with both quiet the root is Done
-    // and the ring is gone.
-    await setFixtureLifecycle(herdr, child, "working");
-    await setFixtureLifecycle(herdr, child, "idle");
-    await expect(page.locator(`[data-agent-group="done"] [data-pane="${parent}"]`)).toBeVisible({ timeout: 20_000 });
-    await expect(parentRow).toHaveAttribute("data-waiting", "false");
-    await screenshot(page, "sidebar-status-done");
-
-    // B6: a child that goes away while the list is open leaves it, and with
-    // none left the list closes.
-    await parentRow.locator("[data-descendant-badge]").click();
-    await expect(list.locator(`[data-agent-child="${child}"]`)).toBeVisible();
+    await badge.click();
+    const before = sent.get("focus_pane") ?? 0;
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(before + 1);
+    expect(last.get("focus_pane")?.pane_id).toBe(child);
+    await expect(page.locator(`[data-pane-view="${child}"]`)).toBeVisible();
+    await expect(list).toHaveCount(0);
+    const back = page.locator(`[data-pane-return="${parent}"]`);
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible();
+    const headerBadge = page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`);
+    await headerBadge.focus();
+    await page.keyboard.press("Space");
+    await expect(list).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(headerBadge).toBeFocused();
+    await headerBadge.click();
+    await screenshot(page, "sessions-pane-child-popover");
+    await list.locator("[data-agent-children-unfold]").click();
+    await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toBeVisible();
+    expect(sent.get("agent_tree_toggle") ?? 0).toBe(0);
+    await page.keyboard.press("Escape");
+    await headerBadge.click();
     herdr.run(["pane", "close", child]);
     await expect(list).toHaveCount(0, { timeout: 20_000 });
-    await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
+    await expect(headerBadge).toHaveCount(0);
   } finally {
     daemon?.stop();
     herdr.stop();

@@ -64,12 +64,11 @@ test("handoff roots have provenance without delegation or a focus change in eith
       }
       roots.push(root);
     }
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
+    const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "false");
     await expect(parentRow.locator("[data-agent-tree-toggle], [data-agent-children]")).toHaveCount(0);
     for (const root of roots) {
-      const row = page.locator(`[data-agent-list] [data-pane="${root.pane}"]`);
+      const row = page.locator(`nav[data-sidebar] [data-pane="${root.pane}"]`);
       await expect(row).toHaveAttribute("data-delegated", "false");
       await expect(row).toHaveAttribute("data-depth", "0");
     }

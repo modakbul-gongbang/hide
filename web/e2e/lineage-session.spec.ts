@@ -22,8 +22,7 @@ test("a pane taken over by another agent is a root, and so is a child of a paren
     const [parent, child] = herdr.panes;
     daemon = await startHided(herdr, "lineage-session");
     await open(page, daemon);
-    await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
-    const row = (pane: string) => page.locator(`[data-agent-list] [data-pane="${pane}"]`);
+    const row = (pane: string) => page.locator(`nav[data-sidebar] [data-pane="${pane}"]`);
     await expect(row(parent)).toBeVisible({ timeout: 20_000 });
     await expect(row(child)).toBeVisible({ timeout: 20_000 });
 

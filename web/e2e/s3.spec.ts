@@ -140,7 +140,6 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
 
     // Focus the repository checkout and show the Explorer in the Tools
     // column: that is where the tree lives (S6 D-05, B10).
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
@@ -1088,7 +1087,6 @@ test("a dropped file reaches the terminal as an attachment", async ({ page }) =>
     // the pasted token is observable there; openCheckout focused the repository.
     // The repository's pane stays on screen until the core answers the checkout
     // click, so the drop waits for the fixture's own first pane, by its id.
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const project = page.locator("[data-project]", { hasText: "fixture" });
     await project.locator("[data-checkout]").first().click();
     const [target] = herdr.panes;

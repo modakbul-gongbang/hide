@@ -320,8 +320,11 @@ test("Delegated canvas returns to its normal tab while the chip's focus is still
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     declareParent(herdr, child, parent);
-    const chip = page.locator(`[data-child-chip="${child}"]`).first();
-    await expect(chip).toBeVisible({ timeout: 20_000 });
+    const badge = page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`);
+    await expect(badge).toBeVisible({ timeout: 20_000 });
+    await badge.click();
+    const chip = page.locator(`[data-agent-child="${child}"]`);
+    await expect(chip).toBeVisible();
     // The chip shows once the lineage is known; the delegated canvas exists
     // once the core has moved the child out of its parent's tab.
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0);
@@ -357,8 +360,11 @@ test("A delegated canvas's normal tab keeps the Agent commands in its menu", asy
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     declareParent(herdr, child, parent);
-    const chip = page.locator(`[data-child-chip="${child}"]`).first();
-    await expect(chip).toBeVisible({ timeout: 20_000 });
+    const badge = page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`);
+    await expect(badge).toBeVisible({ timeout: 20_000 });
+    await badge.click();
+    const chip = page.locator(`[data-agent-child="${child}"]`);
+    await expect(chip).toBeVisible();
     await chip.click();
     // The child pane view is focused before the core has switched the drawn
     // canvas to the delegated tab; until then the normal tab is the selected one

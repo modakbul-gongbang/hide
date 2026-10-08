@@ -23,7 +23,6 @@ test.describe.configure({ timeout: 180_000 });
 
 const ALIAS = "unreachable-e2e";
 const CENTER = "[data-main-screen], [data-workspace-screen]";
-const SIDEBAR_LABELS = SYSTEM === "mac" ? ["Projects⇧⌘P", "Agents⇧⌘A"] : ["ProjectsAlt+Shift+P", "AgentsCtrl+Alt+A"];
 
 async function openAddDeviceForm(page: Page): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
@@ -67,13 +66,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
     // #349: device name, shared Overview, then Projects | Agents with direct keycaps.
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator("[data-sidebar-overview]")).toHaveText(SYSTEM === "mac" ? "Overview⇧⌘O" : "OverviewAlt+Shift+O");
     await expect(page.locator("[data-project-list] [data-home-destination]")).toContainText("Home");
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await expect(page.locator("[data-agent-list], [data-agents-empty]").first()).toBeVisible();
-    await expect(page.locator("[data-project-list]")).toHaveCount(0);
-    await page.locator('[data-sidebar-mode="projects"]').click();
+    await expect(page.locator("[data-project-list]")).toBeVisible();
 
     // B6: a right-click on the rail offers Hide rail; hidden, the name is the device menu with Add device… and Show device rail; the choice is the core's, so it survives a reload.
     await rail.click({ button: "right", position: { x: 10, y: 400 } });
@@ -113,7 +109,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await page.locator("[data-add-device]").click();
     await leaveSettings(page, "closes itself");
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
     expect(ids).toEqual([daemon.node, ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
@@ -193,7 +189,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 20_000 });
     await page.keyboard.press("Escape");
     await expect(rail.locator(`[data-rail-tile="${daemon.node}"]`)).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator("[data-home-destination]")).toBeVisible();
     await expect(page.locator(CENTER).first()).toBeVisible();
   } finally {

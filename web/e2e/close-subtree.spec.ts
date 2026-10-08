@@ -4,7 +4,7 @@
 // children running as the operator's own rows. Delete worktree asks the same
 // question about the agents its checkout spawned outside it.
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
@@ -94,10 +94,6 @@ async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<
   return { order: done, close: () => fail(new Error("closed by the test")) };
 }
 
-async function agentsMode(page: Page): Promise<void> {
-  await page.locator('[data-sidebar-mode="agents"]').click();
-}
-
 /** The tops of `buttons`, rounded: one value means they share one row. */
 async function rowTops(buttons: Locator[]): Promise<number[]> {
   const tops = new Set<number>();
@@ -125,17 +121,17 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    await agentsMode(page);
-    await expect(page.locator(`[data-agent-tree-toggle="${target}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${target}"] [data-descendant-badge]`).first()).toBeVisible({ timeout: 30_000 });
 
     // The sheet chooses where the keyboard starts from the states it opens
     // on, so it opens once the sidebar shows every child's: a row whose
     // state is not in yet reads Unknown, which is the core's close guard.
-    await page.locator(`[data-agent-tree-toggle="${target}"]`).click();
+    await page.locator(`nav[data-sidebar] [data-pane="${target}"] [data-descendant-badge]`).first().click();
     for (const [pane, status] of [[working, "working"], [asking, "question"], [finished, "done"], [quiet, "idle"]]) {
-      await expect(page.locator(`[data-pane="${pane}"] [data-agent-status-mark]`)).toHaveAttribute("data-agent-status-mark", status, { timeout: 30_000 });
+      await expect(page.locator(`[data-agent-child="${pane}"] [data-mark]`)).toHaveAttribute("data-mark", { working: "●", question: "?", done: "✓", idle: "○" }[status]!, { timeout: 30_000 });
     }
     await expect(page.locator(`[data-agent-open="${target}"]`)).not.toHaveAccessibleName(/\bUnknown\b/);
+    await page.keyboard.press("Escape");
 
     const sheet = page.locator("[data-confirm-subtree]");
     const summary = sheet.locator("[data-subtree-summary]");
@@ -201,11 +197,9 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    await agentsMode(page);
     // The sheet reads the core's close lists, so wait until the lineage is in.
-    await page.locator(`[data-agent-tree-toggle="${target}"]`).click({ timeout: 30_000 });
-    await expect(page.locator(`[data-agent-tree-toggle="${child}"]`)).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(`[data-agent-tree-toggle="${keeper}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${target}"] [data-descendant-badge]`).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${keeper}"] [data-descendant-badge]`).first()).toBeVisible({ timeout: 30_000 });
 
     const sheet = page.locator("[data-confirm-subtree]");
     await page.locator(`[data-terminal-host="${target}"]`).click();
@@ -272,7 +266,6 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    await agentsMode(page);
 
     const confirm = page.locator('[data-confirm-close="pane"]');
     const subtree = page.locator("[data-confirm-subtree]");
@@ -361,9 +354,7 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await agentsMode(page);
-    await expect(page.locator(`[data-agent-tree-toggle="${spawner}"]`)).toBeVisible({ timeout: 30_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${spawner}"] [data-descendant-badge]`).first()).toBeVisible({ timeout: 30_000 });
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
     // The fixture branch has nothing ahead of main, yet no work of its own
@@ -417,9 +408,7 @@ test("Remove project closes the agents its panes spawned outside it before the p
     countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await agentsMode(page);
-    await expect(page.locator(`[data-agent-tree-toggle="${herdr.panes[1]}"]`)).toBeVisible({ timeout: 30_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${herdr.panes[1]}"] [data-descendant-badge]`).first()).toBeVisible({ timeout: 30_000 });
 
     // A plain folder's row: its menu target is the row itself.
     await page.locator("[data-project-menu]").filter({ has: page.getByRole("button", { name: /^fixture,/ }) }).first().click({ button: "right" });

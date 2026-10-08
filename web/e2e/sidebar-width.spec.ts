@@ -56,7 +56,6 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const nav = page.locator("nav[data-sidebar]");
     const box = page.locator("[data-sidebar-box]");
     const edge = page.locator("[data-sidebar-edge]");

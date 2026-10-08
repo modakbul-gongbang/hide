@@ -40838,6 +40838,14 @@
     "--size-overview-sheet-w": {
       "type": "number",
       "value": 1440
+    },
+    "--size-pane-parent-breakpoint": {
+      "type": "number",
+      "value": 640
+    },
+    "--size-pane-state-example": {
+      "type": "number",
+      "value": 144
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

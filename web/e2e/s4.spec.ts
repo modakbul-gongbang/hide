@@ -42,7 +42,6 @@ test("History opens a scoped patch, then updates after editing the original file
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
     // The Tools column holds one tool; History's tab swaps the Explorer out
     // (S6 B10).
@@ -128,7 +127,6 @@ test("registered subfolder History opens inside patches and hides sibling change
     daemon = await startHided(herdr, "s4-nested", herdr.root);
 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await registerFolder(page, daemon, registered);
     await expect.poll(() => sent.get("create_workspace") ?? 0).toBe(1);
     const project = page.locator("[data-project]", { hasText: "registered" });

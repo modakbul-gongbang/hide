@@ -7,12 +7,48 @@
     "selector": "[data-session-panel]",
     "measurement": "web/e2e/session-panel-geometry.mjs",
     "frames": [
-      {"node":"sfu-panel-l","referenceNode":"YIiB2","theme":"light","width":481,"scale":1,"content":"reference","state":"rest"},
-      {"node":"sfu-panel-d","referenceNode":"YIiB2","theme":"dark","width":481,"scale":1,"content":"reference","state":"rest"}
+      {
+        "node": "sfu-panel-l",
+        "referenceNode": "YIiB2",
+        "theme": "light",
+        "width": 481,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "sfu-panel-d",
+        "referenceNode": "YIiB2",
+        "theme": "dark",
+        "width": 481,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
     ],
-    "conditions": {"themes":["light","dark"],"widths":[480,360],"contents":["reference","long"]},
-    "states": {"rest":"Project Sessions at rest.","children":"Direct children opened from the row badge.","resolved":"Today's resolved sessions expanded."},
-    "rules": {"noOverlap":true,"noSidewaysOverflow":true},
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        480,
+        360
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "states": {
+      "rest": "Project Sessions at rest.",
+      "children": "Direct children opened from the row badge.",
+      "resolved": "Today's resolved sessions expanded."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
     "judgment": [
       "The approved reference is Dark; Light must retain its hierarchy using the existing theme tokens.",
       "Do the two-line rows, task tags, live issue/PR facts and front-checkout bar match v6?",
@@ -27,12 +63,46 @@
     "selector": "[data-gallery-scene=\"pane-header\"]",
     "measurement": "web/e2e/pane-header-geometry.mjs",
     "frames": [
-      {"node":"sfu-ph-board-l","referenceNode":"MYW3i","theme":"light","width":1240,"scale":1,"content":"reference","state":"rest"},
-      {"node":"sfu-ph-board-d","referenceNode":"MYW3i","theme":"dark","width":1240,"scale":1,"content":"reference","state":"rest"}
+      {
+        "node": "sfu-ph-board-l",
+        "referenceNode": "MYW3i",
+        "theme": "light",
+        "width": 1240,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "sfu-ph-board-d",
+        "referenceNode": "MYW3i",
+        "theme": "dark",
+        "width": 1240,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
     ],
-    "conditions": {"themes":["light","dark"],"widths":[1240],"contents":["reference","long"]},
-    "states": {"rest":"Connection and direct-child states.","children":"The header badge's shared direct-child popover."},
-    "rules": {"noOverlap":true,"noSidewaysOverflow":true},
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1240
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "states": {
+      "rest": "Connection and direct-child states.",
+      "children": "The header badge's shared direct-child popover."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
     "judgment": [
       "The approved reference is Dark; Light must retain its hierarchy using the existing theme tokens.",
       "Does the identity stay quiet while the highest-priority band carries the one actionable state?",
@@ -41,7 +111,7 @@
     ]
   },
   "projects-sidebar": {
-    "description": "The sidebar's Projects tab: project, checkout and agent rows.",
+    "description": "The single sidebar: operator roots and orphans under projects and checkouts.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-projects-sidebar",
     "scene": "projects-sidebar",
@@ -82,11 +152,9 @@
       "rest": "No pointer on the list and no keyboard focus.",
       "hover-parent": "The pointer on the unfolded parent agent a1.",
       "focus-parent": "Keyboard focus on the unfolded parent agent a1.",
-      "folded-parent": "a1's children folded with its chevron, so its badge speaks for them.",
       "checkout-closed": "main's agent rows closed with its chevron, so its status badge counts them."
     },
     "rules": {
-      "childIndentPx": 18,
       "rootsAligned": true,
       "stableUnderHover": true,
       "stableUnderFocus": true,

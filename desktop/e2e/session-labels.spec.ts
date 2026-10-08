@@ -85,11 +85,10 @@ test("a label belongs to its session: never shown for another, restored for its 
       execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", window.source.split(":")[1]!, path.join(dir, `session-labels-${name}.png`)]);
     };
     const tab = page.locator(`[data-tab="${herdr.tab}"]`);
-    const row = page.locator(`[data-agent-list] [data-pane="${pane}"]`);
+    const row = page.locator(`nav[data-sidebar] [data-pane="${pane}"]`);
 
     // Session A is analyzed into its title and its question.
     await expect(tab).toContainText(A, { timeout: 30_000 });
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(row.locator('[data-agent-line="request"]')).toHaveText(A_REPLY);
     await capture("a");
 

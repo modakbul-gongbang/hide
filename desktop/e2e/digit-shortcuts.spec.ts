@@ -199,14 +199,13 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
 
     // B5, B2: holding ⌥ alone numbers the Agents rows top to bottom; the
     // time and the fold slot stay put; ⌥2 opens the second row.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const rows = page.locator("[data-agent-list] [data-pane]");
+    const rows = page.locator("nav[data-sidebar] [data-pane]");
     await expect(rows).toHaveCount(2);
     const firstRow = rows.first();
     const kept = [firstRow, firstRow.locator("[data-agent-title]"), firstRow.locator("[data-fold-slot]"), rows.nth(1)];
     const rowsBefore = await boxes(kept);
     await page.keyboard.down("Alt");
-    const rowCaps = page.locator("[data-agent-list] [data-keycap]");
+    const rowCaps = page.locator("nav[data-sidebar] [data-keycap]");
     await expect(rowCaps).toHaveCount(2);
     await expect(rowCaps).toHaveText(["1", "2"]);
     expect(await boxes(kept)).toEqual(rowsBefore);
@@ -217,7 +216,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     const opened = sent.get("focus_pane") ?? 0;
     await page.keyboard.press("Alt+Digit2");
     await exactlyOnce(sent, "focus_pane", opened + 1, page);
-    await expect(page.locator(`[data-agent-list] [data-pane="${secondPane}"] [aria-current="true"]`)).toHaveCount(1);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${secondPane}"] [aria-current="true"]`)).toHaveCount(1);
     await page.keyboard.press("Alt+Digit3");
     await quietFor(page, 400, "the shortcut with no target sends nothing");
     expect(sent.get("focus_pane") ?? 0).toBe(opened + 1);
@@ -232,7 +231,6 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     labelAgent(herdr, asking, { task: asking === herdr.panes[0] ? "Agent one" : "Agent two", reply: "계속할까요?", question: true });
     try {
       await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
-      await page.locator('[data-sidebar-mode="projects"]').click();
       const raised = page.locator(`[data-raised-group="needs_you"] [data-pane="${asking}"]`);
       await expect(raised).toBeVisible();
       const checkoutToggle = page.locator("[data-checkout-toggle]").first();

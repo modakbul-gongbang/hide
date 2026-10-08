@@ -38,7 +38,6 @@ async function startFixture() {
 async function openPrimary(page: Page, daemon: Daemon) {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await enterWorkspace(page, "primary");
-  await page.locator('[data-sidebar-mode="projects"]').click();
   await page.locator('[data-project]', { hasText: "primary" }).locator('[data-checkout][aria-label^="main"]').click();
 }
 

@@ -41,7 +41,6 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
 
     // The checkout row opens the Workspace on the child's pane: the strip
     // has no tab for it (B1), and the empty state is not shown.
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const checkout = page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first();
     await checkout.click();
     await expect(page.locator("[data-canvas]").first()).toHaveAttribute("data-canvas", beta.result.tab.tab_id, { timeout: 20_000 });
@@ -50,23 +49,17 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     await expect(page.locator('[data-agent-tab-bar] [role="tab"]')).toHaveCount(0);
     await screenshot(page, "delegated-checkout-open");
 
-    // beta's line two names the agent it was raised from, behind an arrow at
-    // the small icon size: a class naming an undefined size token once drew
-    // it at lucide's 24px.
-    const betaRow = page.locator("[data-project]", { hasText: "beta" }).first();
-    const raisedArrow = betaRow.locator("[data-checkout-parent] svg");
+    // Session UI B1/B38: lineage belongs to the pane header and root badge.
+    const raisedArrow = page.locator(`[data-pane-view="${child}"] [data-pane-return="${parent}"] svg`);
     await expect(raisedArrow).toBeVisible();
     expect((await raisedArrow.boundingBox())?.width).toBe(12);
-    await betaRow.screenshot({ path: test.info().outputPath("delegated-checkout-raised-from.png") });
+    await screenshot(page, "delegated-checkout-raised-from");
 
-    // Back on the first checkout, the child's own sidebar row brings its
-    // pane to the screen with the keyboard in it.
+    // Back on the first checkout, the root's badge opens its direct child.
     await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible({ timeout: 20_000 });
-    const betaProject = page.locator("[data-project]").filter({ has: page.getByRole("button", { name: /^beta(?:,|$)/ }) });
-    // Opening beta unfolded it; switching checkout keeps that expansion.
-    await expect(betaProject.locator("[data-checkout-toggle]")).toHaveAttribute("aria-expanded", "true");
-    await betaProject.locator(`[data-agent-open="${child}"]`).click();
+    await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-descendant-badge]`).click();
+    await page.locator(`[data-agent-child="${child}"]`).click();
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(child);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 20_000 });
     await expect(page.locator("[data-empty-new-tab]")).toHaveCount(0);

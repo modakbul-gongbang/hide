@@ -135,7 +135,6 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       await page.goto("about:blank");
       await page.goto(`${next.origin}/#token=${next.token}`);
       await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 20_000 });
-      await page.locator('[data-sidebar-mode="projects"]').click();
       return sent;
     };
     /**

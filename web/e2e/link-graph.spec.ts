@@ -138,7 +138,6 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await chooseTheme(page, "light");
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await overview.locator('[data-lens-tile-button="prs"]').click();

@@ -37,7 +37,6 @@ test("file and diff views open wrapped and Wrap turns it off per tab", async ({ 
 
     daemon = await startHided(herdr, "view-wrap");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "wrap-repo" }).locator("[data-checkout]").first().click();
 
     await showExplorer(page);

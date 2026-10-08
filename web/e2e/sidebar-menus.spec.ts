@@ -99,14 +99,13 @@ async function startMenus(page: Page, options: { pinned?: boolean } = {}) {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.origin });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
 
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^repo/ }) });
     const projectRow = project.locator("[data-project-menu]").first();
     const main = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="main"]') });
     const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     await expect(feature).toBeVisible({ timeout: 30_000 });
-    const agentRow = page.locator(`[data-agent-list] li[data-pane="${worktreePane}"]`);
+    const agentRow = page.locator(`nav[data-sidebar] li[data-pane="${worktreePane}"]`);
     if (options.pinned) {
       // Pin registers the row; a checkout row's menu and Set as default are
       // the registered project's, so these contracts start from it.
@@ -198,7 +197,6 @@ test("a plain folder's row shows the stored Issue source, not Automatic", async 
     daemon = await startHided(herdr, "sidebar-menus-folder");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]").filter({ has: page.locator("[data-project-menu]") }).locator("[data-project-menu]").first();
     await expect(row).toBeVisible({ timeout: 30_000 });
     let menu = await openMenu(page, row, "notes actions");
@@ -273,7 +271,6 @@ test("the agent row's menu copies Herdr's session id, the row's title and the pa
   const { agentRow, worktreePane, stop } = await startMenus(page);
   try {
     // B7, B8
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(agentRow).toBeVisible();
     let menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     expect(await menuLines(menu)).toEqual(["Show", "─", "Copy title", "Copy session id", "Copy pane ID", "─", "Close tab…"]);
@@ -297,7 +294,6 @@ test("the agent row's Close tab… closes that agent's tab without asking when i
     // front. An idle agent's tab closes without asking (close.ts asks only
     // for working or attention panes), and the row leaves with its pane.
     const mainTabs = page.locator(`[data-tab-bar] [data-tab-kind="herdr"]`);
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(agentRow).toBeVisible();
     const menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await menu.locator('[data-menu-item="close_tab"]').click();
@@ -310,14 +306,12 @@ test("the agent row's Close tab… closes that agent's tab without asking when i
 test("the project, checkout and agent menus draw in the light theme", async ({ page }) => {
   const { projectRow, main, agentRow, stop } = await startMenus(page);
   try {
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(agentRow).toBeVisible();
     await chooseTheme(page, "light");
     await rest(page);
     await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await screenshot(page, "sidebar-menus-agent-light");
     await page.keyboard.press("Escape");
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openMenu(page, projectRow, "repo actions");
     await screenshot(page, "sidebar-menus-project-light");
     await page.keyboard.press("Escape");

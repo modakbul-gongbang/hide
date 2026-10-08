@@ -52,7 +52,6 @@ async function start(page: Page, label: string): Promise<{ herdr: HerdrFixture; 
   const daemon = await startHided(herdr, label, home);
   const sent = countSent(page);
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-  await page.locator('[data-sidebar-mode="projects"]').click();
   await page.locator("[data-checkout]").first().click();
   await expect(page.locator(`[data-pane-view="${pane}"]`)).toBeVisible({ timeout: 20_000 });
   return { herdr, daemon, pane, sent };

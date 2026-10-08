@@ -70,7 +70,6 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const display = await displayLocator.getAttribute("data-display");
 
     // Then beta's terminal, from the sidebar.
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first().click();
     await expect(canvas).toHaveAttribute("data-canvas", betaTab);
 
@@ -171,9 +170,9 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
 
     // A sidebar control owns the keyboard: recent agents still open, starting
     // at the most recent pane, without marking an underlying pane as visited.
-    const projectsMode = page.locator('[data-sidebar-mode="projects"]');
-    await projectsMode.focus();
-    await expect(projectsMode).toBeFocused();
+    const sidebarOverview = page.locator('[data-sidebar-overview]');
+    await sidebarOverview.focus();
+    await expect(sidebarOverview).toBeFocused();
     let focuses = sent.get("focus_pane") ?? 0;
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");

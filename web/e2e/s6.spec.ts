@@ -316,7 +316,6 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator("[data-column-badge]")).toHaveCount(0);
 
     // An agent chosen from the sidebar changes no column (B22, D-17).
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await page.locator(`[data-agent-open="${parent}"]`).first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
@@ -376,9 +375,10 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // (B14-B16).
     declareParent(herdr, child, parent);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0, { timeout: 20_000 });
-    const chip = page.locator(`[data-pane-children="${parent}"] [data-child-chip="${child}"]`);
+    await page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`).click();
+    const chip = page.locator(`[data-agent-child="${child}"]`);
     await expect(chip).toBeVisible({ timeout: 20_000 });
-    await expect(chip).toHaveAttribute("aria-label", /Agent two/);
+    await expect(chip).toContainText("Agent two");
     await screenshot(page, "s6-child-chip");
     await chip.click();
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(child);

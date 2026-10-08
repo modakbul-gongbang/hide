@@ -235,7 +235,6 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator(`[data-checkout][aria-label^="${BRANCH}"]`).first().click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await focusAgent(page, agent);

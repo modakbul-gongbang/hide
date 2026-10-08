@@ -179,9 +179,9 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
 
     // Sidebar focus also opens recent Agent panes. It has no pane origin,
     // so the first chord selects the most recent pane, then walks the list.
-    const projectsMode = page.locator('[data-sidebar-mode="projects"]');
-    await projectsMode.focus();
-    await expect(projectsMode).toBeFocused();
+    const sidebarOverview = page.locator('[data-sidebar-overview]');
+    await sidebarOverview.focus();
+    await expect(sidebarOverview).toBeFocused();
     focused = sent.get("focus_pane") ?? 0;
     await page.keyboard.down("Control");
     await page.keyboard.press("Tab");
@@ -205,7 +205,6 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     await exactlyOnce(sent, "focus_pane", focused + 1, page);
 
     // Recent Projects gamma, beta, fixture: fixture is current.
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const checkout = (name: string) => page.locator("[data-project]", { hasText: name }).locator("[data-checkout]").first();
     for (const name of ["gamma", "beta", "fixture"]) {
       await checkout(name).click();

@@ -49,7 +49,6 @@ async function featureRow(page: Page) {
 async function openDeletion(page: Page, daemon: Daemon) {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-  await page.locator('[data-sidebar-mode="projects"]').click();
   const feature = await featureRow(page);
   await feature.locator("[data-checkout-menu]").click({ button: "right" });
   await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
@@ -171,7 +170,6 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     daemon = await startHided(herdr, "worktree-refreshed-consent");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
     const feature = await featureRow(page);
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
@@ -297,7 +295,6 @@ test("a dirty worktree with an unmerged branch and an agent is deleted once both
     daemon = await startHided(herdr, "worktree-delete");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     await expect(feature).toBeVisible({ timeout: 30_000 });

@@ -196,10 +196,9 @@ test("a device's Home is made on its first start, the rail follows registration,
     // The raw shim starts idle; give its Home pane a real detected question for the counts and rail mark.
     setFixtureSession(device, homeAgent.pane, `device-home-${process.pid}`);
     await setFixtureLifecycle(device, homeAgent.pane, "blocked");
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await expect(page.locator("[data-agent-list]")).toBeVisible();
-    await expect(page.locator("[data-agent-list] [data-device-chip]")).toHaveCount(0);
-    await expect(page.locator("[data-agent-counts]")).toContainText(/Working|Needs You|Done/);
+    await expect(page.locator("nav[data-sidebar]")).toBeVisible();
+    await expect(page.locator("nav[data-sidebar] [data-device-chip]")).toHaveCount(0);
+    await expect(page.locator('[data-raised-group="needs_you"]')).toBeVisible();
     await expect(page.locator(`[data-rail-tile="${DEVICE}"] [data-rail-badge]`).first()).toBeVisible();
     await capture(page, app, "device-home-device-agents");
     // B10: removing the device in front moves the front to This Mac; the rail stays with its one tile, and the device keeps ~/hide and its agents.

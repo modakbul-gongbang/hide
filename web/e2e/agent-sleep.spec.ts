@@ -39,14 +39,11 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     const last = new Map<string, Record<string, unknown>>();
     countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-checkout]").first().click();
     const pane = page.locator(`[data-pane-view="${sleeper}"]`);
     await expect(pane).toBeVisible({ timeout: 20_000 });
     // Sleep must preserve a name the automatic label worker has produced.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await expect(page.locator(`[data-agent-list] [data-pane="${sleeper}"]`)).toContainText("Agent two");
-    await page.locator('[data-sidebar-mode="projects"]').click();
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${sleeper}"]`)).toContainText("Agent two");
 
     // B15: Sleep agent from the pane menu.
     await page.locator(`[data-pane-menu="${sleeper}"]`).click();
@@ -60,13 +57,12 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
     // Sleeping with Wake agent instead of showing that shell.
     await expect(pane.locator('[data-pane-sleep="sleeping"]')).toBeVisible({ timeout: 30_000 });
     await expect(pane.locator(`[data-agent-wake="${sleeper}"]`)).toBeVisible();
-    await expect(pane.locator('[data-pane-sleep-caption="sleeping"]')).toHaveText("sleeping");
+    await expect(pane.locator('[data-pane-header-band="sleeping"]')).toContainText("sleeping");
     const slept = processInfo();
     expect(slept.foreground_process_group_id).toBe(slept.shell_pid);
 
     // B10: the row keeps its name with the moon.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const row = page.locator(`[data-agent-list] [data-pane="${sleeper}"]`);
+    const row = page.locator(`nav[data-sidebar] [data-pane="${sleeper}"]`);
     await expect(row.locator('[data-mark="☾"]')).toBeVisible({ timeout: 20_000 });
     await expect(row).toContainText("Agent two");
     await expect(row.locator('[data-agent-mark="claude"]')).toBeVisible();

@@ -49,7 +49,6 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     app = launched.app;
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const dialog = page.locator("[data-add-project]");
     const browse = page.locator("[data-add-project-browse]");
     const alert = dialog.locator("[data-registration-reason]");
@@ -148,7 +147,6 @@ test("Create new project makes a Git repository and adds it; a name already take
     app = launched.app;
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const dialog = page.locator("[data-add-project]");
     const view = dialog.locator("[data-create-project]");
     const name = view.getByLabel("Name");
@@ -239,7 +237,6 @@ test("Clone from URL clones a repository into a folder under home and adds it as
     app = launched.app;
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     const dialog = page.locator("[data-add-project]");
     await page.locator("[data-sidebar-new-workspace]").click();
     await expect(dialog.locator("[data-add-project-other-ways]")).toContainText("Other ways to add");

@@ -1,12 +1,6 @@
-// The sidebar's Projects tab on an isolated pinned Herdr and hided: a Git
-// project with an agent in its primary checkout and one in a worktree, and a
-// plain folder with one agent. The primary checkout leads its project, and
-// the rows name their kind and last-commit age;
-// a checkout's agent rows start closed, where its status badge counts them, and
-// open on its chevron; a project's badge counts all of them and stays; a plain
-// folder is one row that opens its checkout; a project folds its checkouts;
-// both folds are the core's ui state, so they survive a reload. Light and Dark
-// captures land in HIDE_E2E_SCREENSHOT_DIR.
+// One sidebar on an isolated Herdr and daemon: new checkouts open by default,
+// roots own direct-child badges, and project/checkout folds persist.
+// Existing row geometry, context menus and type scaling remain stable.
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -21,7 +15,7 @@ import { animationsFinished, quietFor } from "./wait";
 test.describe.configure({ timeout: 180_000 });
 
 function git(cwd: string, args: string[]): void {
-  execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "ignore" });
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
@@ -51,7 +45,6 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
 async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-  await page.locator('[data-sidebar-mode="projects"]').click();
 }
 
 /** Whether the project row's Overview button, its click target and focus ring, fills the row's whole height. */
@@ -95,7 +88,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await animationsFinished(page);
 }
 
-test("the Projects tab: kind, age, status badges, opened checkouts and folded projects", async ({ page }) => {
+test("the sidebar: kind, age, status badges, opened checkouts and folded projects", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -154,6 +147,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     // idle here. Line two is the purpose with the age ending it. The project's
     // badge counts both checkouts' agents.
     const featureToggle = feature.locator("[data-checkout-toggle]");
+    await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
+    await featureToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
     await expect(feature.locator("[data-checkout-agents-open]")).toHaveCount(0);
     await expect(feature.locator('[data-checkout-status] [data-badge-part="idle"]')).toHaveText("1");
@@ -179,6 +174,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     const primaryRow = primary.locator("[data-checkout]").locator("xpath=..");
     const primaryParts = [primary.getByText("main", { exact: true }), primary.locator("[data-checkout-age]")];
     const primaryToggle = primary.locator("[data-checkout-toggle]");
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
+    await primaryToggle.click();
     const primaryMenu = page.getByRole("menu", { name: "main actions" });
     const beforeLooking = new Map(sent);
     await rest(page);
@@ -269,6 +266,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
 
     // An agentless checkout uses the same single-line height as Overview;
     // opening it sends no disclosure intent and leaves the fold slot empty.
+    await project.locator("[data-empty-worktrees]").click();
     const emptyRow = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="empty"]') });
     const emptyButton = emptyRow.locator("[data-checkout]");
     await expect(emptyRow.locator("[data-checkout-toggle]")).toHaveCount(0);
@@ -306,6 +304,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(folderRow).toHaveAttribute("data-checkout-kind", "folder");
     await expect(folder.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("1");
     const folderToggle = folder.locator("[data-checkout-toggle]");
+    await expect(folderToggle).toHaveAttribute("aria-expanded", "true");
+    await folderToggle.click();
     await expect(folderToggle).toHaveAttribute("aria-expanded", "false");
     // The row opens the folder's checkout, not an Overview.
     await folderRow.click();
@@ -323,62 +323,32 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
-    // sidebar-readability B12, B13, B9 and lineage session contract: a parent in
-    // Projects folds its children with the core's lineage state, the one
-    // Agents folds by. The worktree's agent becomes the primary agent's child:
-    // folded by default, its other-checkout child is a C line rather than a
-    // descendant badge, and the parent keeps an always-shown chevron.
-    // Unfolding is one agent_tree_toggle and nothing else, the C line gives way
-    // to the child row under its parent, and its own checkout still lists it.
+    // Delegated children leave the checkout tree and stay reachable from
+    // the root's direct-child badge, without a second lineage disclosure.
     declareParent(herdr, rowsPane, mainPane);
     await primaryToggle.click();
     const parentRow = primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"]`);
-    await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0, { timeout: 20_000 });
-    const checkoutLine = parentRow.locator('[data-checkout-line="feature/sidebar-rows"]');
-    await expect(checkoutLine).toBeVisible();
-    await expect(checkoutLine).toContainText("feature/sidebar-rows");
-    const lineageToggle = parentRow.locator(`[data-agent-tree-toggle="${mainPane}"]`);
-    await expect(lineageToggle).toHaveAttribute("aria-expanded", "false");
-    await rest(page);
-    await expect(lineageToggle).toHaveCSS("opacity", "1");
-    await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveCount(0);
-    const beforeFold = new Map(sent);
-    await lineageToggle.click();
-    await expect.poll(() => (sent.get("agent_tree_toggle") ?? 0) - (beforeFold.get("agent_tree_toggle") ?? 0)).toBe(1);
-    expect(last.get("agent_tree_toggle")?.pane_id).toBe(mainPane);
-    const childUnderParent = primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`);
-    await expect(childUnderParent).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
-    await expect(checkoutLine).toHaveCount(0);
-    await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
-    await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "0");
-    // Checked once the list has redrawn, so a frame sent behind the toggle has arrived too.
-    expect([...sent].filter(([kind, count]) => count !== (beforeFold.get(kind) ?? 0)).map(([kind]) => kind)).toEqual(["agent_tree_toggle"]);
-    await screenshot(page, "projects-sidebar-lineage-open");
-    // D-3: project, checkout, folder and agent rows, parents and the rest, end
-    // their times on one column and centre their chevrons on another.
+    const badge = parentRow.locator("[data-descendant-badge]");
+    await expect(badge).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);
+    await expect(page.locator("[data-agent-tree-toggle], [data-checkout-line]")).toHaveCount(0);
+    const beforeBadge = new Map(sent);
+    await badge.click();
+    await expect(page.locator(`[data-agent-child="${rowsPane}"] [data-branch-chip]`)).toHaveText("feature/sidebar-rows");
+    await screenshot(page, "projects-sidebar-child-popover");
+    await page.keyboard.press("Escape");
+    await expect(badge).toBeFocused();
+    expect([...sent].filter(([kind, count]) => count !== (beforeBadge.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
     expect(await sidebarColumns(page)).toEqual({ times: [expect.any(Number)], chevrons: [expect.any(Number)] });
-    // The same fold in Agents: the child is drawn under its parent there too.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await expect(page.locator(`[data-agent-list] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");
-    expect(await sidebarColumns(page)).toEqual({ times: [expect.any(Number)], chevrons: [expect.any(Number)] });
-    await expect(page.locator(`[data-agent-list] [data-pane="${mainPane}"] [data-agent-place]`)).toHaveText("repo › main");
-    await page.locator('[data-sidebar-mode="projects"]').click();
-
-    // Folding changes nothing but the list (B9): no focus, open, read, start
-    // or close event, and the center keeps the Workspace it showed.
     const screenBefore = await page.locator("[data-workspace-screen]").count();
     const quiet = new Map(sent);
-    await lineageToggle.click();
-    await expect(childUnderParent).toHaveCount(0, { timeout: 15_000 });
-    await lineageToggle.click();
-    await expect(childUnderParent).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
     await primaryToggle.click();
     await primaryToggle.click();
     await projectToggle.click();
     await projectToggle.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     const moved = [...sent].filter(([kind, count]) => count !== (quiet.get(kind) ?? 0)).map(([kind]) => kind);
-    expect(moved.filter((kind) => !["agent_tree_toggle", "checkout_agents_toggle", "project_checkouts_fold", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
+    expect(moved.filter((kind) => !["checkout_agents_toggle", "project_checkouts_fold", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
     expect(await page.locator("[data-workspace-screen]").count()).toBe(screenBefore);
     await expect(folderRow).toHaveAttribute("aria-current", "true");
 
@@ -404,19 +374,18 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await projectRow.click();
-    await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
-    // The lineage fold is the core's too: left unfolded above, it is still unfolded.
-    await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"] [data-agent-tree-toggle]`)).toHaveAttribute("aria-expanded", "true");
-    await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");
+    await expect(parentRow.locator("[data-descendant-badge]")).toBeVisible();
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);
     // B25: every level open, at the design width and the app's minimum, nothing runs sideways.
     for (const width of ["calc(240px + var(--size-rail))", "calc(var(--size-sidebar-min) + var(--size-rail))"]) expect(await sidebarOverflow(page, width)).toEqual([]);
     await sidebarOverflow(page, "");
 
     // B4 in Agents: a quiet row and the row after it stay put through hover,
     // keyboard focus and selection.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    const quietRows = page.locator("[data-agent-list] li[data-pane]:not(:has([data-agent-line])):has([data-agent-elapsed])");
+    await folderToggle.click();
+    const quietRows = page.locator("nav[data-sidebar] li[data-pane]:not(:has([data-agent-line])):has([data-agent-elapsed])");
     const [agentRow, nextRow] = [quietRows.nth(0), quietRows.nth(1)];
     const agentParts = [agentRow.locator("[data-agent-title]"), agentRow.locator("[data-agent-elapsed]")];
     await rest(page);
@@ -429,7 +398,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(agentRow.locator("[data-agent-open]")).toHaveAttribute("aria-current", "true");
     await rest(page);
     expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentAtRest);
-    await page.locator('[data-sidebar-mode="projects"]').click();
+    await folderToggle.click();
     await expect(folderToggle).toHaveAttribute("aria-expanded", "false");
 
     for (const theme of ["light", "dark"] as const) {
@@ -447,10 +416,8 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await rest(page);
     const projectsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(primaryRow, feature, primaryParts) };
     const outsideAtDefault = await probeTextSize(page, "main");
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await rest(page);
     const agentsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(agentRow, nextRow, agentParts) };
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="general"]').click();
     const fontSize = page.locator('[data-font-size="true"] [role="slider"]');
@@ -474,7 +441,6 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
     await rest(page);
     await screenshot(page, "projects-sidebar-large-font");
-    await page.locator('[data-sidebar-mode="agents"]').click();
     await rest(page);
     expect(await sidebarTextSizes(page)).toEqual(agentsAtDefault.sizes);
     expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentsAtDefault.row);
@@ -483,7 +449,6 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentsAtDefault.row);
     await rest(page);
     await screenshot(page, "agents-sidebar-large-font");
-    await page.locator('[data-sidebar-mode="projects"]').click();
 
     // B3: on an input with no hover, the controls that wait for the pointer are always shown.
     const cdp = await page.context().newCDPSession(page);

@@ -94,16 +94,15 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await expect(input).toBeFocused();
     expect((sent.get("focus_pane") ?? 0) - before).toBe(1);
 
-    // Direct commands close Overview, show the requested list and converge.
+    // Shift+A opens the Agents graph; Shift+P closes it and focuses the one sidebar.
     await page.keyboard.press(chord("overview"));
     await page.keyboard.press(chord("sidebar_agents"));
-    await expect(modal).toHaveCount(0);
-    await expect(page.locator('[data-sidebar-mode="agents"]')).toHaveAttribute("aria-selected", "true");
-    // The sidebar takes the keyboard one frame after the list shows, so wait for it rather than read it the moment the modal is gone.
-    await expect.poll(() => page.locator('nav[data-sidebar="agents"]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
-    await page.keyboard.press(chord("sidebar_agents"));
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('[data-overview-view="agents"]')).toBeVisible();
     await page.keyboard.press(chord("sidebar_projects"));
-    await expect(page.locator('[data-sidebar-mode="projects"]')).toHaveAttribute("aria-selected", "true");
+    await expect(modal).toHaveCount(0);
+    await expect.poll(() => page.locator('nav[data-sidebar]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await home.click();
     await expect(page.locator("[data-overview-page]")).toBeVisible();
     await expect(modal).toHaveCount(0);

@@ -25,8 +25,7 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     const sidebar = page.locator("nav[data-sidebar]");
     // B3: Projects is the first tab and the one shown.
     await expect(sidebar).toHaveAttribute("data-sidebar", "projects", { timeout: 20_000 });
-    await expect(page.locator("[data-sidebar-mode]")).toContainText(["Projects", "Agents"]);
-    await expect(page.locator('[data-sidebar-mode="projects"]')).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     const list = page.locator("[data-project-list]");
     await expect(list.locator("[data-checkout]").first()).toBeVisible({ timeout: 20_000 });
 
@@ -45,7 +44,7 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await expect(overview).not.toHaveAttribute("aria-current", "page");
     // The row is the Projects list's own, under the tab strip.
     expect(await overview.evaluate((row) => row.closest("[data-project-list]") !== null)).toBe(true);
-    expect((await overview.boundingBox())!.y).toBeGreaterThan((await page.locator("[data-sidebar-strip]").boundingBox())!.y);
+    expect((await overview.boundingBox())!.y).toBeGreaterThan((await page.locator("[data-sidebar-overview]").boundingBox())!.y);
 
     // B7 and the removed controls: the list starts at a project, and no field or bottom button is left.
     await expect(list).not.toContainText("All projects");
@@ -90,13 +89,18 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await page.keyboard.press(chord("new_workspace", "electron"));
     await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
-    // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Home row is Projects' and goes with it.
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await expect(sidebar).toHaveAttribute("data-sidebar", "agents");
-    await expect(page.locator("[data-agent-list]")).toBeVisible();
+    // The direct commands focus this one list or open the Agents graph.
+    await page.keyboard.press(chord("sidebar_projects"));
+    await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press(chord("sidebar_agents"));
+    await expect(page.getByRole("dialog", { name: "Overview", exact: true }).locator('[data-overview-view="agents"]')).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toHaveAttribute("data-sidebar", "projects");
+    await expect(list).toBeVisible();
     await expect(add).toHaveCount(0);
     await expect(search).toBeVisible();
-    await expect(overview).toHaveCount(0);
+    await expect(overview).toBeVisible();
     await page.mouse.move(640, 700);
     await screenshot(page, "sidebar-shell-agents-light");
   } finally {

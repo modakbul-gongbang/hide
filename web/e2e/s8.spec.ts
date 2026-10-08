@@ -286,7 +286,6 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // Another window moves the agent focus: this window keeps its Project and
     // its list (B6). Then it names another Project: this window says so and
     // takes its Project back only when asked (A7).
-    await page.locator('[data-sidebar-mode="agents"]').click();
     const other = await context.newPage();
     await other.setViewportSize({ width: 1280, height: 800 });
     await open(other, daemon);
@@ -305,7 +304,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(other.locator(`[data-pane-view="${second}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     // This window has seen the focus move, and its Project and list stayed.
     // `bg-secondary` alone marks the selected row; `focus-visible:bg-accent` is on every row.
-    await expect(page.locator(`[data-agent-list] [data-pane="${second}"]`)).toHaveClass(/(^|\s)bg-secondary(\s|$)/, { timeout: 15_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${second}"]`)).toHaveClass(/(^|\s)bg-secondary(\s|$)/, { timeout: 15_000 });
     await expect(page.locator("[data-sessions-screen]")).toHaveAttribute("data-sessions-screen", request?.workspace_id as string);
     await expect(rows).toHaveCount(4);
     await expect(page.locator("[data-session-detail]")).toHaveAttribute("data-session-detail", "failed");

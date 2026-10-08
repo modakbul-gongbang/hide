@@ -28,10 +28,6 @@
       "lines": 290,
       "expect": 103
     },
-    "overview-requests.spec.ts::the request view: what each agent was asked, what came of it, and what is the operator's": {
-      "lines": 202,
-      "expect": 59
-    },
     "overview.spec.ts::a project's Overview: tiles, the Agents graph, and the Issues board": {
       "lines": 827,
       "expect": 328
@@ -40,7 +36,7 @@
       "lines": 120,
       "expect": 44
     },
-    "projects-sidebar.spec.ts::the Projects tab: kind, age, status badges, opened checkouts and folded projects": {
+    "projects-sidebar.spec.ts::the sidebar: kind, age, status badges, opened checkouts and folded projects": {
       "lines": 411,
       "expect": 153
     },
@@ -63,10 +59,6 @@
     "s8.spec.ts::a Project's Sessions: history, filters, a read-only session, failures and two windows": {
       "lines": 244,
       "expect": 88
-    },
-    "sidebar-status.spec.ts::a root waiting on its child, the badge's child list, and the progress line rules": {
-      "lines": 144,
-      "expect": 47
     },
     "worktree-delete.spec.ts::an open deletion dialog receives refreshed Git facts and retires Discard through an A-to-B-to-A return": {
       "lines": 136,
