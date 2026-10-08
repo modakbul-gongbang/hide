@@ -452,6 +452,7 @@ struct Inner {
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
     roots: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
+    readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
 }
 
 impl Drop for Inner {
@@ -502,6 +503,7 @@ impl RemoteHost {
                 gate: Gate::new(),
                 next_id: AtomicU64::new(1),
                 roots: Mutex::new(HashMap::new()),
+                readers: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -521,6 +523,7 @@ impl RemoteHost {
     /// Sends one request and waits at most `timeout` for its answer. Must
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
+        hide_node_link::link::check_reader_call(self, &call)?;
         self.inner.gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, None);
         self.inner.gate.release();
@@ -536,6 +539,7 @@ impl RemoteHost {
         timeout: Duration,
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
+        hide_node_link::link::check_reader_call(self, &call)?;
         self.inner.gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, Some(progress));
         self.inner.gate.release();
@@ -644,6 +648,10 @@ impl RemoteHost {
     /// is taken out again.
     fn send(&self, id: u64, call: Call, timeout: Duration) -> Result<(), LinkError> {
         let inner = &self.inner;
+        if let Err(error) = hide_node_link::link::check_reader_call(self, &call) {
+            lock_recover(&inner.pending).remove(&id);
+            return Err(error);
+        }
         // A cancel adds no effect on the device and is how a draining link
         // ends the reporting calls it waits for.
         let cancels = matches!(call, Call::Cancel { .. });
@@ -715,6 +723,13 @@ impl RemoteHost {
 }
 
 impl NodeLink for RemoteHost {
+    fn reader_features(&self) -> Option<&hide_node_link::sessions::ReaderFeatures> {
+        if self.closed_reason().is_some() || self.inner.gate.stopped().is_some() {
+            return None;
+        }
+        self.inner.readers.get()
+    }
+
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         RemoteHost::call(self, call, timeout)
     }
@@ -896,6 +911,18 @@ pub fn establish(
         host.close("helper protocol mismatch");
         return Err(EstablishError::Helper(reason));
     }
+    let readers = hello.readers();
+    for reason in readers.diagnostics() {
+        crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.reader_advertisement_refused",
+            "target": target,
+            "reason": reason,
+        }));
+    }
+    host.inner.readers.set(readers).map_err(|_| {
+        EstablishError::Helper("The device reader facts were already established".to_owned())
+    })?;
     if panes.is_some() {
         establish_stage(target, "panes", since);
         start_panes(client, &host);
@@ -950,16 +977,11 @@ fn start_panes(client: &RusshRemoteClient, host: &RemoteHost) {
     }
 }
 
-/// Why a started helper is not used: one that answers another protocol reads
-/// this build's requests with other shapes (a helper on protocol 8 ignores
-/// the View diffs a `changes` read carries and answers none, PRD S7 A5).
-/// The refusal is the device's unavailable reason. A device always runs the
-/// helper this Hide carries, installed by the digest of its bytes, so only a
-/// rebuilt or reinstalled Hide clears it: a development `hided` carries the
-/// `hided` it runs as (`host_helper_dir`), and a
-/// stale build there is installed and refused again on every connection.
+/// Protocol24 has an audited transition contract with a frozen reader set.
+/// Every other mismatch is refused before use; ordinary digest-based payload
+/// replacement still installs the helper carried by this build.
 fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
-    (hello.protocol != PROTOCOL_VERSION).then(|| {
+    (!matches!(hello.protocol, 24 | PROTOCOL_VERSION)).then(|| {
         format!(
             "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}; the helper this Hide carries does not match it, so rebuild or reinstall Hide",
             hello.protocol
@@ -1752,6 +1774,7 @@ fn spawn_host(
         gate: Gate::new(),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
+        readers: std::sync::OnceLock::new(),
     });
     let reader = Arc::downgrade(&inner);
     client.runtime.spawn(async move {
@@ -2100,10 +2123,10 @@ mod tests {
         assert_eq!((admission.running, admission.queued), (0, 0));
     }
 
-    /// PRD S7 A5: a helper still on the protocol before the View diffs is
-    /// refused with a reason naming both versions, never used.
+    /// Only the audited protocol24 transition is admitted alongside the
+    /// current protocol; earlier and unknown future contracts are refused.
     #[test]
-    fn a_helper_on_the_previous_protocol_is_refused_with_both_versions() {
+    fn only_the_audited_previous_helper_protocol_is_admitted() {
         let hello = |protocol| Hello {
             protocol,
             version: "0.0.0".to_owned(),
@@ -2113,16 +2136,19 @@ mod tests {
             machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
                 reason: "fixture identity is unavailable".to_owned(),
             },
+            reader_features: None,
         };
-        let refusal = helper_protocol_refusal(&hello(PROTOCOL_VERSION - 1)).expect("refused");
+        let refusal = helper_protocol_refusal(&hello(23)).expect("refused");
         assert_eq!(
             refusal,
             format!(
                 "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}; the helper this Hide carries does not match it, so rebuild or reinstall Hide",
-                PROTOCOL_VERSION - 1
+                23
             )
         );
         assert_eq!(helper_protocol_refusal(&hello(PROTOCOL_VERSION)), None);
+        assert_eq!(helper_protocol_refusal(&hello(24)), None);
+        assert!(helper_protocol_refusal(&hello(PROTOCOL_VERSION + 1)).is_some());
     }
 
     /// An answer line keeps its result as the helper's own text, `null`

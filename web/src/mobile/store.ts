@@ -75,6 +75,8 @@ type PhoneState = {
   pendingOpen: AgentKey | null;
   pendingInput: PendingInput | null;
   inputError: Notice | null;
+  /** One request or failure at a time, keyed by the stable conversation intent. */
+  sleepAction: { sleepId: string; requestId: string | null; error: boolean } | null;
   /** Shown once after pairing: Share › Add to Home Screen (B11). */
   installHint: boolean;
   /** What the start sheet lists; null until hided sends it after the sheet opens. */
@@ -101,6 +103,7 @@ const initial: PhoneState = {
   pendingOpen: null,
   pendingInput: null,
   inputError: null,
+  sleepAction: null,
   installHint: false,
   startCatalog: null,
   startSheet: CLOSED_SHEET,
@@ -136,6 +139,11 @@ export function applyFrame(frame: ServerFrame): void {
       return;
     case "agents":
       patch({ groups: frame.groups, interfaceLanguage: frame.interface_language });
+      return;
+    case "sleep_result":
+      if (state.sleepAction?.requestId === frame.request_id && state.sleepAction?.sleepId === frame.sleep_id) {
+        patch({ sleepAction: { sleepId: frame.sleep_id, requestId: null, error: !frame.ok } });
+      }
       return;
     case "rows": {
       const detail = state.detail;
