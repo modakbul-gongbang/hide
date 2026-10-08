@@ -397,7 +397,7 @@ fn ordinary_click_uses_detected_pane_agent_and_never_sends_enter() {
             .into_iter()
             .filter_map(|control| match control {
                 TerminalControl::Write { pane, data } if pane == pane_id => {
-                    Some(live::decode_base64(&data).unwrap())
+                    Some(hide_node_link::terminal::decode_base64(&data).unwrap())
                 }
                 _ => None,
             })

@@ -256,7 +256,6 @@ fn with_live(runtime: &mut Runtime) {
         .into_owned();
     runtime.live = Some(crate::live::LiveContext {
         socket_path: socket.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket)),
@@ -842,7 +841,6 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
         let mut runtime = shared.lock().unwrap();
         runtime.live = Some(crate::live::LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
             runtime: Arc::downgrade(&shared),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),

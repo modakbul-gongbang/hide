@@ -244,6 +244,20 @@ pub enum TerminalUp {
     },
 }
 
+/// Bytes as every terminal line and control carries them: base64.
+pub fn encode_base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The bytes a terminal line or control carries as base64.
+pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|error| format!("base64 payload could not be decoded: {error}"))
+}
+
 /// One terminal line on a device link, either way: `{"terminal": …}`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TerminalLine<T> {

@@ -198,7 +198,6 @@ fn local_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
     let mut runtime = shared.lock().unwrap();
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_owned(),
-        herdr_bin: None,
         runtime: shared.weak(),
         notifier: ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),

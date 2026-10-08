@@ -42,7 +42,6 @@ fn runtime_on(herdr: &FakeHerdr, checkout_path: &str) -> (Runtime, String) {
     let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_path_buf(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),

@@ -2,8 +2,7 @@
 //! it reads, and the input, resize, scroll and release lines it takes. The
 //! CLI is the official client; this module only frames its lines.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
+pub use hide_node_link::terminal::{decode_base64, encode_base64};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -159,16 +158,6 @@ pub fn session_arguments(mode: Mode, pane_id: &str, rows: u16, cols: u16) -> Vec
         "--rows".to_owned(),
         rows.to_string(),
     ]
-}
-
-pub fn encode_base64(bytes: &[u8]) -> String {
-    BASE64.encode(bytes)
-}
-
-pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
-    BASE64
-        .decode(value)
-        .map_err(|error| format!("base64 payload could not be decoded: {error}"))
 }
 
 #[cfg(test)]

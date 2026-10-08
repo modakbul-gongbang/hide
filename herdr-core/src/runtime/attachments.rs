@@ -825,7 +825,7 @@ impl Runtime {
             let control = TerminalControl::AttachmentDeliver {
                 intent: pending.operation.id.clone(),
                 generation: pending.terminal_generation.unwrap_or_default(),
-                paste: live::encode_base64(paste),
+                paste: hide_node_link::terminal::encode_base64(paste),
             };
             pending.writing = true;
             self.terminals.control(control);
@@ -914,7 +914,7 @@ mod tests {
             .filter_map(|control| match control {
                 TerminalControl::AttachmentDeliver { intent, paste, .. } => {
                     assert_eq!(intent, ID);
-                    Some(live::decode_base64(&paste).unwrap())
+                    Some(hide_node_link::terminal::decode_base64(&paste).unwrap())
                 }
                 _ => None,
             })
@@ -1186,7 +1186,10 @@ mod tests {
                 .filter_map(|control| match control {
                     TerminalControl::AttachmentDeliver {
                         generation, paste, ..
-                    } => Some((*generation, live::decode_base64(paste).unwrap())),
+                    } => Some((
+                        *generation,
+                        hide_node_link::terminal::decode_base64(paste).unwrap(),
+                    )),
                     _ => None,
                 })
                 .collect::<Vec<_>>();

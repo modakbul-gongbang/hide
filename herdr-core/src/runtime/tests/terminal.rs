@@ -312,7 +312,6 @@ fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> SharedRuntime {
         let mut runtime = shared.lock().unwrap();
         runtime.live = Some(live::LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
             runtime: shared.weak(),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),

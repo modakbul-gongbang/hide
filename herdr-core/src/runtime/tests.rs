@@ -477,7 +477,6 @@ pub(super) fn live_runtime() -> Runtime {
         .into_owned();
     runtime.live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
@@ -892,7 +891,6 @@ fn live_tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         .into_owned();
     runtime.live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),

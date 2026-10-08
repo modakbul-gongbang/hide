@@ -699,7 +699,6 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
         .into_owned();
     runtime.live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
@@ -2969,7 +2968,6 @@ fn tab_strip_reorder_asks_herdr_and_lands_only_once_herdr_reports_the_order() {
     let herdr = FakeHerdr::start("tab-move", |_, _| tab_list(&["w-order:t2", "w-order:t1"]));
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_path_buf(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
@@ -3050,7 +3048,6 @@ fn tab_strip_reorder_indexes_a_move_in_the_whole_workspace_not_one_checkout() {
     });
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_path_buf(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
@@ -3181,7 +3178,6 @@ fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
     let herdr = FakeHerdr::start("tab-retry", |_, _| tab_list(&["w-order:t2", "w-order:t1"]));
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_path_buf(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
@@ -3822,7 +3818,6 @@ fn tab_strip_reorder_a_drag_within_one_workspace_uses_that_workspaces_index() {
     let herdr = FakeHerdr::start("split-move", |_, _| tab_list(&["w-right:t2", "w-right:t1"]));
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_path_buf(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
@@ -3919,7 +3914,6 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
     });
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_path_buf(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
@@ -4380,7 +4374,6 @@ fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
         crate::fake_herdr::FakeHerdr::start("rename-busy", |_, _| serde_json::json!({"type":"ok"}));
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_owned(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),

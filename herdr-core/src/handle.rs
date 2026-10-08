@@ -378,7 +378,6 @@ impl Core {
                 Arc::clone(&own_node),
                 own_herdr,
                 socket_path,
-                options.herdr_bin_path.as_deref(),
                 usage_paths,
             )
         } else {

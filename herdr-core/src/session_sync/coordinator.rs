@@ -2098,7 +2098,6 @@ mod worktree_observer_tests {
             let context = SessionSyncContext::local(
                 &LiveContext {
                     socket_path: socket_path.clone(),
-                    herdr_bin: None,
                     runtime: Arc::downgrade(&runtime),
                     notifier,
                     api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(
@@ -2343,7 +2342,6 @@ mod focus_readback_order_tests {
         SessionSyncContext::local(
             &LiveContext {
                 socket_path: herdr.socket_path().to_path_buf(),
-                herdr_bin: None,
                 runtime: Arc::downgrade(runtime),
                 notifier: ChangeNotifier::noop(),
                 api_connector: Arc::new(herdr.connector()),
@@ -2547,7 +2545,6 @@ mod pane_cwd_confirmation_tests {
         SessionSyncContext::local(
             &LiveContext {
                 socket_path: herdr.socket_path().to_path_buf(),
-                herdr_bin: None,
                 runtime: Weak::new(),
                 notifier: ChangeNotifier::noop(),
                 api_connector: Arc::new(herdr.connector()),

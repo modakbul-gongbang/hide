@@ -1618,7 +1618,7 @@ impl Runtime {
         }
         self.terminals.control(TerminalControl::Write {
             pane: pane_id.to_owned(),
-            data: live::encode_base64(bytes),
+            data: hide_node_link::terminal::encode_base64(bytes),
         });
     }
 }

@@ -7,8 +7,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::wire;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -58,11 +56,10 @@ pub use worktree_control::{
     spawn_worktree_open, spawn_worktree_preflight,
 };
 
-/// Everything a terminal session spawn needs from the live configuration.
+/// What live commands and session sync need from the live configuration.
 #[derive(Clone)]
 pub struct LiveContext {
     pub socket_path: PathBuf,
-    pub herdr_bin: Option<PathBuf>,
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
     pub(crate) api_connector: Arc<dyn ApiConnector>,
@@ -2954,12 +2951,10 @@ pub(crate) fn install(
     own_node: Arc<dyn crate::node_access::NodeLink>,
     own_herdr: Arc<dyn ApiConnector>,
     socket_path: &str,
-    herdr_bin: Option<&str>,
     usage_paths: crate::usage::UsagePaths,
 ) -> Option<crate::session_sync::SessionSyncHandle> {
     let context = LiveContext {
         socket_path: PathBuf::from(socket_path),
-        herdr_bin: herdr_bin.map(PathBuf::from),
         runtime: Arc::downgrade(runtime),
         notifier: notifier.clone(),
         api_connector: own_herdr,
@@ -3169,16 +3164,6 @@ pub(crate) fn split_areas(
             ))
         }
     }
-}
-
-pub fn encode_base64(bytes: &[u8]) -> String {
-    BASE64.encode(bytes)
-}
-
-pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
-    BASE64
-        .decode(value)
-        .map_err(|error| format!("base64 payload could not be decoded: {error}"))
 }
 
 #[cfg(test)]
@@ -4603,7 +4588,6 @@ mod tests {
         });
         let context = LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
             runtime: Weak::new(),
             notifier: ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),

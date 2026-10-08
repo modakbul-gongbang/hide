@@ -141,7 +141,6 @@ fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
         .into_owned();
     runtime.live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
