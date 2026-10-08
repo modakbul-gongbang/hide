@@ -272,12 +272,14 @@ fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_notice() {
 #[test]
 fn a_call_hide_ai_never_sent_is_not_counted() {
     // Hide AI's classes for a request no provider took, and ones that may
-    // follow a model turn (D-34).
+    // follow a model turn (D-34): a provider past its restart cap is
+    // reported unavailable after its turn answered.
     for (reason, counted) in [
         ("disabled", 0),
+        ("no_provider", 0),
         ("not_authenticated", 0),
         ("usage_limited", 0),
-        ("provider_unavailable", 0),
+        ("provider_unavailable", 1),
         ("transient", 1),
         ("over_budget", 1),
         ("timeout", 1),
@@ -1212,8 +1214,9 @@ fn a_task_verified_while_its_factory_is_paused_goes_to_a_person_s_merge() {
         TaskState::MergeWaiting,
         "a person can merge (B41)"
     );
-    assert!(
-        h.world().premerge_calls <= premerge + 1,
+    assert_eq!(
+        h.world().premerge_calls,
+        premerge + 1,
         "its merge check runs once, not per tick"
     );
     let merged = h.op(Command::Merge { task: t.clone() });
@@ -1222,6 +1225,54 @@ fn a_task_verified_while_its_factory_is_paused_goes_to_a_person_s_merge() {
         h.state(&f, &t),
         TaskState::Landed | TaskState::Done
     ));
+}
+
+#[test]
+fn a_task_its_merge_check_sends_back_during_a_pause_reaches_its_worker_only_on_resume() {
+    for (answer, letter) in [
+        (
+            PreMerge::Conflict {
+                files: vec!["src/lib.rs".into()],
+            },
+            "rebase",
+        ),
+        (
+            PreMerge::QuickCheckFailed {
+                check: "cargo check".into(),
+            },
+            "검증 실패",
+        ),
+    ] {
+        let mut h = Bench::new(false);
+        let f = h.factory(false);
+        let t = h.ready("Sent back while paused", &[]);
+        h.world().hold_judgments = true;
+        h.done(&f, &t);
+        h.op(Command::PauseFactory { project: None });
+        h.world()
+            .premerge
+            .insert(t.clone(), [answer].into_iter().collect());
+        h.world().hold_judgments = false;
+        let wakes = h.world().wakes.len();
+        let letters = letters_to(&h, &t).len();
+        for _ in 0..3 {
+            h.engine.tick();
+        }
+        assert_eq!(h.state(&f, &t), TaskState::Running, "{letter}");
+        assert_eq!(h.world().wakes.len(), wakes, "no turn starts: {letter}");
+        assert_eq!(letters_to(&h, &t).len(), letters, "{letter}");
+        assert!(h.task(&f, &t).worker.expect("worker").asleep, "{letter}");
+        h.op(Command::ResumeFactory { project: None });
+        let woken: Vec<String> = h
+            .world()
+            .wakes
+            .iter()
+            .filter(|(to, _)| to == &t)
+            .map(|(_, body)| body.clone())
+            .collect();
+        assert_eq!(woken.len(), 1, "{woken:?}");
+        assert!(woken[0].contains(letter), "{woken:?}");
+    }
 }
 
 #[test]

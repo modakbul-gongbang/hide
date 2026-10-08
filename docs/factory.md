@@ -310,8 +310,8 @@ It is refused for an answer a person gave (`already_answered`) and on a finished
 
 **The daily cap.**
 A Factory sends at most `observer_daily_limit` (100, from 1 to 1000) Observer calls a day, counted by the machine's local day.
-A call the provider never received gives its count back: Hide AI off, no agent to run it, a full judgment queue, an unsupported request, a paused Factory, or a provider that refused it before any model turn (not logged in, at its usage limit, or unavailable).
-A transient failure and a spent Hide AI budget count, since either can follow a turn.
+A call the provider never received gives its count back: Hide AI off, no agent to run it, a full judgment queue, an unsupported request, or a provider that refused it before any model turn (not logged in or at its usage limit); a paused Factory sends and charges nothing.
+A transient failure, a spent Hide AI budget and an unavailable provider count, since each can follow a turn: Hide AI reports a provider past its restart cap as unavailable after the turn answered.
 At the cap nothing is sent, the request goes to a person, and the first refusal of the day leaves one `daily_limit` notice.
 
 **A quiet worker.**
@@ -342,7 +342,8 @@ In 직접 and 함께 a risk path always waits for a person.
 **Pausing a Factory.**
 `hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends; a request that arrives meanwhile goes to a person.
 A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing.
-A Task verified while paused that a person must merge, by its mode or a gate such as a failed check, goes through its usual merge checks to `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
+A Task verified while paused that a person must merge, by its mode, an open question or a gate such as a failed check or a risk path, goes through its usual merge checks to `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
+A Task sent back to its worker while paused, by a conflict with main, a failed check or a person, goes back to `running` with its worker asleep, and the worker hears why on resume.
 A Factory AI verdict asked before the pause still lands: an answer reaches the sleeping worker on resume, while a risk-path approval merges nothing and is asked again on resume, and a diagnosis is set aside.
 `hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path unless main is broken.
 

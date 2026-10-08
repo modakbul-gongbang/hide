@@ -4329,6 +4329,18 @@ impl Engine {
         let Some(worker) = self.task(factory, id).and_then(|t| t.worker.clone()) else {
             return;
         };
+        if self.factories.get(factory).is_some_and(|f| f.paused) {
+            // A paused Factory starts no turn (D-48): the worker sleeps and
+            // the resume hands it this, whoever sent the Task back.
+            self.with_task(factory, id, |task| {
+                task.flags
+                    .push(format!("pending reply: {}", judgment::cut(body, 2000)))
+            });
+            if !worker.asleep {
+                self.put_to_sleep(factory, id);
+            }
+            return;
+        }
         self.keep(factory, Some(id), "letter.out", "wake", body);
         let now = self.now();
         let result = if worker.asleep {
