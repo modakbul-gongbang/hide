@@ -81,7 +81,7 @@ def integration_close(self,workspace):
   import json
   write_private(self.run/'integration-observations.json',json.dumps(self.integration_observations).encode())
 def guardian_after_workspace(self,args,**kwargs):
- if args[:2]==['agent','start']:
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='guardian' and args[:2]==['agent','start']:
   try:
    self.owner.run([sys.executable,'-c','raise SystemExit(125)'],env=self.env,check=False)
   except ProcessSafetyError:
