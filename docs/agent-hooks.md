@@ -516,3 +516,8 @@ Install and remove are deliberately not CLI subcommands: writing to the operator
 
 The operator's real `~/.claude/settings.json` and `~/.codex/hooks.json` are never a test target.
 Every test in this crate builds its own `HOME` fixture and asserts against that.
+
+OpenCode's plugin is tested at three layers, none of which runs the operator's OpenCode.
+`hide-agent-hooks/src/opencode/tests.rs` writes, judges and removes the file in a fixture `HOME`, and `tests/it/opencode_helper.rs` runs the built helper beside a stand-in `hide` that records each call.
+`tests/it/opencode_plugin.rs` runs `tests/opencode/plugin.test.mjs` in Node 22, which loads the generated plugin as OpenCode does and calls its hooks with OpenCode 1.18.30's event and hook shapes (`tests/fixtures/opencode/events-1.18.30.json`) against a stand-in helper; the rust lane installs Node for it.
+`web/e2e/opencode-plugin.spec.ts` lets the kit write the plugin into a private `HOME`, runs a small OpenCode stand-in (`web/e2e/opencode-host.ts`) that loads it in two panes of the pinned Herdr, reports itself the way Herdr's OpenCode integration does, and checks a letter on the next prompt and its confirmation once stored, the spawn guard's refusal, and the subagent counts Herdr receives.
