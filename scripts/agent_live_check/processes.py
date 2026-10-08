@@ -513,6 +513,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                 child.wait(timeout=1)
                 # No group signal after wait: a future reused PGID is not ours.
                 end = time.monotonic() + 2
+                term_deadlines = {}
                 while True:
                     if sys.platform.startswith("linux"):
                         linux_children_remain()
@@ -522,12 +523,26 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "") 
                         signal_proven(dict(observed), signal.SIGKILL, skip_group=False)
                         raise
                     live_extras = [p for p in remaining.values() if not p.zombie]
+                    identities = {(p.pid, p.birth) for p in live_extras}
+                    term_deadlines = {key: value for key, value in term_deadlines.items() if key in identities}
+                    new = {p.pid: p for p in live_extras if (p.pid, p.birth) not in term_deadlines}
+                    errors = []
+                    for signum in (signal.SIGCONT, signal.SIGTERM):
+                        errors.extend(signal_proven(new, signum, skip_group=False))
+                    for p in new.values():
+                        term_deadlines[p.pid, p.birth] = min(end, time.monotonic() + 0.5)
                     # The released PGID grants no signal authority. Retained
                     # group proofs and readable tokens still authorize each
                     # independently rechecked birth, including same-group peers.
-                    errors = signal_proven({p.pid: p for p in live_extras}, signal.SIGKILL, skip_group=False)
+                    expired = {p.pid: p for p in live_extras
+                               if time.monotonic() >= term_deadlines[p.pid, p.birth]}
+                    errors.extend(signal_proven(expired, signal.SIGKILL, skip_group=False))
                     if errors:
-                        raise ProcessError("owned_signal_failures:" + json.dumps(errors, separators=(",", ":")))
+                        # Preserve the failure while allowing other proven
+                        # peers their grace/KILL and absence confirmation.
+                        failed = True
+                        sys.stderr.write("guardian_signal_failure:owned_signal_failures:" +
+                                         json.dumps(errors, separators=(",", ":")) + "\n")
                     if not group_exists(group) and not any(p.group != group for p in remaining.values()):
                         confirmed = True
                         break
