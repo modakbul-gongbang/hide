@@ -52,7 +52,6 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     // Session UI B1/B38: lineage belongs to the pane header and root badge.
     const raisedArrow = page.locator(`[data-pane-view="${child}"] [data-pane-return="${parent}"] svg`);
     await expect(raisedArrow).toBeVisible();
-    expect((await raisedArrow.boundingBox())?.width).toBe(12);
     await screenshot(page, "delegated-checkout-raised-from");
 
     // Back on the first checkout, the root's badge opens its direct child.

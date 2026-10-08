@@ -112,7 +112,7 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     // reads it; the row is the operator's to answer, with the approval mark.
     await moveState(herdr, pane, "working");
     await moveState(herdr, pane, "unknown");
-    const waiting = page.locator(`[data-agent-group="needs_you"] [data-pane="${pane}"]`);
+    const waiting = page.locator(`[data-raised-group="needs_you"] [data-pane="${pane}"]`);
     await expect(waiting).toBeVisible({ timeout: 20_000 });
     await expect(waiting.locator('[data-mark="!"]')).toBeVisible();
     await screenshot(page, "codex-plan-approval-waiting");
@@ -128,7 +128,7 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     const current = seqOf(herdr, pane);
     await expect.poll(() => turnRead(daemon!, pane), { message: "the session is read for the current state", timeout: 20_000 }).toEqual({ seq: current, mode: "other" });
     await expect(row).toBeVisible();
-    await expect(page.locator(`[data-agent-group="needs_you"] [data-pane="${pane}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${pane}"]`)).toHaveCount(0);
     await screenshot(page, "codex-plan-approval-approved");
   } finally {
     daemon?.stop();
