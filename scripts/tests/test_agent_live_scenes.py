@@ -33,17 +33,18 @@ class ScenePreparation(unittest.TestCase):
                     screens, queries, sent = [], [], []
                     ordinal = 1 if phase == "arrival" else 2
                     current = "Sign in to continue" if failure == "authentication" else "current received frame"
-                    def screen(pane):
+                    def screen(pane, **kwargs):
                         screens.append(pane)
                         return current if len(screens) == ordinal else "READY before"
-                    def agent(pane):
+                    def agent(pane, **kwargs):
                         queries.append(pane)
                         if failure == "identity" and len(queries) == ordinal:
                             raise ProcessError("fixture_identity_query_failed")
                         return {"agent_status": "idle"}
                     runtime = SimpleNamespace(fixture_bin=None, screen=screen, agent=agent,
-                                              send=lambda pane, text: sent.append(text),
-                                              owner=SimpleNamespace(cancelled=threading.Event()))
+                                              send=lambda pane, text, **kwargs: sent.append(text),
+                                              owner=SimpleNamespace(deadline=time.monotonic() + 5,
+                                                                    cancelled=threading.Event()))
                     recipe = {"kind": "claude", "scenes": {"rest": {
                         "send": "", "arrived": "READY", "draft": "never", "no_match": "never", "unsafe": "never"}}}
                     expected = ProcessError if failure == "identity" else AuthenticationRequired
@@ -230,13 +231,14 @@ class ScenePreparation(unittest.TestCase):
             screens = ["❯ ", LABEL + "\nWorking", LABEL + "\n❯ "]
             statuses = ["idle", "working", "done"]
             session = {"kind": "id", "source": "herdr:" + key, "value": "owned-native-session"}
-            def agent(pane):
+            def agent(pane, **kwargs):
                 value = {"agent_status": statuses[index[0]], "agent_session": session}
                 index[0] += 1
                 return value
-            runtime = SimpleNamespace(fixture_bin=None, screen=lambda pane: screens[index[0]], agent=agent,
-                                      send=lambda pane, text: submitted.append(text),
-                                      owner=SimpleNamespace(cancelled=threading.Event()))
+            runtime = SimpleNamespace(fixture_bin=None, screen=lambda pane, **kwargs: screens[index[0]], agent=agent,
+                                      send=lambda pane, text, **kwargs: submitted.append(text),
+                                      owner=SimpleNamespace(deadline=time.monotonic() + 5,
+                                                            cancelled=threading.Event()))
             result = seed(runtime, "owned", recipe, Path("/unused"), {"session_root": None}, 2)
             self.assertEqual(len(submitted), 1)
             self.assertEqual(result["visible_tokens"], [LABEL])

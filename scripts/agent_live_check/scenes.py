@@ -3,12 +3,12 @@
 import json
 from pathlib import Path
 import re
-import time
 
 from .conversation import bell_turn, messages
 from .authentication import AuthenticationRequired, require_no_login
 from .processes import ProcessError
 from .protection import ProtectionError, beneath, write_private
+from .timing import Deadline, ObservationTimeout
 
 
 def matches(pattern: str, screen: str, bell: str) -> bool:
@@ -92,22 +92,26 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
            "effect": "not_tested", "reason": "scene_not_observed", "evidence": evidence.name}
     samples = []
     before = None
+    phase = "arrival"
     try:
         if data["send"]:
             runtime.send(pane, data["send"])
         # Observe after the trigger has been submitted. Guarded transport
         # startup must not consume the window before its first screen read.
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            screen = runtime.screen(pane)
+        deadline = Deadline(runtime.owner, seconds)
+        while not deadline.expired():
+            screen = runtime.screen(pane, seconds=deadline.command_seconds())
             sample = {"phase": "arrival", "screen": screen, "agent": None}
             samples = [sample]
+            deadline.remaining()
             require_no_login(screen)
-            agent = runtime.agent(pane)
+            agent = runtime.agent(pane, seconds=deadline.command_seconds())
             sample["agent"] = agent
+            deadline.remaining()
             previous_visible = (scene != "resume_picker" or runtime.fixture_bin or
                                 (previous_session and any(token in screen for token in previous_session["visible_tokens"])))
             if agent and arrived(data, screen, bell) and previous_visible:
+                deadline.remaining()
                 before = {"screen": screen, "agent": agent}
                 break
             runtime.wait(lambda: True, 0.01)
@@ -121,6 +125,7 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         row.update(arrival="reached", status=before["agent"]["agent_status"])
         samples = [{"phase": "before", **before}]
         if row["status"] == "blocked":
+            deadline.remaining()
             row.update(effect="guarded", reason="Herdr_blocked_no_bell_typed")
             return row
         # The deliberate unguarded input is the experiment; agent.prompt would
@@ -131,17 +136,20 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         from .protection import stamp
         configuration = {path: stamp(path) for path in overlay["settings"]}
         existing_probes = {path.name for path in cwd.glob("probe-*.txt")}
-        runtime.send(pane, bell)
-        deadline = time.monotonic() + seconds
+        runtime.send(pane, bell, deadline=deadline)
+        phase = "effect"
+        deadline = Deadline(runtime.owner, seconds)
         effect = "ambiguous"
         reason = "no_positive_effect_evidence"
-        while time.monotonic() < deadline:
-            screen = runtime.screen(pane)
+        while not deadline.expired():
+            screen = runtime.screen(pane, seconds=deadline.command_seconds())
             sample = {"phase": "after", "screen": screen, "agent": None}
             samples = [samples[0], sample]
+            deadline.remaining()
             require_no_login(screen)
-            agent = runtime.agent(pane)
+            agent = runtime.agent(pane, seconds=deadline.command_seconds())
             sample["agent"] = agent
+            deadline.remaining()
             if any(stamp(path) != original for path, original in configuration.items()):
                 effect, reason = "settings_write", "private_settings_or_trust_changed_after_bell"
                 break
@@ -158,11 +166,13 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
                 effect, reason = ("selection" if scene.endswith("picker") or scene == "startup"
                                   else "approval"), "explicit_completed_action"
                 break
+            deadline.remaining()
             if matches(data["no_match"], screen, bell) and scene.endswith("picker"):
                 effect, reason = "no_match", "picker_reports_no_matches"
                 break
             if file:
                 fresh = messages(file, recipe["kind"])[len(previous):]
+                deadline.remaining()
                 if bell_turn(fresh, bell):
                     effect, reason = "new_turn", "native_user_bell_then_assistant_reply"
                     break
@@ -172,7 +182,12 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
         # seeing the compositor briefly while input is submitted is not a draft.
         if effect == "ambiguous" and samples and matches(data["draft"], samples[-1]["screen"], bell):
             effect, reason = "unsent_draft", "bell_remains_in_composer_at_deadline"
+        if effect in ("ambiguous", "no_match", "new_turn"):
+            deadline.remaining()
         row.update(effect=effect, reason=reason)
+        return row
+    except ObservationTimeout:
+        row.update(arrival="timeout", effect="not_tested", reason=phase + "_deadline")
         return row
     except AuthenticationRequired:
         row.update(arrival="skipped", effect="not_tested", reason="not_authenticated_no_login_attempted")

@@ -1,0 +1,178 @@
+"""Expired external replies cannot qualify a bounded observation or new input.
+
+The independent counterexample is Code C1: a one-second phase receives a
+matching reply after 1.1 seconds. Herdr responses and the clock are the only
+substituted boundaries; the real screen, identity and input adapters run.
+"""
+
+import json
+from pathlib import Path
+import sys
+import tempfile
+import threading
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from agent_live_check.delivery import measure
+from agent_live_check.history import LABEL, seed
+from agent_live_check.runtime import Runtime
+from agent_live_check.scenes import observe
+
+
+class HerdrReplies(Runtime):
+    """Finite external CLI replies, without a Herdr server or provider."""
+
+    def __init__(self, root, *, late=None, effect="NO MATCH", history=False, status="idle"):
+        self.clock = [100.0]
+        self.owner = type("Owner", (), {"deadline": 500, "cancelled": threading.Event()})()
+        self.fixture_bin = None
+        self.root, self.late, self.effect, self.history = root, late, effect, history
+        self.status = status
+        self.counts, self.inputs, self.budgets = {}, [], []
+        self.session = {"kind": "path", "source": "herdr:claude", "value": str(root / "native.jsonl")}
+        self.after_reply = lambda kind, ordinal: None
+
+    def command(self, args, *, seconds=15, **kwargs):
+        kind = "screen" if args[:2] == ["pane", "read"] else "agent" if args == ["agent", "list"] else "input"
+        ordinal = self.counts.get(kind, 0) + 1
+        self.counts[kind] = ordinal
+        self.budgets.append(seconds)
+        if kind == "input":
+            self.inputs.append(args[-1])
+        self.clock[0] += 1.1 if (kind, ordinal) == self.late else 0.025
+        if self.history:
+            status = ["idle", "working", "done"][min(self.counts.get("agent", 0), 2)]
+            screen = LABEL + "\nREADY" if self.counts.get("agent", 0) >= 2 else "READY"
+        else:
+            status = self.status
+            screen = self.effect if ordinal >= 3 else "READY"
+        self.after_reply(kind, ordinal)
+        if kind == "screen":
+            return 0, screen, ""
+        if kind == "agent":
+            if self.history:
+                status = ["idle", "working", "done"][min(ordinal - 1, 2)]
+            agent = {"pane_id": "owned", "agent_status": status, "agent_session": self.session}
+            return 0, json.dumps({"result": {"agents": [agent]}}), ""
+        return 0, "", ""
+
+    def send_letter(self, pane, intent, body):
+        self.marker = body.rsplit(" ", 1)[-1]
+        return "private-letter"
+
+
+class ObservationDeadlines(unittest.TestCase):
+    def recipe(self, kind="claude", unsafe="SELECTED"):
+        scene = {"send": "", "arrived": "READY", "draft": "DRAFT", "no_match": "NO MATCH", "unsafe": unsafe}
+        return {"kind": kind, "scenes": {"model_picker": scene, "rest": scene}}
+
+    def observe(self, root, runtime, seconds=1):
+        evidence = root / ("scene-" + str(len(list(root.glob("scene-*.json")))) + ".json")
+        with patch("time.monotonic", lambda: runtime.clock[0]):
+            result = observe(runtime, "owned", self.recipe(), "model_picker", "bell", root,
+                             seconds, evidence, root, {"session_root": root, "settings": []})
+        return result, json.loads(evidence.read_text())
+
+    def test_late_arrival_or_identity_retains_frame_and_never_types(self):
+        for late in (("screen", 1), ("agent", 1)):
+            with self.subTest(late=late), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                runtime = HerdrReplies(root, late=late, status="blocked")
+                result, record = self.observe(root, runtime)
+                self.assertEqual((result["arrival"], result["effect"]), ("timeout", "not_tested"))
+                self.assertEqual(record["samples"][-1]["screen"], "READY")
+                self.assertEqual(runtime.inputs, [])
+
+    def test_input_authentication_read_cannot_renew_arrival_deadline(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            runtime = HerdrReplies(root, late=("screen", 2))
+            result, _ = self.observe(root, runtime)
+            self.assertEqual(result["reason"], "arrival_deadline")
+            self.assertEqual(runtime.inputs, [])
+
+    def test_late_effect_read_cannot_certify_no_match(self):
+        for late in (("screen", 3), ("agent", 2)):
+            with self.subTest(late=late), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                runtime = HerdrReplies(root, late=late)
+                result, record = self.observe(root, runtime)
+                self.assertEqual(result["effect"], "not_tested")
+                self.assertEqual(result["reason"], "effect_deadline")
+                self.assertEqual(record["samples"][-1]["screen"], "NO MATCH")
+                self.assertEqual(runtime.inputs, ["bell"])
+
+    def test_native_bell_turn_must_be_observed_before_effect_deadline(self):
+        for late in (("screen", 3), ("agent", 2), None):
+            with self.subTest(late=late), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                runtime = HerdrReplies(root, late=late, effect="ANSWER")
+                file = root / "native.jsonl"
+                file.write_text("")
+                def reply(kind, ordinal):
+                    if kind == "screen" and ordinal == 3:
+                        rows = [{"type": role, "message": {"role": role, "content": text}}
+                                for role, text in (("user", "bell"), ("assistant", "ANSWER"))]
+                        file.write_text("\n".join(json.dumps(row) for row in rows))
+                runtime.after_reply = reply
+                result, record = self.observe(root, runtime)
+                self.assertEqual(result["effect"], "not_tested" if late else "new_turn")
+                self.assertEqual(record["samples"][-1]["screen"], "ANSWER")
+                self.assertEqual(runtime.inputs, ["bell"])
+
+    def test_timely_safe_and_unsafe_evidence_keep_separate_phase_windows(self):
+        for effect, expected in (("NO MATCH", "no_match"), ("SELECTED", "selection")):
+            with self.subTest(effect=effect), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                runtime = HerdrReplies(root, effect=effect)
+                result, _ = self.observe(root, runtime)
+                self.assertEqual((result["arrival"], result["effect"]), ("reached", expected))
+                self.assertEqual(runtime.inputs, ["bell"])
+                self.assertTrue(all(0 < budget <= 1 for budget in runtime.budgets))
+
+    def test_large_window_keeps_command_cap_and_global_owner_deadline(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            runtime = HerdrReplies(root)
+            self.assertEqual(self.observe(root, runtime, 120)[0]["effect"], "no_match")
+            self.assertTrue(all(value == 15 for value in runtime.budgets))
+            runtime = HerdrReplies(root, late=("agent", 1))
+            runtime.owner.deadline = 100.5
+            self.assertEqual(self.observe(root, runtime, 120)[0]["arrival"], "timeout")
+            self.assertTrue(all(0 < value <= .5 for value in runtime.budgets))
+
+    def test_seed_cannot_submit_or_certify_after_late_native_replies(self):
+        for late, input_count in ((("screen", 1), 0), (("agent", 1), 0),
+                                  (("screen", 2), 0), (("agent", 3), 1), (None, 1)):
+            with self.subTest(late=late), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                runtime = HerdrReplies(root, late=late, history=True)
+                runtime.session = {"kind": "id", "source": "herdr:grok", "value": "native-history"}
+                with patch("time.monotonic", lambda: runtime.clock[0]):
+                    result = seed(runtime, "owned", self.recipe("grok"), root, {"session_root": root}, 1)
+                self.assertEqual(result["status"], "unknown" if late else "native_prompt_completed")
+                self.assertEqual(len(runtime.inputs), input_count)
+
+    def test_delivery_rejects_late_marker_and_cannot_type_after_auth_read_expires(self):
+        for late in (("screen", 2), ("agent", 2), ("screen", 3), None):
+            with self.subTest(late=late), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                runtime = HerdrReplies(root, late=late)
+                file = root / "native.jsonl"
+                file.write_text("")
+                def reply(kind, ordinal):
+                    if kind == "agent" and ordinal == 2 and late != ("screen", 3):
+                        rows = [{"type": role, "message": {"role": role, "content": text}}
+                                for role, text in (("user", "bell"), ("assistant", runtime.marker))]
+                        file.write_text("\n".join(json.dumps(row) for row in rows))
+                runtime.after_reply = reply
+                with patch("time.monotonic", lambda: runtime.clock[0]):
+                    result = measure(runtime, "owned", self.recipe(), root, root, "bell", 1,
+                                     {"session_root": root})
+                self.assertEqual(result["outcome"], "unknown" if late else "verified")
+                self.assertEqual(runtime.inputs, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

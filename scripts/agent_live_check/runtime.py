@@ -15,6 +15,7 @@ import urllib.request
 from .processes import MAX_OUTPUT, OwnedProcesses, ProcessError
 from .authentication import require_no_login
 from .protection import ProtectionError, beneath, private_directory, validate_isolation, write_private
+from .timing import Deadline
 
 
 def clean_env() -> dict[str, str]:
@@ -282,9 +283,16 @@ class Runtime:
         agents = self.json(["agent", "list"], seconds=seconds)["agents"]
         return next((agent for agent in agents if agent["pane_id"] == pane), None)
 
-    def send(self, pane, text):
-        require_no_login(self.screen(pane))
-        self.command(["pane", "run", pane, text])
+    def send(self, pane, text, *, deadline: Deadline | None = None):
+        if deadline is None:
+            require_no_login(self.screen(pane))
+            self.command(["pane", "run", pane, text])
+            return
+        require_no_login(self.screen(pane, seconds=deadline.command_seconds()))
+        # The authentication read and mandatory transport cleanup can finish
+        # after their budget. Never start input using that expired evidence.
+        self.command(["pane", "run", pane, text], seconds=deadline.command_seconds())
+        deadline.remaining()
 
     def send_letter(self, pane, intent, body):
         if pane not in self.pane_credentials:
