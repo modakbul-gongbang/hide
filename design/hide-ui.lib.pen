@@ -12279,131 +12279,150 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "28pt 첫 줄. 알려진 자식이 있으면 24pt 한 줄 추가. 480pt 미만에서 부모 이름을 숨기고 24pt 복귀 아이콘은 유지. 종류별 toolbar는 16번 시트를 따른다.",
+          "content": "v9: one quiet identity, shared direct-child badge and one opaque band over the terminal. At 344 and 400, the parent is an icon and title/reason truncate; time, actions, PR, badge and window controls stay. No extra child row or relationship sheet.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
         },
         {
           "type": "text",
-          "id": "qzyeG",
-          "name": "Width 344",
+          "id": "cNJvU",
+          "name": "344 · child pane",
           "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "344pt · 자식의 부모 복귀",
+          "content": "344 · child pane",
           "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
+          "fontSize": "$--text-caption",
           "fontWeight": "normal"
         },
         {
-          "type": "text",
-          "id": "d5Hsl6",
-          "name": "Width 400",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "400pt · 자식의 부모 복귀",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "uclFG",
-          "name": "Plain terminal label",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Plain terminal",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "ub2WA",
-          "name": "Browser label",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Browser",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "uvjC4",
-          "name": "File label",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "File",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "j61p9",
-          "name": "Diff label",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Diff",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "QNJEY",
-          "name": "Detected but uninstrumented label",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Detected but uninstrumented · 알려진 자식 없음",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "a9t7j",
-          "name": "Disconnected retained agent label",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Disconnected retained agent · 알려진 자식 없음",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "type": "text",
-          "id": "N88zC",
-          "name": "Instrumentation contract",
-          "fill": "$--subtle-foreground",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Unknown 안내는 agent detected + 계측 불가일 때만. 일반 terminal에는 미계측 줄 없음. tooltip/help에 상태와 확인 범위를 함께 제공.",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
-        },
-        {
-          "id": "Kg0Gk",
+          "id": "KHJnj",
           "type": "ref",
-          "ref": "ZvLjg",
-          "name": "Disconnected retained agent",
-          "width": 740,
+          "ref": "Z3BnL",
+          "name": "Narrow identity 344",
+          "width": 344,
           "descendants": {
-            "JLRBz": {
-              "enabled": false,
-              "width": 740
+            "XnWql": {
+              "enabled": true
+            },
+            "LiVL9": {
+              "content": "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토"
             }
           }
+        },
+        {
+          "type": "text",
+          "id": "KI7IG",
+          "name": "400 · child pane",
+          "fill": "$--subtle-foreground",
+          "content": "400 · child pane",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "Ap7wf",
+          "type": "ref",
+          "ref": "Z3BnL",
+          "name": "Narrow identity 400",
+          "width": 400,
+          "descendants": {
+            "XnWql": {
+              "enabled": true
+            },
+            "LiVL9": {
+              "content": "긴 한국어 제목을 좁은 pane에서 확인하는 상태 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "WybIq",
+          "name": "Plain terminal · no state band or child row",
+          "fill": "$--subtle-foreground",
+          "content": "Plain terminal · no state band or child row",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "WtKNx",
+          "name": "Shell identity",
+          "width": 400,
+          "height": 28,
+          "fill": "$--color-selected-wash",
+          "gap": "$--spacing-xs",
+          "padding": [
+            0,
+            "$--spacing-sm"
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "rHLeO",
+              "name": "Shell",
+              "width": 14,
+              "height": 14,
+              "icon": "terminal-square",
+              "library": "lucide",
+              "fill": "$--muted-foreground"
+            },
+            {
+              "type": "text",
+              "id": "CvGJf",
+              "name": "Shell title",
+              "fill": "$--foreground",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "zsh · project",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "z6Orpo",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "maximize",
+              "width": 24,
+              "height": 24,
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "maximize",
+                  "fill": "$--muted-foreground"
+                }
+              }
+            },
+            {
+              "id": "u39VR",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "ellipsis",
+              "width": 24,
+              "height": 24,
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "ellipsis",
+                  "fill": "$--muted-foreground"
+                }
+              }
+            },
+            {
+              "id": "CM7Yd",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "x",
+              "width": 24,
+              "height": 24,
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "x",
+                  "fill": "$--muted-foreground"
+                }
+              }
+            }
+          ]
         }
       ]
     },
