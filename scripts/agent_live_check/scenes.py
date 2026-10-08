@@ -186,11 +186,20 @@ def observe(runtime, pane: str, recipe: dict, scene: str, bell: str,
             deadline.remaining()
         row.update(effect=effect, reason=reason)
         return row
-    except ObservationTimeout:
-        row.update(arrival="timeout", effect="not_tested", reason=phase + "_deadline")
-        return row
     except AuthenticationRequired:
         row.update(arrival="skipped", effect="not_tested", reason="not_authenticated_no_login_attempted")
         raise
+    except ProcessError as error:
+        effect_read_expired = (phase == "effect" and type(error) is ProcessError
+                               and str(error) == "command_timeout" and deadline.expired()
+                               and deadline.end < runtime.owner.deadline)
+        if runtime.owner.cancelled.is_set() or not (isinstance(error, ObservationTimeout) or effect_read_expired):
+            raise
+        if row["arrival"] == "reached":
+            # A later expiry cannot revoke timely arrival or certify an effect.
+            row.update(effect="ambiguous", reason=phase + "_deadline")
+        else:
+            row.update(arrival="timeout", effect="not_tested", reason=phase + "_deadline")
+        return row
     finally:
         write_private(evidence, (json.dumps({"observation": row, "samples": samples}, indent=2) + "\n").encode())

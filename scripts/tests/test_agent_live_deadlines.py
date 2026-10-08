@@ -19,7 +19,7 @@ from agent_live_check.delivery import measure
 from agent_live_check.history import LABEL, seed
 from agent_live_check.runtime import Runtime
 from agent_live_check.scenes import observe
-from agent_live_check.processes import COMMAND_SECONDS, OwnedProcesses, ProcessError
+from agent_live_check.processes import COMMAND_SECONDS, OwnedProcesses, ProcessError, ProcessSafetyError
 from agent_live_check.timing import Deadline
 
 
@@ -125,7 +125,7 @@ class ObservationDeadlines(unittest.TestCase):
                 root = Path(name)
                 runtime = HerdrReplies(root, late=late)
                 result, record = self.observe(root, runtime)
-                self.assertEqual(result["effect"], "not_tested")
+                self.assertEqual((result["arrival"], result["effect"]), ("reached", "ambiguous"))
                 self.assertEqual(result["reason"], "effect_deadline")
                 self.assertEqual(record["samples"][-1]["screen"], "NO MATCH")
                 self.assertEqual(runtime.inputs, ["bell"])
@@ -144,9 +144,44 @@ class ObservationDeadlines(unittest.TestCase):
                         file.write_text("\n".join(json.dumps(row) for row in rows))
                 runtime.after_reply = reply
                 result, record = self.observe(root, runtime)
-                self.assertEqual(result["effect"], "not_tested" if late else "new_turn")
+                self.assertEqual((result["arrival"], result["effect"]),
+                                 ("reached", "ambiguous" if late else "new_turn"))
                 self.assertEqual(record["samples"][-1]["screen"], "ANSWER")
                 self.assertEqual(runtime.inputs, ["bell"])
+
+    def test_effect_phase_timeout_preserves_arrival_without_hiding_fatal_or_early_failures(self):
+        cases = [
+            (("screen", 3), ProcessError("command_timeout"), 16.1, False, 500, True),
+            (("agent", 2), ProcessError("command_timeout"), 16.1, False, 500, True),
+            (("screen", 1), ProcessError("command_timeout"), 16.1, False, 500, False),
+            (("screen", 3), ProcessSafetyError("command_timeout"), 16.1, False, 500, False),
+            (("screen", 3), ProcessError("command_output_over_budget"), 16.1, False, 500, False),
+            (("screen", 3), ProcessError("run_cancelled"), 16.1, False, 500, False),
+            (("screen", 3), ProcessError("command_timeout"), .1, False, 500, False),
+            (("screen", 3), ProcessError("command_timeout"), 16.1, True, 500, False),
+            (("screen", 3), ProcessError("command_timeout"), 16.1, False, 110, False),
+        ]
+        for failed, error, delay, cancel, owner_end, observed in cases:
+            with self.subTest(failed=failed, error=repr(error), delay=delay, cancel=cancel, owner_end=owner_end):
+                with tempfile.TemporaryDirectory() as name:
+                    root = Path(name)
+                    runtime = HerdrReplies(root, late=failed, late_seconds=delay, effect="SELECTED")
+                    runtime.owner.deadline = owner_end
+                    def failure(kind, ordinal):
+                        if (kind, ordinal) == failed:
+                            if cancel:
+                                runtime.owner.cancelled.set()
+                            raise error
+                    runtime.after_reply = failure
+                    if observed:
+                        result, record = self.observe(root, runtime)
+                        self.assertEqual((result["arrival"], result["effect"], result["reason"]),
+                                         ("reached", "ambiguous", "effect_deadline"))
+                        self.assertEqual(record["observation"], result)
+                    else:
+                        with self.assertRaises(type(error)) as raised:
+                            self.observe(root, runtime)
+                        self.assertIs(raised.exception, error)
 
     def test_timely_safe_and_unsafe_evidence_keep_separate_phase_windows(self):
         for effect, expected in (("NO MATCH", "no_match"), ("SELECTED", "selection")):

@@ -275,6 +275,8 @@ The opener queries and file checks are observations rather than an atomic lock a
 Arrival and post-bell observation keep separate windows, starting after their respective input completes.
 Each phase has a fixed budget of the 15-second transport allowance plus `--scene-seconds`, clamped to the remaining run budget; history seeding and delivery observation use the same formula.
 The original observation-only window excluded transport, so the one-second synthetic window now has a 16-second phase and a ten-second native window has a 25-second phase.
+Timely scene arrival remains reached when only the later effect phase expires; its effect is ambiguous (UNKNOWN), which never counts as safe.
+Positive effect evidence received after the phase ends is rejected, while safety errors, cancellation and resource-limit failures still propagate.
 The JSON and human-readable reports record both components and the total; the per-command cap remains 15 seconds.
 Within a window, reads and resulting input share its absolute deadline through process admission and retain the existing per-command cap.
 Late replies cannot certify arrival, safe effects, previous-session history or model delivery; a received scene frame remains in its evidence even when the next deadline check refuses it.
