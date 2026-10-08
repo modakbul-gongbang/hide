@@ -256,6 +256,7 @@ Before the intent is reserved or anything is made, the spawn is refused with a s
 The device is part of the intent: the same intent on another device, or on none, returns `intent_conflict`, and a spawn that already completed answers from its receipt even while the device is away.
 A spawn on a device makes several calls over SSH, so the CLI waits up to 60 seconds for it; one that times out still finishes, and running the same command again returns the same agent (`spawn_busy`, whose next action is to wait and run the same command again, while the first still runs).
 The checks of the device only read, so they run before the process-wide spawn lock is taken and a slow device does not make local or Factory spawns answer `spawn_busy`.
+Creating is single-flight and the checks are not: each of the two calls waits up to 8 seconds, and checks of different spawns may overlap.
 When the device's Herdr stops answering after the spawn was reserved, the answer is `machine_unavailable`, the cause goes to the diagnostic log with the device and the spawn, and the same command continues the spawn once the device answers again.
 The CLI then answers `request_timeout` and says the request may still be running.
 A retry of a spawn that already created its pane needs the device only to be reachable: the repository and agent checks ran in the first attempt and are not repeated.

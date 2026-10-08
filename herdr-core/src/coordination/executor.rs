@@ -11,8 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const STORE_TIMEOUT: Duration = Duration::from_secs(5);
-// Finite side effects serialize without occupying the durable store or Runtime.
-// A concurrent spawn is refused instead of accumulating blocked workers.
+// Creating something is single-flight: finite side effects serialize without
+// occupying the durable store or Runtime, and a concurrent spawn is refused
+// instead of accumulating blocked workers. The device checks before it only
+// read, so they are not: each is bounded by `TARGET_CHECK_TIMEOUT` and runs
+// beside another spawn's.
 pub(crate) static SPAWN: Mutex<()> = Mutex::new(());
 /// Tests share `SPAWN` through the process, so those that spawn take turns
 /// when a runner puts them on threads of one process.
@@ -517,7 +520,7 @@ fn spawn(
     // The device checks above only read, so a slow device never holds the
     // process-wide lock that local and Factory spawns need; everything that
     // creates something runs under it.
-    let _single = SPAWN.try_lock().map_err(|_| "spawn_busy")?;
+    let single = SPAWN.try_lock().map_err(|_| "spawn_busy")?;
     let parent_id = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
         if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
@@ -787,6 +790,9 @@ fn spawn(
             &ledger,
         ))
     })();
+    // Nothing after this creates anything, so a device that has gone quiet
+    // never holds the lock for the probe below.
+    drop(single);
     placed.map_err(|reason| {
         if on_device {
             device_unreachable(connector.as_ref(), &child_device, &spawn_id, reason)
