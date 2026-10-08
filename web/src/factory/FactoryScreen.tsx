@@ -75,7 +75,7 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
         {place.tab === "turn" ? <MyTurn summary={summary} factory={factory} actions={actions} /> : null}
         {place.tab === "board" ? <FactoryBoard factories={factories} place={place} actions={actions} inbox={summary.inbox} /> : null}
         {place.tab === "graph" ? <FactoryGraph factories={factories} filtered={factory !== null} /> : null}
-        {place.tab === "settings" ? <FactorySettings factories={factories} actions={actions} /> : null}
+        {place.tab === "settings" ? <FactorySettings factories={factories} filtered={factory !== null} summary={summary} actions={actions} /> : null}
       </div>
     </>
   );

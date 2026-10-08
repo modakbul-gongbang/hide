@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronRightIcon, CirclePauseIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon, SquareTerminalIcon, UserIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
-import { Group, Note, Row } from "../components/settings-rows";
+import { agentAdapter } from "../agentAdapters";
+import { AgentPicker } from "../components/agent-picker";
+import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { CLI_DEFAULT, modelChoices, providerById } from "../hideAi";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { MessageKey } from "../i18n/catalogs";
+import { cn } from "../lib/utils";
+import { useShellStore } from "../store";
+import { useUiStore } from "../ui";
 import type { FactoryCommand } from "./commands";
-import type { FactoryView } from "./model";
+import { MODE_LABEL, MODE_LINE } from "./labels";
+import { OBSERVER_MODES, type FactoryAi, type FactoryView, type ObserverMode, type WorkerCandidate } from "./model";
 import { Refusal } from "./MyTurn";
 import { useFactoryRequest } from "./request";
 
@@ -31,7 +40,12 @@ export type FactoryConfig = {
   verify_failure_limit: number;
   verify_timeout_ms: number;
   disk_floor_bytes: number;
-  default_runtime: "claude" | "codex";
+  /** The first candidate's agent; the only candidate while `workers` is empty (D-42). */
+  default_runtime: string;
+  workers: WorkerCandidate[];
+  observer_mode: ObserverMode;
+  observer_daily_limit: number;
+  factory_ai: FactoryAi | null;
   harness: { name: string; instructions: string } | null;
   autonomy: { id: string; description: string; enabled: boolean }[];
   autonomy_diff_limit: number;
@@ -49,6 +63,8 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const GIB = 1024 * 1024 * 1024;
+/** The most worker candidates a Factory keeps (D-41). */
+const WORKER_LIMIT = 5;
 
 /** A number setting: its key, the unit the engine takes it in, and how it reads from the config. */
 type NumberSetting = { key: string; label: MessageKey; read: (answer: ConfigAnswer) => number };
@@ -56,7 +72,6 @@ type NumberSetting = { key: string; label: MessageKey; read: (answer: ConfigAnsw
 const per = (unit: number, field: keyof FactoryConfig) => (answer: ConfigAnswer) => Math.round((answer.config[field] as number) / unit);
 const plain = (field: keyof FactoryConfig) => (answer: ConfigAnswer) => answer.config[field] as number;
 
-const RUN: NumberSetting[] = [{ key: "max_workers", label: "factory.settings.maxWorkers", read: (answer) => answer.machine.max_workers }];
 const VERIFY: NumberSetting[] = [
   { key: "verify_failure_limit", label: "factory.settings.verifyFailureLimit", read: plain("verify_failure_limit") },
   { key: "verify_timeout_minutes", label: "factory.settings.verifyTimeout", read: per(MINUTE, "verify_timeout_ms") },
@@ -66,6 +81,7 @@ const THRESHOLDS: NumberSetting[] = [
   { key: "stall_minutes", label: "factory.settings.stall", read: per(MINUTE, "stall_ms") },
   { key: "no_report_minutes", label: "factory.settings.noReport", read: per(MINUTE, "no_report_ms") },
   { key: "new_task_limit", label: "factory.settings.newTaskLimit", read: plain("new_task_limit") },
+  { key: "observer_daily_limit", label: "factory.settings.observerLimit", read: plain("observer_daily_limit") },
 ];
 const WATCH: NumberSetting[] = [
   { key: "watch_interval_minutes", label: "factory.settings.watchInterval", read: per(MINUTE, "watch_interval_ms") },
@@ -96,35 +112,106 @@ const CHECK_LABEL: Record<(typeof CHECK_POINTS)[number], MessageKey> = {
 };
 
 /**
- * The settings tab (PRD software-factory-ui B22): every engine default of one
- * Factory in the groups the PRD names, read from and written through the
- * stage-1 `config` command, so a change applies from the engine's next
- * judgment. Closing the Factory waits until no Task runs.
+ * What each choice hands to Factory AI and what stays the person's (D-03,
+ * D-14, D-21, D-32): the engine's mode table in the words the settings show.
  */
-export function FactorySettings({ factories, actions }: { factories: FactoryView[]; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const [picked, setPicked] = useState<string | null>(null);
-  const factory = factories.find((view) => view.id === picked) ?? factories[0] ?? null;
-  if (!factory) return null;
+const MODE_TABLE: Record<ObserverMode, { me: MessageKey[]; ai: MessageKey[] }> = {
+  manual: {
+    me: ["factory.settings.decide.technical", "factory.settings.decide.product", "factory.settings.decide.cardFix", "factory.settings.decide.permission", "factory.settings.decide.riskMerge"],
+    ai: ["factory.settings.decide.answered"],
+  },
+  assist: {
+    me: ["factory.settings.decide.product", "factory.settings.decide.cardFixProposal", "factory.settings.decide.permission", "factory.settings.decide.riskMerge"],
+    ai: ["factory.settings.decide.technical", "factory.settings.decide.answered"],
+  },
+  autonomous: {
+    me: ["factory.settings.decide.permission"],
+    ai: ["factory.settings.decide.technical", "factory.settings.decide.product", "factory.settings.decide.cardFix", "factory.settings.decide.riskMerge", "factory.settings.decide.answered"],
+  },
+};
+
+/**
+ * The settings tab (PRD factory-observer B33-B36): with every project shown,
+ * the list of Factories and what this Mac runs at once; with one, its four
+ * groups (AI에게 맡기기, 작업자, 머지, 그 밖) and the rest folded under 고급 설정.
+ * Every value is read from and written through the `config` command, so a
+ * change applies from the engine's next judgment.
+ */
+export function FactorySettings({ factories, filtered, summary, actions }: { factories: FactoryView[]; filtered: boolean; summary: { inbox: { factory: string; group: string }[] }; actions: Actions }) {
+  if (factories.length === 0) return null;
   return (
-    <div className="flex max-w-(--size-settings-sheet-w) flex-col gap-sm px-lg pb-xl" data-factory-settings={factory.id}>
-      {factories.length > 1 ? (
-        <Select value={factory.id} onValueChange={setPicked}>
-          <SelectTrigger size="sm" className="w-auto self-start" aria-label={t("factory.projectFilter")} data-factory-settings-factory="true">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {factories.map((view) => (
-              <SelectItem key={view.id} value={view.id}>
-                {view.project_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : null}
-      <SettingsBody key={factory.id} factory={factory} actions={actions} />
+    <div className="flex max-w-(--size-settings-sheet-w) flex-col gap-sm px-lg pb-xl" data-factory-settings={filtered ? factories[0]!.id : "all"}>
+      {filtered ? <SettingsBody key={factories[0]!.id} factory={factories[0]!} actions={actions} /> : <FactoryList factories={factories} summary={summary} actions={actions} />}
     </div>
   );
+}
+
+/** Every Factory on one line each, and the one number they share on this Mac (B36). */
+function FactoryList({ factories, summary, actions }: { factories: FactoryView[]; summary: { inbox: { factory: string; group: string }[] }; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const read = useFactoryRequest(actions);
+  const write = useFactoryRequest(actions);
+  const pause = useFactoryRequest(actions);
+  const [machine, setMachine] = useState<number | null>(null);
+  const first = factories[0]!.project;
+  useEffect(() => {
+    read.send({ verb: "config", project: first, set: [] });
+  }, [first]);
+  useEffect(() => {
+    for (const state of [read.state, write.state]) if (state.phase === "taken") setMachine((state.answer as unknown as ConfigAnswer).machine.max_workers);
+  }, [read.state, write.state]);
+  return (
+    <>
+      <Group title={t("factory.settings.factories")} note={undefined} data-factory-settings-group="factories">
+        {factories.map((view) => {
+          const turn = summary.inbox.filter((item) => item.factory === view.id && item.group !== "notice").length;
+          return (
+            <div key={view.id} className="flex min-w-0 items-center gap-md px-md py-sm" data-factory-list-row={view.id}>
+              <span className="min-w-0 flex-1 truncate text-subhead font-semibold">{view.project_name}</span>
+              <span className="flex w-[calc(var(--size-control-lg)*3)] shrink-0 items-center gap-xxs text-caption text-subtle-foreground" data-factory-list-paused={view.paused ? "true" : "false"}>
+                {view.paused ? <CirclePauseIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <span aria-hidden="true" className="size-(--size-status-mark) rounded-full bg-agent-working" />}
+                {view.paused ? t("factory.settings.paused") : t("factory.settings.running")}
+              </span>
+              <span className="flex shrink-0 items-center gap-xxs text-caption text-subtle-foreground">
+                <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+                {t(MODE_LABEL[view.observer_mode])}
+              </span>
+              <span className="flex shrink-0 items-center gap-xxs text-caption text-subtle-foreground">
+                <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+                {t("factory.settings.workerCount", { count: view.workers.length })}
+              </span>
+              <span className={cn("shrink-0 text-caption", turn > 0 ? "text-warning" : "text-muted-foreground")}>{t("factory.settings.turnCount", { count: turn })}</span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={view.paused ? t("factory.resume") : t("factory.pause")}
+                data-factory-list-pause={view.id}
+                disabled={pause.state.phase === "sending"}
+                onClick={() => pause.send({ verb: view.paused ? "resume_factory" : "pause_factory", project: view.project })}
+              >
+                {view.paused ? <PlayIcon /> : <PauseIcon />}
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label={view.project_name} data-factory-list-open={view.id} onClick={() => useUiStore.getState().setFactoryPlace({ factory: view.id })}>
+                <ChevronRightIcon />
+              </Button>
+            </div>
+          );
+        })}
+      </Group>
+      <Refusal state={pause.state} />
+      <Group title={t("factory.settings.machine")} data-factory-settings-group="machine">
+        <Row label={t("factory.settings.machineWorkers")} detail={<Note>{t("factory.settings.machineWorkersDetail")}</Note>}>
+          {machine === null ? null : <TextField reset={0} value={String(machine)} numeric valid={(text) => Number.isInteger(Number(text)) && Number(text) >= 1} onCommit={(value) => write.send({ verb: "config", project: first, set: [["max_workers", value]] })} data="max_workers" />}
+        </Row>
+      </Group>
+      <Refusal state={write.state} />
+    </>
+  );
+}
+
+/** A config's worker candidates; a Factory made before candidates reads as one of its default agent (D-42). */
+function candidatesOf(config: FactoryConfig): WorkerCandidate[] {
+  return config.workers.length > 0 ? config.workers : [{ agent: config.default_runtime, description: "" }];
 }
 
 function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Actions }) {
@@ -164,94 +251,269 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
     // The last write's phase, so a reader can wait for the engine's answer.
     <div className="contents" data-factory-settings-write={write.state.phase}>
       <Refusal state={write.state} />
-      <Group title={t("factory.settings.run")} data-factory-settings-group="run">
-        {numbers(RUN)}
-        <Row label={t("factory.settings.defaultRuntime")}>
-          <Choice value={config.default_runtime} options={[["claude", "Claude Code"], ["codex", "Codex"]]} onChange={(value) => set("default_runtime", value)} data="default_runtime" />
+      <ObserverGroup factory={factory} config={config} reset={refusals} set={set} actions={actions} />
+      <WorkersGroup config={config} machine={answer.machine.max_workers} reset={refusals} set={set} actions={actions} />
+      <Group title={t("factory.settings.merge")} data-factory-settings-group="merge">
+        <Row label={t("factory.settings.autoMerge")} detail={<Note>{t("factory.settings.autoMergeDetail")}</Note>}>
+          <Switch checked={config.merge_mode === "auto"} disabled={!factory.auto_merge_available && config.merge_mode !== "auto"} aria-label={t("factory.settings.autoMerge")} data-factory-setting="merge_mode" onCheckedChange={(on) => set("merge_mode", on ? "auto" : "manual")} />
         </Row>
-        <Row label={t("factory.settings.harness")} detail={<Note>{t("factory.settings.harnessDetail")}</Note>}>
-          <TextField reset={refusals} value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
-        </Row>
-      </Group>
-      <Group title={t("factory.settings.verification")} data-factory-settings-group="verification">
-        <Row label={t("factory.settings.verificationKind")}>
-          <span className="text-body text-subtle-foreground" data-factory-settings-verification={config.verification.kind}>
-            {t(config.verification.kind === "ci" ? "factory.create.ci" : config.verification.kind === "commands" ? "factory.create.commands" : "factory.create.none")}
+        <Row label={t("factory.settings.verification")}>
+          <span className="min-w-0 text-right text-body text-subtle-foreground [overflow-wrap:anywhere]" data-factory-settings-verification={config.verification.kind}>
+            {config.verification.kind === "ci" ? t("factory.settings.verificationCi", { checks: config.verification.checks.join(", ") }) : config.verification.kind === "commands" ? t("factory.settings.verificationCommands", { commands: config.verification.commands.join(", ") }) : t("factory.create.none")}
           </span>
         </Row>
-        {config.verification.kind === "ci" ? (
-          <Row label={t("factory.settings.ciChecks")}>
-            <TextField reset={refusals} value={config.verification.checks.join(", ")} onCommit={(value) => set("ci", value)} data="ci" />
-          </Row>
-        ) : (
-          <Row label={t("factory.settings.verifyCommands")} detail={<Note>{t("factory.settings.verifyCommandsDetail")}</Note>}>
-            <TextField reset={refusals} value={verify} onCommit={(value) => set("verify", value)} data="verify" />
-          </Row>
-        )}
-        {numbers(VERIFY)}
-      </Group>
-      <Group title={t("factory.settings.merge")} data-factory-settings-group="merge">
-        <Row label={t("factory.create.merge")}>
-          <Choice value={config.merge_mode} options={[["auto", t("factory.create.auto")], ["manual", t("factory.create.manual")]]} onChange={(value) => set("merge_mode", value)} data="merge_mode" />
-        </Row>
-        <Row label={t("factory.settings.mergeMethod")}>
-          <Choice value={config.merge_method} options={[["merge", t("factory.settings.method.merge")], ["squash", t("factory.settings.method.squash")], ["rebase", t("factory.settings.method.rebase")]]} onChange={(value) => set("merge_method", value)} data="merge_method" />
-        </Row>
-        <Row label={t("factory.settings.quickCheck")}>
-          <TextField reset={refusals} value={config.quick_check ?? ""} onCommit={(value) => set("quick_check", value)} data="quick_check" />
-        </Row>
-        <Row label={t("factory.settings.riskPaths")} detail={<Note>{t("factory.settings.riskPathsDetail")}</Note>}>
-          <TextField reset={refusals} value={config.risk_paths.join(", ")} onCommit={(value) => set("risk_paths", value)} data="risk_paths" />
+        <Row label={t("factory.settings.riskPaths")} detail={<Note>{config.observer_mode === "autonomous" ? t("factory.settings.riskAi") : t("factory.settings.riskMine")}</Note>}>
+          <TextField reset={refusals} value={config.risk_paths.join(", ")} mono onCommit={(value) => set("risk_paths", value)} data="risk_paths" />
         </Row>
       </Group>
-      <Group title={t("factory.settings.thresholds")} data-factory-settings-group="thresholds">
-        {numbers(THRESHOLDS)}
-      </Group>
-      <Group title={t("factory.settings.checks")} data-factory-settings-group="checks">
-        {numbers(WATCH)}
-        {config.checks.map((check, at) => (
-          <Row key={at} label={t(CHECK_LABEL[check.at])}>
-            <span className="min-w-0 text-body text-subtle-foreground [overflow-wrap:anywhere]">{check.instruction}</span>
-          </Row>
-        ))}
-        <AddCheck written={writes} refused={refusals} sending={write.state.phase === "sending"} onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
-      </Group>
-      <Group title={t("factory.settings.notifyKeep")} data-factory-settings-group="keep">
+      <Group title={t("factory.settings.other")} data-factory-settings-group="other">
         <Row label={t("factory.settings.macosNotifications")} detail={<Note>{t("factory.settings.macosNotificationsDetail")}</Note>}>
           <Switch checked={config.macos_notifications} aria-label={t("factory.settings.macosNotifications")} data-factory-setting="macos_notifications" onCheckedChange={(on) => set("macos_notifications", on ? "on" : "off")} />
         </Row>
-        {numbers(KEEP)}
-      </Group>
-      <Group title={t("factory.settings.autonomy")} data-factory-settings-group="autonomy">
-        {config.autonomy.map((scope) => (
-          <Row key={scope.id} label={scope.description}>
-            <Switch checked={scope.enabled} aria-label={scope.description} data-factory-setting={`autonomy:${scope.id}`} onCheckedChange={(on) => set("autonomy", `${scope.id}=${on ? "on" : "off"}`)} />
+        <Disclosure title={t("factory.settings.advanced")} summary={t("factory.settings.advancedSummary")} data-factory-settings-group="advanced">
+          {numbers(THRESHOLDS)}
+          {config.verification.kind === "ci" ? (
+            <Row label={t("factory.settings.ciChecks")}>
+              <TextField reset={refusals} value={config.verification.checks.join(", ")} onCommit={(value) => set("ci", value)} data="ci" />
+            </Row>
+          ) : (
+            <Row label={t("factory.settings.verifyCommands")} detail={<Note>{t("factory.settings.verifyCommandsDetail")}</Note>}>
+              <TextField reset={refusals} value={verify} onCommit={(value) => set("verify", value)} data="verify" />
+            </Row>
+          )}
+          {numbers(VERIFY)}
+          <Row label={t("factory.settings.mergeMethod")}>
+            <Choice value={config.merge_method} options={[["merge", t("factory.settings.method.merge")], ["squash", t("factory.settings.method.squash")], ["rebase", t("factory.settings.method.rebase")]]} onChange={(value) => set("merge_method", value)} data="merge_method" />
           </Row>
-        ))}
-        {numbers(AUTONOMY)}
-        {RECOVERY.map((action) => (
-          <Row key={action.id} label={t(action.label)}>
-            <Switch checked={config.recovery.includes(action.id)} aria-label={t(action.label)} data-factory-setting={`recovery:${action.id}`} onCheckedChange={(on) => set("recovery", `${action.id}=${on ? "on" : "off"}`)} />
+          <Row label={t("factory.settings.quickCheck")}>
+            <TextField reset={refusals} value={config.quick_check ?? ""} onCommit={(value) => set("quick_check", value)} data="quick_check" />
           </Row>
-        ))}
-      </Group>
-      <Group title={t("factory.settings.advanced")} data-factory-settings-group="advanced">
-        {numbers(ADVANCED)}
-        <Row label={t("factory.settings.prdInIssue")}>
-          <Switch checked={config.prd_in_issue} aria-label={t("factory.settings.prdInIssue")} data-factory-setting="prd_in_issue" onCheckedChange={(on) => set("prd_in_issue", on ? "on" : "off")} />
-        </Row>
-        {(["claude", "codex"] as const).map((runtime) => (
-          <Row key={runtime} label={t("factory.settings.workerArgs", { runtime: runtime === "claude" ? "Claude Code" : "Codex" })}>
-            <TextField reset={refusals} value={(config.worker_args[runtime] ?? []).join(" ")} onCommit={(value) => set("worker_args", `${runtime}=${value}`)} data={`worker_args:${runtime}`} />
+          <Row label={t("factory.settings.harness")} detail={<Note>{t("factory.settings.harnessDetail")}</Note>}>
+            <TextField reset={refusals} value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
           </Row>
-        ))}
+          {numbers(WATCH)}
+          {config.checks.map((check, at) => (
+            <Row key={at} label={t(CHECK_LABEL[check.at])}>
+              <span className="min-w-0 text-body text-subtle-foreground [overflow-wrap:anywhere]">{check.instruction}</span>
+            </Row>
+          ))}
+          <AddCheck written={writes} refused={refusals} sending={write.state.phase === "sending"} onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
+          {numbers(KEEP)}
+          {config.autonomy.map((scope) => (
+            <Row key={scope.id} label={scope.description}>
+              <Switch checked={scope.enabled} aria-label={scope.description} data-factory-setting={`autonomy:${scope.id}`} onCheckedChange={(on) => set("autonomy", `${scope.id}=${on ? "on" : "off"}`)} />
+            </Row>
+          ))}
+          {numbers(AUTONOMY)}
+          {RECOVERY.map((action) => (
+            <Row key={action.id} label={t(action.label)}>
+              <Switch checked={config.recovery.includes(action.id)} aria-label={t(action.label)} data-factory-setting={`recovery:${action.id}`} onCheckedChange={(on) => set("recovery", `${action.id}=${on ? "on" : "off"}`)} />
+            </Row>
+          ))}
+          {numbers(ADVANCED)}
+          <Row label={t("factory.settings.prdInIssue")}>
+            <Switch checked={config.prd_in_issue} aria-label={t("factory.settings.prdInIssue")} data-factory-setting="prd_in_issue" onCheckedChange={(on) => set("prd_in_issue", on ? "on" : "off")} />
+          </Row>
+          {[...new Set(candidatesOf(config).map((candidate) => candidate.agent))].map((runtime) => (
+            <Row key={runtime} label={t("factory.settings.workerArgs", { runtime: agentAdapter(runtime)?.label ?? runtime })}>
+              <TextField reset={refusals} value={(config.worker_args[runtime] ?? []).join(" ")} onCommit={(value) => set("worker_args", `${runtime}=${value}`)} data={`worker_args:${runtime}`} />
+            </Row>
+          ))}
+        </Disclosure>
         <Row label={t("factory.settings.close")} detail={<Note>{running ? t("factory.settings.closeRunning") : t("factory.settings.closeDetail")}</Note>}>
-          <Button variant="destructive" size="sm" disabled={running || write.state.phase === "sending"} data-factory-close="true" onClick={() => send({ verb: "close", project: factory.project })}>
-            {t("factory.settings.close")}
+          <Button variant="outline" size="sm" disabled={running || write.state.phase === "sending"} data-factory-close="true" onClick={() => send({ verb: "close", project: factory.project })}>
+            {t("factory.settings.closeButton")}
           </Button>
         </Row>
       </Group>
     </div>
+  );
+}
+
+/**
+ * AI에게 맡기기 (B33): who answers, as three choices with what each hands to
+ * Factory AI; the agent, model and effort Factory AI runs on; and today's
+ * judgments against the daily cap. With Hide AI off every decision comes to
+ * the person, so the choices dim and say so (B10).
+ */
+function ObserverGroup({ factory, config, reset, set, actions }: { factory: FactoryView; config: FactoryConfig; reset: number; set: (key: string, value: string) => void; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const ai = useShellStore((s) => s.rest?.status?.background_ai);
+  const off = ai?.enabled === false;
+  const mode = config.observer_mode;
+  const full = factory.observer_today >= factory.observer_limit;
+  return (
+    <Group title={t("factory.settings.ai")} note={undefined} data-factory-settings-group="observer">
+      <div className="flex flex-col gap-sm px-md py-sm">
+        <span className="text-caption text-muted-foreground">{t("factory.settings.aiCaption")}</span>
+        <RadioGroup value={mode} disabled={off} onValueChange={(value) => set("observer_mode", value)} className={cn("grid-cols-3", off && "opacity-(--opacity-dimmed)")} aria-label={t("factory.settings.ai")} data-factory-setting="observer_mode">
+          {OBSERVER_MODES.map((choice) => (
+            <label key={choice} className={cn("flex min-w-0 cursor-pointer items-start gap-sm rounded-md border px-md py-sm", choice === mode ? "border-foreground bg-accent" : "border-border")} data-factory-mode={choice}>
+              <RadioGroupItem value={choice} className="mt-xxs" />
+              <span className="flex min-w-0 flex-col">
+                <span className="text-subhead font-semibold">{t(MODE_LABEL[choice])}</span>
+                <span className="text-caption text-subtle-foreground">{t(MODE_LINE[choice])}</span>
+              </span>
+            </label>
+          ))}
+        </RadioGroup>
+        {off ? (
+          <Note data-factory-ai-off="true">{t("factory.settings.aiOff")}</Note>
+        ) : (
+          <div className="flex flex-col gap-xs" data-factory-mode-table={mode}>
+            <ModeChips icon={<UserIcon aria-hidden="true" className="size-(--size-icon-sm)" />} label={t("factory.settings.toMe")} keys={MODE_TABLE[mode].me} />
+            <ModeChips icon={<SparklesIcon aria-hidden="true" className="size-(--size-icon-sm)" />} label={t("factory.settings.toAi")} keys={MODE_TABLE[mode].ai} />
+          </div>
+        )}
+      </div>
+      <Row label={t("factory.settings.aiAgent")}>
+        {off ? <span className="text-body text-subtle-foreground" data-factory-setting="factory_ai">{t("factory.settings.aiNone")}</span> : <FactoryAiPicker value={config.factory_ai} reset={reset} set={set} actions={actions} />}
+      </Row>
+      <Row label={t("factory.settings.aiToday")} detail={full ? <Note tone="warn">{t("factory.settings.aiTodayFull")}</Note> : undefined}>
+        <span className="flex items-center gap-sm" data-factory-ai-today={`${factory.observer_today}/${factory.observer_limit}`}>
+          <span aria-hidden="true" className="h-xs w-(--size-settings-control-w) overflow-hidden rounded-full bg-border">
+            <span className={cn("block h-full rounded-full", full ? "bg-warning" : "bg-success")} style={{ width: `${Math.min(100, (factory.observer_today / Math.max(1, factory.observer_limit)) * 100)}%` }} />
+          </span>
+          <span className={cn("font-mono text-caption", full ? "text-warning" : "text-subtle-foreground")}>
+            {factory.observer_today} / {factory.observer_limit}
+          </span>
+        </span>
+      </Row>
+    </Group>
+  );
+}
+
+function ModeChips({ icon, label, keys }: { icon: ReactNode; label: string; keys: MessageKey[] }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-xs">
+      <span className="flex w-[calc(var(--size-control-lg)*3)] shrink-0 items-center gap-xxs text-caption text-subtle-foreground">
+        {icon}
+        {label}
+      </span>
+      {keys.map((key) => (
+        <span key={key} className="rounded-sm bg-muted px-sm py-xxs text-caption text-foreground">
+          {t(key)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Factory AI's agent among Hide AI's, or Hide AI's own choice; then its model and effort (D-40). */
+function FactoryAiPicker({ value, set }: { value: FactoryAi | null; reset: number; set: (key: string, value: string) => void; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const ai = useShellStore((s) => s.rest?.status?.background_ai);
+  const provider = providerById(ai, value?.provider);
+  const providers = (ai?.providers ?? []).filter((row) => row.selectable || row.id === value?.provider);
+  const efforts = provider ? (agentAdapter(provider.agent)?.efforts ?? []) : [];
+  return (
+    <>
+      <Select value={value?.provider ?? "default"} onValueChange={(next) => set("factory_ai", next)}>
+        <SelectTrigger size="sm" className="w-auto" aria-label={t("factory.settings.aiAgent")} data-factory-setting="factory_ai">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">{t("factory.settings.aiFollow")}</SelectItem>
+          {providers.map((row) => (
+            <SelectItem key={row.id} value={row.id}>
+              {row.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {provider && value ? (
+        <>
+          <Select value={value.model ?? CLI_DEFAULT} onValueChange={(next) => set("factory_ai_model", next === CLI_DEFAULT ? "default" : next)}>
+            <SelectTrigger size="sm" className="w-auto" aria-label={t("factory.settings.model")} data-factory-setting="factory_ai_model">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[CLI_DEFAULT, ...modelChoices(provider, value.model ?? "").filter((choice) => choice !== CLI_DEFAULT)].map((choice) => (
+                <SelectItem key={choice} value={choice}>
+                  {choice === CLI_DEFAULT ? t("factory.settings.cliDefault") : choice}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {efforts.length > 0 ? <EffortSelect value={value.effort ?? null} efforts={efforts} onChange={(next) => set("factory_ai_effort", next ?? "default")} data="factory_ai_effort" /> : null}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function EffortSelect({ value, efforts, onChange, data }: { value: string | null; efforts: readonly string[]; onChange: (effort: string | null) => void; data: string }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <span className="flex items-center gap-xs">
+      <span className="text-caption text-muted-foreground">{t("factory.settings.effort")}</span>
+      <Select value={value ?? CLI_DEFAULT} onValueChange={(next) => onChange(next === CLI_DEFAULT ? null : next)}>
+        <SelectTrigger size="sm" className="w-auto" aria-label={t("factory.settings.effort")} data-factory-setting={data}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={CLI_DEFAULT}>{t("factory.settings.cliDefault")}</SelectItem>
+          {efforts.map((effort) => (
+            <SelectItem key={effort} value={effort}>
+              {effort}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </span>
+  );
+}
+
+/**
+ * 작업자 (B32): the candidates Factory AI picks from per Task, the first the
+ * default, each an agent, model and effort with a line saying when to use it.
+ * Every change sends the whole list, which the engine checks as one (D-41).
+ */
+function WorkersGroup({ config, machine, reset, set, actions }: { config: FactoryConfig; machine: number; reset: number; set: (key: string, value: string) => void; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const workers = candidatesOf(config);
+  const save = (next: WorkerCandidate[]) => set("workers", JSON.stringify(next));
+  const change = (at: number, patch: Partial<WorkerCandidate>) => save(workers.map((candidate, index) => (index === at ? { ...candidate, ...patch } : candidate)));
+  return (
+    <Group title={t("factory.settings.workers")} data-factory-settings-group="workers">
+      <span className="block px-md pt-sm text-caption text-muted-foreground">{t("factory.settings.workersCaption")}</span>
+      {workers.map((candidate, at) => {
+        const adapter = agentAdapter(candidate.agent);
+        return (
+          <div key={at} className="flex flex-col gap-xs px-md py-sm" data-factory-worker-candidate={at + 1}>
+            <div className="flex min-w-0 flex-wrap items-center gap-sm">
+              <span className="min-w-0 flex-1 text-subhead">{at === 0 ? t("factory.settings.workerDefault") : t("factory.settings.workerCandidate")}</span>
+              <AgentPicker
+                actions={actions}
+                value={{ kind: candidate.agent as never, model: candidate.model ?? null }}
+                onChange={(next) => change(at, next.kind === candidate.agent ? { model: next.model } : { agent: next.kind, model: null, effort: null })}
+              />
+              {adapter && adapter.efforts.length > 0 ? <EffortSelect value={candidate.effort ?? null} efforts={adapter.efforts} onChange={(effort) => change(at, { effort })} data={`worker_effort:${at + 1}`} /> : <span className="text-caption text-muted-foreground">{t("factory.settings.cliDefault")}</span>}
+              {at > 0 ? (
+                <Button variant="ghost" size="icon-sm" aria-label={t("factory.settings.removeWorker")} data-factory-worker-remove={at + 1} onClick={() => save(workers.filter((_, index) => index !== at))}>
+                  <XIcon />
+                </Button>
+              ) : (
+                <span className="size-(--size-control-sm)" />
+              )}
+            </div>
+            <TextField reset={reset} value={candidate.description} placeholder={t("factory.settings.workerDescription")} wide onCommit={(description) => change(at, { description })} data={`worker_description:${at + 1}`} />
+          </div>
+        );
+      })}
+      <div className="flex min-w-0 flex-wrap items-center gap-sm px-md py-xs">
+        <Button variant="ghost" size="sm" disabled={workers.length >= WORKER_LIMIT} data-factory-worker-add="true" onClick={() => save([...workers, { agent: workers[0]!.agent, description: "" }])}>
+          <PlusIcon />
+          {t("factory.settings.addWorker")}
+        </Button>
+        {workers.length >= WORKER_LIMIT ? <span className="text-caption text-muted-foreground">{t("factory.settings.workerLimit")}</span> : null}
+        <span className="flex-1" />
+        <Button variant="link" size="sm" className="text-caption text-muted-foreground" data-factory-machine-link="true" onClick={() => useUiStore.getState().setFactoryPlace({ factory: null })}>
+          {t("factory.settings.maxWorkersNote", { count: machine })}
+        </Button>
+      </div>
+    </Group>
   );
 }
 
@@ -265,7 +527,7 @@ function NumberRow({ label, value, onCommit, data, reset }: { label: string; val
 }
 
 /** `reset` changes when the engine refuses a write, which leaves the config as it was, so the draft shows it again. */
-function TextField({ value, onCommit, placeholder, numeric = false, valid, data, reset }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; valid?: (text: string) => boolean; data: string; reset: number }) {
+function TextField({ value, onCommit, placeholder, numeric = false, mono = false, wide = false, valid, data, reset }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; mono?: boolean; wide?: boolean; valid?: (text: string) => boolean; data: string; reset: number }) {
   const [draft, setDraft] = useState(value);
   // The draft last sent, so the blur after Enter does not send it again.
   const sent = useRef<string | null>(null);
@@ -285,7 +547,7 @@ function TextField({ value, onCommit, placeholder, numeric = false, valid, data,
     <Input
       value={draft}
       type={numeric ? "number" : "text"}
-      className={numeric ? "w-[calc(var(--size-control-lg)*3)]" : "w-(--size-settings-control-w)"}
+      className={cn(numeric ? "w-[calc(var(--size-control-lg)*3)]" : wide ? "w-full" : "w-(--size-settings-control-w)", mono && "font-mono")}
       placeholder={placeholder}
       aria-label={placeholder}
       data-factory-setting={data}

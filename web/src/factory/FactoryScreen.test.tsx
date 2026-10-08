@@ -126,6 +126,7 @@ const CONFIG = {
   no_report_ms: 3_600_000, watch_interval_ms: 1_800_000, watch_daily_limit: 4, outside_read_ms: 120_000, cancel_keep_ms: 604_800_000, done_fold_ms: 259_200_000,
   archive_fold_ms: 7_776_000_000, new_task_limit: 10, verify_failure_limit: 3, verify_timeout_ms: 3_600_000, disk_floor_bytes: 10_737_418_240, default_runtime: "claude",
   harness: null, autonomy: [], autonomy_diff_limit: 400, recovery: [], risk_paths: [], checks: [], prd_in_issue: false, macos_notifications: false, worker_args: {},
+  workers: [], observer_mode: "assist", observer_daily_limit: 100, factory_ai: null,
 };
 
 /** Answers the settings tab's config read the way the engine does. */
@@ -137,7 +138,7 @@ async function answerConfig(summary: FactorySummary, events: Parameters<Dispatch
 it("keeps Close disabled while the Running column holds a Task in any of its states, as the engine refuses then (B22)", async () => {
   const waiting = factory({ columns: [{ column: "moving", label: "running", cards: [card("T-1", "merge_waiting", { column: "moving" })] }] });
   const summary = { my_turn: 0, notices: 0, factories: [waiting], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings" });
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   expect(container.querySelector<HTMLButtonElement>("[data-factory-close]")!.disabled).toBe(true);
   const done = { my_turn: 0, notices: 0, factories: [factory({ columns: [{ column: "done", label: "done", cards: [card("T-1", "done", { column: "done" })] }] })], inbox: [] };
@@ -205,7 +206,7 @@ it("sends the picked answer on Enter, but leaves Enter on 자세히 to open the 
 
 it("sends a setting once though Enter and leaving the field both commit, and shows the saved value again when the engine refuses it (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings" });
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
   await act(async () => {
@@ -251,7 +252,7 @@ function lastAction(events: Parameters<DispatchFn>[0][]) {
 
 it("keeps a check's instruction until the engine takes it, then reads the config again, since a check answers with no config (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings" });
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!;
   await act(async () => type(field, "README가 최신인지"));
@@ -271,7 +272,7 @@ it("keeps a check's instruction until the engine takes it, then reads the config
 
 it("puts an emptied number back to the saved value instead of sending 0 (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings" });
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='question_deadline_hours']")!;
   await act(async () => type(field, ""));
@@ -316,7 +317,7 @@ it("does not send a taken answer again while its item is still on screen (B10)",
 
 it("holds Add while a check is on its way, and keeps a refused check's text through a later write of another setting (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings" });
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!, "README"));
   const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
@@ -334,7 +335,7 @@ it("holds Add while a check is on its way, and keeps a refused check's text thro
 
 it("puts a number the field cannot take back to the saved value instead of leaving it as if saved (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings" });
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
   await act(async () => type(field, "2.5"));
@@ -438,4 +439,80 @@ it("opens a local issue through its catalog identity without opening the Factory
   expect(useUiStore.getState().overviewLens.panel).toBe("local:/fixture#7");
   expect(useUiStore.getState().screen).toMatchObject({ kind: "main", deviceId: "local" });
   useShellStore.setState({ rest: null });
+});
+
+const NOTICE: InboxItem = {
+  ...MERGE, group: "notice", kind: "notice", rank: 4, question: "q-9", text: "Which database? → postgres", suggestion: "", choices: ["ok"], result_code: "acknowledge", gates: [],
+  notice: "ai_answered", refers_to: "q-1", decision_kind: "B", observer_reason: null, overridable: true,
+};
+
+function commands(events: Parameters<DispatchFn>[0][]): Record<string, unknown>[] {
+  return events.flatMap((event) => {
+    const sent = event as unknown as { kind: string; payload: { command: Record<string, unknown> } };
+    return sent.kind === "factory_action" ? [sent.payload.command] : [];
+  });
+}
+
+it("changes Factory AI's answer only through 다른 답, which answers the question the notice is about (D-19)", async () => {
+  const { container, events } = await mount({ my_turn: 0, notices: 1, factories: [factory()], inbox: [NOTICE] });
+  expect(container.querySelector("[data-factory-group='notice']")!.textContent).toContain(english["factory.turn.noticesHint"]);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-override]")!.click());
+  await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-override-text]")!, "sqlite"));
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
+  expect(commands(events)).toEqual([{ verb: "answer", task: "f1/T-1", question: "q-1", choice: null, text: "sqlite", change: true }]);
+});
+
+it("acknowledges the notices of every Factory shown with one action (D-43)", async () => {
+  const other = factory({ id: "f2", project: "/other", project_name: "other" });
+  const { container, events } = await mount({ my_turn: 0, notices: 2, factories: [factory(), other], inbox: [NOTICE, { ...NOTICE, factory: "f2", question: "q-8" }] });
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-ack-all]")!.click());
+  expect(commands(events)).toEqual([{ verb: "ack_notices", project: "/fixture" }, { verb: "ack_notices", project: "/other" }]);
+});
+
+it("says why a request Factory AI sorted is still the person's in the Factory's mode (D-14, D-21)", async () => {
+  const question: InboxItem = { ...MERGE, group: "answer", kind: "blocking", question: "q-2", text: "빈 열에 무엇을?", suggestion: "없음", choices: ["안내"], result_code: "wake_worker", gates: [], decision_kind: "C", observer_reason: "작업자는 첫 안을 추천합니다." };
+  const { container } = await mount({ my_turn: 1, notices: 0, factories: [factory()], inbox: [question] });
+  expect(container.querySelector("[data-factory-decision-kind='C']")!.textContent).toBe(`${english["factory.decision.C"]} · ${english["factory.decision.mine.assist"]} 작업자는 첫 안을 추천합니다.`);
+});
+
+it("pauses the one Factory the header shows, and says it is paused with a way to resume (D-48)", async () => {
+  const { container, events } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { factory: "f1" });
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-pause='pause']")!.click());
+  expect(commands(events)).toEqual([{ verb: "pause_factory", project: "/fixture" }]);
+  const paused = lastAction(events).payload.request_id;
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, notices: 0, factories: [factory({ paused: true })], inbox: [] }, actions: [{ request_id: paused, answer: { ok: true } }] } }));
+  expect(container.querySelector("[data-factory-paused-chip]")).not.toBeNull();
+  expect(container.querySelector("[data-factory-flow-cell='moving']")!.textContent).toContain(english["factory.flow.asleep"]);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-pause='resume']")!.click());
+  expect(commands(events).at(-1)).toEqual({ verb: "resume_factory", project: "/fixture" });
+});
+
+it("lists every Factory when all projects are shown, and pauses one from its row (B36)", async () => {
+  const other = factory({ id: "f2", project: "/other", project_name: "other", paused: true, observer_mode: "autonomous" });
+  const { container, events } = await mount({ my_turn: 0, notices: 0, factories: [factory(), other], inbox: [] }, { tab: "settings" });
+  expect([...container.querySelectorAll("[data-factory-list-row]")].map((row) => row.getAttribute("data-factory-list-row"))).toEqual(["f1", "f2"]);
+  expect(container.querySelector("[data-factory-list-row='f2'] [data-factory-list-paused]")!.getAttribute("data-factory-list-paused")).toBe("true");
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-list-pause='f2']")!.click());
+  expect(commands(events).at(-1)).toEqual({ verb: "resume_factory", project: "/other" });
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-list-open='f2']")!.click());
+  expect(useUiStore.getState().screen).toMatchObject({ place: { factory: "f2" } });
+});
+
+it("reads a Factory made before worker candidates as one of its default agent, and sends the whole list on a change (D-41, D-42)", async () => {
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
+  await answerConfig(summary, events);
+  expect(container.querySelectorAll("[data-factory-worker-candidate]")).toHaveLength(1);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-worker-add]")!.click());
+  expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [["workers", JSON.stringify([{ agent: "claude", description: "" }, { agent: "claude", description: "" }])]] });
+});
+
+it("changes who answers with one of three choices, and dims them while Hide AI is off (B33, B10)", async () => {
+  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
+  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
+  await answerConfig(summary, events);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-mode='autonomous'] button")!.click());
+  expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [["observer_mode", "autonomous"]] });
+  await act(async () => useShellStore.setState((state) => ({ rest: { ...state.rest, status: { ...state.rest?.status, background_ai: { enabled: false, provider: null, chosen: false, providers: [], unavailable_reason: null } } } as never })));
+  expect(container.querySelector("[data-factory-ai-off]")!.textContent).toBe(english["factory.settings.aiOff"]);
 });
