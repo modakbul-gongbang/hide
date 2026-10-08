@@ -459,3 +459,18 @@ fn an_unowned_parent_is_refused_before_the_device_is_asked() {
     assert!(spawner.ledger().spawns.is_empty());
     assert!(spawner.herdr.methods().is_empty());
 }
+
+/// An agent on a device cannot start work on this machine or on a third one.
+#[test]
+fn a_caller_on_a_device_may_name_no_other_device() {
+    let spawner = spawner();
+    let mut runtime = spawner.runtime.lock().unwrap();
+    for target in [crate::node::TEST_NODE, "studio", "ghost"] {
+        assert_eq!(
+            runtime.spawn_target(DEVICE, target).err().as_deref(),
+            Some("machine_not_permitted"),
+            "{target}"
+        );
+    }
+    assert!(runtime.spawn_target(crate::node::TEST_NODE, DEVICE).is_ok());
+}

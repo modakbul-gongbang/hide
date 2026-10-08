@@ -810,12 +810,19 @@ impl Runtime {
     /// The node link of the device a spawn names with `--machine`, or why it
     /// cannot take the spawn: a refusal code the caller can branch on, with
     /// the ids it could have named when the id is not a device at all. The
-    /// caller's own device is never named here (the spawn drops it first).
+    /// caller's own device is never named here (the spawn drops it first), and a
+    /// caller that is not on this machine may name no other device.
     pub(crate) fn spawn_target(
         &mut self,
         caller_device: &str,
         device: &str,
     ) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
+        // Only an agent on this machine starts work on a device: one on a
+        // device would otherwise reach this machine or a third one, and the
+        // refusal names no device so it maps nothing.
+        if caller_device != self.node.as_str() {
+            return Err("machine_not_permitted".into());
+        }
         let registered = self
             .snapshot
             .ui_state

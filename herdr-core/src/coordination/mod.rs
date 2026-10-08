@@ -22,9 +22,11 @@ pub(crate) fn refusal(code: &str, detail: &str) -> String {
 
 /// The code of a refusal and the detail it carries, if any.
 pub fn split_refusal(refusal: &str) -> (&str, Option<&str>) {
+    // Only the refusals that build a detail carry one, so text from a device
+    // that happens to hold the separator is never read as a next action.
     match refusal.split_once(DETAIL) {
-        Some((code, detail)) => (code, Some(detail)),
-        None => (refusal, None),
+        Some((code @ "machine_unknown", detail)) => (code, Some(detail)),
+        _ => (refusal, None),
     }
 }
 

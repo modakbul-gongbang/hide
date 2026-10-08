@@ -1364,6 +1364,7 @@
             ],
             "refusals": [
                 "machine_unknown",
+                "machine_not_permitted",
                 "machine_unavailable",
                 "repository_unavailable",
                 "agent_not_installed",
@@ -1670,7 +1671,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:b853722ee6bb8bf92902d1cabf884521b250cf377ce4386dfcc3e65d4931fbb8",
+    "digest": "sha256:0a1c1fc4d9498743222b4d03b794560668c192bdc707a4e3632a40602ff59736",
     "envelopes": {
         "agent": {
             "answer": "value",

@@ -962,6 +962,9 @@ fn delivery_next_action(code: &str) -> &'static str {
         "agent_not_installed" => {
             "Install the agent CLI on the device so it is on the device's PATH, then run the command again"
         }
+        "machine_not_permitted" => {
+            "Run the command from an agent on the machine that runs Hide, or leave out --machine"
+        }
         "intent_conflict" => {
             "Use a new intent, or repeat the request this intent was first used for"
         }
@@ -3294,6 +3297,7 @@ mod tests {
         );
         assert!(none.contains("No other device is connected"), "{none}");
         for code in [
+            "machine_not_permitted",
             "machine_unavailable",
             "repository_unavailable",
             "agent_not_installed",

@@ -452,6 +452,11 @@ fn spawn(
     if !crate::fork::valid_agent_name(name) {
         return Err("invalid_agent_name".into());
     }
+    // The device probe takes the kind as a program name, so only a kind Hide
+    // can start reaches it.
+    if machine.is_some() && hide_agent_adapter::start_kind(kind).is_none() {
+        return Err("invalid_spawn".into());
+    }
     let mut ledger = state(client)?;
     if let Some(device) = machine {
         // Nothing is created for a device that cannot take the spawn, so the

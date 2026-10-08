@@ -216,6 +216,7 @@ pub const COMMANDS: &[Spec] = &[
         answers: &["agent"],
         refusals: &[
             "machine_unknown",
+            "machine_not_permitted",
             "machine_unavailable",
             "repository_unavailable",
             "agent_not_installed",

@@ -257,6 +257,7 @@ The device is part of the intent: the same intent on another device, or on none,
 A spawn on a device makes several calls over SSH, so the CLI waits up to 60 seconds for it; one that times out still finishes, and running the same command again returns the same agent (`spawn_busy` while the first still runs).
 The CLI then answers `request_timeout` and says the request may still be running.
 A retry of a spawn that already created its pane needs the device only to be reachable: the repository and agent checks ran in the first attempt and are not repeated.
+`--machine` is allowed only from an agent on the machine that runs Hide; an agent on a device that names any other device is refused with `machine_not_permitted`, which lists no device.
 A parent other than the caller is refused with `parent_authority_required` before any device is asked.
 The receipt keeps the device as an optional field of the version 1 ledger, absent for every older record.
 The spawn guard is unchanged: a direct `herdr --machine …` start is still the operator's own responsibility.
