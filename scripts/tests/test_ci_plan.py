@@ -76,11 +76,11 @@ class Selection(unittest.TestCase):
 
     def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
         # It builds hided, hide, the agent hooks and the host helper and runs
-        # herdr-core's remote_delivery test, so a change to one of those crates
+        # hided's remote_delivery test, so a change to one of those crates
         # or to a crate they depend on plans it.
         for path in (
             "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-host/src/lib.rs",
-            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "herdr-core/tests/remote_delivery.rs",
+            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "hided/tests/remote_delivery.rs",
         ):
             with self.subTest(path=path):
                 self.assertIn("remote-mailbox", plan(path)["lanes"])
@@ -100,7 +100,7 @@ class Selection(unittest.TestCase):
 
     def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
         for path in (
-            "herdr-core/src/lib.rs", "herdr-core/tests/remote_delivery.rs", "hided/src/main.rs",
+            "herdr-core/src/lib.rs", "hided/tests/remote_delivery.rs", "hided/src/main.rs",
             "hide-host/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-platform/src/process.rs",
             "hide-session/src/lib.rs", "hide-ai/src/lib.rs",
         ):

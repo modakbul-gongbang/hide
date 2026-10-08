@@ -11,7 +11,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
-  claudeSettings, codexHooks, deviceHome,
+  claudeSettings, codexHooks, deviceBridges, deviceHome,
   codexAutostart, codexDaemonAnswers, codexDaemonWritten, proveDeviceHome, startCodexDaemon, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
 import { endChild, hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
@@ -65,10 +65,9 @@ async function startDeviceRun(name: string, aliases: string[]) {
   const local = await startHerdr({ agents: false });
   const device = await startHerdr({ agents: false });
   const run = isolate(local, name);
-  const bridge = fs.mkdtempSync("/tmp/hide-kb-");
+  const bridge = deviceBridges(home);
   const helper = path.join(run.root, "device-helper");
   const cliDir = path.join(run.root, "device-bin");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
   run.env.HIDE_HOST_HELPER_ROOT = helper;
   run.env.HIDE_HOST_CLI_DIR = cliDir;
   writeSshConfig(run.env.HOME!, aliases);
@@ -88,14 +87,12 @@ async function stopDeviceRun(setup: DeviceRun): Promise<void> {
   const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (evidence) fs.copyFileSync(setup.daemonLog, path.join(evidence, `${path.basename(setup.run.root)}-daemon.jsonl`));
   setup.run.cleanup();
-  // The daemon keeps its bridge sockets until it exits; remove the folder after that.
   try {
     await endChild(setup.daemon);
   } finally {
     setup.device.stop();
     setup.local.stop();
   }
-  fs.rmSync(setup.bridge, { recursive: true, force: true });
 }
 
 /** The files Herdr's integrations for Claude Code and Codex leave in an account's home. */
@@ -195,7 +192,7 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     await screenshot(page, "agents-hooks-per-machine");
 
     // B25, B26: the hook the kit installed runs in a device pane and names that device's Workspace, with no Memory there.
-    const session = await inDevicePane(device, `printf '{}' | HIDE_STATE_DIR=${quote(path.join(run.root, "device-cli-state"))} HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} sh -c ${quote(hideCommand(readSettings(claudeSettings(home)), "SessionStart", hooks))}`, "device-session-start");
+    const session = await inDevicePane(device, `printf '{}' | HIDE_STATE_DIR=${quote(path.dirname(bridge))} sh -c ${quote(hideCommand(readSettings(claudeSettings(home)), "SessionStart", hooks))}`, "device-session-start");
     expect(session.status).toBe(0);
     const context = (JSON.parse(session.stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
     expect(context).toContain("Hide Workspace control is available for this session's checkout");
@@ -247,6 +244,51 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     expect(devicePlugins(device)).not.toContain(LABELS_ID);
   } catch (error) {
     console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
+    console.log(fs.readFileSync(daemonLog, "utf8"));
+    throw error;
+  } finally {
+    await app?.close().catch(() => undefined);
+    await stopDeviceRun(setup);
+  }
+});
+
+// A device an older Hide ran carries that Hide's helper build, which
+// `current` leads to, and the bridge folder its gone pane service left. The
+// version-mismatch install points `current` at this build, which runs as
+// `hided`, and removes the older build; the device's pane service removes the
+// dead bridge folder when it starts.
+test("a device an older Hide ran keeps only this build and no dead bridge folder", async () => {
+  const setup = await startDeviceRun("upgrade", [ALIAS]);
+  const { device, run, bridge, helper, daemonLog } = setup;
+  const OLD_BUILD = "0123456789abcdef";
+  fs.mkdirSync(path.join(helper, OLD_BUILD), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(helper, OLD_BUILD, "hide-host-helper"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+  fs.symlinkSync(OLD_BUILD, path.join(helper, "current"));
+  const leftover = path.join(bridge, "bridge-older-hide");
+  fs.mkdirSync(leftover, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(leftover, "bootstrap.sock"), "");
+  const long = new Date(Date.now() - 10 * 60_000);
+  fs.utimesSync(leftover, long, long);
+  let app: ElectronApplication | undefined;
+  try {
+    app = await relaunch(run.env);
+    const page = await shellPage(app);
+    await enterWorkspace(page, "fixture");
+    const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
+    await sendFrame(page, state, { kind: "register_device", payload: {
+      id: DEVICE, label: "SSH kit fixture", ssh_alias: ALIAS, herdr_socket_path: device.socket, host_consent: true,
+    } });
+    await expect.poll(() => daemonEvents(daemonLog).some((line) => line.kind === "apply.completed" && line.device_id === DEVICE), { timeout: 120_000 }).toBe(true);
+
+    const builds = fs.readdirSync(helper).filter((name) => name !== "current");
+    expect(builds).toHaveLength(1);
+    expect(builds[0]).not.toBe(OLD_BUILD);
+    expect(fs.readlinkSync(path.join(helper, "current"))).toBe(builds[0]);
+    const installed = fs.readdirSync(path.join(helper, builds[0]!));
+    expect(installed).toContain("hided");
+    expect(installed).not.toContain("hide-host-helper");
+    await expect.poll(() => fs.existsSync(leftover), { timeout: 60_000 }).toBe(false);
+  } catch (error) {
     console.log(fs.readFileSync(daemonLog, "utf8"));
     throw error;
   } finally {

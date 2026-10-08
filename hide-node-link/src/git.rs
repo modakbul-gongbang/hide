@@ -180,41 +180,171 @@ pub enum GitCommand {
 }
 
 impl GitCommand {
-    /// The arguments after `git --no-optional-locks -C <root>`.
-    pub fn args(&self) -> Vec<String> {
-        let owned = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect();
+    /// The arguments after `git --no-optional-locks -C <root>`, or why the
+    /// values cannot make them: a branch or a revision is never an option,
+    /// a range or a refspec.
+    pub fn args(&self) -> Result<Vec<String>, String> {
+        let owned = |args: &[&str]| Ok(args.iter().map(|arg| (*arg).to_owned()).collect());
         match self {
             Self::Status => owned(&["status", "--porcelain=v1", "--untracked-files=all"]),
             Self::CommonDir => owned(&["rev-parse", "--path-format=absolute", "--git-common-dir"]),
-            Self::RefCommit { name } => {
-                owned(&["rev-parse", "--verify", &format!("{name}^{{commit}}")])
-            }
-            Self::CountCommits { base, head } => {
-                owned(&["rev-list", "--count", &format!("{base}..{head}"), "--"])
-            }
+            Self::RefCommit { name } => owned(&[
+                "rev-parse",
+                "--verify",
+                &format!("{}^{{commit}}", revision_name(name)?),
+            ]),
+            Self::CountCommits { base, head } => owned(&[
+                "rev-list",
+                "--count",
+                &format!("{}..{}", revision_name(base)?, revision_name(head)?),
+                "--",
+            ]),
             Self::ListFiles => owned(&["ls-files", "-z"]),
             Self::CurrentBranch => owned(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
-            Self::Checkout { branch } => owned(&["checkout", "--no-overwrite-ignore", branch]),
+            // The closing `--` makes git read the name as a branch only; a
+            // tracked file of that name is never restored over its edits.
+            Self::Checkout { branch } => owned(&[
+                "checkout",
+                "--no-overwrite-ignore",
+                branch_name(branch)?,
+                "--",
+            ]),
             Self::HasLocalBranch { branch } => owned(&[
                 "show-ref",
                 "--verify",
                 "--quiet",
-                &format!("refs/heads/{branch}"),
+                &format!("refs/heads/{}", branch_name(branch)?),
             ]),
-            Self::FetchBranch { branch } => owned(&[
-                "fetch",
-                "--no-tags",
-                "origin",
-                &format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
-            ]),
-            Self::SetBranchConfig { branch, key, value } => {
-                owned(&["config", &format!("branch.{branch}.{}", key.name()), value])
+            Self::FetchBranch { branch } => {
+                let branch = branch_name(branch)?;
+                owned(&[
+                    "fetch",
+                    "--no-tags",
+                    "origin",
+                    &format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
+                ])
             }
+            Self::SetBranchConfig { branch, key, value } => owned(&[
+                "config",
+                "--",
+                &format!("branch.{}.{}", branch_name(branch)?, key.name()),
+                value,
+            ]),
             Self::UnsetBranchConfig { branch, key } => owned(&[
                 "config",
                 "--unset-all",
-                &format!("branch.{branch}.{}", key.name()),
+                "--",
+                &format!("branch.{}.{}", branch_name(branch)?, key.name()),
             ]),
         }
+    }
+}
+
+/// A revision git reads as one: never an option, never a refspec or range.
+pub fn revision_name(value: &str) -> Result<&str, String> {
+    let valid = !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with('-')
+        && !value.contains("..")
+        && value.chars().all(|c| {
+            !c.is_control() && !c.is_whitespace() && !matches!(c, ':' | '\\' | '*' | '?' | '[')
+        });
+    valid
+        .then_some(value)
+        .ok_or_else(|| format!("not a revision: {value:?}"))
+}
+
+/// A branch name as a revision, which also cannot leave `refs/heads/` or
+/// name a revision relative to one (`~`, `^`, `@{`).
+pub fn branch_name(value: &str) -> Result<&str, String> {
+    let value = revision_name(value)?;
+    (!value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains(['~', '^'])
+        && !value.contains("@{"))
+    .then_some(value)
+    .ok_or_else(|| format!("not a branch: {value:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request names a branch or a revision, never an argument: a value
+    /// git would read as an option, a range or a refspec is refused before
+    /// git sees it, and a setting's value stays text whatever it starts with.
+    #[test]
+    fn a_value_that_would_read_as_an_option_a_range_or_a_refspec_is_refused() {
+        for branch in [
+            "--orphan=x",
+            "-b",
+            "a..b",
+            "a:b",
+            "main ",
+            "/main",
+            "",
+            "a*",
+            "a?",
+            "a[b]",
+            "HEAD~3",
+            "main^",
+            "main@{1}",
+        ] {
+            assert!(
+                GitCommand::Checkout {
+                    branch: branch.into()
+                }
+                .args()
+                .is_err(),
+                "{branch:?}"
+            );
+            assert!(
+                GitCommand::FetchBranch {
+                    branch: branch.into()
+                }
+                .args()
+                .is_err(),
+                "{branch:?}"
+            );
+        }
+        assert!(
+            GitCommand::CountCommits {
+                base: "--all".into(),
+                head: "HEAD".into()
+            }
+            .args()
+            .is_err()
+        );
+        assert_eq!(
+            GitCommand::SetBranchConfig {
+                branch: "feature/x".into(),
+                key: BranchConfigKey::Description,
+                value: "--global".into()
+            }
+            .args()
+            .unwrap(),
+            ["config", "--", "branch.feature/x.description", "--global"]
+        );
+        assert_eq!(
+            GitCommand::Checkout {
+                branch: "feature/x".into()
+            }
+            .args()
+            .unwrap(),
+            ["checkout", "--no-overwrite-ignore", "feature/x", "--"]
+        );
+        assert_eq!(
+            GitCommand::FetchBranch {
+                branch: "main".into()
+            }
+            .args()
+            .unwrap(),
+            [
+                "fetch",
+                "--no-tags",
+                "origin",
+                "+refs/heads/main:refs/remotes/origin/main"
+            ]
+        );
     }
 }

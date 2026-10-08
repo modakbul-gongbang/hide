@@ -116,7 +116,8 @@ pub enum Verification {
 }
 
 impl Verification {
-    pub fn exists(&self) -> bool {
+    /// Whether the Factory verifies at all.
+    pub fn configured(&self) -> bool {
         !matches!(self, Self::None)
     }
 }
@@ -1021,7 +1022,7 @@ impl Task {
     }
 
     pub fn merge_mode(&self, factory: &Factory) -> MergeMode {
-        if !factory.config.verification.exists() {
+        if !factory.config.verification.configured() {
             return MergeMode::Manual;
         }
         self.human.merge_mode.unwrap_or(factory.config.merge_mode)

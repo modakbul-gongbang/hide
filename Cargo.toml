@@ -32,8 +32,9 @@ incremental = false
 # The workspace's own crates keep file and line tables, enough for a panic's
 # backtrace, and leave out the rest of the debug info, which is most of what a
 # debug build of them writes and links. Dependencies keep the default, so the
-# builds CI has cached for them stay valid. A crate added to `members` without
-# an entry here builds with full debug info, which is only slower.
+# builds CI has cached for them stay valid, except the SSH crates at the end.
+# A crate added to `members` without an entry here builds with full debug
+# info, which is only slower.
 [profile.dev.package.herdr-core]
 debug = "line-tables-only"
 
@@ -72,3 +73,48 @@ debug = "line-tables-only"
 
 [profile.dev.package.hide-agent-adapter]
 debug = "line-tables-only"
+
+# A device's node is installed and spoken to over SSH, and every byte of
+# both goes through these crates' ciphers and packet code. Unoptimized they
+# move a few MiB a second, so a debug build's own node, which is what a
+# development daemon installs on a device, took longer to upload than the
+# remote mailbox lane waits for a ready device. Optimizing them keeps a dev
+# build's SSH as fast as a shipped one's for a few seconds more of build.
+[profile.dev.package.russh]
+opt-level = 3
+
+[profile.dev.package.russh-sftp]
+opt-level = 3
+
+[profile.dev.package.russh-cryptovec]
+opt-level = 3
+
+[profile.dev.package.ssh-cipher]
+opt-level = 3
+
+[profile.dev.package.chacha20]
+opt-level = 3
+
+[profile.dev.package.poly1305]
+opt-level = 3
+
+[profile.dev.package.aes]
+opt-level = 3
+
+[profile.dev.package.aes-gcm]
+opt-level = 3
+
+[profile.dev.package.ctr]
+opt-level = 3
+
+[profile.dev.package.ghash]
+opt-level = 3
+
+[profile.dev.package.polyval]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.hmac]
+opt-level = 3

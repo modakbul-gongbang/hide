@@ -2,7 +2,8 @@
 """The core decides and keeps state; it never touches a machine (PRD
 core-host-node D-21). Files, processes, the Herdr socket and session files
 are a node's, reached through `NodeLink`; this check fails when production
-code under `herdr-core/src` reaches one directly.
+code under `herdr-core/src`, or under `hide-factory/src`, the Software
+Factory engine the core runs (D-01), reaches one directly.
 
 Test code is exempt: test-only files, a module file its parent declares
 behind `#[cfg(test)]`, and every item behind `#[cfg(test)]`. The core's own
@@ -18,6 +19,11 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORE = ROOT / "herdr-core" / "src"
+
+
+def scanned() -> list:
+    """The production trees the core runs: its own, and the Factory engine's."""
+    return [CORE, ROOT / "hide-factory" / "src"]
 
 # What reaching a machine looks like, with what to do instead.
 BANNED = [
@@ -45,8 +51,8 @@ BANNED = [
     (r"\.(try_exists|is_symlink)\(\)", "reads the file system; ask a node"),
     (r"\b(std::)?env::(current_exe|current_dir|set_current_dir|home_dir)\b",
      "reads where this process runs; that is a node's"),
-    (r"\bhide_factory::exec\b|\bSystemRunner\b|\bexec::(checked|shell)\b",
-     "runs a Factory command on this machine; that is a node's"),
+    (r"\brussh(_config|_sftp)?\b",
+     "speaks SSH; a device is reached through `hide_node_link::device`"),
     (r"\bhide_ai::settings::(load|save)\b",
      "reads or writes the AI choice file; keep it in one of the core's stores"),
 ]
@@ -74,6 +80,19 @@ STORES = {
         "reads and writes the operator's AI choice, a core store beside the "
         "core's state file (`hide_ai::settings`)",
     ),
+    "herdr-core/src/factory.rs": (
+        2,
+        "opens the Factory's store when one exists and reads the operator's "
+        "AI choice, both core stores beside the core's state file",
+    ),
+    "hide-factory/src/store.rs": (
+        12,
+        "the Factory's store, which the core keeps beside its state file",
+    ),
+    "hide-factory/src/engine.rs": (
+        2,
+        "reads a Task's attached PRD, a file in the Factory's own store",
+    ),
     "herdr-core/src/node_migration.rs": (
         15,
         "converts the core's own stores to node ids once, where they were "
@@ -85,18 +104,6 @@ STORES = {
 # goes in the change that moves it; the check fails once a listed file no
 # longer reaches a machine, so a stale entry cannot linger.
 LATER_LAYERS = {
-    "herdr-core/src/remote.rs": (14, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/remote/host.rs": (11, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/remote/retirement.rs": (3, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/remote/attachments.rs": (1, "2b: the SSH transport moves into hide-node"),
-    "herdr-core/src/ssh_hosts.rs": (7, "2b: reading ~/.ssh/config is the node's with the transport"),
-    "herdr-core/src/factory.rs": (
-        15,
-        "2b: the Factory engine main added after layer 2a runs its git, gh and "
-        "check commands, worktree removal, disk and program reads and its "
-        "done-today clock's time zone read on this machine; they move to the core's own node over its link, and its store "
-        "and AI choice stay as core stores",
-    ),
     "herdr-core/src/live.rs": (3, "3: the terminal attach child moves to the node's terminal path"),
     "herdr-core/src/terminal_attachments.rs": (2, "3: pasted attachments move with the terminal path"),
     "herdr-core/src/labels/generator.rs": (
@@ -113,7 +120,8 @@ FIXTURES = {
 
 
 def test_only(path: pathlib.Path) -> bool:
-    relative = path.relative_to(CORE).as_posix()
+    tree = next(root for root in scanned() if path.is_relative_to(root))
+    relative = path.relative_to(tree).as_posix()
     name = path.name
     return (
         name == "tests.rs"
@@ -148,7 +156,7 @@ def test_modules() -> set:
     declaration = re.compile(
         r"#\[cfg\((?:all\()?test\b[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;"
     )
-    for parent in CORE.rglob("*.rs"):
+    for parent in (path for tree in scanned() for path in tree.rglob("*.rs")):
         text = strip_comments_and_literals(parent.read_text())
         directory = parent.parent if parent.name in ("lib.rs", "mod.rs", "main.rs") else parent.with_suffix("")
         for match in declaration.finditer(text):
@@ -206,7 +214,7 @@ def main() -> int:
         if not (ROOT / listed).exists():
             failures.append(f"{listed}: listed as excused but no longer exists; remove the entry")
     tests = test_modules()
-    for path in sorted(CORE.rglob("*.rs")):
+    for path in sorted(path for tree in scanned() for path in tree.rglob("*.rs")):
         relative = path.relative_to(ROOT).as_posix()
         if test_only(path) or relative in tests or relative in FIXTURES:
             continue
@@ -226,7 +234,7 @@ def main() -> int:
             continue
         failures.extend(found)
     if failures:
-        print("herdr-core reaches the machine directly (PRD core-host-node D-21):", file=sys.stderr)
+        print("The core reaches the machine directly (PRD core-host-node D-21):", file=sys.stderr)
         print("\n".join(failures), file=sys.stderr)
         print(f"{len(failures)} finding(s)", file=sys.stderr)
         return 1

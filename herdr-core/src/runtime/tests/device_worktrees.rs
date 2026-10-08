@@ -119,7 +119,7 @@ fn device_runtime_with_host(
             phase: hosts::HostPhase::Ready {
                 host,
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hide-host-helper".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
             },
             generation: 1,
         },

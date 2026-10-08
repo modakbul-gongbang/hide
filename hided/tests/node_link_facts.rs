@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use hide_platform::process::OwnedChild;
 use serde_json::{Value, json};
 
-const HELPER: &str = env!("CARGO_BIN_EXE_hide-host-helper");
+const HELPER: &str = env!("CARGO_BIN_EXE_hided");
 const DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 64 * 1024;
 const REPLY: &str = "assistant reply that is conversation, not a link fact";
@@ -30,7 +30,7 @@ fn serve(home: &Path, requests: &[Value]) -> BTreeMap<u64, Value> {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("PATH", "")
-        .arg("serve")
+        .args(["node", "serve"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

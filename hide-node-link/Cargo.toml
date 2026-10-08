@@ -17,6 +17,7 @@ publish = false
 [dependencies]
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-ai = { path = "../hide-ai" }
+hide-herdr-client = { path = "../hide-herdr-client" }
 hide-kit = { path = "../hide-kit" }
 hide-platform = { path = "../hide-platform" }
 hide-project = { path = "../hide-project" }

@@ -114,6 +114,94 @@ pub const SESSION_INCREMENT_READ_LIMIT_BYTES: u64 = 1024 * 1024;
 /// Largest individual JSONL record retained or parsed by a cursor.
 pub const SESSION_LINE_LIMIT_BYTES: usize = 256 * 1024;
 
+/// Claude Code's transcript folder, under the home folder.
+pub const CLAUDE_SESSIONS: &str = ".claude/projects";
+/// Codex CLI's transcript folder, under the home folder.
+pub const CODEX_SESSIONS: &str = ".codex/sessions";
+
+/// The folder in `home` that holds `agent`'s session files, `None` for an
+/// agent that keeps no file per session.
+pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
+    match agent {
+        Agent::Claude => Some(home.join(CLAUDE_SESSIONS)),
+        Agent::Codex => Some(home.join(CODEX_SESSIONS)),
+        Agent::OpenCode => None,
+    }
+}
+
+/// Why [`inside_session_root`] refused a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootRefusal {
+    /// None of the agents keeps a file per session.
+    Unsupported,
+    /// The path resolves outside every agent's session folder.
+    Outside,
+    /// Nothing is at the path.
+    Missing,
+    /// The path could not be resolved.
+    Unreadable,
+}
+
+/// `path` with every link resolved, refused unless it lies under one of
+/// `agents`' session folders in `home`: a path a caller names, or a link
+/// planted inside a folder, never makes a reader open a file elsewhere.
+pub fn inside_session_root(
+    home: &Path,
+    agents: &[Agent],
+    path: &Path,
+) -> std::result::Result<PathBuf, RootRefusal> {
+    let roots = agents
+        .iter()
+        .filter_map(|agent| session_root(home, *agent))
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        return Err(RootRefusal::Unsupported);
+    }
+    let roots = roots
+        .iter()
+        .filter_map(|root| hide_platform::fs::identity::canonical(root).ok())
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        return Err(RootRefusal::Outside);
+    }
+    let path = hide_platform::fs::identity::canonical(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            RootRefusal::Missing
+        } else {
+            RootRefusal::Unreadable
+        }
+    })?;
+    if roots
+        .iter()
+        .any(|root| path.starts_with(root) && &path != root)
+    {
+        Ok(path)
+    } else {
+        Err(RootRefusal::Outside)
+    }
+}
+
+/// Opens a session file for reading without waiting on it: a pipe or a
+/// device named where a session file should be is refused at once instead of
+/// blocking the reader, and so is a folder.
+pub(crate) fn open_session_file(path: &Path) -> io::Result<File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Session source is not a regular file.",
+        ));
+    }
+    Ok(file)
+}
+
 /// The local agent session formats supported by Hide. Claude Code and Codex
 /// keep a JSONL file per session; OpenCode keeps every session in one SQLite
 /// database, which only the session adapter reads (`label_transcript`).
@@ -510,7 +598,8 @@ impl SessionCursor {
     }
 
     fn read_appended(&mut self, path: &Path) -> Result<AppendedBytes> {
-        let mut file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+        let mut file =
+            open_session_file(path).map_err(|error| SessionError::io("open", path, error))?;
         let metadata = file
             .metadata()
             .map_err(|error| SessionError::io("stat", path, error))?;
@@ -683,11 +772,11 @@ impl SessionLocator {
     }
 
     fn claude_root(&self) -> PathBuf {
-        self.home.join(".claude/projects")
+        self.home.join(CLAUDE_SESSIONS)
     }
 
     fn codex_root(&self) -> PathBuf {
-        self.home.join(".codex/sessions")
+        self.home.join(CODEX_SESSIONS)
     }
 
     fn claude_path_for_id(
@@ -870,7 +959,8 @@ pub fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>> {
 
 /// Read a bounded tail while dropping a line cut by the byte boundary.
 pub fn read_tail(path: &Path, maximum_bytes: u64) -> Result<String> {
-    let mut file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+    let mut file =
+        open_session_file(path).map_err(|error| SessionError::io("open", path, error))?;
     let length = file
         .metadata()
         .map_err(|error| SessionError::io("stat", path, error))?
@@ -912,7 +1002,8 @@ const SCAN_BLOCK_BYTES: u64 = 64 * 1024;
 /// `None` for the file's last newline. A line longer than the window is
 /// passed over by scanning back to its start, without keeping its bytes.
 pub fn read_page_before(path: &Path, end: Option<u64>, maximum_bytes: u64) -> Result<PageBefore> {
-    let mut file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+    let mut file =
+        open_session_file(path).map_err(|error| SessionError::io("open", path, error))?;
     let length = file
         .metadata()
         .map_err(|error| SessionError::io("stat", path, error))?
@@ -969,7 +1060,7 @@ fn line_start_before(file: &mut File, path: &Path, end: u64) -> Result<u64> {
 
 /// Read a whole file while enforcing a hard byte cap before and during I/O.
 pub fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<String> {
-    let file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+    let file = open_session_file(path).map_err(|error| SessionError::io("open", path, error))?;
     let length = file
         .metadata()
         .map_err(|error| SessionError::io("stat", path, error))?
@@ -1020,7 +1111,7 @@ pub(crate) fn read_bounded_line(
 
 /// Read the cwd from Codex's first session_meta line.
 pub fn codex_session_cwd(path: &Path) -> Option<String> {
-    let mut reader = BufReader::new(File::open(path).ok()?);
+    let mut reader = BufReader::new(open_session_file(path).ok()?);
     let first = read_bounded_line(&mut reader, SESSION_LINE_LIMIT_BYTES).ok()??;
     let value: Value = serde_json::from_slice(&first).ok()?;
     value

@@ -20,9 +20,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
 use hide_node::pane_proof::{PaneIdentity, caller_directory, descends_from, process_start};
+use hide_node::ssh::RemoteHost;
+use hide_node_link::protocol::Call;
 use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -69,6 +70,14 @@ pub struct Capability {
 }
 
 impl Capability {
+    /// Whether this credential was issued for a pane of `node`, vouched for
+    /// over `link`; a local one never was.
+    pub fn vouched_by(&self, node: &str, link: &RemoteHost) -> bool {
+        self.remote
+            .as_ref()
+            .is_some_and(|remote| remote.node == node && remote.link.same_link(link))
+    }
+
     /// The refusal for a command whose answer no longer matches this
     /// credential's context: a pane moved or closed, or a checkout that is
     /// no longer registered on its device.
@@ -88,23 +97,24 @@ pub fn refusal_next_action(reason: &str) -> &'static str {
     }
 }
 
+/// A device pane's credential: the node that vouched for the pane and the
+/// link it vouched over. It holds only while that link does (B18).
 #[derive(Clone)]
 struct RemoteCapability {
-    bridge_id: String,
-    alive: Arc<AtomicBool>,
-    client: Arc<RusshRemoteClient>,
-    helper_path: String,
+    node: String,
+    link: RemoteHost,
     source_pane_id: String,
 }
 
 pub(crate) struct RemoteGrant {
-    pub bridge_id: String,
-    pub alive: Arc<AtomicBool>,
-    pub client: Arc<RusshRemoteClient>,
-    pub helper_path: String,
+    pub node: String,
+    pub link: RemoteHost,
     pub source_pane_id: String,
     pub one_shot: bool,
 }
+
+/// How long a device's node may take to re-read a pane for a command.
+const PANE_INSPECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn entry_alive(entry: &Capability) -> bool {
     if entry.created.elapsed() >= CAPABILITY_LIFETIME
@@ -113,7 +123,7 @@ fn entry_alive(entry: &Capability) -> bool {
         return false;
     }
     if let Some(remote) = &entry.remote {
-        return remote.alive.load(Ordering::Acquire);
+        return remote.link.closed_reason().is_none();
     }
     let shell_alive = match &entry.binding {
         Binding::Pane {
@@ -149,11 +159,23 @@ fn remove_local_reference(entry: &Capability) {
     }
 }
 
+/// What a reference file holds: the credential, and the way to the daemon
+/// that issued it.
 #[derive(Serialize, Deserialize)]
 pub struct Reference {
     pub token: String,
-    pub port: u16,
-    pub origin_port: u16,
+    #[serde(flatten)]
+    pub route: Route,
+}
+
+/// How a command reaches the daemon that issued its credential: this
+/// machine's loopback port, or, on a device, the node socket whose link to
+/// that daemon carries the command (`hide_host::panes`).
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Route {
+    Daemon { port: u16, origin_port: u16 },
+    Node { socket: String },
 }
 
 pub struct Registry {
@@ -227,8 +249,10 @@ impl Registry {
         let mut file = private::create_new_file(&path).map_err(|_| "reference_unavailable")?;
         let bytes = serde_json::to_vec(&Reference {
             token: token.clone(),
-            port,
-            origin_port: port,
+            route: Route::Daemon {
+                port,
+                origin_port: port,
+            },
         })
         .map_err(|_| "reference_unavailable")?;
         if file
@@ -262,7 +286,7 @@ impl Registry {
         grant: RemoteGrant,
     ) -> Result<(String, bool), &'static str> {
         let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
-        if self.closed.load(Ordering::SeqCst) || !grant.alive.load(Ordering::Acquire) {
+        if self.closed.load(Ordering::SeqCst) || grant.link.closed_reason().is_some() {
             return Err("hide_unavailable");
         }
         entries.retain(|_, entry| {
@@ -276,10 +300,7 @@ impl Registry {
             && let Some((token, _)) = entries.iter().find(|(_, entry)| {
                 !entry.one_shot
                     && same_caller(entry, attestation)
-                    && entry
-                        .remote
-                        .as_ref()
-                        .is_some_and(|remote| remote.bridge_id == grant.bridge_id)
+                    && entry.vouched_by(&grant.node, &grant.link)
             })
         {
             return Ok((token.clone(), false));
@@ -300,10 +321,8 @@ impl Registry {
                 claimed: false,
                 path: PathBuf::new(),
                 remote: Some(RemoteCapability {
-                    bridge_id: grant.bridge_id,
-                    alive: grant.alive,
-                    client: grant.client,
-                    helper_path: grant.helper_path,
+                    node: grant.node,
+                    link: grant.link,
                     source_pane_id: grant.source_pane_id,
                 }),
             },
@@ -333,12 +352,21 @@ impl Registry {
         }
     }
 
-    pub fn revoke_bridge_token(&self, bridge_id: &str, token: &str) {
+    /// Revokes `token` when `node` vouched for it over `link`; a node can
+    /// withdraw only what it vouched for.
+    /// The credential `token` names, when `node` vouched for it over `link`:
+    /// a command a device's node relays runs only on a credential that same
+    /// node vouched for over that same connection (PRD core-host-node B18).
+    pub fn vouched(&self, token: &str, node: &str, link: &RemoteHost) -> Option<Capability> {
+        self.get(token)
+            .filter(|capability| capability.vouched_by(node, link))
+    }
+
+    pub fn revoke_vouched(&self, node: &str, link: &RemoteHost, token: &str) {
         if let Ok(mut entries) = self.entries.lock()
             && entries
                 .get(token)
-                .and_then(|entry| entry.remote.as_ref())
-                .is_some_and(|remote| remote.bridge_id == bridge_id)
+                .is_some_and(|entry| entry.vouched_by(node, link))
         {
             entries.remove(token);
         }
@@ -385,10 +413,14 @@ impl Registry {
             return Err(outcome);
         }
         let actual = if let Some(remote) = &cap.remote {
-            let identity = remote
-                .client
-                .workspace_pane_identity(&remote.helper_path, &remote.source_pane_id)
-                .map_err(|_| "remote_unavailable")?;
+            let identity: PaneIdentity = hide_node_link::call_as(
+                &remote.link,
+                Call::PaneInspect {
+                    pane_id: remote.source_pane_id.clone(),
+                },
+                PANE_INSPECT_TIMEOUT,
+            )
+            .map_err(|_| "remote_unavailable")?;
             let context = core
                 .workspace_query(&cap.context.device_id, &cap.pane_id, Query::Info)
                 .map_err(|_| "pane_not_connected")?
@@ -413,14 +445,11 @@ impl Registry {
         Ok(cap)
     }
 
-    pub fn revoke_bridge(&self, bridge_id: &str) {
+    /// Revokes every credential `node` vouched for over `link`, at once,
+    /// when the link ends (B18).
+    pub fn revoke_link(&self, node: &str, link: &RemoteHost) {
         if let Ok(mut entries) = self.entries.lock() {
-            entries.retain(|_, entry| {
-                entry
-                    .remote
-                    .as_ref()
-                    .is_none_or(|remote| remote.bridge_id != bridge_id)
-            });
+            entries.retain(|_, entry| !entry.vouched_by(node, link));
         }
     }
 
@@ -859,6 +888,77 @@ fn answer_bootstrap(
 mod tests {
     use super::*;
 
+    fn device_attestation(node: &str) -> Attestation {
+        Attestation {
+            pane_id: format!("remote:{node}:pane:w1:p1"),
+            context: Context {
+                device_id: node.to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/checkout".to_owned(),
+            },
+            binding: Binding::Pane {
+                terminal_id: "t1".to_owned(),
+                shell_pid: 42,
+                shell_started: 9,
+            },
+        }
+    }
+
+    fn device_grant(node: &str, link: &RemoteHost) -> RemoteGrant {
+        RemoteGrant {
+            node: node.to_owned(),
+            link: link.clone(),
+            source_pane_id: "w1:p1".to_owned(),
+            one_shot: false,
+        }
+    }
+
+    /// B18 and letter-720: a device credential answers only on the link it
+    /// was vouched for over: not on another node's link, not on its own
+    /// node's next connection, and not once its link closed or was revoked.
+    #[test]
+    fn a_device_credential_answers_only_on_the_link_that_vouched_for_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let link_a = RemoteHost::detached("ssh:a");
+        let link_b = RemoteHost::detached("ssh:b");
+        let next_a = RemoteHost::detached("ssh:a");
+        let (token, issued) = registry
+            .issue_remote(
+                &device_attestation("node-a"),
+                device_grant("node-a", &link_a),
+            )
+            .unwrap();
+        assert!(issued);
+        assert!(registry.vouched(&token, "node-a", &link_a).is_some());
+        assert!(registry.vouched(&token, "node-b", &link_b).is_none());
+        assert!(registry.vouched(&token, "node-b", &link_a).is_none());
+        assert!(registry.vouched(&token, "node-a", &next_a).is_none());
+        registry.revoke_link("node-a", &link_a);
+        assert!(registry.vouched(&token, "node-a", &link_a).is_none());
+        assert!(registry.get(&token).is_none());
+
+        // A link that ends takes its credentials with it, and issues none.
+        let (token, _) = registry
+            .issue_remote(
+                &device_attestation("node-a"),
+                device_grant("node-a", &next_a),
+            )
+            .unwrap();
+        next_a.close("lost");
+        assert!(registry.get(&token).is_none());
+        assert_eq!(
+            registry
+                .issue_remote(
+                    &device_attestation("node-a"),
+                    device_grant("node-a", &next_a)
+                )
+                .err(),
+            Some("hide_unavailable")
+        );
+    }
+
     #[tokio::test]
     async fn long_state_directory_keeps_a_short_private_bootstrap_socket() {
         let directory = tempfile::tempdir().unwrap();
@@ -1014,20 +1114,22 @@ mod tests {
     /// A core with no Herdr and no registered checkout, so every bootstrap
     /// answer below comes from the attestation path itself.
     fn bare_core(directory: &Path) -> CoreHandle {
-        CoreHandle::spawn(herdr_core::CoreOptions {
-            schema_version: crate::state_file::SCHEMA_VERSION,
-            home: None,
-            node_id: herdr_core::node::NodeId::parse("test-node").unwrap(),
-            herdr_socket_path: None,
-            herdr_bin_path: None,
-            app_state_path: directory.join("core-state.json").display().to_string(),
-            host_helper_dir: None,
-            host_helper_root: None,
-            host_cli_dir: None,
-            workspace_views_path: None,
-            shortcut_import_path: None,
-            local_issues_path: None,
-        })
+        CoreHandle::spawn(
+            herdr_core::CoreOptions {
+                schema_version: crate::state_file::SCHEMA_VERSION,
+                home: None,
+                node_id: herdr_core::node::NodeId::parse("test-node").unwrap(),
+                herdr_socket_path: None,
+                herdr_bin_path: None,
+                app_state_path: directory.join("core-state.json").display().to_string(),
+                host_helper_root: None,
+                host_cli_dir: None,
+                workspace_views_path: None,
+                shortcut_import_path: None,
+                local_issues_path: None,
+            },
+            Default::default(),
+        )
         .unwrap()
     }
 

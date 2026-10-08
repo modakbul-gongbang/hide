@@ -736,16 +736,18 @@ impl Runtime {
                 );
                 self.fail_attachment(&error, true);
             }
-            Ok(paths) => match ingress::paste_bytes(&paths, pending.bracketed) {
-                Ok(paste) => {
-                    pending.paste = Some(paste);
-                    self.deliver_attachment();
+            Ok(paths) => {
+                match ingress::paste_bytes(&paths, pending.bracketed, pending.remote.is_some()) {
+                    Ok(paste) => {
+                        pending.paste = Some(paste);
+                        self.deliver_attachment();
+                    }
+                    Err(error) => {
+                        self.fail_attachment(&error, false);
+                        return true;
+                    }
                 }
-                Err(error) => {
-                    self.fail_attachment(&error, false);
-                    return true;
-                }
-            },
+            }
         }
         self.sync_async_operations();
         true
@@ -812,7 +814,6 @@ mod tests {
                     .join("state.json")
                     .to_string_lossy()
                     .into_owned(),
-                host_helper_dir: None,
                 host_helper_root: None,
                 host_cli_dir: None,
                 workspace_views_path: None,
@@ -825,6 +826,7 @@ mod tests {
                 codex_home: None,
             },
             std::sync::Arc::new(hide_node::Local::of_process()),
+            crate::node::test_devices(),
         );
         runtime.test_dirs.push(folder);
         runtime.ensure_terminal_pane("pane-one");

@@ -33,8 +33,8 @@ Pick the cheapest layer that can observe the result.
 | End to end | A flow that crosses a process boundary a user depends on: browser to hided to the core to Herdr to the PTY, or the desktop window and its native integration | `web/e2e/`, `desktop/e2e/` |
 
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
-The external crate-boundary lane in `herdr-core/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
-It verifies real helper attestation and reverse-forward mailbox intake, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
+The external crate-boundary lane in `hided/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
+It verifies real helper attestation and mailbox intake over the device's node link, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
 Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned for a change to a crate it builds and tests) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
 A pull request runs it on Linux only: SSH, the helper's attestation and the mailbox are the same code on every system, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
 The fixture's macOS branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP server path) and the usual remote device being a Mac are why the nightly runs the lane on macOS too (`remote mailbox (macOS)`).
@@ -282,7 +282,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.
    A sleep that is the subject of the test, such as a fake peer that answers late, is the exception and says so in a comment.
 6. **Poll the state, once, with a named condition.**
-   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `herdr-core/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
+   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `hided/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
    The helper fails with the name of the thing it waited for, so a hang is readable.
 7. **Own and remove what the test starts.**
    Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.

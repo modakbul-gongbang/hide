@@ -87,7 +87,9 @@ pub async fn gateway(mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'stat
             }
         }
     });
-    let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
+    let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    let transport: std::pin::Pin<Box<dyn crate::workspace_cli::Transport>> = Box::pin(stream);
+    let (socket, _) = tokio_tungstenite::client_async(format!("ws://{address}"), transport)
         .await
         .unwrap();
     Cdp::new(socket)

@@ -1,20 +1,24 @@
-//! Short subprocesses (`git`, `gh`) behind one seam, and the reading of their
-//! failures into the structured environment signals (D-31 rule 2). Every run
-//! has a deadline and a capped output (`hide_platform::process::run_to_end`);
-//! tests replace the runner with a recording fake.
+//! The Factory's machine work, done by the core's own node over its link
+//! (PRD core-host-node D-01, `hide_node_link::factory`), and the reading of
+//! a failed run into the structured environment signals (D-31 rule 2). The
+//! node runs each command with a deadline and capped output; tests answer
+//! the link with a fake.
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use hide_platform::process::{RunFailure, run_to_end};
+use hide_node_link::factory::{FactoryCall, FactoryGh, FactoryGit, RUN_DEADLINE_MS, RunAnswer};
+use hide_node_link::protocol::Call;
+use hide_node_link::{LinkError, NodeLink, call_as, call_as_with_progress};
+use serde::de::DeserializeOwned;
 
 use crate::adapters::{EnvSignal, Failure};
 
-/// The longest a single `git` or `gh` call may take.
-pub const CALL_DEADLINE: Duration = Duration::from_secs(120);
+/// How long the link waits past a run's own deadline before it gives up on
+/// the answer.
+const LINK_SLACK: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Output {
@@ -29,77 +33,114 @@ impl Output {
     }
 }
 
-pub trait Runner: Send {
-    /// Runs `program` with `args` in `cwd`; `Err` only when it could not run
-    /// or answer at all.
-    fn run(
-        &mut self,
-        program: &str,
-        args: &[String],
-        cwd: Option<&Path>,
-    ) -> Result<Output, Failure>;
+/// The node the Factory's projects live on. `stop` ends a run in flight
+/// when the engine shuts down.
+#[derive(Clone)]
+pub struct Machine {
+    node: Arc<dyn NodeLink>,
+    stop: Arc<AtomicBool>,
 }
 
-/// The real runner. `stop` ends a call in flight when the engine shuts down.
-pub struct SystemRunner {
-    pub stop: Arc<AtomicBool>,
-}
+impl Machine {
+    pub fn new(node: Arc<dyn NodeLink>, stop: Arc<AtomicBool>) -> Self {
+        Self { node, stop }
+    }
 
-impl Runner for SystemRunner {
-    fn run(
-        &mut self,
-        program: &str,
-        args: &[String],
-        cwd: Option<&Path>,
-    ) -> Result<Output, Failure> {
-        let mut command = Command::new(program);
-        command.args(args);
-        // A pager or a prompt would wait forever for a person.
-        command
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GH_PAGER", "cat");
-        if let Some(cwd) = cwd {
-            command.current_dir(cwd);
-        }
-        match run_to_end(&mut command, CALL_DEADLINE, &self.stop) {
-            Ok(finished) => Ok(Output {
-                code: finished.code,
-                stdout: finished.stdout,
-                stderr: finished.stderr,
-            }),
-            Err(RunFailure::TimedOut) => Err(if program == "gh" {
-                Failure::environment(program, EnvSignal::Network, "timed out")
-            } else {
-                Failure::task(program, "timed out")
-            }),
-            Err(RunFailure::Stopped) => Err(Failure::task(program, "stopped")),
-            Err(RunFailure::Start(error)) | Err(RunFailure::Wait(error)) => {
-                Err(Failure::task(program, error.to_string()))
-            }
-        }
+    /// One git command in `cwd`; `Err` only when it could not run or answer
+    /// at all.
+    pub fn git(&self, cwd: &Path, command: FactoryGit) -> Result<Output, Failure> {
+        self.run(
+            "git",
+            FactoryCall::Git {
+                cwd: cwd.to_string_lossy().into_owned(),
+                command,
+            },
+        )
+    }
+
+    pub fn gh(&self, command: FactoryGh) -> Result<Output, Failure> {
+        self.run("gh", FactoryCall::Gh { command })
+    }
+
+    /// The project's quick check under the node's shell.
+    pub fn check(&self, cwd: &Path, text: &str) -> Result<Output, Failure> {
+        self.run(
+            "quick_check",
+            FactoryCall::Check {
+                cwd: cwd.to_string_lossy().into_owned(),
+                text: text.to_owned(),
+            },
+        )
+    }
+
+    fn run(&self, program: &str, call: FactoryCall) -> Result<Output, Failure> {
+        let answer: RunAnswer = call_as_with_progress(
+            self.node.as_ref(),
+            Call::Factory { call },
+            Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
+            |_: serde_json::Value| !self.stop.load(Ordering::Acquire),
+        )
+        .map_err(|error| Failure::task(program, error.to_string()))?;
+        read_run(program, answer)
+    }
+
+    /// Any other Factory request, answered as `T`.
+    pub fn call<T: DeserializeOwned>(&self, stage: &str, call: FactoryCall) -> Result<T, Failure> {
+        call_as(
+            self.node.as_ref(),
+            Call::Factory { call },
+            Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
+        )
+        .map_err(|error| Failure::task(stage, error.to_string()))
+    }
+
+    /// A Factory read whose link failure stays apart from the node's answer,
+    /// so a caller can ask again rather than read it as the answer.
+    pub fn read<T: DeserializeOwned>(&self, call: FactoryCall) -> Result<T, LinkError> {
+        call_as(
+            self.node.as_ref(),
+            Call::Factory { call },
+            Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
+        )
+    }
+
+    /// Any other node request, answered as `T`.
+    pub fn node_call<T: DeserializeOwned>(&self, stage: &str, call: Call) -> Result<T, Failure> {
+        call_as(
+            self.node.as_ref(),
+            call,
+            Duration::from_millis(RUN_DEADLINE_MS) + LINK_SLACK,
+        )
+        .map_err(|error| Failure::task(stage, error.to_string()))
     }
 }
 
-/// The shell a verify command or quick check runs under, and its flag.
-pub fn shell() -> (&'static str, &'static str) {
-    if cfg!(windows) {
-        ("cmd", "/C")
-    } else {
-        ("/bin/sh", "-c")
+/// How a run ended, as the Factory reads it.
+pub fn read_run(program: &str, answer: RunAnswer) -> Result<Output, Failure> {
+    match answer {
+        RunAnswer::Finished {
+            code,
+            stdout,
+            stderr,
+        } => Ok(Output {
+            code,
+            stdout,
+            stderr,
+        }),
+        RunAnswer::TimedOut if program == "gh" => Err(Failure::environment(
+            program,
+            EnvSignal::Network,
+            "timed out",
+        )),
+        RunAnswer::TimedOut => Err(Failure::task(program, "timed out")),
+        RunAnswer::Stopped => Err(Failure::task(program, "stopped")),
+        RunAnswer::Unstarted { reason } => Err(Failure::task(program, reason)),
     }
 }
 
-/// Runs and requires success; a failure is read for its signal.
-pub fn checked(
-    runner: &mut dyn Runner,
-    stage: &str,
-    program: &str,
-    args: &[&str],
-    cwd: Option<&Path>,
-) -> Result<String, Failure> {
-    let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-    let output = runner.run(program, &args, cwd)?;
+/// A run that must succeed; a failure is read for its signal.
+pub fn checked(stage: &str, output: Result<Output, Failure>) -> Result<String, Failure> {
+    let output = output?;
     if output.ok() {
         return Ok(output.stdout);
     }

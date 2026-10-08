@@ -180,7 +180,12 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped file-root reply".to_owned())?
     }
 
-    pub fn spawn(options: CoreOptions) -> Result<Self, String> {
+    /// `panes` is where each device's node link sends its panes' proofs and
+    /// command streams (`node_panes`).
+    pub fn spawn(
+        options: CoreOptions,
+        panes: hide_node::ssh::PaneEventsSlot,
+    ) -> Result<Self, String> {
         let node = options.node_id.clone();
         let (command_tx, command_rx) = mpsc::channel::<Command>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -188,7 +193,7 @@ impl CoreHandle {
         let notify_for_thread = notify_tx.clone();
         let thread = thread::Builder::new()
             .name("hided-core".into())
-            .spawn(move || owner_loop(options, command_rx, ready_tx, notify_for_thread))
+            .spawn(move || owner_loop(options, panes, command_rx, ready_tx, notify_for_thread))
             .map_err(|error| format!("core owner thread failed to start: {error}"))?;
         ready_rx
             .recv()
@@ -400,6 +405,7 @@ impl Drop for CoreHandle {
 
 fn owner_loop(
     options: CoreOptions,
+    panes: hide_node::ssh::PaneEventsSlot,
     commands: Receiver<Command>,
     ready: Sender<Result<(), String>>,
     notify: broadcast::Sender<()>,
@@ -426,12 +432,29 @@ fn owner_loop(
         .herdr_socket_path
         .as_deref()
         .map(|socket| hide_node::herdr(std::path::Path::new(socket)));
-    let Some(core) = Core::create(options, std::sync::Arc::new(own_node), own_herdr) else {
+    // The program builds devices run ship beside this binary; a daemon
+    // anywhere else carries none, which leaves each device's node
+    // `unsupported` with that reason.
+    let devices = hide_node::ssh::Connector::new(
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
+    )
+    .with_pane_events(panes);
+    let Some(core) = Core::create(
+        options,
+        std::sync::Arc::new(own_node),
+        own_herdr,
+        std::sync::Arc::new(devices),
+    ) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),
         ));
         return;
     };
+    // After the core opened its Logs file: the SSH transport's records land
+    // there too.
+    hide_node::diagnostics::install(herdr_core::diagnostics::emit);
     core.on_change(move || {
         let _ = notify.send(());
     });

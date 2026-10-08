@@ -560,7 +560,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
-            host_helper_dir: None,
             host_helper_root: None,
             host_cli_dir: None,
             workspace_views_path: None,
@@ -573,6 +572,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             codex_home: None,
         },
         std::sync::Arc::new(hide_node::Local::of_process()),
+        crate::node::test_devices(),
     )))
 }
 
@@ -969,7 +969,6 @@ fn official_remote_session_coordinator_probe() {
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
-            host_helper_dir: None,
             host_helper_root: None,
             host_cli_dir: None,
             workspace_views_path: None,
@@ -982,6 +981,7 @@ fn official_remote_session_coordinator_probe() {
             codex_home: None,
         },
         std::sync::Arc::new(hide_node::Local::new(Some(PathBuf::from(home)))),
+        crate::node::test_devices(),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the

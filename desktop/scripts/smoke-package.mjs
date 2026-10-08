@@ -7,8 +7,8 @@
 // It checks the archive against its `.sha256`, unpacks it into a new
 // temporary folder (Windows with Expand-Archive, as a user's Extract All
 // reads a zip, rather than the tar that wrote it), and from the unpacked
-// folder: Herdr reports the pinned version, the device helper and the hook
-// helper start, and the bundled
+// folder: Herdr reports the pinned version, the daemon answers in its device
+// node role (`hided node --version`), the hook helper starts, and the bundled
 // `hide connect` starts the bundled daemon, which serves the web shell it
 // embeds, installs the CLI and holds both installed agents for the first-run choice
 // (their files untouched), installs both hooks once that choice is answered
@@ -104,12 +104,11 @@ try {
   // Cleanup always uses the known complete first package, even if preparing
   // or connecting the upgrade fails before its CLI can run.
   const controlCli = bundled("hide");
-  const helper = `hide-host-helper-${label}-x86_64`;
 
   const electron = path.join(app, `hide${exe}`);
 
   check("bundled files", () => {
-    const expected = [path.join(resources, "app.asar"), electron, ...["hide", "hided", "hide-agent-hooks", helper, "herdr"].map(bundled)];
+    const expected = [path.join(resources, "app.asar"), electron, ...["hide", "hided", "hide-agent-hooks", "herdr"].map(bundled)];
     // herdr.exe finds its ConPTY runtime in the folder beside it.
     if (process.platform === "win32") expected.push(path.join(resources, "conpty", "conpty.dll"));
     const absent = expected.filter((file) => !fs.statSync(file, { throwIfNoEntry: false })?.isFile());
@@ -160,9 +159,10 @@ try {
     return reported;
   });
 
-  check(`${helper} --version`, () => {
-    const reported = output(bundled(helper), ["--version"], isolated);
-    if (!reported.startsWith("hide-host-helper ")) throw new Error(`answered '${reported}'`);
+  // A device runs this same program in its node role.
+  check("hided node --version", () => {
+    const reported = output(bundled("hided"), ["node", "--version"], isolated);
+    if (!reported.startsWith("hided-node ")) throw new Error(`answered '${reported}'`);
     return reported;
   });
 

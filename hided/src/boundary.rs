@@ -1921,6 +1921,36 @@ mod windows_boundary_tests {
 }
 
 #[cfg(test)]
+mod identity_tests {
+    use super::{Boundary, Root};
+
+    /// The boundary pins a local root by the identity it read when the root
+    /// was registered, and the node refuses a root whose identity differs, so
+    /// on every system both must read one directory as the same identity or
+    /// every local read would be refused as replaced.
+    #[test]
+    fn root_identity_is_the_one_the_node_reads() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let home = sandbox.path().join("home");
+        std::fs::create_dir_all(home.join("checkout")).unwrap();
+        let boundary = Boundary::new(&home).unwrap();
+        let root = boundary.home().join("checkout");
+        boundary.set_roots(vec![Root {
+            workspace_id: "w".to_owned(),
+            checkout_id: "c".to_owned(),
+            path: root.clone(),
+        }]);
+
+        let pinned = boundary
+            .root_identity(&root.to_string_lossy())
+            .expect("a registered root has an identity");
+        let opened = hide_host::root::Root::open_pinned(&root, pinned)
+            .expect("the node opens the root the boundary pinned");
+        assert_eq!(opened.identity(), pinned);
+    }
+}
+
+#[cfg(test)]
 mod wire_tests {
     use super::Entry;
 
