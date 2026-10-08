@@ -345,15 +345,80 @@ pub(crate) fn register_code_owned(
         .ok_or_else(|| "parent_unavailable".into())
 }
 
+/// How long the device's node may take to answer one of the spawn's checks.
+const TARGET_CHECK_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Judges a device that is not the caller's before anything is made there:
+/// the id names a device, the device takes work now, `repo` (when this
+/// attempt still has to make the checkout) is a repository there, and the
+/// agent CLI is installed there. The node link is taken under the runtime
+/// lock and called after it is released.
+fn check_target(
+    client: &Client,
+    actor: &Actor,
+    device: &str,
+    kind: &str,
+    repository: Option<&str>,
+) -> Result<(), String> {
+    use crate::node_access::{LinkError, call_as};
+    use hide_node_link::{cleanup::RepositoryDirs, protocol::Call};
+    let link = client
+        .runtime
+        .upgrade()
+        .ok_or("delivery_unavailable")?
+        .lock()
+        .map_err(|_| "delivery_unavailable")?
+        .spawn_target(&actor.device_id, device)?;
+    // A node that did not answer says nothing about the repository or the
+    // CLI, so it is the device that is unavailable; only its own answer can
+    // refuse them.
+    let unavailable = |error: LinkError| match error {
+        LinkError::Refused(_) => None,
+        _ => Some("machine_unavailable".to_owned()),
+    };
+    if let Some(repository) = repository {
+        match call_as::<Option<RepositoryDirs>>(
+            link.as_ref(),
+            Call::Repository {
+                path: repository.to_owned(),
+            },
+            TARGET_CHECK_TIMEOUT,
+        ) {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err("repository_unavailable".into()),
+            Err(error) => return Err(unavailable(error).unwrap_or("repository_unavailable".into())),
+        }
+    }
+    match call_as::<bool>(
+        link.as_ref(),
+        Call::AgentInstalled {
+            name: hide_agent_adapter::canonical_kind(kind).to_owned(),
+        },
+        TARGET_CHECK_TIMEOUT,
+    ) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("agent_not_installed".into()),
+        Err(error) => Err(unavailable(error).unwrap_or("agent_not_installed".into())),
+    }
+}
+
 fn spawn(
     client: &Client,
     authority: &Authority,
     actor: &Actor,
-    command: Command,
+    mut command: Command,
 ) -> Result<Value, String> {
     let _single = SPAWN.try_lock().map_err(|_| "spawn_busy")?;
+    // The caller's own device is the absence of a device: one intent, one
+    // spelling.
+    if let Command::Spawn { machine, .. } = &mut command
+        && machine.as_deref() == Some(actor.device_id.as_str())
+    {
+        *machine = None;
+    }
     let Command::Spawn {
         parent,
+        machine,
         name,
         intent,
         kind,
@@ -366,6 +431,7 @@ fn spawn(
         return Err("invalid_spawn".into());
     };
     if parent.as_ref().is_some_and(|parent| !super::key(parent))
+        || machine.as_ref().is_some_and(|machine| !super::key(machine))
         || ![name, intent, kind, repo, branch]
             .into_iter()
             .all(|s| super::key(s))
@@ -379,6 +445,35 @@ fn spawn(
         return Err("invalid_agent_name".into());
     }
     let mut ledger = state(client)?;
+    if let Some(device) = machine {
+        // Nothing is created for a device that cannot take the spawn, so the
+        // judgment comes before the parent is registered or the intent
+        // reserved, and a retry of an intent that already progressed or
+        // completed is judged by what it already did.
+        let known_parent = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
+            super::live_self(&ledger, actor).next().map(|p| p.id.clone())
+        } else {
+            parent.clone()
+        };
+        let earlier = known_parent.and_then(|id| {
+            ledger
+                .spawns
+                .iter()
+                .find(|record| record.parent == id && record.intent == *intent)
+        });
+        if earlier.is_some_and(|record| record.machine != *machine) {
+            return Err("intent_conflict".into());
+        }
+        if !earlier.is_some_and(|record| record.completed) {
+            check_target(
+                client,
+                actor,
+                device,
+                kind,
+                (!earlier.is_some_and(|record| record.pane.is_some())).then_some(repo.as_str()),
+            )?;
+        }
+    }
     let parent_id = if parent.as_deref().is_none_or(|parent| parent == super::HERE) {
         if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
@@ -453,13 +548,25 @@ fn spawn(
             &ledger,
         ));
     }
+    // Everything the child needs happens on its own device; only the parent's
+    // authority and watch stay with the caller.
+    let child_device = reserved
+        .machine
+        .clone()
+        .unwrap_or_else(|| actor.device_id.clone());
     let CoordinationContext {
         connector,
         host_scope,
         machine: native_machine,
         codex: codex_daemon,
         on_node,
-    } = context(client, &actor.device_id)?;
+    } = context(client, &child_device).map_err(|reason| {
+        if reserved.machine.is_some() {
+            "machine_unavailable".to_owned()
+        } else {
+            reason
+        }
+    })?;
     if reserved.pane.is_none() {
         // Reconcile a worktree whose creation reply was interrupted. The
         // existing local/device connector and checkout owner are shared with
@@ -591,7 +698,7 @@ fn spawn(
     let mut child = record(
         &native,
         HostIdentity {
-            machine: &actor.device_id,
+            machine: &child_device,
             scope: &host_scope,
             native_machine: &native_machine,
             on_node,
@@ -883,6 +990,7 @@ mod tests {
                 .to_owned();
             let command = Command::Spawn {
                 parent: Some("here".into()),
+                machine: None,
                 name: "recipient".into(),
                 intent: "one-child".into(),
                 kind: "codex".into(),

@@ -806,6 +806,42 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// The node link of the device a spawn names with `--machine`, or why it
+    /// cannot take the spawn: a refusal code the caller can branch on, with
+    /// the ids it could have named when the id is not a device at all. The
+    /// caller's own device is never named here (the spawn drops it first).
+    pub(crate) fn spawn_target(
+        &mut self,
+        caller_device: &str,
+        device: &str,
+    ) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
+        let registered = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .any(|registration| registration.id == device);
+        if device != self.node.as_str() && !registered {
+            let mut connected: Vec<String> = self
+                .snapshot
+                .ui_state
+                .device_registrations
+                .iter()
+                .map(|registration| registration.id.clone())
+                .chain(std::iter::once(self.node.to_string()))
+                .filter(|id| id != caller_device && self.coordination_context(id).is_ok())
+                .collect();
+            connected.sort();
+            return Err(crate::coordination::refusal("machine_unknown", &connected.join(", ")));
+        }
+        self.coordination_context(device)
+            .map_err(|_| "machine_unavailable".to_owned())?;
+        self.node_link(device)
+            .map_err(|_| "machine_unavailable".to_owned())
+    }
+}
+
 /// What a coordination command needs of the machine it acts on.
 pub(crate) struct CoordinationContext {
     pub(crate) connector: Arc<dyn hide_herdr_client::ApiConnector>,
