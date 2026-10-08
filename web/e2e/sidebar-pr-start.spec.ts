@@ -160,6 +160,7 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       fs.writeFileSync(file, JSON.stringify({ ...state, right_panel_visible: true, right_panel_section: "explorer", expanded_inactive_checkout_project_paths: [toPage(path.join(herdr.root, "charlie"))] }));
     });
     let sent = await attach(daemon);
+    for (const fold of await page.locator("[data-empty-worktrees]").all()) await fold.click();
     await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });
     await expect(row("feature/bravo")).toHaveAttribute("data-checkout-kind", "pr_draft", { timeout: 30_000 });
     await expect(glyph(41)).not.toHaveClass(/text-muted-foreground/);

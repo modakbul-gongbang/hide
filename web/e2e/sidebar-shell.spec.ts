@@ -93,7 +93,7 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await page.keyboard.press(chord("sidebar_agents"));
-    await expect(page.getByRole("dialog", { name: "Overview", exact: true }).locator('[data-overview-view="agents"]')).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Overview", exact: true }).locator('[data-main-view="agents"]')).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(sidebar).toHaveAttribute("data-sidebar", "projects");

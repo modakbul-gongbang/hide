@@ -142,7 +142,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // The worktree's commit was just made: its age is the first minute.
     await expect(feature.locator("[data-checkout-age]")).toHaveText("now");
 
-    // sidebar-readability D-14: a checkout's agent rows start closed, and its
+    // Session UI B5: checkout agents start open; the operator can fold them, and its
     // status badge counts its one agent under the mark that agent's row draws,
     // idle here. Line two is the purpose with the age ending it. The project's
     // badge counts both checkouts' agents.
@@ -175,7 +175,9 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     const primaryParts = [primary.getByText("main", { exact: true }), primary.locator("[data-checkout-age]")];
     const primaryToggle = primary.locator("[data-checkout-toggle]");
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
+    const togglesBefore = sent.get("checkout_agents_toggle") ?? 0;
     await primaryToggle.click();
+    await expect.poll(() => sent.get("checkout_agents_toggle") ?? 0).toBe(togglesBefore + 1);
     const primaryMenu = page.getByRole("menu", { name: "main actions" });
     const beforeLooking = new Map(sent);
     await rest(page);

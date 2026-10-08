@@ -484,7 +484,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect.poll(() => coreLog(daemon as Daemon)).toContain('"mode":"app_closed","renderers":1');
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-mobile-tab="true"]')).toHaveCount(0);
-    await page.locator(`nav[data-sidebar] [data-project-list] [data-agent-open="${two}"]`).click();
+    await page.locator(`nav[data-sidebar] [data-project] [data-agent-open="${two}"]`).click();
     await expect(phone.locator('[data-phone-group="seen"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible({ timeout: 20_000 });
     await page.close();
     await work(herdr, one);

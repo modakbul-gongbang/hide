@@ -152,7 +152,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.keyboard.press("Escape");
     await page.locator("[data-home-destination]").click();
     expect(await page.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "tasks", "projects"]);
-    await row(stopped).locator('[data-session-focus="row"]').click();
+    await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
     await showSessions();
     await page.mouse.move(2, 998);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());

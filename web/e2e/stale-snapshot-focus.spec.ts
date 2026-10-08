@@ -118,11 +118,11 @@ test("the answer to a click on the focused pane leaves the keys where the operat
     await enterWorkspace(page, "fixture");
     const pane = page.locator(`[data-pane-view="${herdr.panes[0]}"]`);
     const keys = pane.locator(".xterm-helper-textarea");
-    const agents = page.locator('nav[data-sidebar="agents"]');
+    const agents = page.locator('nav[data-sidebar="projects"]');
     const sidebarHasKeys = () => agents.evaluate((node) => node.contains(document.activeElement));
     await expect(pane).toHaveAttribute("data-transport", "controlling");
     await expect.poll(() => herdrHasFocus(herdr, herdr.panes[0])).toBe(true);
-    await page.keyboard.press(chord("sidebar_agents"));
+    await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(sidebarHasKeys).toBe(true);
 
     // A click back into the pane that is already focused is still a click the
@@ -133,7 +133,7 @@ test("the answer to a click on the focused pane leaves the keys where the operat
     await expect(keys).toBeFocused();
     await expect.poll(() => net.sent().length).toBe(1);
     await expect.poll(() => net.includes(1)).toBeGreaterThan(0);
-    await page.keyboard.press(chord("sidebar_agents"));
+    await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(sidebarHasKeys).toBe(true);
 
     // The answer moves no pane, so it moves no keys.
@@ -157,7 +157,7 @@ test("a focus move that waited for the last click is dropped once the operator t
     await enterWorkspace(page, "fixture");
     const panes = herdr.panes.map((pane) => page.locator(`[data-pane-view="${pane}"]`));
     const keys = panes[1].locator(".xterm-helper-textarea");
-    const agents = page.locator('nav[data-sidebar="agents"]');
+    const agents = page.locator('nav[data-sidebar="projects"]');
     const sidebarHasKeys = () => agents.evaluate((node) => node.contains(document.activeElement));
     for (const pane of panes) await expect(pane).toHaveAttribute("data-transport", "controlling");
     await expect.poll(() => herdrHasFocus(herdr, herdr.panes[0])).toBe(true);
@@ -168,7 +168,7 @@ test("a focus move that waited for the last click is dropped once the operator t
     net.hold();
     await page.mouse.click(box.x + 100, box.y + 100);
     await expect.poll(() => net.includes(1)).toBeGreaterThan(0);
-    await page.keyboard.press(chord("sidebar_agents"));
+    await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(sidebarHasKeys).toBe(true);
     await page.mouse.click(box.x + 100, box.y + 100);
     await expect(keys).toBeFocused();
@@ -181,7 +181,7 @@ test("a focus move that waited for the last click is dropped once the operator t
     await read(page, net);
     await expect(panes[1]).toHaveAttribute("data-focused", "true");
     await expect(keys).toBeFocused();
-    await page.keyboard.press(chord("sidebar_agents"));
+    await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(sidebarHasKeys).toBe(true);
     net.deliver();
     await read(page, net);

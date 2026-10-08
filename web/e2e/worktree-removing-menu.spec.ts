@@ -79,6 +79,9 @@ test("a checkout row being deleted opens no empty menu", async ({ page }) => {
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
 
+    const emptyFold = page.locator("[data-empty-worktrees]");
+    await expect(emptyFold).toHaveAttribute("aria-expanded", "false");
+    await emptyFold.click();
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     await expect(feature).toBeVisible({ timeout: 30_000 });
     await feature.locator("[data-checkout-menu]").click({ button: "right" });

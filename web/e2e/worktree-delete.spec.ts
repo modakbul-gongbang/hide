@@ -40,6 +40,9 @@ async function deletionFixture(herdr: HerdrFixture) {
  */
 async function featureRow(page: Page) {
   const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
+  const emptyFold = project.locator("[data-empty-worktrees]");
+  await expect(emptyFold).toHaveAttribute("aria-expanded", "false");
+  await emptyFold.click();
   const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
   await expect(feature.locator("[data-checkout-age]")).toBeVisible({ timeout: 30_000 });
   await expect(project.locator("[data-inactive-checkouts]")).toHaveCount(0);

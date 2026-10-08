@@ -1409,7 +1409,7 @@ test("the column toggles, tools, kind marks and an open while File Views is off 
     await expect(page.locator("[data-workspace-toolbar] [data-column-toggle]")).toHaveCount(2);
     await expect(page.locator("[data-workspace-toolbar] [data-tool-tab]")).toHaveCount(0);
     await expect(page.locator("[data-layout-choice]")).toHaveCount(0);
-    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(2);
+    await expect(page.locator('[data-column-row="tools"] [data-tool-tab]')).toHaveCount(3);
 
     // The first file turns File Views on with one View area (B2).
     await expect(workspace).toHaveAttribute("data-file-views", "off");

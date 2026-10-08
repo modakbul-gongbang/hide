@@ -868,7 +868,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
     await expect(allProjects).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
-    await expect(main.locator("[data-main-tab]")).toHaveCount(4);
+    await expect(main.locator("[data-main-tab]")).toHaveCount(3);
     await expect(main).toHaveAttribute("data-main-view", "agents");
     await expect(main.locator('[data-main-tab="agents"] [data-agents-waiting]')).toBeVisible();
     await page.locator('[data-main-tab="agents"]').click();
