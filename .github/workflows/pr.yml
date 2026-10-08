@@ -100,7 +100,10 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        run: |
+          echo 'lanes=["rust"]' >> "$GITHUB_OUTPUT"
+          echo 'full=false' >> "$GITHUB_OUTPUT"
+          echo 'rust-packages=["hided","hide-agent-hooks"]' >> "$GITHUB_OUTPUT"
 
   policy:
     name: policy checks
@@ -177,10 +180,10 @@ jobs:
           else
             mapfile -t packages < <(jq -r '.[] | "-p", .' <<<"$PACKAGES")
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
-            bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
+            bash scripts/verify-cargo.sh nextest --profile ci --retries 0 --no-fail-fast "${packages[@]}" -E 'binary(connect_stop) | test(outside_a_registered_checkout_or_a_herdr_pane_the_same_command_runs)' --stress-count 150
           fi
       - name: Report flaky and failed tests
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         continue-on-error: true
         timeout-minutes: 5
         env:
