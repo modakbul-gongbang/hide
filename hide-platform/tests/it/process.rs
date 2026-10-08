@@ -62,6 +62,28 @@ fn child_role() {
             std::io::stdout().write_all(&input).unwrap();
             std::io::stderr().write_all(b"ERROR-MARKER").unwrap();
         }
+        // Ten guarded runs that must leave the tree as they found it; the
+        // count is of this process, which runs nothing else.
+        "guarded_work" => {
+            let me = std::process::id();
+            let baseline = measure_tree(me).unwrap().descendants;
+            for _ in 0..10 {
+                let deadline = Instant::now() + HANG_LIMIT;
+                let mut command = role_command("echo");
+                command.stdin(Stdio::null());
+                let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
+                assert!(
+                    child
+                        .capture_until(deadline, 64 * 1024)
+                        .unwrap()
+                        .status
+                        .success()
+                );
+                drop(child);
+                assert_eq!(measure_tree(me).unwrap().descendants, baseline);
+            }
+            println!("RELEASED");
+        }
         "overflow" => {
             std::io::stdout()
                 .write_all(&vec![b'x'; MAX_CAPTURE_BYTES + 1])
@@ -544,29 +566,18 @@ fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
 fn repeated_guarded_work_releases_children_and_capture_resources() {
     let _serial = serial();
     // The other modules of this binary start children of their own, so the
-    // test follows each child it starts, by pid and start time, rather than
-    // counting the shared process's tree.
-    for _ in 0..10 {
-        let deadline = Instant::now() + HANG_LIMIT;
-        let mut command = role_command("echo");
-        command.stdin(Stdio::null());
-        let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
-        let pid = child.id();
-        let started = start_time(pid).unwrap();
-        assert!(
-            child
-                .capture_until(deadline, 64 * 1024)
-                .unwrap()
-                .status
-                .success()
-        );
-        drop(child);
-        assert_ne!(
-            start_time(pid).ok(),
-            Some(started),
-            "the dropped child is reaped, not left behind"
-        );
-    }
+    // ten runs happen in a role process whose tree holds only what they leave.
+    let deadline = Instant::now() + HANG_LIMIT;
+    let mut command = role_command("guarded_work");
+    command.stdin(Stdio::null());
+    let mut child = OwnedChild::spawn(&mut command).unwrap();
+    let output = child.capture_until(deadline, 64 * 1024).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("RELEASED"));
 }
 
 /// A detached child holds none of its parent's standard handles: whoever reads
