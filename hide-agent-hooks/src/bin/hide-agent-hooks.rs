@@ -215,8 +215,9 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
     let (repo, branch) = guard::checkout_facts(&cwd);
-    let command = guard::spawn_command(&launch, repo.as_deref(), branch.as_deref());
-    let output = guard::deny_output(&guard::refusal_reason(&command));
+    let delegation = guard::spawn_command(&launch, repo.as_deref(), branch.as_deref(), true);
+    let handoff = guard::spawn_command(&launch, repo.as_deref(), branch.as_deref(), false);
+    let output = guard::deny_output(&guard::refusal_reason(&delegation, &handoff));
     // The refusal is logged before it is printed, and the refusal stands even
     // when the log cannot be written.
     guard::record_refusal(&home, runtime.id(), &pane, &launch);

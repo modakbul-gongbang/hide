@@ -34,7 +34,9 @@ Nothing else is read from the command but the helper's quoted path, and the help
 
 ## What the hook returns and reports back
 
-On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecificOutput.additionalContext` combines the worktree-purpose instruction, which also tells the agent to run `hide factory add` to put work into a Factory instead of adding a GitHub label (see [factory.md](factory.md)), with the bounded Project Memory capsule when Memory is enabled.
+On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecificOutput.additionalContext` combines the worktree-purpose instruction with the bounded Project Memory capsule when Memory is enabled.
+The instruction explains supervised delegation (`hide agent spawn --parent here …`, with an automatic watch) and independent operator handoff (`hide agent spawn …`, without parent or automatic watch); both preserve focus and record origin.
+It also tells the agent to run `hide factory add` to put work into a Factory instead of adding a GitHub label (see [factory.md](factory.md)).
 The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a renderer-connected Workspace for the caller and report its actual capabilities.
 The probe does not need a pane id: the daemon binds a caller inside a Herdr pane to that pane, and any other local caller, such as a tool shell or hook inside Codex's shared app-server daemon or a plain terminal, to the registered checkout holding its cwd (`docs/ARCHITECTURE.md`, the Workspace CLI).
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
@@ -131,8 +133,10 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 
 ## The spawn guard
 
-`PreToolUse` carries the spawn guard (PRD herdr-spawn-guard): a shell call that starts an agent through Herdr is refused before it runs, because Herdr records no parent for such a child, so it would show in the Agents graph with no line to the agent that started it and no watch.
-The reason handed back is the filled command to use instead, `hide agent spawn --parent here --name <name> --intent <intent> --kind <kind> --repo <main root> --branch <branch>`, so the agent redoes the call in one step.
+`PreToolUse` carries the spawn guard: a shell call that starts an agent through Herdr is refused before it runs because it bypasses Hide's responsibility record.
+The reason offers two filled commands with the same name, kind, repository, branch and native arguments: `hide agent spawn --parent here …` delegates work the caller supervises and starts an automatic watch; `hide agent spawn …` hands independent work to the operator as a root without an automatic watch.
+Both record the caller as origin and open a separate tab without changing the current screen or keyboard focus.
+The agent fills missing values and chooses responsibility before rerunning the call.
 What is refused, in a pane of a registered checkout (the call is `herdr`, or `$HERDR_BIN_PATH`, after any `VAR=value` words and the prefix words `time`, `exec`, `command`, `nohup`, `env` and, at the start of a command in a shell line, `if`, `then`, `elif`, `else`, `while`, `until`, `do`, `{` and `!`):
 
 - `herdr agent start <name> --kind <kind> ...`;
@@ -149,7 +153,7 @@ The registered-checkout test is `hide workspace bootstrap` through the sibling `
 Only the daemon's own "this caller is not in a Hide checkout" answers (`checkout_not_registered`, `caller_unavailable`, `pane_not_connected`, `pane_unavailable`, `pane_changed`, `caller_not_in_pane`) mean the call is not Hide's to guide, and it runs silently.
 Any other outcome, a `hide` that is missing, a bridge to a device that is gone, an answer that does not come within the guard's 2.5 second budget, an unreadable answer and a reason this build does not know, lets the call run and appends one `daemon.unreachable` line with its cause to the guard's log, throttled to one per ten minutes through the delivery diagnostics' store (cause `guard`), because a refusal Hide cannot explain would be worse than the untracked child.
 The line goes to the log only: a hook's standard error reaches nobody the operator or the agent could act on.
-A pane of a Herdr server Hide does not attach to, whose working directory is inside a registered checkout, is bound by `hide workspace bootstrap` to that checkout and so reads as registered too; the guard is guidance, not a boundary, and the `hide agent spawn --parent here` it offers cannot parent a child of such a pane (known limitation, PRD D-03 reads the pane and the checkout, not whose Herdr it is).
+A pane of a Herdr server Hide does not attach to, whose working directory is inside a registered checkout, is bound by `hide workspace bootstrap` to that checkout and so reads as registered too; the guard is guidance, not a boundary, and the Hide commands it offers cannot spawn from such an unattached pane (known limitation, PRD D-03 reads the pane and the checkout, not whose Herdr it is).
 `--repo` is the repository's main root and `--branch` the caller's current branch, both read from the call's `cwd` through the repository's own files (`hide_project::git`), with no git process; a detached HEAD leaves `<branch>` for the agent to fill.
 The guard stays silent inside a Grok, OpenCode or Cursor session (`ForeignOrigin`), where Claude Code's hook runs but its deny handling is unverified.
 Claude Code and Codex share one deny envelope, `hookSpecificOutput.permissionDecision = "deny"` with `permissionDecisionReason`; every other path prints nothing and exits 0, and the whole entry runs inside `catch_unwind`, so a defect allows the call rather than refusing an ordinary one; a failed owner handshake in the environment ends the outer hook with 0 as well, since exit 2 from a pre-tool hook would refuse the call.

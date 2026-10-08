@@ -185,7 +185,7 @@ pub(crate) enum Effect {
     Agents {
         authority: Authority,
         actor: Actor,
-        mutation: crate::coordination::Mutation,
+        mutation: Box<crate::coordination::Mutation>,
     },
     Command {
         authority: Authority,

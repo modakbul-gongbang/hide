@@ -1,10 +1,10 @@
 //! The spawn guard: a `PreToolUse` hook that refuses an agent's shell call when
 //! it starts another agent through Herdr directly, and answers with the
-//! `hide agent spawn --parent here ...` command that does the same thing.
+//! two `hide agent spawn` commands that choose delegation or operator handoff.
 //!
 //! Herdr records no parent for an agent it starts, so such a child reaches the
 //! Agents graph as a root with no line to its starter and no watch, and nobody
-//! is woken when it stops. `hide agent spawn` writes the lineage and starts the
+//! is woken when it stops. Delegation writes the lineage and starts the
 //! watch. The guard is a redirect, not a security boundary: it sees one shell
 //! call at one layer and acts only inside a Herdr pane whose checkout Hide has
 //! registered (`docs/agent-hooks.md`, The spawn guard).
@@ -797,12 +797,19 @@ fn shell_word(word: &str) -> String {
 }
 
 /// The `hide agent spawn` command that does what `launch` does and also records
-/// the parent and starts the watch (PRD D-10). What the call does not say stays
+/// responsibility mode. Delegation records the parent and starts a watch.
+/// What the call does not say stays
 /// in angle brackets for the agent to fill: the intent always, the name when
 /// the launch gave none, the repository and branch when the checkout has none.
-pub fn spawn_command(launch: &Launch, repo: Option<&str>, branch: Option<&str>) -> String {
+pub fn spawn_command(
+    launch: &Launch,
+    repo: Option<&str>,
+    branch: Option<&str>,
+    delegate: bool,
+) -> String {
     let mut command = format!(
-        "hide agent spawn --parent here --name {} --intent <intent> --kind {} --repo {} --branch {}",
+        "hide agent spawn{} --name {} --intent <intent> --kind {} --repo {} --branch {}",
+        if delegate { " --parent here" } else { "" },
         launch
             .name
             .as_deref()
@@ -822,11 +829,14 @@ pub fn spawn_command(launch: &Launch, repo: Option<&str>, branch: Option<&str>) 
 }
 
 /// The reason a refused call reads, for the agent.
-pub fn refusal_reason(command: &str) -> String {
+pub fn refusal_reason(delegation: &str, handoff: &str) -> String {
     format!(
-        "Not run: this call starts an agent with herdr directly, and Herdr records no parent for it, so the child would show in Hide's Agents graph with no line to you and no watch, and nobody would be woken when it stops. \
-         Start it through Hide instead, filling in what is in angle brackets:\n\n{command}\n\n\
-         It opens the child in its own tab, ties it to you and starts the watch. If this call held other commands, run them separately."
+        "Not run: this call starts an agent with herdr directly and bypasses Hide's responsibility record. \
+         Choose who will handle the work, filling in what is in angle brackets:\n\n\
+         Delegate work you will supervise (parent relationship and automatic watch):\n{delegation}\n\n\
+         Hand off independent work to the operator (root agent, no automatic watch):\n{handoff}\n\n\
+         Both modes record you as origin and open a separate tab without changing the current screen or keyboard focus. \
+         If this call held other commands, run them separately."
     )
 }
 
@@ -1300,33 +1310,42 @@ mod tests {
     fn the_offered_command_is_filled_from_the_call() {
         let start = found("herdr agent start set-g --kind claude --pane p -- --model opus");
         assert_eq!(
-            spawn_command(&start, Some("/Users/me/herdr-ide"), Some("fix/thing")),
+            spawn_command(&start, Some("/Users/me/herdr-ide"), Some("fix/thing"), true),
             "hide agent spawn --parent here --name set-g --intent <intent> --kind claude --repo /Users/me/herdr-ide --branch fix/thing -- --model opus"
+        );
+        assert_eq!(
+            spawn_command(&start, Some("/repo"), Some("topic"), false),
+            "hide agent spawn --name set-g --intent <intent> --kind claude --repo /repo --branch topic -- --model opus"
         );
         let run = found("herdr pane run p codex 'fix the tests'");
         assert_eq!(
-            spawn_command(&run, Some("/a b"), None),
+            spawn_command(&run, Some("/a b"), None, true),
             "hide agent spawn --parent here --name <name> --intent <intent> --kind codex --repo '/a b' --branch <branch> -- 'fix the tests'"
         );
         assert_eq!(
-            spawn_command(&run, None, Some("main")),
+            spawn_command(&run, None, Some("main"), true),
             "hide agent spawn --parent here --name <name> --intent <intent> --kind codex --repo <repo> --branch main -- 'fix the tests'"
         );
         // A single quote inside an argument survives a shell reading it back.
         let quoted = found("herdr pane run p claude \"it's\"");
-        assert!(spawn_command(&quoted, None, None).ends_with("-- 'it'\\''s'"));
+        assert!(spawn_command(&quoted, None, None, true).ends_with("-- 'it'\\''s'"));
     }
 
     #[test]
     fn the_refusal_is_the_one_envelope_both_runtimes_read() {
-        let output: serde_json::Value =
-            serde_json::from_str(&deny_output(&refusal_reason("hide agent spawn ..."))).unwrap();
+        let output: serde_json::Value = serde_json::from_str(&deny_output(&refusal_reason(
+            "hide agent spawn --parent here ...",
+            "hide agent spawn ...",
+        )))
+        .unwrap();
         assert_eq!(output["hookSpecificOutput"]["hookEventName"], "PreToolUse");
         assert_eq!(output["hookSpecificOutput"]["permissionDecision"], "deny");
         let reason = output["hookSpecificOutput"]["permissionDecisionReason"]
             .as_str()
             .unwrap();
+        assert!(reason.contains("hide agent spawn --parent here ..."));
         assert!(reason.contains("hide agent spawn ..."));
+        assert!(reason.contains("root agent, no automatic watch"));
         assert!(!reason.contains('\u{2014}'), "no em dash");
     }
 
